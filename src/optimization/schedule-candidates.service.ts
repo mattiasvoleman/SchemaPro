@@ -72,7 +72,9 @@ import {
   draftMastersWhere,
   engineMayStillBeSolving,
   ENGINE_LACKS_BEST_EFFORT,
+  ENGINE_NOT_REACHED,
   ENGINE_TIMED_OUT,
+  ENGINE_WAIT_EXPIRED,
   OptimizationProxyService,
   previousLessonsFrom,
   regenerationSweepDay,
@@ -591,9 +593,12 @@ function unplacedViewOf(value: unknown): RunUnplaced | null {
  */
 export function engineFailureOf(error: unknown): RunFailure {
   const failure = failureOf(error);
-  // The engine's own ceiling has a name of its own for Generera; a candidate
-  // run says it as it said every engine 503 before (ENGINE_TIMED_OUT).
-  if (failure.code === ENGINE_TIMED_OUT) return { ...failure, code: CANDIDATE_ENGINE_TIMEOUT };
+  // The engine's own ceiling, the API's own wait and a call that never arrived have a name of their own for Generera (and the
+  // figures of where it was, omgång 13 M2); a candidate run says each as it said every engine 503 before, with no figures: the
+  // schemaförslag page has one sentence for them (CANDIDATE_ENGINE_TIMEOUT), and a code it has no text for would show English.
+  if (failure.code === ENGINE_TIMED_OUT || failure.code === ENGINE_WAIT_EXPIRED || failure.code === ENGINE_NOT_REACHED) {
+    return { message: failure.message, code: CANDIDATE_ENGINE_TIMEOUT, params: null };
+  }
   if (failure.code !== null || !(error instanceof HttpException)) return failure;
   const status = error.getStatus();
   if (status === 503 || status === 504) return { ...failure, code: CANDIDATE_ENGINE_TIMEOUT };

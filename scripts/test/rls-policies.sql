@@ -69122,3 +69122,488 @@ ROLLBACK;
 \setenv PGPORT
 \setenv PGUSER
 \setenv PGDATABASE
+
+-- ---------------------------------------------------------------------------
+-- Section 555: en körning som fick slut på tid sparar var tiden gick (20270228090000).
+--
+-- OptimizationJobs fick en kolumn, "report" (jsonb, nullbar, utan standardvärde), och en CHECK: ett objekt på högst 8 KiB. Inga armar
+-- och inga rättigheter ändrades: de fyra administratörsarmarna ligger kvar hos API:ts roll ensam (section 162) och kolumnen lyds av dem
+-- som tabellens övriga. Här läses kolumnen och kontrollen ur katalogen, kontrollens kanter prövas som schemaläggaren (hennes arm skriver
+-- raden), och PostgREST:s roll och en lärare läser ingen rapport alls.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  run uuid;
+  got text;
+  n bigint;
+BEGIN
+  -- Kolumnen: jsonb, nullbar, utan standardvärde.
+  SELECT string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod) || ' ' || CASE WHEN a.attnotnull THEN 'not null' ELSE 'null' END
+                    || ' ' || coalesce(pg_get_expr(d.adbin, d.adrelid), 'no default'), ', ' ORDER BY a.attname) INTO got
+    FROM pg_attribute a
+    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = 'public."OptimizationJobs"'::regclass AND a.attname = 'report' AND NOT a.attisdropped;
+  IF got IS DISTINCT FROM 'report jsonb null no default' THEN
+    RAISE EXCEPTION 'fx 555: the report column is %', got;
+  END IF;
+
+  -- Kontrollen, validerad: namnet, objektet och taket (utan parenteser: Postgres 16 och 17 sätter dem olika).
+  SELECT c.convalidated::text || ' ' || translate(regexp_replace(pg_get_constraintdef(c.oid), '\s+', ' ', 'g'), '()', '') INTO got
+    FROM pg_constraint c
+   WHERE c.conrelid = 'public."OptimizationJobs"'::regclass AND c.contype = 'c' AND c.conname = 'OptimizationJobs_report_is_a_small_object';
+  IF got IS NULL OR got NOT LIKE 'true CHECK report IS NULL OR %' OR position('jsonb_typeof' IN got) = 0
+     OR position('''object''' IN got) = 0 OR position('octet_length' IN got) = 0 OR position('<= 8192' IN got) = 0 THEN
+    RAISE EXCEPTION 'fx 555: the check on report is %', coalesce(got, 'missing');
+  END IF;
+
+  -- Armarna som förut: de fyra, API:ts rolls ensam, och ingen nämner kolumnen (en arm som gjorde det vore en ny dörr).
+  SELECT string_agg(policyname || ' ' || cmd || ' ' || roles::text, ', ' ORDER BY policyname) INTO got
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'OptimizationJobs';
+  IF got IS DISTINCT FROM 'optimization_jobs_admin_delete DELETE {app_authenticated}, '
+                       || 'optimization_jobs_admin_insert INSERT {app_authenticated}, '
+                       || 'optimization_jobs_admin_select SELECT {app_authenticated}, '
+                       || 'optimization_jobs_admin_update UPDATE {app_authenticated}' THEN
+    RAISE EXCEPTION 'fx 555: OptimizationJobs'' arms are %', got;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'OptimizationJobs'
+                AND (coalesce(qual, '') || coalesce(with_check, '')) ~ 'report') THEN
+    RAISE EXCEPTION 'fx 555: an arm of OptimizationJobs reads the report';
+  END IF;
+
+  -- Schemaläggaren skriver raden: en körning, och rapporten som API:t skriver den (ett objekt), tas bort igen och skrivs över.
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt")
+  VALUES (school, yr, app.current_user_id(), 'SUCCEEDED', 'TIMEOUT', now()) RETURNING id INTO run;
+  UPDATE "OptimizationJobs"
+     SET "report" = '{"totalSeconds": 109, "budgetSeconds": 100, "stages": [{"stage": "BUILD", "seconds": 4}]}'::jsonb
+   WHERE id = run;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'fx 555: the administrator''s write of a report changed % row(s)', n; END IF;
+  UPDATE "OptimizationJobs" SET "report" = NULL WHERE id = run;
+  UPDATE "OptimizationJobs" SET "report" = '{}'::jsonb WHERE id = run;
+
+  -- Kontrollens kanter, en i taget: ett objekt och inte mer än 8 192 tecken som text. `{"x": "` och `"}` är nio av dem.
+  BEGIN
+    UPDATE "OptimizationJobs" SET "report" = '[1, 2]'::jsonb WHERE id = run;
+    RAISE EXCEPTION 'fx 555: an array was accepted as a report';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "report" = '7'::jsonb WHERE id = run;
+    RAISE EXCEPTION 'fx 555: a number was accepted as a report';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "report" = '"text"'::jsonb WHERE id = run;
+    RAISE EXCEPTION 'fx 555: a text was accepted as a report';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "report" = 'null'::jsonb WHERE id = run;
+    RAISE EXCEPTION 'fx 555: a JSON null was accepted as a report (a run with none has a database NULL)';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  UPDATE "OptimizationJobs" SET "report" = jsonb_build_object('x', repeat('y', 8183)) WHERE id = run;
+  IF NOT EXISTS (SELECT 1 FROM "OptimizationJobs" WHERE id = run AND octet_length("report"::text) = 8192) THEN
+    RAISE EXCEPTION 'fx 555: the largest report the check accepts is not 8192 characters as text';
+  END IF;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "report" = jsonb_build_object('x', repeat('y', 8184)) WHERE id = run;
+    RAISE EXCEPTION 'fx 555: a report of 8193 characters was accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+
+  -- En lärare ser ingen körning och därmed ingen rapport, och ändrar ingen.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000111')::text, true);
+  SELECT count(*) INTO n FROM "OptimizationJobs" WHERE "report" IS NOT NULL;
+  IF n <> 0 THEN RAISE EXCEPTION 'fx 555: a teacher reads % report(s)', n; END IF;
+  UPDATE "OptimizationJobs" SET "report" = '{}'::jsonb;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'fx 555: a teacher wrote % report(s)', n; END IF;
+
+  -- PostgREST:s roll, med schemaläggarens claims: ingen läsning och ingen skrivning av just den nya kolumnen.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+  SET LOCAL ROLE authenticated;
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'fx 555: could not act as authenticated'; END IF;
+  SELECT count(*) INTO n FROM (SELECT "report" FROM "OptimizationJobs") AS r;
+  IF n <> 0 THEN RAISE EXCEPTION 'fx 555: as PostgREST''s role the schemaläggare reads % report(s)', n; END IF;
+  UPDATE "OptimizationJobs" SET "report" = '{}'::jsonb;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'fx 555: as PostgREST''s role the schemaläggare wrote % report(s)', n; END IF;
+  SET LOCAL ROLE app_authenticated;
+
+  RAISE NOTICE 'fx 555: the report column and its check hold at their edges, and nobody but the API''s role reads or writes it';
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Undervisningsuppdragets omfattning (20270301090000), sections 560-563. The owner's side is section 564 in rls-owner-checks.sql.
+--
+--   560  the catalogue as the migration wrote it: the two reference tables, their keys, checks, indexes, arms and privileges
+--   561  who reads and who writes: every signed-in principal reads the ordinance, nobody who connects as an API role writes it
+--   562  the figures as the migration put them in (SFS 2026:1487 3 §, 4 §, 5 §), and the rows that must NOT be there
+--   563  the policy column: StaffingPolicies."assignmentScopeMode", WARN until the school says otherwise
+--
+-- The ordinance is global reference data like the national timplan (section 15): no school id, so the question every other table
+-- is asked, does school A see school B, has no meaning here. Two others take its place: can every active principal READ it, and can
+-- NO API principal WRITE it? A statute an admin can edit is a check that reports what the school wished the law said.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.ut_tick() RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('ut.checks', (coalesce(nullif(current_setting('ut.checks', true), ''), '0')::integer + 1)::text, true);
+$f$;
+CREATE FUNCTION pg_temp.ut_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.ut_tick();
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'ut %: got\n%\nwanted\n%', p_label, p_got, p_want USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION pg_temp.ut_true(p_label text, p_cond boolean) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.ut_tick();
+  IF p_cond IS NOT TRUE THEN
+    RAISE EXCEPTION 'ut %: not true', p_label USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+-- A statement and what became of it: ok, or the SQLSTATE. A failed statement leaves nothing.
+CREATE FUNCTION pg_temp.ut_try(p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+BEGIN
+  EXECUTE p_stmt;
+  RETURN 'ok';
+EXCEPTION WHEN OTHERS THEN
+  RETURN SQLSTATE;
+END $f$;
+CREATE FUNCTION pg_temp.ut_as(p_sub text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_sub)::text, true);
+$f$;
+-- The catalogue, one string per kind, so that a change to any of them is one failed line that says which.
+CREATE FUNCTION pg_temp.ut_columns(p_tbl regclass) RETURNS text LANGUAGE sql AS $f$
+  SELECT string_agg(format('%s %s %s %s', a.attname, format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END,
+                           coalesce(pg_get_expr(d.adbin, d.adrelid), '-')), E'\n' ORDER BY a.attnum)
+    FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = p_tbl AND a.attnum > 0 AND NOT a.attisdropped;
+$f$;
+CREATE FUNCTION pg_temp.ut_constraints(p_tbl regclass) RETURNS text LANGUAGE sql AS $f$
+  SELECT string_agg(c.conname || ' ' || regexp_replace(pg_get_constraintdef(c.oid), '\s+', ' ', 'g'), E'\n' ORDER BY c.conname COLLATE "C")
+    FROM pg_constraint c WHERE c.conrelid = p_tbl;
+$f$;
+CREATE FUNCTION pg_temp.ut_indexes(p_tbl regclass) RETURNS text LANGUAGE sql AS $f$
+  SELECT string_agg(ix.relname || ' ' || regexp_replace(pg_get_indexdef(i.indexrelid), '^.* USING ', 'USING ') || ' '
+                    || CASE WHEN i.indisvalid AND i.indisready THEN 'valid' ELSE 'INVALID' END || CASE WHEN i.indpred IS NULL THEN ' whole' ELSE ' partial' END,
+                    E'\n' ORDER BY ix.relname COLLATE "C")
+    FROM pg_index i JOIN pg_class ix ON ix.oid = i.indexrelid WHERE i.indrelid = p_tbl;
+$f$;
+CREATE FUNCTION pg_temp.ut_arms(p_tbl text) RETURNS text LANGUAGE sql AS $f$
+  SELECT string_agg(policyname || ' ' || cmd || ' ' || roles::text || ' [' || coalesce(qual, '') || '] [' || coalesce(with_check, '') || ']', E'\n' ORDER BY policyname COLLATE "C")
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = p_tbl;
+$f$;
+CREATE FUNCTION pg_temp.ut_acl(p_tbl regclass) RETURNS text LANGUAGE sql AS $f$
+  SELECT string_agg(g.who || '=' || g.privs, ';' ORDER BY g.who COLLATE "C")
+    FROM (SELECT coalesce(ro.rolname, 'PUBLIC')::text AS who, string_agg(a.privilege_type, ',' ORDER BY a.privilege_type COLLATE "C") AS privs
+            FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a LEFT JOIN pg_roles ro ON ro.oid = a.grantee
+           WHERE c.oid = p_tbl AND a.grantee <> c.relowner GROUP BY 1) g;
+$f$;
+
+-- ---------------------------------------------------------------------------
+-- Section 560: the catalogue as the migration wrote it (20270301090000).
+--
+-- Nothing here plants a row. What a name, a type, a default, a key, a check, an exclusion, an index, an arm or a privilege is, as
+-- the catalogue holds it: a CHECK loosened, an exclusion dropped (two lydelser would then hold the same day, and a grade would
+-- name two bands), a write arm added, a grant to anon, MAINTAIN handed back by a default privilege.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tbl regclass;
+  t text;
+  r text;
+  priv text;
+BEGIN
+  tbl := '"AssignmentScopeVersions"'::regclass;
+  PERFORM pg_temp.ut_expect('560 versions: columns', pg_temp.ut_columns(tbl),
+    E'id uuid NN gen_random_uuid()\ncode text NN -\nsfs text NN -\ntitle text NN -\nvalidFrom date NN -\nvalidTo date N -\n'
+    || E'supersededByCode text N -\nsource text NN -\ncreatedAt timestamp(6) with time zone NN CURRENT_TIMESTAMP');
+  PERFORM pg_temp.ut_expect('560 versions: keys and checks', pg_temp.ut_constraints(tbl),
+    E'AssignmentScopeVersions_code_is_not_blank CHECK ((btrim(code) <> \'\'::text))\n'
+    || E'AssignmentScopeVersions_does_not_supersede_itself CHECK ((("supersededByCode" IS NULL) OR ("supersededByCode" <> code)))\n'
+    || E'AssignmentScopeVersions_pkey PRIMARY KEY (id)\n'
+    || E'AssignmentScopeVersions_supersededByCode_fkey FOREIGN KEY ("supersededByCode") REFERENCES "AssignmentScopeVersions"(code) ON UPDATE CASCADE ON DELETE RESTRICT\n'
+    || E'AssignmentScopeVersions_title_is_not_blank CHECK ((btrim(title) <> \'\'::text))\n'
+    || E'AssignmentScopeVersions_validity_does_not_overlap EXCLUDE USING gist (daterange("validFrom", "validTo", \'[]\'::text) WITH &&)\n'
+    || E'AssignmentScopeVersions_validity_is_a_range CHECK ((("validTo" IS NULL) OR ("validTo" >= "validFrom")))');
+  PERFORM pg_temp.ut_expect('560 versions: indexes', pg_temp.ut_indexes(tbl),
+    E'AssignmentScopeVersions_code_key USING btree (code) valid whole\n'
+    || E'AssignmentScopeVersions_pkey USING btree (id) valid whole\n'
+    || E'AssignmentScopeVersions_validity_does_not_overlap USING gist (daterange("validFrom", "validTo", \'[]\'::text)) valid whole');
+
+  tbl := '"AssignmentScopeBands"'::regclass;
+  PERFORM pg_temp.ut_expect('560 bands: columns', pg_temp.ut_columns(tbl),
+    E'id uuid NN gen_random_uuid()\nversionId uuid NN -\nschoolForm "SchoolForm" NN -\ngradeNumbering "GradeNumbering" NN -\n'
+    || E'gradeFrom integer NN -\ngradeTo integer NN -\nteachingHoursLow integer NN -\nteachingHoursHigh integer NN -\n'
+    || E'planningFloorPercent integer NN -\nteachingSection text NN -\nplanningSection text NN -\nnote text N -');
+  PERFORM pg_temp.ut_expect('560 bands: keys and checks', pg_temp.ut_constraints(tbl),
+    E'AssignmentScopeBands_grades_are_a_range CHECK ((("gradeFrom" >= 0) AND ("gradeFrom" <= "gradeTo") AND ("gradeTo" <= 12)))\n'
+    || E'AssignmentScopeBands_grades_do_not_overlap EXCLUDE USING gist ("versionId" WITH =, "schoolForm" WITH =, "gradeNumbering" WITH =, int4range("gradeFrom", "gradeTo", \'[]\'::text) WITH &&)\n'
+    || E'AssignmentScopeBands_note_is_not_blank CHECK (((note IS NULL) OR (btrim(note) <> \'\'::text)))\n'
+    || E'AssignmentScopeBands_pkey PRIMARY KEY (id)\n'
+    || E'AssignmentScopeBands_planning_floor_is_a_share CHECK ((("planningFloorPercent" >= 0) AND ("planningFloorPercent" <= 300)))\n'
+    || E'AssignmentScopeBands_sections_are_not_blank CHECK (((btrim("teachingSection") <> \'\'::text) AND (btrim("planningSection") <> \'\'::text)))\n'
+    || E'AssignmentScopeBands_span_is_a_span CHECK ((("teachingHoursLow" > 0) AND ("teachingHoursLow" <= "teachingHoursHigh") AND ("teachingHoursHigh" <= 2500)))\n'
+    || E'AssignmentScopeBands_versionId_fkey FOREIGN KEY ("versionId") REFERENCES "AssignmentScopeVersions"(id) ON UPDATE CASCADE ON DELETE CASCADE');
+  PERFORM pg_temp.ut_expect('560 bands: indexes', pg_temp.ut_indexes(tbl),
+    E'AssignmentScopeBands_grades_do_not_overlap USING gist ("versionId", "schoolForm", "gradeNumbering", int4range("gradeFrom", "gradeTo", \'[]\'::text)) valid whole\n'
+    || E'AssignmentScopeBands_pkey USING btree (id) valid whole\n'
+    || E'AssignmentScopeBands_version_form_numbering_from_key USING btree ("versionId", "schoolForm", "gradeNumbering", "gradeFrom") valid whole');
+
+  -- Nothing else in the tables: no trigger of their own, no other key that names them, row security on and not forced.
+  FOREACH t IN ARRAY ARRAY['AssignmentScopeVersions', 'AssignmentScopeBands'] LOOP
+    tbl := format('%I', t)::regclass;
+    PERFORM pg_temp.ut_expect('560 ' || t || ' has no trigger of its own', (SELECT count(*) FROM pg_trigger WHERE tgrelid = tbl AND NOT tgisinternal)::text, '0');
+    PERFORM pg_temp.ut_true('560 ' || t || ': row security is on', (SELECT relrowsecurity FROM pg_class WHERE oid = tbl));
+    PERFORM pg_temp.ut_true('560 ' || t || ': row security is not forced', NOT (SELECT relforcerowsecurity FROM pg_class WHERE oid = tbl));
+    PERFORM pg_temp.ut_true('560 ' || t || ' is commented', coalesce(obj_description(tbl, 'pg_class'), '') <> '');
+    -- One arm, a SELECT for any signed-in principal and for nobody else; no INSERT, UPDATE or DELETE arm.
+    PERFORM pg_temp.ut_expect('560 ' || t || ': arms', pg_temp.ut_arms(t),
+      CASE t WHEN 'AssignmentScopeVersions' THEN 'assignment_scope_versions_select' ELSE 'assignment_scope_bands_select' END
+      || ' SELECT {authenticated} [(( SELECT app.current_school_id() AS current_school_id) IS NOT NULL)] []');
+    -- Privileges: SELECT for the API's roles, nothing for anon or PUBLIC, no column-only grant, and no privilege that writes, locks
+    -- or rewrites (MAINTAIN on 17: REVOKE ALL took it).
+    PERFORM pg_temp.ut_expect('560 ' || t || ': who holds what (the owner aside)', pg_temp.ut_acl(tbl),
+      'app_authenticated=SELECT' || CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN ';authenticated=SELECT;service_role=SELECT' ELSE ';authenticated=SELECT' END);
+    PERFORM pg_temp.ut_expect('560 ' || t || ': no column has a grant of its own', (SELECT count(*) FROM pg_attribute WHERE attrelid = tbl AND attacl IS NOT NULL)::text, '0');
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      FOREACH priv IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        PERFORM pg_temp.ut_true(format('560 %s holds %s on %s (it must not)', r, priv, t), NOT has_table_privilege(r, tbl, priv));
+      END LOOP;
+      IF current_setting('server_version_num')::int >= 170000 THEN
+        PERFORM pg_temp.ut_true(format('560 %s holds MAINTAIN on %s (it must not)', r, t), NOT has_table_privilege(r, tbl, 'MAINTAIN'));
+      END IF;
+      PERFORM pg_temp.ut_expect(format('560 %s reads %s', r, t), has_table_privilege(r, tbl, 'SELECT')::text, (r <> 'anon')::text);
+      IF r IN ('authenticated', 'anon') THEN
+        FOREACH priv IN ARRAY ARRAY['INSERT', 'UPDATE', 'REFERENCES'] LOOP
+          PERFORM pg_temp.ut_true(format('560 %s holds %s on a column of %s (it must not)', r, priv, t), NOT has_any_column_privilege(r, tbl, priv));
+        END LOOP;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  -- The policy column (section 563 asserts what it does): its type, that it cannot be NULL, and that the default is WARN.
+  PERFORM pg_temp.ut_expect('560 StaffingPolicies."assignmentScopeMode"',
+    (SELECT format_type(a.atttypid, a.atttypmod) || ' ' || CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END || ' ' || coalesce(pg_get_expr(d.adbin, d.adrelid), '-')
+       FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      WHERE a.attrelid = '"StaffingPolicies"'::regclass AND a.attname = 'assignmentScopeMode' AND NOT a.attisdropped),
+    '"StaffingCheckMode" NN ''WARN''::"StaffingCheckMode"');
+  PERFORM pg_temp.ut_true('560 the policy column is commented',
+    coalesce(col_description('"StaffingPolicies"'::regclass, (SELECT attnum FROM pg_attribute WHERE attrelid = '"StaffingPolicies"'::regclass AND attname = 'assignmentScopeMode')), '') <> '');
+  RAISE NOTICE 'ut 560: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 561: who reads and who writes.
+--
+-- Read by every ACTIVE principal at a school (app.current_school_id(), as the national timplan since 20261212090000, so that a
+-- huvudman's läsare naming a school reads what the school's läsare reads; section 262 compares that for every table): an
+-- administrator, a teacher, a pupil and a guardian. Not by a request with no principal, and not by a deactivated administrator (section 9 swept every readable table and found the national timplan the
+-- first time it was tried with USING (true): a revoked token kept reading it). Written by nobody who connects as an API role, and
+-- refused LOUDLY: insufficient_privilege, because the migration revokes the write grants that 20260806000000's default
+-- privileges hand every new table. A policy alone would refuse an UPDATE by matching no row, which is silent.
+-- ---------------------------------------------------------------------------
+
+-- No principal at all reads nothing.
+BEGIN;
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('561 no principal reads a version', (SELECT count(*) FROM "AssignmentScopeVersions")::text, '0');
+  PERFORM pg_temp.ut_expect('561 no principal reads a band', (SELECT count(*) FROM "AssignmentScopeBands")::text, '0');
+END $$;
+ROLLBACK;
+
+-- A principal of each role, found by the school's administrator and then acted as. The administrator comes from the runner (psql
+-- variable admin_auth_id, handed over through ut.admin because a DO body is not interpolated). A role the fixtures lack fails here,
+-- so that a missing fixture cannot make the reads below pass vacuously.
+CREATE FUNCTION pg_temp.ut_become(p_role text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE
+  sub text;
+BEGIN
+  PERFORM pg_temp.ut_as(current_setting('ut.admin'));
+  SELECT "authId"::text INTO sub FROM "Users"
+   WHERE "schoolId" = app.current_school_id() AND role::text = p_role AND "isActive" AND "authId" IS NOT NULL
+   ORDER BY "authId" LIMIT 1;
+  IF sub IS NULL THEN
+    RAISE EXCEPTION 'ut: the fixtures hold no active % in school A to act as', p_role;
+  END IF;
+  PERFORM pg_temp.ut_as(sub);
+  IF app.current_user_role()::text IS DISTINCT FROM p_role THEN
+    RAISE EXCEPTION 'ut: expected to act as a %, resolved role %', p_role, coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+END $f$;
+-- The rows a statement touched (an UPDATE that row security leaves nothing to touch says 0).
+CREATE FUNCTION pg_temp.ut_rows(p_stmt text) RETURNS bigint LANGUAGE plpgsql AS $f$
+DECLARE n bigint;
+BEGIN
+  EXECUTE p_stmt;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $f$;
+SELECT set_config('ut.admin', :'admin_auth_id', false);
+
+-- Every active role reads both tables in full, and every write it could attempt is refused as a missing privilege.
+BEGIN;
+DO $$
+DECLARE
+  who text;
+  stmt text;
+BEGIN
+  FOREACH who IN ARRAY ARRAY['SCHOOL_ADMIN', 'TEACHER', 'STUDENT', 'GUARDIAN'] LOOP
+    PERFORM pg_temp.ut_become(who);
+    PERFORM pg_temp.ut_expect('561 a ' || who || ' reads the version', (SELECT count(*) FROM "AssignmentScopeVersions")::text, '1');
+    PERFORM pg_temp.ut_expect('561 a ' || who || ' reads the two bands', (SELECT count(*) FROM "AssignmentScopeBands")::text, '2');
+    FOREACH stmt IN ARRAY ARRAY[
+      $q$UPDATE "AssignmentScopeVersions" SET "validFrom" = DATE '2020-01-01'$q$,
+      $q$UPDATE "AssignmentScopeVersions" SET "validTo" = DATE '2027-12-31'$q$,
+      $q$INSERT INTO "AssignmentScopeVersions" (code, sfs, title, "validFrom", source) VALUES ('UT560', 'x', 'x', DATE '2040-01-01', 'x')$q$,
+      $q$DELETE FROM "AssignmentScopeVersions"$q$,
+      $q$TRUNCATE "AssignmentScopeVersions" CASCADE$q$,
+      $q$UPDATE "AssignmentScopeBands" SET "teachingHoursHigh" = 2000$q$,
+      $q$UPDATE "AssignmentScopeBands" SET "planningFloorPercent" = 0$q$,
+      $q$INSERT INTO "AssignmentScopeBands" ("versionId", "schoolForm", "gradeNumbering", "gradeFrom", "gradeTo", "teachingHoursLow", "teachingHoursHigh", "planningFloorPercent", "teachingSection", "planningSection")
+         SELECT id, 'GRUNDSKOLA', 'TIOARIG', 1, 6, 550, 650, 100, 'x', 'x' FROM "AssignmentScopeVersions"$q$,
+      $q$DELETE FROM "AssignmentScopeBands"$q$,
+      $q$TRUNCATE "AssignmentScopeBands"$q$
+    ] LOOP
+      PERFORM pg_temp.ut_expect('561 a ' || who || ' is refused: ' || left(regexp_replace(stmt, '\s+', ' ', 'g'), 60), pg_temp.ut_try(stmt), '42501');
+    END LOOP;
+    -- Read back: nothing above moved anything.
+    PERFORM pg_temp.ut_expect('561 after the refused writes the band still says 650 and 600',
+      (SELECT string_agg("teachingHoursHigh"::text, ',' ORDER BY "gradeFrom") FROM "AssignmentScopeBands"), '650,600');
+  END LOOP;
+  RAISE NOTICE 'ut 561: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- A deactivated administrator reads nothing: the arm asks for an active principal, and a revoked token must not keep reading.
+BEGIN;
+SELECT pg_temp.ut_as(:'inactive_auth_id');
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_true('561 the deactivated administrator resolves to no principal', app.current_user_id() IS NULL);
+  PERFORM pg_temp.ut_expect('561 ... and reads no version', (SELECT count(*) FROM "AssignmentScopeVersions")::text, '0');
+  PERFORM pg_temp.ut_expect('561 ... and no band', (SELECT count(*) FROM "AssignmentScopeBands")::text, '0');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 562: the figures as the migration put them in, read as an administrator.
+--
+-- Asserted against FIGURES, not against "more than zero": a seed that half-applied, or a band with a digit wrong, cannot pass by
+-- accident. Each figure is SFS 2026:1487, read in the ordinance's own text (svenskforfattningssamling.se, SFS2026-1487.pdf):
+-- 3 § p. 1 550-650 (årskurs 1-6), 3 § p. 2 500-600 (årskurs 7-9), 4 § p. 1 planning at least equal to the teaching time, 5 § p. 1
+-- a further 10 per cent for årskurs 7-9. What has no row is asserted too, because a row that should not be there is as wrong as
+-- one that is missing: förskoleklassen is outside the ordinance (prop. 2025/26:196 s. 43-44), and the ten-year numbering has no figures
+-- until the ordinance is changed for it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+DECLARE
+  g int;
+  want text;
+BEGIN
+  PERFORM pg_temp.ut_expect('562 the version, as the ordinance names itself',
+    (SELECT concat_ws('|', code, sfs, title, "validFrom", coalesce("validTo"::text, '-'), coalesce("supersededByCode", '-'), source) FROM "AssignmentScopeVersions"),
+    'SFS2026:1487|SFS 2026:1487|Förordning om omfattning av tiden för lärares och förskollärares undervisningsuppdrag|2027-07-01|-|-|'
+    || 'https://svenskforfattningssamling.se/sites/default/files/sfs/2026-06/SFS2026-1487.pdf');
+  PERFORM pg_temp.ut_expect('562 the bands, in grade order: form, numbering, grades, span, planning floor, paragraphs',
+    (SELECT string_agg(concat_ws(' ', "schoolForm", "gradeNumbering", "gradeFrom" || '-' || "gradeTo", "teachingHoursLow" || '-' || "teachingHoursHigh",
+                                 "planningFloorPercent" || '%', '[' || "teachingSection" || ']', '[' || "planningSection" || ']'), E'\n' ORDER BY "gradeFrom")
+       FROM "AssignmentScopeBands"),
+    E'GRUNDSKOLA NIOARIG 1-6 550-650 100% [3 § p. 1] [4 § p. 1]\nGRUNDSKOLA NIOARIG 7-9 500-600 110% [3 § p. 2] [4 § p. 1 och 5 § p. 1]');
+  -- The 110 is an interpretation (5 § says "utöver den tid som anges i 4 §" but 4 § does not list årskurs 7-9) and says so; the
+  -- first band is the ordinance's own and carries no note.
+  PERFORM pg_temp.ut_true('562 årskurs 1-6 rests on no interpretation', (SELECT "note" IS NULL FROM "AssignmentScopeBands" WHERE "gradeFrom" = 1));
+  PERFORM pg_temp.ut_true('562 årskurs 7-9 says that its 110 per cent is an interpretation',
+    (SELECT "note" LIKE 'Tolkning: 5 §%' AND "note" LIKE '%ytterligare minst 10 %' FROM "AssignmentScopeBands" WHERE "gradeFrom" = 7));
+
+  -- A grade finds exactly one band under NIOARIG, from 1 to 9, and none at 0 (förskoleklass) or above 9.
+  FOR g IN 0..12 LOOP
+    want := CASE WHEN g BETWEEN 1 AND 9 THEN '1' ELSE '0' END;
+    PERFORM pg_temp.ut_expect('562 årskurs ' || g || ' finds ' || want || ' band under NIOARIG',
+      (SELECT count(*) FROM "AssignmentScopeBands" WHERE "schoolForm" = 'GRUNDSKOLA' AND "gradeNumbering" = 'NIOARIG' AND g BETWEEN "gradeFrom" AND "gradeTo")::text, want);
+  END LOOP;
+  PERFORM pg_temp.ut_expect('562 the ten-year numbering has no figures yet',
+    (SELECT count(*) FROM "AssignmentScopeBands" WHERE "gradeNumbering" = 'TIOARIG')::text, '0');
+  PERFORM pg_temp.ut_expect('562 no other school form has a row: Rastra has no staff in them',
+    (SELECT count(*) FROM "AssignmentScopeBands" WHERE "schoolForm" <> 'GRUNDSKOLA')::text, '0');
+  -- 4 §: planning at least as long as teaching, in every band.
+  PERFORM pg_temp.ut_expect('562 no band lets planning fall below the teaching time',
+    (SELECT count(*) FROM "AssignmentScopeBands" WHERE "planningFloorPercent" < 100)::text, '0');
+
+  -- The version in force on a day, as the gateway asks for it: the day it is in force from, and not the day before.
+  PERFORM pg_temp.ut_expect('562 the ordinance holds on 2027-07-01',
+    (SELECT count(*) FROM "AssignmentScopeVersions" WHERE "validFrom" <= DATE '2027-07-01' AND ("validTo" IS NULL OR "validTo" >= DATE '2027-07-01'))::text, '1');
+  PERFORM pg_temp.ut_expect('562 ... and on the first day of läsår 2027/28 (a year starts in August)',
+    (SELECT count(*) FROM "AssignmentScopeVersions" WHERE "validFrom" <= DATE '2027-08-16' AND ("validTo" IS NULL OR "validTo" >= DATE '2027-08-16'))::text, '1');
+  PERFORM pg_temp.ut_expect('562 ... not on 2027-06-30, the day before it holds, and so not in läsår 2026/27',
+    (SELECT count(*) FROM "AssignmentScopeVersions" WHERE "validFrom" <= DATE '2027-06-30' AND ("validTo" IS NULL OR "validTo" >= DATE '2027-06-30'))::text, '0');
+  RAISE NOTICE 'ut 562: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 563: the policy column, StaffingPolicies."assignmentScopeMode".
+--
+-- WARN for every school that had a policy row before the column, because the column is added with a constant default; the school's
+-- own choice (OFF or REFUSE) is its administrator's to make, through the policy's own arms, and nobody else's; a value that is not
+-- one of the three, and NULL, are refused. What the mode DOES (it governs a write that takes a teacher over the ordinance's highest
+-- level) is the gateway's, in a later PR; here is only what the database holds.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+DECLARE
+  m text;
+BEGIN
+  -- The school's row, written as its administrator without saying anything about the new column (a row from before it is the same
+  -- thing: the column is added with a constant default, so every existing row read WARN the moment the migration ran). A school that
+  -- already has a row keeps it, so the assertion is about the row that is there either way.
+  INSERT INTO "StaffingPolicies" ("schoolId", "updatedAt") VALUES (app.current_school_id(), now()) ON CONFLICT ("schoolId") DO NOTHING;
+  PERFORM pg_temp.ut_expect('563 the school''s policy row says WARN, until the school says otherwise',
+    (SELECT "assignmentScopeMode"::text FROM "StaffingPolicies" WHERE "schoolId" = app.current_school_id()), 'WARN');
+  PERFORM pg_temp.ut_expect('563 no policy row of the school''s own says anything else',
+    (SELECT count(*) FROM "StaffingPolicies" WHERE "assignmentScopeMode" <> 'WARN')::text, '0');
+  FOREACH m IN ARRAY ARRAY['OFF', 'REFUSE', 'WARN'] LOOP
+    PERFORM pg_temp.ut_expect('563 the administrator sets ' || m,
+      pg_temp.ut_rows(format($q$UPDATE "StaffingPolicies" SET "assignmentScopeMode" = %L WHERE "schoolId" = app.current_school_id()$q$, m))::text, '1');
+    PERFORM pg_temp.ut_expect('563 ... and reads ' || m || ' back',
+      (SELECT "assignmentScopeMode"::text FROM "StaffingPolicies" WHERE "schoolId" = app.current_school_id()), m);
+  END LOOP;
+  -- The other two modes did not move with it.
+  PERFORM pg_temp.ut_expect('563 the other two modes are as they were',
+    (SELECT "qualificationMode"::text || ' ' || "overAllocationMode"::text FROM "StaffingPolicies" WHERE "schoolId" = app.current_school_id()), 'WARN WARN');
+  PERFORM pg_temp.ut_expect('563 a value that is not a mode is refused (invalid_text_representation)',
+    pg_temp.ut_try($q$UPDATE "StaffingPolicies" SET "assignmentScopeMode" = 'MAYBE' WHERE "schoolId" = app.current_school_id()$q$), '22P02');
+  PERFORM pg_temp.ut_expect('563 NULL is refused (not_null_violation)',
+    pg_temp.ut_try($q$UPDATE "StaffingPolicies" SET "assignmentScopeMode" = NULL WHERE "schoolId" = app.current_school_id()$q$), '23502');
+  RAISE NOTICE 'ut 563 (administrator): % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- A teacher cannot change it: the policy's arms are the administrator's, and the new column is the same row.
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+INSERT INTO "StaffingPolicies" ("schoolId", "updatedAt") VALUES (app.current_school_id(), now()) ON CONFLICT ("schoolId") DO NOTHING;
+SELECT pg_temp.ut_become('TEACHER');
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('563 a teacher''s change of the mode touches no row',
+    pg_temp.ut_try($q$UPDATE "StaffingPolicies" SET "assignmentScopeMode" = 'OFF'$q$) || ' ' ||
+    (SELECT count(*) FROM "StaffingPolicies" WHERE "assignmentScopeMode" = 'OFF'), 'ok 0');
+END $$;
+ROLLBACK;

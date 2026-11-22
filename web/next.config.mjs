@@ -13,6 +13,11 @@ const nextConfig = {
   // root to this package so Next.js does not infer the repo root.
   turbopack: {
     root: __dirname,
+    resolveAlias: {
+      // The browser never uses Supabase Storage; see utils/supabase/storage-stub.ts.
+      // The server render keeps the real package.
+      "@supabase/storage-js": { browser: "./utils/supabase/storage-stub.ts" },
+    },
   },
 };
 
