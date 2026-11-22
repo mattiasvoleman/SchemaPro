@@ -157,7 +157,7 @@ def test_språkval_groups_hold_every_pupil_once_and_their_teachers_are_shared_ac
     assert len(teachers) == 2
     years_of = {t: {r.min_grade_level for r in language if r.teacher_id == t} for t in teachers}
     assert all(len(years) > 1 for years in years_of.values())
-    # Two teachers on twelve groups that draw from every class: the 2026-11-03 week.
+    # Two teachers on twelve groups that draw from every class: a språkval week that has timed out.
     assert week.facts["sharedTeachers"] == 2
 
 
@@ -264,8 +264,8 @@ def test_the_sweep_moves_each_axis_from_the_base_and_reaches_the_production_scho
 
 
 def test_the_production_form_is_where_the_production_school_stands_against_the_engine_s_limit() -> None:
-    """At fifteen classes the production form needs more group pairs than the engine takes: the real
-    school, at 4,493 of 5,000, is within a few classes of that wall (m5-prod/q7b)."""
+    """At fifteen classes the production form needs more group pairs than the engine takes: a real
+    school of that form is within a few classes of that wall."""
     ok = build_week(corpus.with_classes(corpus.PRODUCTION, 12))
     assert 3000 < ok.facts["groupConflicts"] <= corpus.ENGINE_GROUP_CONFLICTS_LIMIT
     with pytest.raises(ValueError, match="group pairs"):

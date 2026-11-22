@@ -6,19 +6,18 @@
 
 WHY A CORPUS. The four earlier bench schools (solve_2000_students.py,
 validate_schedule.py, hogstadium.py, staff_60x400.py) give every class its own
-lessons, and what they share is a block or a specialist room. The one real school in
-production is shaped otherwise (analysis 2026-11-17, and the aggregates of m5-prod):
-24 classes in åk 4-9 and 877 lessons, and in åk 8 and 9 (five classes and about 115
-pupils each) every subject but Teknik taught in groups that cut across the classes:
-12-13 groups for every pupil, 85 groups and 2,149 pairs of them that share a pupil in
-åk 9 alone, 4,493 of the engine's 5,000 pairs in all. Twenty-one of its teachers
-stand on parallel groups that take pupils from the same class, one of them on ten.
-Matematik, Engelska and Svenska are level groups that draw from 4.7-4.9 of a grade's
-five classes; SO, NO, Bild, Idrott, Musik and Slöjd draw from 2.7-2.9. Hemkunskap and
-Musik are half groups. More than a quarter of the weekly minutes (134 of 355 posts) are in posts
-that run one term only. That shape, and the språkval of 2026-11-03 (three or four groups of
-one teacher drawing pupils from every class), is what made Generera answer TIMEOUT,
-and no bench had it.
+lessons, and what they share is a block or a specialist room. A real school with every
+year filled in is shaped otherwise. It is described here by its form and by no count that
+would point to it (the repository is public: no name, no id, no figure of one school's):
+in its upper years every subject but one is taught in groups that cut across the classes,
+a pupil sits in about a dozen groups and most pairs of groups share a pupil, so that the
+pairs are within a few classes of the engine's 5,000. Many of its teachers stand on
+parallel groups that take pupils from the same class. Matematik, Engelska and Svenska are
+level groups that draw from nearly every class of a year; the other subjects draw from about
+half of them. Two subjects run in half groups, and about a quarter of the weekly minutes
+are in posts that run one term only. That shape, and a språkval of three or four groups to
+one teacher drawing pupils from every class, is what has made Generera answer TIMEOUT, and
+no bench had it.
 
 THE AXES are the ones a school can count itself (SchoolShape):
 
@@ -32,8 +31,8 @@ THE AXES are the ones a school can count itself (SchoolShape):
                       benches; the production school ten, Teknik aside)
   mixing, group_factor
                       how many classes a group draws its pupils from, and how big
-                      the groups are against a class (the production school's: 2.8
-                      of 5 for the practical subjects, level groups from every class)
+                      the groups are against a class (a real school's: about half
+                      the classes for the practical subjects, level groups from every class)
   languages           språkval groups per year, their teachers shared across the
                       years, with or without a block
   term_subjects       subjects that run one term only, half of the classes or
@@ -47,14 +46,14 @@ THE AXES are the ones a school can count itself (SchoolShape):
 
 THE WEEK ITSELF is the högstadium's (hogstadium.py): the same eleven subjects,
 the same hours (a pupil's week is about 24 hours of the 40 the frame offers,
-where the production school's is 24-26), the same rooms scaled to the number of
+and a real school's is much the same), the same rooms scaled to the number of
 classes, a planning afternoon for every teacher. It is written here, not imported
 from there, so that the corpus does not move when that bench does: the nightly gate
 compares one corpus against two engines. What it does not copy from the production
-school is the length of its lessons (40, 50, 65, up to 130 minutes: here every lesson
-is one of the högstadium's), its rooms (one kitchen, one laboratory, one art room) and
-its pupils (a pupil's group list is 110 different ones in 111 pupils: the corpus's are
-what `mixing` makes them).
+school is the length of its lessons (a school's run from 40 to 130 minutes: here every
+lesson is one of the högstadium's), its rooms (the specialist rooms are single) and its
+pupils (in a real year nearly every pupil's list of groups is a list of their own: the
+corpus's are what `mixing` makes them).
 
 DETERMINISTIC. Fixed ids, and a pseudo-random generator seeded from `seed`
 and the label of what is drawn (never the process's), so the same shape gives
@@ -84,7 +83,7 @@ from pathlib import Path
 # The engine tree to validate against: this one, or the one ENGINE_ROOT names (corpus_measure.py).
 sys.path.insert(0, str(Path(os.environ.get("ENGINE_ROOT") or Path(__file__).resolve().parent.parent).resolve()))
 
-from app.schemas.schedule import OptimizeScheduleRequest  # noqa: E402
+from app.schemas.schedule import MAX_PERIODS, OptimizeScheduleRequest  # noqa: E402
 
 #: Bump when a change to the generator changes what a shape builds, so a stored
 #: result can tell which corpus it was measured on.
@@ -119,9 +118,8 @@ _BY_CODE = {code: (lessons, minutes, room) for code, lessons, minutes, room in S
 #: class, as it does there: the class keeps one post of its own.
 GROUP_ORDER = ("SO", "NO", "IDH", "BL", "HKK", "MU", "SL", "MA", "EN", "SV")
 #: The subjects the production school teaches in LEVEL groups, whose pupils come from
-#: nearly every class (its åk 9: Engelska 4.8 classes of 5 to a group, Matematik 4.7,
-#: Svenska 4.9). The others' groups draw from 2.7-2.9 of the five classes, which is
-#: `mixing` 0.5. A level subject is always fully mixed.
+#: nearly every class of the year. The others' groups draw from about half of the
+#: classes, which is `mixing` 0.5. A level subject is always fully mixed.
 LEVEL_SUBJECTS = ("MA", "EN", "SV")
 #: Subjects the production school runs in half groups (ten groups for five
 #: classes), taken when `half_groups` is on.
@@ -155,8 +153,8 @@ class SchoolShape:
     pupils_per_class: int = 22
     group_subjects: int = 3
     #: How far a group's pupils are drawn from every class of the year: 1.0 is
-    #: random (each group takes pupils from nearly every class: the production
-    #: school's 7+2+4+7+2), 0.0 is the classes themselves (group k is class k).
+    #: random (each group takes pupils from nearly every class), 0.0 is the classes
+    #: themselves (group k is class k).
     #: Between them a group takes pupils from the classes near its own, so the pairs
     #: of groups that share a pupil are fewer and WHO sits where decides which
     #: ones: the seed matters. At 1.0 with groups of a class's size nearly every
@@ -165,12 +163,12 @@ class SchoolShape:
     mixing: float = 0.5
     #: Parallel groups of a group subject per class of the year (1.0: as many
     #: groups as classes, so a group is a class's size; 1.5: groups of two thirds of it).
-    #: The production school's groups are smaller than its classes (about 17 pupils
-    #: against 22), which is what leaves pairs of groups that share no pupil.
+    #: A real school's groups are smaller than its classes, which is what leaves pairs of
+    #: groups that share no pupil.
     group_factor: float = 1.0
     half_groups: bool = False
     #: Run the groups of a group subject that have a teacher of their own as one
-    #: parallel block (the same times), as the 2026-11-03 week was solved: the engine
+    #: parallel block (the same times), as a språkval week has been solved: the engine
     #: sees one slot for the year's class instead of one per group. A group whose
     #: teacher stands on more than one group of the subject cannot be in the block.
     block_subjects: bool = False
@@ -180,20 +178,51 @@ class SchoolShape:
     lunch: tuple[str, str, int] = ("11:00:00", "13:00:00", 30)
     shared_teachers: int = 0
     groups_per_shared_teacher: int = 3
+    #: Teachers of the group subjects. 0 gives every group a teacher of its own (about one post to
+    #: a teacher in the production form, and no teacher that couples one year to another or one
+    #: subject to another); a real school's teachers have many posts each, and some stand on posts
+    #: in every year. With n >= 1 the group subjects are taken n at a time (GROUP_ORDER) and group
+    #: k of every subject of the team, in EVERY year, is one teacher's: n = 1 is a teacher who
+    #: teaches a subject's k:th group in every year (three posts), n = 2 one who teaches two
+    #: subjects as well (six). The groups of one teacher are never parallel, so M is not what this
+    #: moves, and the week load is not either (measured: 85 % and 96 % for both); all subjects on
+    #: one teacher is refused by the engine (IMPOSSIBLE).
+    subjects_per_teacher: int = 0
     #: Språkval groups per year. None is one fewer than the year's classes (at
     #: least two, and enough that no group is above 30 pupils, which is what a
     #: classroom holds), as a school runs them; 0 is no språkval.
     languages: int | None = None
     #: Teachers of the språkval groups of ALL the years. None is one for every
-    #: four groups, the 3-4 groups to a teacher of the 2026-11-03 week.
+    #: four groups, the three or four groups to a teacher that a school runs.
     language_teachers: int | None = None
     language_block: bool = False
     term_subjects: int = 0
+    #: How many periods the year is cut into by the dates of the term posts (AnonymousRequirement.
+    #: periods is a mask over them, and the engine plans, checks and prices every one as a week of
+    #: its own: app/solver/weeks.py). 2 is autumn and spring and nothing between, which no real
+    #: school has: every dated post cuts the year again (periods-are-not-terms), and a real
+    #: school's posts end on several dates and start on several more, so six to eight periods.
+    #: With more than two the autumn's units stop in turn, one after another, and the spring's
+    #: start in turn, so that the later periods hold some of each, as the weeks around New Year do.
+    term_periods: int = 2
+    #: One number of group subjects for each of `years` (None: `group_subjects` in every year).
+    #: A real school's lower years are mostly by class and its upper years by group, and the
+    #: pairs of groups that share a pupil, the engine's 5,000, are spent in the upper ones. With
+    #: one number for all the years a week of a whole school's size (a few dozen classes, hundreds
+    #: of lessons) has no form to be built in: the form of the upper years alone is over the limit
+    #: at fifteen classes. Overrides `group_subjects` where given.
+    group_subjects_by_year: tuple[int, ...] | None = None
     seed: int = 1
 
     @property
     def classes(self) -> int:
         return self.classes_per_year * len(self.years)
+
+    def group_subjects_of(self, year: int) -> int:
+        """The number of group subjects of `year`."""
+        if self.group_subjects_by_year is None:
+            return self.group_subjects
+        return self.group_subjects_by_year[self.years.index(year)]
 
     def group_count(self, code: str) -> int:
         """Parallel groups of group subject `code` in one year."""
@@ -217,11 +246,20 @@ class SchoolShape:
     def name(self) -> str:
         """n<classes>-g<group subjects>-m<shared teachers asked>-s<seed>, plus what is not the form's default."""
         extras = "".join((
-            f"-t{self.term_subjects}" if self.term_subjects else "",
+            f"-t{self.term_subjects}" + (f"p{self.term_periods}" if self.term_periods != 2 else "")
+            if self.term_subjects else "",
+            f"-q{self.subjects_per_teacher}" if self.subjects_per_teacher else "",
+            # One number of group subjects a year, as the form of the whole school: "-y0.0.0.3.10.10".
+            "-y" + ".".join(str(n) for n in self.group_subjects_by_year)
+            if self.group_subjects_by_year is not None else "",
             "-b" if self.language_block else "",
             "-h" if self.half_groups else "",
             "-k" if self.block_subjects else "",
             f"-l{self.language_teachers}" if self.language_teachers is not None else "",
+            # How many parallel groups a shared teacher stands on is what M means in this week:
+            # two shapes that differ in it are two weeks, and must not share a name (or requestId).
+            f"-p{self.groups_per_shared_teacher}"
+            if self.shared_teachers and self.groups_per_shared_teacher != 3 else "",
         ))
         return f"n{self.classes}-g{self.group_subjects}-m{self.shared_teachers}-s{self.seed}{extras}"
 
@@ -238,8 +276,20 @@ class SchoolShape:
         if not 0 <= self.group_subjects <= len(GROUP_ORDER):
             msg = f"group_subjects is 0..{len(GROUP_ORDER)}, not {self.group_subjects}"
             raise ValueError(msg)
+        if self.group_subjects_by_year is not None and (
+            len(self.group_subjects_by_year) != len(self.years)
+            or not all(0 <= n <= len(GROUP_ORDER) for n in self.group_subjects_by_year)
+        ):
+            msg = f"group_subjects_by_year is one number 0..{len(GROUP_ORDER)} for each of the years {self.years}"
+            raise ValueError(msg)
         if not 0 <= self.term_subjects <= len(TERM_ORDER):
             msg = f"term_subjects is 0..{len(TERM_ORDER)}, not {self.term_subjects}"
+            raise ValueError(msg)
+        if self.subjects_per_teacher < 0:
+            msg = f"subjects_per_teacher is 0 or more, not {self.subjects_per_teacher}"
+            raise ValueError(msg)
+        if not 2 <= self.term_periods <= MAX_PERIODS:
+            msg = f"term_periods is 2..{MAX_PERIODS}, not {self.term_periods}"
             raise ValueError(msg)
         if self.language_groups and self.language_teacher_count < 1:
             msg = "språkval needs at least one teacher"
@@ -284,7 +334,7 @@ def build_week(shape: SchoolShape) -> CorpusWeek:
     years = shape.years
     classes_per_year = shape.classes_per_year
     pupils_per_year = classes_per_year * shape.pupils_per_class
-    group_codes = GROUP_ORDER[: shape.group_subjects]
+    group_codes = GROUP_ORDER[: max(shape.group_subjects_of(year) for year in years)]
     term_codes = TERM_ORDER[: shape.term_subjects]
 
     requirements: list[dict[str, object]] = []
@@ -299,7 +349,8 @@ def build_week(shape: SchoolShape) -> CorpusWeek:
     slots: list[tuple[int, str, int]] = []
     for code in group_codes:
         for year in years:
-            slots.append((year, code, shape.group_count(code)))
+            if code in GROUP_ORDER[: shape.group_subjects_of(year)]:
+                slots.append((year, code, shape.group_count(code)))
     # One subject's groups, year by year, are cut into runs of `groups_per_shared_teacher`
     # (the last run shorter): a run of two or more is a teacher who stands on parallel
     # groups, which is what "shared" means; a run of one is an ordinary teacher. The runs of
@@ -328,26 +379,43 @@ def build_week(shape: SchoolShape) -> CorpusWeek:
     for year, code, count in slots:
         for k in range(count):
             if (year, code, k) not in teacher_of_group:
-                name = f"teacher-{code}-{year}-{k}"
+                if shape.subjects_per_teacher:
+                    team = group_codes.index(code) // shape.subjects_per_teacher
+                    name = f"teacher-T{team}-{k}"
+                else:
+                    name = f"teacher-{code}-{year}-{k}"
                 teacher_of_group[(year, code, k)] = name
                 teachers.add(name)
 
     # ---- the years ------------------------------------------------------------------
     class_form_lessons: dict[str, int] = defaultdict(int)
     for code, lessons, _minutes, _room in SUBJECTS:
-        if code not in group_codes:
-            class_form_lessons[code] = lessons * len(years) * classes_per_year
+        by_class = sum(1 for year in years if code not in GROUP_ORDER[: shape.group_subjects_of(year)])
+        if by_class:
+            class_form_lessons[code] = lessons * by_class * classes_per_year
     pool = {
         code: max(1, -(-total // LESSONS_PER_TEACHER)) for code, total in class_form_lessons.items()
     }
 
-    def _term_periods(index: int, count: int) -> tuple[bool, bool]:
-        """First half of `count` units in the autumn, the rest in the spring."""
-        return (True, False) if index < (count + 1) // 2 else (False, True)
+    periods = shape.term_periods
+
+    def _term_periods(index: int, count: int) -> tuple[bool, ...]:
+        """First half of `count` units in the autumn, the rest in the spring.
+
+        With two periods that is all there is. With more, the autumn unit number i runs periods
+        0..(i mod (n - 1)) and the spring unit number j the last periods from (n - 1 - j mod
+        (n - 1)) on, so the posts that stop and start in the middle do so on different dates."""
+        autumn = index < (count + 1) // 2
+        unit = index if autumn else index - (count + 1) // 2
+        if autumn:
+            last = unit % (periods - 1)
+            return tuple(period <= last for period in range(periods))
+        first = periods - 1 - unit % (periods - 1)
+        return tuple(period >= first for period in range(periods))
 
     def _requirement(
         key: str, code: str, group: str, teacher: str, size: int, year: int, *,
-        term: tuple[bool, bool] | None = None,
+        term: tuple[bool, ...] | None = None,
     ) -> dict[str, object]:
         lessons, minutes, room = _BY_CODE[code]
         row: dict[str, object] = {
@@ -381,7 +449,7 @@ def build_week(shape: SchoolShape) -> CorpusWeek:
         own_class = [classes[p // shape.pupils_per_class] for p in range(pupils_per_year)]
         groups_of_pupil: list[set[str]] = [{class_ids[own_class[p]]} for p in range(pupils_per_year)]
 
-        for code in group_codes:
+        for code in GROUP_ORDER[: shape.group_subjects_of(year)]:
             count = shape.group_count(code)
             order = _order_pupils(
                 pupils_per_year, shape.pupils_per_class,
@@ -411,7 +479,7 @@ def build_week(shape: SchoolShape) -> CorpusWeek:
                 requirements.append(row)
 
         for code, _lessons, _minutes, _room in SUBJECTS:
-            if code in group_codes:
+            if code in GROUP_ORDER[: shape.group_subjects_of(year)]:
                 continue
             for index, name in enumerate(classes):
                 term = _term_periods(index, classes_per_year) if code in term_codes else None
@@ -548,7 +616,7 @@ def build_week(shape: SchoolShape) -> CorpusWeek:
         "teachers": len(all_teachers),
         "sharedTeachers": shared_teachers_of(request),
         "sharedTeachersAsked": shape.shared_teachers,
-        "groupSubjects": shape.group_subjects,
+        "groupSubjects": max(shape.group_subjects_of(year) for year in years),
         "languageGroups": shape.language_groups * len(years),
         "termSubjects": shape.term_subjects,
         "termRequirements": sum(1 for r in request.requirements if r.periods is not None),
@@ -605,7 +673,7 @@ def shared_teachers_of(request: OptimizeScheduleRequest) -> int:
 #: with a teacher for every four groups of the years together, no terms.
 BASE = SchoolShape(classes_per_year=3, group_subjects=3)
 
-#: The production school's åk 8-9 (analysis 2026-11-17 and m5-prod/q2-q7): ten subjects
+#: The form of a real school's upper years (aggregates only, no count of one school's): ten subjects
 #: in groups, Matematik, Engelska and Svenska as level groups, half groups in Hemkunskap
 #: and Musik, groups about the size of a class, 08:15-16:00 with five minutes between
 #: lessons and fifteen minutes of lunch in 10:30-13:00, and about a quarter of the week in
@@ -617,8 +685,15 @@ PRODUCTION = SchoolShape(
 
 
 def with_classes(shape: SchoolShape, classes: int, **changes) -> SchoolShape:
-    """`shape` with `classes` classes in all (a third of them in each of its years)."""
-    return replace(shape, classes_per_year=max(1, classes // len(shape.years)), **changes)
+    """`shape` with `classes` classes in all, the same number in each of its years.
+
+    The years are the ones the shape will have: `years=(8, 9)` in `changes` makes five classes
+    a year of ten, not three of nine (it divided by the years the shape had before the change)."""
+    years = changes.get("years", shape.years)
+    if classes < len(years) or classes % len(years):
+        msg = f"{classes} classes do not divide into {len(years)} years ({years}): the same number of classes in each"
+        raise ValueError(msg)
+    return replace(shape, classes_per_year=classes // len(years), **changes)
 
 
 def sweep_shapes(seeds: tuple[int, ...] = (1, 2)) -> list[SchoolShape]:
@@ -632,7 +707,8 @@ def sweep_shapes(seeds: tuple[int, ...] = (1, 2)) -> list[SchoolShape]:
     terms  subjects that run one term only, språkval in a block, and half groups, at twelve.
 
     Every week once (a shape that two axes both reach is not measured twice), and no week the
-    engine would refuse."""
+    engine would refuse: not by its limits (build_week) and not by its own arithmetic either
+    (SchedulerSolver.check_week must not say IMPOSSIBLE of any of them; tests/test_school_corpus_sweep.py)."""
     shapes: dict[str, SchoolShape] = {}
 
     def add(shape: SchoolShape) -> None:
@@ -640,7 +716,10 @@ def sweep_shapes(seeds: tuple[int, ...] = (1, 2)) -> list[SchoolShape]:
             build_week(shape)
         except ValueError:
             return
-        shapes.setdefault(shape.name(), shape)
+        held = shapes.setdefault(shape.name(), shape)
+        if held != shape:
+            msg = f"two different shapes are both called {shape.name()}: {held} and {shape}"
+            raise ValueError(msg)
 
     for seed in seeds:
         for classes in (6, 9, 12, 15, 18):
@@ -650,14 +729,35 @@ def sweep_shapes(seeds: tuple[int, ...] = (1, 2)) -> list[SchoolShape]:
         for classes in (9, 12):
             for groups in (0, 2, 3, 4, 5, 6, 8, 10):
                 add(with_classes(BASE, classes, group_subjects=groups, seed=seed))
-            for m in (0, 2, 4, 8):
+            # Three parallel groups on one teacher put a year over the engine's own week load
+            # at the third shared teacher (check_week: IMPOSSIBLE, DEMAND_YEAR_WEEK_SHORT), so a
+            # week asking for four or eight of them measured the refusal, in milliseconds, and not
+            # a search. Up to two shared teachers stand on three groups; past that on two.
+            for m in (0, 1, 2):
                 add(with_classes(BASE, classes, shared_teachers=m, seed=seed))
+            for m in (4, 8):
+                add(with_classes(BASE, classes, shared_teachers=m, groups_per_shared_teacher=2, seed=seed))
         for terms in (3, 5):
             add(with_classes(BASE, 12, term_subjects=terms, seed=seed))
         add(with_classes(BASE, 12, language_block=True, seed=seed))
         add(with_classes(BASE, 12, group_subjects=6, half_groups=True, seed=seed))
         add(with_classes(PRODUCTION, 6, seed=seed))
         add(with_classes(PRODUCTION, 9, seed=seed))
+        # The same two with the year cut as the production school's is (six periods, not two).
+        add(with_classes(PRODUCTION, 6, term_periods=6, seed=seed))
+        add(with_classes(PRODUCTION, 9, term_periods=6, seed=seed))
+        # Teachers who teach groups in every year, and two subjects: 3 and 6 posts to a teacher
+        # in the production form where a teacher of its own for every group gives 1.1.
+        for subjects in (1, 2):
+            add(with_classes(PRODUCTION, 9, subjects_per_teacher=subjects, seed=seed))
+        # A whole school: åk 4-9, five classes a year, the lower years by class and the upper two by
+        # group. About 660 pupils and 4,150 pairs of groups, and a model of 18,600 variables and
+        # 61,000 constraints: four times the size of the sweep's largest other week that has
+        # groups across the classes.
+        add(replace(
+            PRODUCTION, classes_per_year=5, years=(4, 5, 6, 7, 8, 9),
+            group_subjects_by_year=(0, 0, 0, 3, 10, 10), seed=seed,
+        ))
     return list(shapes.values())
 
 
@@ -669,6 +769,9 @@ def profile(name: str) -> list[SchoolShape]:
     if name == "sweep":
         return sweep_shapes()
     if name == "gate":
+        if not GATE_SHAPES:
+            msg = "the gate profile has no weeks yet (they are picked from the sweep in M5 del 2): nothing to measure"
+            raise ValueError(msg)
         return list(GATE_SHAPES)
     msg = f"profile must be 'gate' or 'sweep', not {name!r}"
     raise ValueError(msg)
