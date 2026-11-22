@@ -17,7 +17,7 @@ export interface Entry {
   outName: string;
 }
 
-/** The kinds a user may mark a column as. A samordningsnummer is read from the day, so it has no choice of its own. */
+/** The kinds a user may mark a column as. A samordningsnummer is read from the day and a TF number from its form, so neither has a choice of its own: a column marked personnummer gives each its own marker. */
 export const CHOOSABLE_KINDS: readonly MarkerKind[] = ["namn", "fornamn", "efternamn", "sign", "epost", "tel", "pnr", "text"];
 
 /** A treatment as the value of an option, and back. "" is no choice. */

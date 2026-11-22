@@ -103,6 +103,27 @@ describe("the tool, a file at a time", () => {
     for (const original of ["Svensson", "Anna", "070-123", "skola.se", "Lind"]) expect(result.textContent, original).not.toContain(original);
   });
 
+  it("takes a column of TF numbers out as TF numbers: proposed from its contents, counted under its own name, never as a personnummer", async () => {
+    // A column headed Id says nothing; the TF numbers in it do (X3's door, 2026-11-22). Two numbers, one of them twice.
+    const user = setup();
+    await addFile(user, csv("kurser.csv", "Id;Namn;Notis\r\n19000101TF01;Anna Svensson;ok\r\n19000101TF02;Bo Ek;ok\r\n19000101tf01;Anna Svensson;ok\r\n"));
+    const columns = await screen.findByRole("table", { name: sv["col.caption"].replace("{n}", "1") });
+    expect(within(columns).getByText("Innehållet är personnummer eller TF-nummer")).toBeInTheDocument();
+    await user.selectOptions(await screen.findByLabelText(sv["col.choiceLabel"].replace("{n}", "3")), "keep");
+    await user.click(screen.getByRole("button", { name: sv["tool.run"] }));
+    const result = await screen.findByRole("region", { name: sv["result.heading"] });
+    const counts = within(result).getByRole("table", { name: sv["result.countsHeading"] });
+    const tfRow = within(counts).getByRole("row", { name: /TF-nummer/ });
+    expect(tfRow).toHaveTextContent(/TF-nummer\s*3\s*2/);
+    expect(within(counts).queryByRole("row", { name: /^personnummer/ })).toBeNull();
+    const preview = within(result).getAllByRole("table").at(-1)!;
+    expect(preview).toHaveTextContent("TF-0001");
+    expect(preview).toHaveTextContent("TF-0002");
+    expect(result.textContent).not.toMatch(/19000101|TF0[12]\b/i);
+    // A TF number has no check digit, so there is no line about one.
+    expect(within(result).queryByText(/kontrollsiffran stämde/)).toBeNull();
+  });
+
   it("hands out a file only after the person has looked through the preview, and what it hands out is the safe text", async () => {
     const user = setup();
     const result = await runFile(user);

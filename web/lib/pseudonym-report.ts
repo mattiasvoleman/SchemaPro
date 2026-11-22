@@ -32,7 +32,8 @@ function kindLines(say: Say, counts: Record<MarkerKind, { occurrences: number; d
 function treatmentText(say: Say, treatment: Treatment): string {
   if (treatment.kind === "keep") return say("treatment.keep");
   if (treatment.kind === "clear") return say("treatment.clear");
-  return say("treatment.mark", { kind: say(`kind.${treatment.marker}`) });
+  // A column marked personnummer gives a TF number in it a TF marker and a samordningsnummer a SAM one: the report says both, as the page's choice does.
+  return say("treatment.mark", { kind: say(treatment.marker === "pnr" ? "group.pnr" : `kind.${treatment.marker}`) });
 }
 
 function describeFile(say: Say, report: FileReport, n: number): string[] {

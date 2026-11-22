@@ -44,6 +44,17 @@ describe("the page", () => {
     expect(promise).toHaveTextContent("Det kan inte avgöra allt");
   });
 
+  it("names the TF number among what it finds, and says which form of it it knows, in both languages", async () => {
+    // Skola24's own course files hold ÅÅÅÅMMDDTFnn where a personnummer goes (X3, 2026-11-22): a school must be able to read on the page that it is replaced.
+    await renderPage("sv");
+    expect(screen.getByText(/TF-nummer \(Skola24:s id-nummer, ÅÅÅÅMMDDTFnn\)/)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: sv.pseudonymiserare.promise.heading })).toHaveTextContent("samordningsnummer, TF-nummer, e-postadresser");
+    cleanup();
+    await renderPage("en");
+    expect(screen.getByText(/TF numbers \(Skola24’s ID numbers, ÅÅÅÅMMDDTFnn\)/)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: en.pseudonymiserare.promise.heading })).toHaveTextContent("coordination numbers, TF numbers, e-mail");
+  });
+
   it("says it in English in English, with the other language one link away", async () => {
     await renderPage("en");
     expect(screen.getByRole("heading", { level: 1, name: en.pseudonymiserare.title })).toBeInTheDocument();

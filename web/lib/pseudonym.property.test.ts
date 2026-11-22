@@ -3,7 +3,7 @@ import { decodeCsvBytes } from "@/lib/csv-encoding";
 import { readTable } from "@/lib/column-table";
 import { findPersonalNumbers } from "@/lib/personal-number";
 import { findPersonalData, luhnHolds } from "@/lib/pseudonym-detect";
-import { KEEP } from "@/lib/pseudonym-headers";
+import { KEEP, mark } from "@/lib/pseudonym-headers";
 import { parseSource, parseText, type ParsedInput } from "@/lib/pseudonym-input";
 import { pseudonymise, type RunResult } from "@/lib/pseudonym-run";
 import { encodeText, type LineEnding, type OutputEncoding } from "@/lib/pseudonym-write";
@@ -23,6 +23,9 @@ import { encodeText, type LineEnding, type OutputEncoding } from "@/lib/pseudony
  *   3. THE STRUCTURE STAYS. The same rows on the same row numbers, the same columns, kept cells that held nothing personal unchanged.
  *   4. THE FORM STAYS. Delimiter, line ending, byte order mark and encoding are read back from the safe file as they were read from the original.
  *   5. RUNNING IT AGAIN CHANGES NOTHING.
+ *   6. THE TF NUMBER (Skola24's ÅÅÅÅMMDDTFnn, X3's door of 2026-11-22). Properties 1, 2 and 5 again for it: one marker (TF-nnnn) per number in every spelling
+ *      the door counts and in every place it stands, nothing of it left (the date's eight digits least of all), and the second run changes nothing; and the
+ *      counts: TF is its own kind in the report, never a personnummer and never a number whose check digit does not hold.
  */
 
 const ROUNDS = 250;
@@ -232,7 +235,7 @@ function generate(r: Rng, ps: Person[], rowCount: number, form: Form): Generated
   return { text, form, rows, headerRow, titleRows, titleSecrets };
 }
 
-async function inputOf(g: Generated): Promise<ParsedInput> {
+async function inputOf(g: Pick<Generated, "text" | "form">): Promise<ParsedInput> {
   const encoded = encodeText(g.text, g.form.encoding, g.form.bom);
   const parsed = await parseSource({ file: new File([encoded.bytes as unknown as BlobPart], "x.csv") });
   if (!parsed.ok) throw new Error(`the generated file was not read: ${parsed.reason}`);
@@ -240,7 +243,7 @@ async function inputOf(g: Generated): Promise<ParsedInput> {
 }
 
 /** The marker text left in a cell once the markers are taken out: what a search of the output must not find anything in. */
-const MARKERS = /\b(?:PNR|SAM|TEL|NAMN|FORNAMN|EFTERNAMN|SIGN|TEXT)-\d{4,}\b|\bepost-\d{4,}@exempel\.invalid/gi;
+const MARKERS = /\b(?:PNR|SAM|TF|TEL|NAMN|FORNAMN|EFTERNAMN|SIGN|TEXT)-\d{4,}\b|\bepost-\d{4,}@exempel\.invalid/gi;
 
 const DECODED = (bytes: Uint8Array): string => {
   const decoded = decodeCsvBytes(bytes);
@@ -436,5 +439,247 @@ describe("property 5: running the safe file through again changes nothing (seed 
       const again = run([parseText(first.files[0]!.text, "file", "UTF-8", false)!]);
       expect(again.files[0]!.text, `round ${round}`).toBe(first.files[0]!.text);
     }
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// 6. The TF number
+// ---------------------------------------------------------------------------
+
+/** A person with an invented TF number: eight digits of a date and two after TF (Skola24 writes ÅÅÅÅMMDDTFnn). It has no check digit and is no personnummer. */
+interface TfPerson extends Person {
+  tfDate: string;
+  tfNo: string;
+}
+
+/** The persons of a run, each with a TF number of their own. The numbers come from the generator of this property alone, so that no earlier property's data moves. */
+function tfPeople(r: Rng, count: number): TfPerson[] {
+  const used = new Set<string>();
+  return people(r, count, false).map((p) => {
+    let date: string;
+    let no: string;
+    do {
+      date = `${1960 + r.int(60)}${String(1 + r.int(12)).padStart(2, "0")}${String(1 + r.int(28)).padStart(2, "0")}`;
+      no = String(1 + r.int(99)).padStart(2, "0");
+    } while (used.has(date + no));
+    used.add(date + no);
+    return { ...p, tfDate: date, tfNo: no };
+  });
+}
+
+/** What may stand between the date and TF, and the letters, as the door counts them (the case of TF is free; one blank or hyphen at most; the dash-like and invisible are folded first). */
+const TF_BETWEEN = ["", "", "", "-", " ", "/", "_", ".", " ", "​", "–"] as const;
+const TF_LETTERS = ["TF", "TF", "tf", "Tf", "tF"] as const;
+
+/** One of the spellings of a TF number that the door counts (the table in the TF PR): the case, the separator, full-width digits. */
+function spellTf(p: TfPerson, r: Rng): string {
+  const wide = r.bool(0.15);
+  const digits = (d: string): string => (wide ? FULLWIDTH(d) : d);
+  return `${digits(p.tfDate)}${r.pick(TF_BETWEEN)}${r.pick(TF_LETTERS)}${digits(p.tfNo)}`;
+}
+
+/** The TF markers of a text, in order. */
+const tfMarkersIn = (text: string): string[] => text.match(/TF-\d{4,6}/g) ?? [];
+
+interface TfRow {
+  /** The persons whose TF numbers stand in the cells, as written: the child's, the guardian's, and those the note mentions, in the order they stand. */
+  child: TfPerson;
+  guardian: TfPerson;
+  mentioned: TfPerson[];
+  /** Whether the id column holds the child's personnummer (a mixed column) and not the child's TF number. */
+  idIsPnr: boolean;
+  cells: string[];
+}
+
+interface TfFile {
+  text: string;
+  form: Form;
+  rows: TfRow[];
+  /** The header row's number, or null for a file like Skola24's course files that has none. */
+  headerRow: number | null;
+}
+
+/** A note with TF numbers in it, among words and names, and now and then with letters stuck to the number: "ID19800101TF01", "19800101TF01x". */
+function tfNote(r: Rng, ps: TfPerson[], mentioned: TfPerson[]): string {
+  const parts: string[] = [];
+  for (let i = 0, total = 2 + r.int(4); i < total; i += 1) {
+    const roll = r.int(5);
+    if (roll === 0 || roll === 1) {
+      const p = r.pick(ps);
+      mentioned.push(p);
+      parts.push(r.pick([spellTf(p, r), spellTf(p, r), `ID${spellTf(p, r)}`, `${spellTf(p, r)}x`, `Se ${spellTf(p, r)}.`]));
+    } else if (roll === 2) parts.push(r.pick(FIRST));
+    else parts.push(r.pick(WORDS));
+  }
+  return parts.join(" ");
+}
+
+function tfFile(r: Rng, ps: TfPerson[], rowCount: number, form: Form, withHeader: boolean, mixed: boolean): TfFile {
+  const lines: string[] = [];
+  let headerRow: number | null = null;
+  if (withHeader) {
+    headerRow = 1;
+    lines.push([r.pick(["Id", "Elev", "Nummer", "Klass"]), "Kod", "Förnamn", "Efternamn", "Anteckning"].map((h) => quote(h, form)).join(form.delimiter));
+  }
+  const rows: TfRow[] = [];
+  for (let i = 0; i < rowCount; i += 1) {
+    const child = r.pick(ps);
+    const guardian = r.pick(ps);
+    const mentioned: TfPerson[] = [];
+    const idIsPnr = mixed && r.bool(0.4);
+    const cells = [idIsPnr ? spellPnr(child, r) : spellTf(child, r), spellTf(guardian, r), child.first, child.last, tfNote(r, ps, mentioned)];
+    rows.push({ child, guardian, mentioned, idIsPnr, cells });
+    lines.push(cells.map((c) => quote(c, form)).join(form.delimiter));
+  }
+  const text = lines.join(form.eol) + (form.finalEol ? form.eol : "");
+  // A hard blank and an en dash are ONE byte each in Windows-1252 (0xA0, 0x96). In a file whose only bytes above 127 are those, the reader's guess at the encoding
+  // (lib/csv-encoding.ts, which counts readable letters) has nothing to go on and may read them as Mac Roman (a dagger, ñ), which is no separator: the number is then
+  // not a TF number. That is the reader's, not the TF number's; a file with any å, ä or ö in it is read right. The generator keeps these two out of that guess.
+  return { text, form: /[ –]/.test(text) ? { ...form, encoding: "UTF-8" } : form, rows, headerRow };
+}
+
+/** The choices for a file of that kind: the user decides the columns the header or the content cannot, and says there is no header row when there is none. */
+const tfChoices = (f: TfFile) => ({
+  headerRow: f.headerRow,
+  treatments: { 0: mark("pnr"), 1: mark("pnr"), 2: mark("fornamn"), 3: mark("efternamn"), 4: KEEP },
+});
+
+/** The body rows of a safe file, whatever the form: the rows after the header, or all of them. */
+const bodyRowsOf = (text: string, f: TfFile) => {
+  const out = readTable(text);
+  return out.rows.slice(f.headerRow === null ? 0 : out.rowNumbers.indexOf(f.headerRow) + 1);
+};
+
+const tfRun = async (files: TfFile[]): Promise<Extract<RunResult, { ok: true }>> => {
+  const inputs = await Promise.all(files.map(inputOf));
+  const result = pseudonymise(inputs, { files: files.map(tfChoices) });
+  if (!result.ok) throw new Error(`undecided: ${JSON.stringify(result.undecided)}`);
+  return result;
+};
+
+describe("property 6: a TF number is one marker, and nothing of it is left (seed 6306)", () => {
+  it("gives a number one TF-nnnn however it is written, in every column, note and file, and two numbers never one", { timeout: SLOW }, async () => {
+    const r = rng(6306);
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const ps = tfPeople(r, 6 + r.int(20));
+      const files = Array.from({ length: 1 + r.int(3) }, () => tfFile(r, ps, 3 + r.int(10), randomForm(r), r.bool(0.5), false));
+      const result = await tfRun(files);
+      const where = `round ${round}`;
+
+      const markerOf = new Map<number, string>();
+      const ownerOf = new Map<string, number>();
+      const see = (person: TfPerson, marker: string, what: string): void => {
+        expect(marker, `${where}: ${what}`).toMatch(/^TF-\d{4}$/);
+        const known = markerOf.get(person.id);
+        if (known === undefined) markerOf.set(person.id, marker);
+        else expect(marker, `${where}: person ${person.id}, ${what}`).toBe(known);
+        const owner = ownerOf.get(marker);
+        if (owner === undefined) ownerOf.set(marker, person.id);
+        else expect(owner, `${where}: ${marker} stands for two persons (${what})`).toBe(person.id);
+      };
+      let occurrences = 0;
+      files.forEach((f, n) => {
+        const body = bodyRowsOf(result.files[n]!.text, f);
+        expect(body.length, where).toBe(f.rows.length);
+        f.rows.forEach((row, i) => {
+          see(row.child, body[i]![0]!.trim(), `child, "${row.cells[0]}"`);
+          see(row.guardian, body[i]![1]!.trim(), `guardian, "${row.cells[1]}"`);
+          // The note keeps its words and puts the marker where the number stood, in the order the numbers stood.
+          const inNote = tfMarkersIn(body[i]![4]!);
+          expect(inNote.length, `${where}: note "${row.cells[4]}" became "${body[i]![4]}"`).toBe(row.mentioned.length);
+          row.mentioned.forEach((p, k) => see(p, inNote[k]!, `note, "${row.cells[4]}"`));
+          occurrences += 2 + row.mentioned.length;
+        });
+      });
+      // The report counts what was put in: every number once per place, and one per person among the numbers.
+      expect(result.report.totals.tf, where).toEqual({ occurrences, distinct: markerOf.size });
+      // A TF number is no personnummer: never counted as one, never a number whose check digit does not hold, never a spelling of ÅÅMMDD-NNNN.
+      expect(result.report.totals.pnr, where).toEqual({ occurrences: 0, distinct: 0 });
+      expect(result.report.totals.sam, where).toEqual({ occurrences: 0, distinct: 0 });
+      expect(result.report.checkDigit, where).toEqual({ pnr: { holds: 0, fails: 0 }, sam: { holds: 0, fails: 0 } });
+      expect(result.report.spellings.every((s) => /^ÅÅÅÅMMDD.?(?:TF|tf|Tf|tF)NN$/.test(s.spelling)), `${where}: ${JSON.stringify(result.report.spellings)}`).toBe(true);
+    }
+  });
+
+  it("keeps a TF number and a personnummer apart in one column: each cell gets the marker of its own kind and counts under it", { timeout: SLOW }, async () => {
+    const r = rng(6307);
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const ps = tfPeople(r, 4 + r.int(12));
+      const f = tfFile(r, ps, 4 + r.int(10), randomForm(r), r.bool(0.5), true);
+      const result = await tfRun([f]);
+      const where = `round ${round}`;
+      const body = bodyRowsOf(result.files[0]!.text, f);
+      const own = new Map<string, number>();
+      f.rows.forEach((row, i) => {
+        const marker = body[i]![0]!.trim();
+        expect(marker, `${where}: "${row.cells[0]}"`).toMatch(row.idIsPnr ? /^PNR-\d{4}$/ : /^TF-\d{4}$/);
+        // One person, one marker of each kind: the same person's TF number and personnummer are two numbers and have two markers.
+        const key = `${row.idIsPnr ? "pnr" : "tf"}:${row.child.id}`;
+        const known = own.get(key);
+        if (known === undefined) own.set(key, i);
+        else expect(marker, `${where}: ${key}`).toBe(body[known]![0]!.trim());
+      });
+      const pnrCells = f.rows.filter((row) => row.idIsPnr).length;
+      const tfCells = f.rows.length - pnrCells + f.rows.length + f.rows.reduce((sum, row) => sum + row.mentioned.length, 0);
+      expect(result.report.totals.tf.occurrences, where).toBe(tfCells);
+      expect(result.report.totals.pnr.occurrences, where).toBe(pnrCells);
+      // The numbers whose check digit is looked at are the personnummer alone.
+      expect(result.report.checkDigit.pnr.holds + result.report.checkDigit.pnr.fails, where).toBe(pnrCells);
+    }
+  });
+
+  it("leaves nothing of a TF number: not as a number, not as its date, not as the TF and its two digits, in any encoding and form", { timeout: SLOW }, async () => {
+    const r = rng(6308);
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const ps = tfPeople(r, 4 + r.int(20));
+      const files = Array.from({ length: 1 + r.int(2) }, () => tfFile(r, ps, 3 + r.int(10), randomForm(r), r.bool(0.5), r.bool(0.3)));
+      const result = await tfRun(files);
+      expect(result.check, `round ${round}`).toEqual({ passed: true, failures: [] });
+      files.forEach((f, n) => {
+        const text = DECODED(result.files[n]!.bytes);
+        const where = `round ${round}, file ${n}`;
+        for (const cell of readTable(text).rows.flat()) {
+          // (A marker with letters stuck to it, IDTF-0006, has no word boundary in front: take every TF-nnnn out, not only those MARKERS finds.)
+          const bare = cell.replace(MARKERS, " ").replace(/TF-\d{4,6}/g, " ");
+          // By shape: the door's own finder and the tool's.
+          expect(findPersonalNumbers(bare), `${where}: "${cell}"`).toEqual([]);
+          expect(findPersonalData(bare), `${where}: "${cell}"`).toEqual([]);
+          // By fragment: no TF followed by two digits, whatever stood between (a number's end is no number, and the note's own words hold no TF).
+          expect(bare, `${where}: "${cell}"`).not.toMatch(/tf[\s\-_./ ​–]?[\d０-９]{2}/i);
+        }
+        // By value, over everything: not one of the dates of the persons' numbers, as eight digits in a row (what a half-done replacement would leave).
+        const bare = text.replace(MARKERS, " ");
+        for (const p of ps) expect(bare, `${where}: ${p.tfDate.slice(0, 2)}…`).not.toMatch(new RegExp(`(?<!\\d)(?:${p.tfDate}|${FULLWIDTH(p.tfDate)})(?!\\d)`));
+      });
+    }
+  });
+
+  it("changes nothing the second time: a safe file of TF markers is a safe file, with the same choices", { timeout: SLOW }, async () => {
+    const r = rng(6309);
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const ps = tfPeople(r, 4 + r.int(12));
+      const f = tfFile(r, ps, 3 + r.int(10), { ...randomForm(r), encoding: "UTF-8", bom: false }, r.bool(0.5), r.bool(0.3));
+      const first = await tfRun([f]);
+      const again = pseudonymise([parseText(first.files[0]!.text, "file", "UTF-8", false)!], { files: [tfChoices(f)] });
+      if (!again.ok) throw new Error(`round ${round}: ${JSON.stringify(again.undecided)}`);
+      expect(again.files[0]!.text, `round ${round}`).toBe(first.files[0]!.text);
+    }
+  });
+});
+
+describe("what the page says it cannot judge about TF numbers stays true", () => {
+  /*
+   * The page (limit3) says TF numbers written in any way but ÅÅÅÅMMDDTFnn are not found: with blanks between TF and the digits, or six digits in the date.
+   * The door counts what Skola24's files have shown and nothing it has guessed (X3's table). If the door learns another form, this test falls and
+   * the page text (messages: pseudonymiserare.report.limit3) is to be changed with it.
+   */
+  it("leaves the forms no file has shown, in a column the user kept, and counts none", () => {
+    const forms = ["800101TF01", "19800101 TF 01", "19800101TF 01", "19800101-TF-01", "1980 0101TF01", "198001011TF01", "19800101TF123", "19800101TF1"];
+    const text = ["Id;Anteckning", ...forms.map((form) => `${form};x`), ""].join("\n");
+    const result = pseudonymise([parseText(text, "file", "UTF-8", false)!], { files: [{ treatments: { 0: KEEP, 1: KEEP } }] });
+    if (!result.ok) throw new Error(JSON.stringify(result.undecided));
+    expect(result.report.totals.tf).toEqual({ occurrences: 0, distinct: 0 });
+    for (const form of forms) expect(result.files[0]!.text, form).toContain(form);
   });
 });

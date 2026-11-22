@@ -73,6 +73,22 @@ describe.each([
     expect(text).toContain("ÅÅÅÅMMDD-NNNN");
   });
 
+  it("says what was replaced of TF numbers under their own name, how they were written as a pattern, and nothing of a check digit", () => {
+    const text = renderReport(run([input("Id;Kod;Notis\n19000101TF01;19000102tf01;Se 19000101-TF01\n19000101TF02;19000102tf01;ok\n")], [], [2]).report, say);
+    expect(text).toContain(say("kind.tf"));
+    // Not a line of the summary under personnummer: the numbers are TF numbers, and the report says what the column was marked as in the words of the page.
+    expect(text).not.toMatch(new RegExp(`^- ${say("kind.pnr")}:`, "m"));
+    expect(text).toContain(say("treatment.mark", { kind: say("group.pnr") }));
+    expect(text).toContain(say("report.spellings"));
+    expect(text).toContain("ÅÅÅÅMMDDTFNN");
+    expect(text).toContain("ÅÅÅÅMMDD-TFNN");
+    expect(text).toContain("ÅÅÅÅMMDDtfNN");
+    // No value, not the date's digits and not the two after TF.
+    expect(text).not.toMatch(/1900|TF0\d|tf01/);
+    expect(text).not.toContain(say("report.checkDigit", { kind: say("kind.pnr"), holds: 0, fails: 0 }));
+    expect(text).not.toMatch(/[{}]/);
+  });
+
   it("says the form of the file: its encoding, delimiter and line ending", () => {
     const text = renderReport(run([input(TABLE)], [], [5]).report, say);
     expect(text).toMatch(/UTF-8/);
