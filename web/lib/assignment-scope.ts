@@ -26,6 +26,20 @@ export interface ScopeStageHours {
   planningFloorPercent: number;
 }
 
+/**
+ * The rektor's assessment of one teacher (AssignmentScopeAssessments, 20270306090000): a level within the span and a registered
+ * exception under 11 §. A reader without HR-läs gets the exception kind alone: the level, the day, the note and the time are null.
+ */
+export interface ScopeAssessmentView {
+  /** The teacher's highest level at full time, hours per läsår; null = none set (the ordinance's edge holds). */
+  levelHours: number | null;
+  exceptionKind: "OWN_INITIATIVE" | "SMALL_GROUP" | null;
+  /** yyyy-mm-dd; set exactly when the exception is OWN_INITIATIVE. */
+  ownInitiativeOn: string | null;
+  note: string | null;
+  decidedAt: string | null;
+}
+
 export interface TeacherScope {
   userId: string;
   verdict: ScopeVerdict;
@@ -52,6 +66,8 @@ export interface TeacherScope {
    * groups with no årskurs; T7): the verdict is then not OVER_MAX. Absent otherwise.
    */
   overOnlyWithUnregulated?: true;
+  /** The rektor's assessment of the teacher: absent (not null) where none is written. */
+  assessment?: ScopeAssessmentView;
 }
 
 export interface ScopeVersionInfo {

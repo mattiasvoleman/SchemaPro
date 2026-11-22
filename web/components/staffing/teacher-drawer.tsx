@@ -23,6 +23,7 @@ import { StatusBadge } from "@/components/staffing/staffing-matrix";
 import { DutiesCard } from "@/components/staffing/duties-card";
 import { AnnualCard } from "@/components/staffing/annual-card";
 import { ScopeCard } from "@/components/staffing/scope-card";
+import { ScopeAssessmentCard } from "@/components/staffing/scope-assessment-card";
 import type { ScopeCardData } from "@/lib/assignment-scope";
 import { EmploymentHistoryCard } from "@/components/staffing/employment-history-card";
 import { PeriodLoadList } from "@/components/staffing/period-load-list";
@@ -215,6 +216,15 @@ export function TeacherDrawer({
         {load ? <AnnualCard annual={load.annual} loadModel={loadModel} showSettingsPath travel={travel} supervision={supervision} /> : null}
 
         {scope ? <ScopeCard data={scope} /> : null}
+
+        {scope ? (
+          <ScopeAssessmentCard
+            teacher={teacher}
+            academicYearId={academicYearId}
+            assessment={scope.teacher.assessment}
+            fullTimeHighestHours={scope.teacher.fullTimeHighestHours}
+          />
+        ) : null}
 
         <EmploymentHistoryCard
           userId={teacher.id}

@@ -214,4 +214,78 @@ describe("ScopeCard", () => {
       expect(rows()).toEqual(["teaching=hours(645)"]);
     });
   });
+
+  describe("the rektor's assessment (8 §, 11 §)", () => {
+    const assessment = (over: Partial<NonNullable<TeacherScope["assessment"]>> = {}) => ({
+      levelHours: 600,
+      exceptionKind: null,
+      ownInitiativeOn: null,
+      note: null,
+      decidedAt: "2027-03-05T08:00:00.000Z",
+      ...over,
+    });
+
+    it("shows the level the rektor set, beside the ordinance's own, and the verdict says it is over the level that was set", () => {
+      render(<ScopeCard data={data({ verdict: "OVER_OWN", highestHours: 600, assessment: assessment() })} />);
+      expect(rows()).toContain("assessmentLevel=hours(600)");
+      expect(screen.getByText("verdictOverOwn(45)")).toBeInTheDocument();
+    });
+
+    it("names the ordinance's edge on the row that is called the ordinance's, and the level the rektor set on a row of its own (never the level under the ordinance's name)", () => {
+      render(<ScopeCard data={data({ verdict: "OVER_OWN", teachingHours: 645, highestHours: 600, ordinanceHighestHours: 650, assessment: assessment() })} />);
+      expect(rows()).toContain("highest=hours(650)");
+      expect(rows()).not.toContain("highest=hours(600)");
+      expect(rows()).toContain("assessmentLevel=hours(600)");
+    });
+
+    it("shows the level after the post as a row of its own for a part-time post, so that 'over by' can be checked against a row", () => {
+      render(<ScopeCard data={data({ verdict: "OVER_OWN", teachingHours: 500, highestHours: 464, ordinanceHighestHours: 520, assessment: assessment({ levelHours: 580 }) })} />);
+      expect(rows()).toEqual(expect.arrayContaining(["highest=hours(520)", "assessmentLevel=hours(580)", "assessmentHighest=hours(464)"]));
+      expect(screen.getByText("verdictOverOwn(36)")).toBeInTheDocument();
+    });
+
+    it("says it in the teacher's own words on their own page", () => {
+      render(<ScopeCard data={data({ verdict: "OVER_OWN", teachingHours: 500, highestHours: 464, ordinanceHighestHours: 520, assessment: assessment({ levelHours: 580 }) })} own />);
+      expect(rows()).toEqual(expect.arrayContaining(["highestOwn=hours(520)", "assessmentLevelOwn=hours(580)", "assessmentHighestOwn=hours(464)"]));
+    });
+
+    it("has no row after the post where it is the level itself (full time), nor where the level is above the ordinance's edge", () => {
+      render(<ScopeCard data={data({ highestHours: 600, ordinanceHighestHours: 650, assessment: assessment() })} />);
+      expect(rows().some((row) => row.startsWith("assessmentHighest"))).toBe(false);
+      cleanup();
+      render(<ScopeCard data={data({ highestHours: 650, ordinanceHighestHours: 650, assessment: assessment({ levelHours: 700 }) })} />);
+      expect(rows().some((row) => row.startsWith("assessmentHighest"))).toBe(false);
+    });
+
+    it("speaks of the level as theirs on the teacher's own page", () => {
+      render(<ScopeCard data={data({ assessment: assessment() })} own />);
+      expect(rows()).toContain("assessmentLevelOwn=hours(600)");
+    });
+
+    it("says that an exception is registered, with its day, and that it does not change the verdict", () => {
+      render(
+        <ScopeCard
+          data={data({ verdict: "OVER_MAX", teachingHours: 731, assessment: assessment({ levelHours: null, exceptionKind: "OWN_INITIATIVE", ownInitiativeOn: "2027-05-02" }) })}
+        />,
+      );
+      expect(screen.getByText(/exceptionRegistered\(exceptionKindOWN_INITIATIVE\)/)).toHaveTextContent("2027-05-02. exceptionKeepsVerdict");
+      // The verdict above it is the same sentence it would be without the exception: the exception silences nothing.
+      expect(screen.getByText(/verdictOverMax/)).toHaveClass("text-destructive");
+      expect(rows().some((row) => row.startsWith("assessmentLevel"))).toBe(false);
+    });
+
+    it("shows the note, and for a reader without HR-läs the exception kind and nothing else of it", () => {
+      render(<ScopeCard data={data({ assessment: assessment({ note: "två grupper om 30" }) })} />);
+      expect(screen.getByText("assessmentNote(två grupper om 30)")).toBeInTheDocument();
+      const hidden = { levelHours: null, exceptionKind: "SMALL_GROUP" as const, ownInitiativeOn: null, note: null, decidedAt: null };
+      render(<ScopeCard data={data({ highestHours: null, ordinanceHighestHours: null, assessment: hidden })} />);
+      expect(screen.getByText("exceptionRegistered(exceptionKindSMALL_GROUP) exceptionKeepsVerdict")).toBeInTheDocument();
+    });
+
+    it("says nothing of an assessment where none is written", () => {
+      render(<ScopeCard data={data()} />);
+      expect(screen.queryByText(/exceptionRegistered|assessmentNote/)).not.toBeInTheDocument();
+      expect(rows().some((row) => row.startsWith("assessmentLevel"))).toBe(false);
+    });
+  });
 });

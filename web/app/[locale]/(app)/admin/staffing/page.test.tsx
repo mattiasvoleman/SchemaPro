@@ -262,6 +262,18 @@ vi.mock("@/components/staffing/engine-release-card", () => ({
   },
 }));
 
+/*
+ * Rektorns bedömning (R1 del G3): the card writes through react-query and is tested on its own (scope-assessment-card.test.tsx). Here only
+ * what the page decides: that the drawer draws it from the report's `scope` block, and what it is handed.
+ */
+const assessmentProps = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock("@/components/staffing/scope-assessment-card", () => ({
+  ScopeAssessmentCard: (props: Record<string, unknown>) => {
+    assessmentProps.push(props);
+    return <section aria-label="scope-assessment" />;
+  },
+}));
+
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
   useTranslations: (namespace: string) => {
@@ -505,17 +517,30 @@ describe("StaffingPage", () => {
 
     it("draws the card in the teacher's drawer from the same block, and none for a year the ordinance does not reach", async () => {
       const user = userEvent.setup();
-      withScope("OVER_MAX");
+      assessmentProps.length = 0;
+      const assessment = { levelHours: 600, exceptionKind: null, ownInitiativeOn: null, note: null, decidedAt: "2027-03-05T08:00:00.000Z" };
+      withScope("OVER_MAX", { teachers: [{ ...bo("OVER_MAX"), assessment }] });
       const first = render(<StaffingPage />);
       await user.click(screen.getByRole("button", { name: "openDrawer(Bo Alm)" }));
       const dialog = within(await screen.findByRole("dialog", {}, { timeout: 5000 }));
       expect(await dialog.findByText("verdictOverMax(81)")).toBeInTheDocument();
+      // The rektor's assessment is drawn under it, handed the teacher, the year, what the block says of them and the span's full-time edge.
+      expect(dialog.getByRole("region", { name: "scope-assessment" })).toBeInTheDocument();
+      expect(assessmentProps.at(-1)).toMatchObject({
+        teacher: expect.objectContaining({ id: "t-bo" }),
+        academicYearId: "y1",
+        assessment,
+        fullTimeHighestHours: 600,
+      });
       first.unmount();
+      assessmentProps.length = 0;
       withScope("OVER_MAX", { version: null, yearReason: "NOT_IN_FORCE" });
       render(<StaffingPage />);
       await user.click(screen.getByRole("button", { name: "openDrawer(Bo Alm)" }));
       await screen.findByRole("dialog", {}, { timeout: 5000 });
       expect(screen.queryByText("verdictOverMax(81)")).not.toBeInTheDocument();
+      // A year the ordinance does not reach has no report to assess against: the card is not drawn there either.
+      expect(screen.queryByRole("region", { name: "scope-assessment" })).not.toBeInTheDocument();
     });
   });
 

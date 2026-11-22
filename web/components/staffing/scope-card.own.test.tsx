@@ -54,6 +54,19 @@ const cases: [string, ScopeCardData][] = [
   // these two nothing renders it in the real catalogues, so a "läraren" in it would reach the teacher's own page (granskningen av #400).
   ["with hours in förskoleklass, beside the planning floor", card({ teachingHours: 688, unregulatedHours: 43 })],
   ["with hours in groups with no årskurs, beside the planning floor", card({ teachingHours: 665, unknownGradeHours: 20 })],
+  [
+    "over the level set for a part-time post, with an exception at the teacher's own initiative",
+    card({
+      verdict: "OVER_OWN",
+      teachingHours: 500,
+      highestHours: 464,
+      ordinanceHighestHours: 520,
+      assessment: { levelHours: 580, exceptionKind: "OWN_INITIATIVE", ownInitiativeOn: "2027-05-02", note: null, decidedAt: "2027-03-05T08:00:00.000Z" },
+    }),
+  ],
+  ["with an exception for a small group", card({ assessment: { levelHours: null, exceptionKind: "SMALL_GROUP", ownInitiativeOn: null, note: null, decidedAt: "2027-03-05T08:00:00.000Z" } })],
+  ["past the edge only with förskoleklass (T7)", card({ teachingHours: 688, unregulatedHours: 43, overOnlyWithUnregulated: true })],
+  ["over their level and past the edge only with förskoleklass", card({ verdict: "OVER_OWN", teachingHours: 688, highestHours: 600, unregulatedHours: 43, overOnlyWithUnregulated: true })],
 ];
 
 describe.each([
