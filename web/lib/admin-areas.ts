@@ -96,6 +96,9 @@ export type PageGate = AdminArea | "DECIDES" | null;
 export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin": null,
   "/admin/setup": "PLANERING",
+  // Vad kom in: counts the school's base data and writes nothing, so every administrator opens it, the läsare and the profiles
+  // that write no Planering included; each gap is a link to the page that owns it, and that page has its own gate.
+  "/admin/intake": null,
   "/admin/years": "PLANERING",
   "/admin/subjects": "PLANERING",
   "/admin/rooms": "PLANERING",

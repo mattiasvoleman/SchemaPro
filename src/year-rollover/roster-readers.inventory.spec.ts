@@ -118,6 +118,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     why: 'a membership file’s rows placing pupils in a half (Halvklasser): each pupil’s class and placement as written, the facts the half trigger holds them to',
   },
   'src/users/users.service.ts': { basis: 'CURRENT', why: 'a user’s own class, read before it is written' },
+  'src/intake/intake.service.ts': {
+    basis: 'CURRENT',
+    why: 'Vad kom in: what the school holds now, of the ACTIVE year alone (the route takes no year, because a rolled year’s classes have no pupils in them until the activation): the classes a post reaches through a pupil’s teaching group, the groups with no members, the pupils with no class; it lists no pupil and no lesson roster',
+  },
   'src/timplan/timplan-stage.service.ts': {
     basis: 'CURRENT',
     why: 'stage totals: home classes from the class history (ENROLLED, below); teaching-group memberships as they are — they carry no dates — for the pupils the history names',
@@ -237,7 +241,7 @@ describe('the roster-reader inventory', () => {
     // list's count of a teaching group's members. Realtime's broadcast had
     // its own until it asked lesson-roster.ts.
     const relations = new Set(queries.filter((query) => query.model === 'relation').map((query) => query.path));
-    expect(relations).toEqual(new Set(['src/integration/ss12000.service.ts', 'src/publication/public-links.service.ts']));
+    expect(relations).toEqual(new Set(['src/intake/intake.service.ts', 'src/integration/ss12000.service.ts', 'src/publication/public-links.service.ts']));
   });
 
   it('classifies no file that reads no roster', () => {

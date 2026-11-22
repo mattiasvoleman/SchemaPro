@@ -289,6 +289,8 @@ describe("AppShell navigation", () => {
       "nav.rooms",
       "nav.groups",
       "nav.people",
+      // Vad kom in: what the pages above hold, last in the phase.
+      "nav.intake",
     ]);
     expect(group("nav.planning")).toEqual([
       "nav.timplan",

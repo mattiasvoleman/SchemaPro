@@ -53,6 +53,9 @@
       - listitem:
         - link "Personer":
           - /url: /sv/admin/people
+      - listitem:
+        - link "Vad kom in":
+          - /url: /sv/admin/intake
     - text: Planering
     - list "Planering":
       - listitem:

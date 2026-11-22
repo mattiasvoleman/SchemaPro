@@ -109,6 +109,9 @@
       "name": "ImportTemplates"
     },
     {
+      "name": "Intake"
+    },
+    {
       "name": "IntegrationKeys"
     },
     {
@@ -11617,6 +11620,46 @@
           "limit": 10,
           "ttlSeconds": 60
         }
+      }
+    },
+    "/api/v1/intake": {
+      "get": {
+        "tags": [
+          "Intake"
+        ],
+        "operationId": "IntakeController_read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
       }
     },
     "/api/v1/integration-keys": {
