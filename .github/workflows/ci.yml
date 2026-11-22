@@ -111,8 +111,8 @@ jobs:
 
       # The verdict of the nightly solver-corpus job (M5): this tree's CP-SAT work against
       # its floor's, on hand-built weeks. Nothing but Node core, so no Python or OR-Tools.
-      - name: Solver corpus gate verdict (node:test)
-        run: node --test scripts/bench/solve-corpus-gate.test.mjs
+      - name: Solver corpus gate verdict and calibration script (node:test)
+        run: node --test scripts/bench/solve-corpus-gate.test.mjs scripts/bench/solve-corpus-calibrate.test.mjs
 
       # Which slice of the API's mutants the nightly mutation job takes, and how
       # the files are dealt into slices. The script imports Stryker's
