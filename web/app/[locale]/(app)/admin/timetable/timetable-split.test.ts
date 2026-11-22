@@ -1,3 +1,4 @@
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import * as lazyPieces from "./timetable-lazy";
 
@@ -24,18 +25,44 @@ const files = Object.entries(sources)
   .filter(([name]) => !/\.test\.tsx?$/.test(name))
   .map(([name, source]) => ({ name: name.replace("./", ""), source }));
 
-/** The modules a file imports for VALUES: `import type` and all-`type` specifiers are erased and cost nothing. */
-function valueImports(source: string): string[] {
+/**
+ * The modules a file takes for VALUES, as the compiler reads them: an `import` or an `export … from` that is not
+ * `type` all through, written with either quote, with or without its semicolon, as `@/…` or as a path. Type-only
+ * forms are erased and cost nothing. Read with the TypeScript parser and not a pattern, which saw only the
+ * double-quoted `import … from "…";` and let `export { X } from '…'` through.
+ */
+function valueImports(source: string, from = "page.tsx"): string[] {
   const found: string[] = [];
-  for (const match of source.matchAll(/^import\s+(?!type\b)([\s\S]*?)\s+from\s+"([^"]+)";/gm)) {
-    const clause = match[1]!;
-    const named = /\{([\s\S]*)\}/.exec(clause)?.[1];
-    const hasDefaultOrNamespace = /^[\w$*]/.test(clause.trim());
-    const onlyTypes = named !== undefined && !hasDefaultOrNamespace && named.split(",").every((part) => !part.trim() || /^type\s/.test(part.trim()));
-    if (!onlyTypes) found.push(match[2]!);
+  const file = ts.createSourceFile(from, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const asModule = (specifier: string) =>
+    specifier.startsWith("@/") ? specifier : specifier.startsWith(".") ? resolveFrom(from, specifier) : specifier;
+  for (const node of file.statements) {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const clause = node.importClause;
+      const named = clause?.namedBindings;
+      const onlyTypes =
+        clause !== undefined &&
+        (clause.isTypeOnly ||
+          (clause.name === undefined && named !== undefined && ts.isNamedImports(named) && named.elements.length > 0 && named.elements.every((e) => e.isTypeOnly)));
+      if (!onlyTypes) found.push(asModule(node.moduleSpecifier.text));
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      const named = node.exportClause;
+      const onlyTypes = node.isTypeOnly || (named !== undefined && ts.isNamedExports(named) && named.elements.length > 0 && named.elements.every((e) => e.isTypeOnly));
+      if (!onlyTypes) found.push(asModule(node.moduleSpecifier.text));
+    }
   }
-  for (const match of source.matchAll(/^import\s+"([^"]+)";/gm)) found.push(match[1]!);
   return found;
+}
+
+/** `../../../../../components/x` from a file in this directory is `@/components/x`. */
+function resolveFrom(from: string, specifier: string): string {
+  const here = ["app", "[locale]", "(app)", "admin", "timetable", from];
+  const path = here.slice(0, -1);
+  for (const part of specifier.split("/")) {
+    if (part === "..") path.pop();
+    else if (part !== ".") path.push(part);
+  }
+  return path[0] === "app" ? `./${path.slice(5).join("/")}` : `@/${path.join("/")}`;
 }
 
 describe("the timetable page's split", () => {
@@ -77,9 +104,35 @@ describe("the timetable page's split", () => {
     "./timetable-exports",
   ];
 
-  it.each(files.map((file) => [file.name, file.source] as const))("%s takes no lazy piece statically", (_name, source) => {
-    const taken = valueImports(source).filter((module) => LAZY.includes(module));
+  it.each(files.map((file) => [file.name, file.source] as const))("%s takes no lazy piece statically", (name, source) => {
+    const taken = valueImports(source, name).filter((module) => LAZY.includes(module));
     expect(taken).toEqual([]);
+  });
+
+  // The guard above is only as good as what it can see. Each of these is a lazy piece taken statically, written
+  // in a way the first version of the guard (a pattern for `import … from "…";`) did not read.
+  it.each([
+    ["a re-export", 'export { SelectionBar } from "@/components/schedule/selection-bar";'],
+    ["a star re-export", 'export * from "@/components/schedule/lesson-dialogs";'],
+    ["single quotes", "import { VersionsDialog } from '@/components/schedule/versions-dialog';"],
+    ["no semicolon", 'import { VersionsDialog } from "@/components/schedule/versions-dialog"\nconst x = 1;'],
+    ["a namespace import", 'import * as dialogs from "@/components/schedule/lesson-dialogs";'],
+    ["a side-effect import", 'import "@/components/schedule/swap-dialog";'],
+    ["a default import", 'import panel from "@/components/timplan/schedule-delta-panel";'],
+    ["a relative path", 'import { ScheduleDeltaPanel } from "../../../../../components/timplan/schedule-delta-panel";'],
+    ["a neighbour's path", 'import { exportIcs } from "./timetable-exports";'],
+    ["a multi-line import", 'import {\n  VersionsDialog,\n  type Props,\n} from "@/components/schedule/versions-dialog";'],
+  ])("sees %s of a lazy piece", (_what, source) => {
+    expect(valueImports(source).filter((module) => LAZY.includes(module))).toHaveLength(1);
+  });
+
+  it.each([
+    ["a type import", 'import type { SelectionBarProps } from "@/components/schedule/selection-bar";'],
+    ["all-type specifiers", 'import { type LessonEditDraft } from "@/components/schedule/lesson-edit-dialog";'],
+    ["a type re-export", 'export type { Props } from "@/components/schedule/lesson-dialogs";'],
+    ["a dynamic import", 'const load = () => import("@/components/schedule/lesson-dialogs");'],
+  ])("does not mistake %s for a static one", (_what, source) => {
+    expect(valueImports(source).filter((module) => LAZY.includes(module))).toEqual([]);
   });
 
   it("is fetched where it was fetched, so the lazy pieces are still reachable", () => {
@@ -93,7 +146,7 @@ describe("the timetable page's split", () => {
   });
 
   it("has hooks that never import the page, which would make a cycle", () => {
-    const cyclic = files.filter((file) => file.name !== "page.tsx" && valueImports(file.source).some((m) => m === "./page"));
+    const cyclic = files.filter((file) => file.name !== "page.tsx" && valueImports(file.source, file.name).some((m) => m === "./page"));
     expect(cyclic.map((file) => file.name)).toEqual([]);
   });
 
