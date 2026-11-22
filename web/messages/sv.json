@@ -1769,6 +1769,76 @@
       "callerWait": "Tjänsten väntade {seconds, number} s på svaret.",
       "configured": "Motorn är inställd på {configured, number} s för sökningen, och den fick {budget, number} s."
     },
+    "suggestions": {
+      "title": "Vad kan jag ändra?",
+      "offer": "Motorn kan räkna fram upp till tre ändringar som skulle låta veckan läggas, och kontrollera dem mot reglerna. Det tar ungefär en och en halv minut. Den lägger inget schema och ändrar ingenting.",
+      "offerTimeout": "Tiden tog slut, så ingenting är bevisat om veckan än. Motorn kan göra en kortare körning där fem av skolans egna regler får ge vika, och säga om veckan då går att lägga och med vilka ändringar. Det tar ungefär en och en halv minut, lägger inget schema och ändrar ingenting.",
+      "offerAction": "Räkna fram förslag",
+      "again": "Räkna om",
+      "running": "Motorn räknar fram förslag. Det tar ungefär en och en halv minut, och du kan lämna sidan.",
+      "failed": {
+        "ENGINE_LACKS_SUGGESTIONS": "Förslag kan inte räknas fram just nu: schemamotorn har inte den funktionen än. Försök igen om några minuter.",
+        "ENGINE_BUSY": "Motorn räknar fram förslag åt någon annan just nu. Försök igen om en stund.",
+        "ENGINE_FAILED": "Förslagen kunde inte räknas fram. Försök igen.",
+        "NOTHING_TO_PLACE": "Alla poster är handlagda, så det finns inget för motorn att räkna på.",
+        "ABANDONED": "Beräkningen avbröts innan den blev klar, troligen av en omstart. Räkna om för att försöka igen."
+      },
+      "refused": {
+        "SUGGESTIONS_NOT_FOR_THIS_RUN": "Förslag kan inte räknas fram för den här körningen.",
+        "SUGGESTIONS_RUN_IS_OLD": "Det finns en nyare körning för läsåret. Förslag räknas bara fram för den senaste.",
+        "SUGGESTIONS_YEAR_BUSY": "Läsåret har en körning igång, och motorns kraft behövs där. Försök igen när den är klar.",
+        "OTHER": "Förslagen kunde inte begäras. Försök igen."
+      },
+      "intro": {
+        "SOLVED": "Motorn har löst veckan med just den här ändringen: den lade ett schema som håller alla regler, med ändringen gjord.",
+        "SOLVED_TOGETHER": "Motorn har löst veckan med just {total, plural, one {den här ändringen} other {de # ändringarna}} tillsammans: den lade ett schema som håller alla regler, med ändringarna gjorda. Ingen av dem är visad räcka ensam.",
+        "MAY_HELP": "Motorn lade en vecka där de här reglerna fick ge vika, men hann inte kontrollera att ändringarna räcker. De kan hjälpa, men mer är inte visat."
+      },
+      "proof": {
+        "SOLVED": "Löser veckan (kontrollerat)",
+        "SOLVED_TOGETHER": "Löser veckan tillsammans (kontrollerat)",
+        "MAY_HELP": "Kan hjälpa (inte kontrollerat)",
+        "AT_LEAST": "Minst",
+        "MEASURED": "Mätt i ett prov"
+      },
+      "change": {
+        "TEACHER_DAILY_CAP": "Höj dagstaket för {teacher} från {current, number} till {needed, number} minuter.",
+        "TEACHER_DAILY_CAP_ANON": "Höj en lärares dagstak från {current, number} till {needed, number} minuter.",
+        "TEACHER_WORK_DAYS": "En deltidstjänst behöver ha en dag till för att veckan ska gå ihop.",
+        "SUBJECT_PER_DAY": "Tillåt {needed, plural, one {# lektion} other {# lektioner}} per dag för {post} (i dag högst {current, number}).",
+        "SUBJECT_DAYS_APART": "Sänk antalet dagar emellan för {post} från {current, number} till {needed, number}.",
+        "SUBJECT_DAYS_APART_REMOVE": "Ta bort kravet på dagar emellan för {post} (i dag {current, number}).",
+        "ROOM_LOCK": "Låt {post} också få använda {rooms}.",
+        "ROOM_LOCK_UNNAMED": "Låt {post} också få använda en sal till."
+      },
+      "hidden": "Vilken tjänst det gäller visas bara för rektor, en administratör med full behörighet och den med HR-läs.",
+      "weekdays": "Motorn behövde det på {days}.",
+      "more": "Ytterligare {count, plural, one {# ändring} other {# ändringar}} hör till samma lösning och behövs för att veckan ska gå ihop. De visas inte här.",
+      "caveat": "Räknat {when}, på veckan som den såg ut då. Det visar att veckan går att lägga, inte hur lång tid nästa Generera tar på den. Motorn hittade de här ändringarna, och det är inte säkert att de är de billigaste. Ingenting ändras förrän du sparar på sidan som äger uppgiften.",
+      "verdict": {
+        "SOLVABLE_AS_IS": "Motorn hittade ett schema som håller alla regler, utan att något behövde ändras. Veckan går alltså att lägga: körningen som tog slut hann bara inte hitta det. Kör Generera igen.",
+        "UNCHECKED": "Motorn hittade ett schema utan att någon regel behövde ge vika, men hann inte kontrollera det mot reglerna. Kör Generera igen.",
+        "NOT_FOUND": "Motorn hittade inget schema inom {seconds, number} s, inte ens med de fem reglerna som får ge vika. Det är inget bevis för att veckan är omöjlig.",
+        "HARD_REFUSAL": "En regel som aldrig får ge vika hindrar veckan, så ingen ändring av de fem reglerna kan hjälpa. Orsaken står under Upptäckta konflikter."
+      },
+      "known": {
+        "title": "Det som redan är känt",
+        "capLesson": "Dagstaket för en lärare måste vara minst {minutes, number} minuter, eftersom en av lärarens lektioner är så lång. Det är det minsta som går, och det räcker inte säkert.",
+        "capWeek": "Dagstaket för en lärare måste vara minst {minutes, number} minuter för att lärarens lektioner ska rymmas på veckans dagar. Låsta lektioner gör att det behövs mer: det är ett minimum och inte en lösning.",
+        "measured": {
+          "TEACHER_DAILY_CAP": "Utan lärarnas dagstak lade motorn veckan i ett kort prov. Det är en mätning: den visar inte att en höjning räcker.",
+          "TEACHER_WORK_DAYS": "Utan deltidstjänsternas dagar lade motorn veckan i ett kort prov. Det är en mätning: den visar inte att fler dagar räcker.",
+          "SUBJECT_SPREAD": "Utan ämnenas regler om hur lektionerna fördelas över veckan lade motorn veckan i ett kort prov. Det är en mätning: den visar inte att en lättare regel räcker."
+        }
+      },
+      "link": {
+        "people": "Öppna lärarens arbetstid",
+        "requirements": "Öppna timplansposten",
+        "constraints": "Öppna rumsreglerna",
+        "staffing": "Öppna tjänstefördelningen"
+      },
+      "linkLabel": "{page}: {sentence}"
+    },
     "bestEffortOffer": "Skolan har Bästa möjliga schema på. Under Schemaförslag kan du lägga ett schema som bryter så få av skolans egna regler som möjligt och se vilka som gav vika.",
     "bestEffortOfferLink": "Ta fram bästa möjliga",
     "bestEffortOfferTimeout": "Generera hann inte bevisa något utan fick slut på tid: ett schema med avsteg kan komma tillbaka där en längre körning av Generera hade sluppit dem.",
