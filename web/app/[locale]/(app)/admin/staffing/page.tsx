@@ -82,6 +82,7 @@ import {
 import { travelOf } from "@/lib/staffing-travel";
 import { sharesByRequirement, useRequirementShares } from "@/lib/requirement-shares";
 import { supervisionOf } from "@/lib/staffing-supervision";
+import { overScopeIds, scopeCardOf } from "@/lib/assignment-scope";
 import { kpis, type UnitView, type WeekView } from "@/lib/staffing-view";
 import { NextStep } from "@/components/layout/next-step";
 import { Page } from "@/components/layout/page";
@@ -287,6 +288,9 @@ export default function StaffingPage() {
   }, [report]);
 
   const figures = report ? kpis(report) : null;
+  // SFS 2026:1487 3 §: the teachers whose teaching hours are over the ordinance's highest level (empty for a läsår the
+  // ordinance does not reach, and from a gateway with no such block).
+  const overScope = overScopeIds(report);
   const noTarget = policy !== undefined && (policy === null || policy.fullTimeTeachingMinutesPerWeek === null);
 
   const openSettings = () => {
@@ -367,6 +371,14 @@ export default function StaffingPage() {
               }
             >
               {t("noTargetBody")}
+            </Notice>
+          ) : null}
+
+          {overScope.size > 0 ? (
+            // The law's own measure, beside the school's riktmärke and never in it: a warning, not a block (the school picks
+            // under Inställningar what a write over the level does). foreground on the warning tint as Notice measures it.
+            <Notice tone="warning" title={t("scopeNoticeTitle", { count: overScope.size })}>
+              {t("scopeNoticeBody")}
             </Notice>
           ) : null}
 
@@ -467,6 +479,7 @@ export default function StaffingPage() {
               week={week}
               unit={unit}
               onOpenTeacher={setOpenTeacherId}
+              overScope={overScope}
             />
           )}
 
@@ -555,6 +568,7 @@ export default function StaffingPage() {
             loadModel={report?.loadModel ?? "MINUTES"}
             travel={travelOf(report, openTeacher.id)}
             supervision={supervisionOf(report, openTeacher.id)}
+            scope={scopeCardOf(report, openTeacher.id)}
             personName={personName}
           />
         </Suspense>

@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TeacherTravel } from "./staffing-travel";
 import type { TeacherSupervision } from "./staffing-supervision";
+import type { ScopeReport } from "./assignment-scope";
 import { api } from "@/lib/api";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { REQUIREMENT_SHARES_KEY } from "@/lib/requirement-shares";
@@ -209,6 +210,12 @@ export interface TeacherLoadReportResponse extends TeacherLoadReport {
    * year has no pass.
    */
   supervision?: { teachers: TeacherSupervision[] } | null;
+  /**
+   * Undervisningsuppdragets omfattning (SFS 2026:1487, src/staffing/assignment-scope.ts): each teacher's teaching hours
+   * over the läsår against the ordinance's span, in clock hours, unweighted, beside the report and never in its counted
+   * minutes. Null, or absent, from a gateway that has no such block.
+   */
+  scope?: ScopeReport | null;
 }
 
 /**
