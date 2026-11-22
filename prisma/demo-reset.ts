@@ -16,6 +16,12 @@
  * be missed: adding one takes a lock on the school's row, which waits for this transaction, and then finds the school gone.
  * Nothing is deleted outside the school: a refusal is a return with nothing written, and a failure rolls the whole thing back.
  *
+ * A DATABASE WITH A REAL SCHOOL. `db:seed` runs against whatever DIRECT_URL names, and the production database holds one school and none with
+ * the demo's slug. Where the demo school is not there, the script makes it only if no person in the database has an address outside the names
+ * reserved for examples (docs/DEPLOYMENT.md §37): a seed run against a database with a real school is refused, and nothing is made, so
+ * `db:seed` and `db:seed --reset` against the wrong database add no school of fictional pupils to it. Where the demo school is there it is
+ * judged by its own people as above, and another school in the same database is not touched.
+ *
  * LOGINS. The seed's people have no login. A tester who has linked the demo's administrator to a Supabase user (docs/DEPLOYMENT.md
  * §15.6) would lose it with the row: the Supabase user would stay, with no profile. So a login that only the demo school holds is
  * written back to the new row with the same address, `authId` and `invitedAt`. A login that another school also holds is not: a row
@@ -25,7 +31,7 @@
  */
 import { Prisma, PrismaClient } from '@prisma/client';
 import { createPgAdapter } from '../src/database/pool-config';
-import { DEMO, isDemoAddress, judgeDemoSchool, refusalText, type DemoSpec, type Refusal, type SchoolFacts } from '../src/demo-school/demo-guard';
+import { DEMO, isDemoAddress, judgeDatabase, judgeDemoSchool, refusalText, type DatabaseSchool, type DemoSpec, type Refusal, type SchoolFacts } from '../src/demo-school/demo-guard';
 import { createDemoSchool, describeDemoSchool, type Db, type DemoSummary } from './demo-school';
 
 export interface LoginReport {
@@ -38,9 +44,12 @@ export interface LoginReport {
 export type ResetResult =
   | { kind: 'CREATED'; schoolId: string; summary: DemoSummary }
   | { kind: 'RESET'; oldSchoolId: string; schoolId: string; summary: DemoSummary; logins: LoginReport }
-  | { kind: 'REFUSED'; schoolId: string; refusal: Refusal }
+  /** `schoolId` is the school that was refused, and null when it is the database: there is no demo school there to name. */
+  | { kind: 'REFUSED'; schoolId: string | null; refusal: Refusal }
   /** A dry run: the school exists and may be reset. */
-  | { kind: 'MAY_BE_RESET'; schoolId: string; people: number; logins: number };
+  | { kind: 'MAY_BE_RESET'; schoolId: string; people: number; logins: number }
+  /** A dry run: there is no demo school, and the database is one it may be made in. */
+  | { kind: 'MAY_BE_CREATED' };
 
 export interface ResetOptions {
   spec?: DemoSpec;
@@ -68,6 +77,13 @@ async function readFacts(tx: Db, spec: DemoSpec, schoolId: string, name: string)
          + (SELECT count(*) FROM "RoomLoans" WHERE ("ownerSchoolId" = ${schoolId}::uuid AND "borrowerSchoolId" <> ${schoolId}::uuid) OR ("borrowerSchoolId" = ${schoolId}::uuid AND "ownerSchoolId" <> ${schoolId}::uuid))
          + (SELECT count(*) FROM "SharedTeacherMarks" WHERE ("schoolId" = ${schoolId}::uuid AND "withSchoolId" <> ${schoolId}::uuid) OR ("withSchoolId" = ${schoolId}::uuid AND "schoolId" <> ${schoolId}::uuid)) AS n`);
   return { slug: spec.slug, name, emails: people.map((row) => row.email), huvudmanTies: count(huvudman), otherSchoolTies: count(others) };
+}
+
+/** What each school of the database holds of people, as far as the guard looks: the domains of their addresses, each once. */
+async function readDatabase(tx: Db): Promise<DatabaseSchool[]> {
+  const rows = await tx.$queryRaw<{ domains: string[] }[]>(Prisma.sql`
+    SELECT array_agg(DISTINCT lower(split_part("email", '@', 2))) AS domains FROM "Users" GROUP BY "schoolId"`);
+  return rows.map((row) => ({ domains: row.domains }));
 }
 
 interface Login {
@@ -98,7 +114,11 @@ export async function resetDemoSchool(client: PrismaClient, options: ResetOption
       const found = await tx.$queryRaw<{ id: string; name: string }[]>(Prisma.sql`SELECT "id"::text AS id, "name" FROM "Schools" WHERE "slug" = ${spec.slug} FOR UPDATE`);
       const school = found[0];
       if (school === undefined) {
-        if (!write) throw new Error(`There is no school with the slug ${spec.slug}: nothing to reset. Run db:seed to make it.`);
+        // Not there: made only in a database that holds no real school. The lock above is on no row, so a school made in the same moment is
+        // the unique slug's to refuse; a real school made in the same moment is not a case a seed is run in.
+        const database = judgeDatabase(await readDatabase(tx));
+        if (database !== null) return { kind: 'REFUSED' as const, schoolId: null, refusal: database };
+        if (!write) return { kind: 'MAY_BE_CREATED' as const };
         const summary = await createDemoSchool(tx, spec);
         return { kind: 'CREATED' as const, schoolId: summary.schoolId, summary };
       }
@@ -153,7 +173,12 @@ export function describeResult(result: ResetResult, spec: DemoSpec = DEMO): stri
         describeDemoSchool(result.summary),
       ].join('\n');
     case 'REFUSED':
-      return `NOT RESET. ${refusalText(result.refusal, spec)}`;
+      return `${result.refusal.code === 'DATABASE_HAS_A_REAL_SCHOOL' ? 'NOT SEEDED' : 'NOT RESET'}. ${refusalText(result.refusal, spec)}`;
+    case 'MAY_BE_CREATED':
+      return [
+        `There is no demo school (${spec.slug}), and the database holds no school with a real person in it.`,
+        'It may be made. Nothing was written: run db:seed, or this again with --yes, to make it.',
+      ].join('\n');
     case 'MAY_BE_RESET':
       return [
         `The demo school (${result.schoolId}) has ${result.people} people, ${result.logins} of them with a login, and nothing ties it to a huvudman or another school.`,

@@ -15,6 +15,10 @@
  * Notes
  * - Connects via DIRECT_URL (table owner) because seeding intentionally
  *   bypasses RLS; never run this with production credentials.
+ * - Made only in a database that holds no real school: where the demo school
+ *   is not there and any person in the database has an address outside the
+ *   names reserved for examples (example.com, .invalid, …), the script prints
+ *   NOT SEEDED and makes nothing (docs/DEPLOYMENT.md §37).
  * - Idempotent: if the demo school already exists the script stops. Pass
  *   `--reset` to delete and recreate it, which prisma/demo-reset.ts does in one
  *   transaction and ONLY if the school is the demo school: every person at the

@@ -1,4 +1,4 @@
-import { DEMO, isDemoAddress, judgeDemoSchool, refusalText, type SchoolFacts } from './demo-guard';
+import { DEMO, isDemoAddress, isReservedDomain, judgeDatabase, judgeDemoSchool, refusalText, type SchoolFacts } from './demo-guard';
 
 /** The demo school as the seed makes it, as far as the guard looks: its name, its people at the demo's domain, and nothing tied to it. */
 const demo = (overrides: Partial<SchoolFacts> = {}): SchoolFacts => ({
@@ -101,6 +101,69 @@ describe('judgeDemoSchool', () => {
   });
 });
 
+describe('isReservedDomain', () => {
+  it.each([
+    'example.com',
+    'EXAMPLE.ORG',
+    'example.net',
+    'kommun.example.org',
+    'demo-skola.example.com',
+    'a.b.c.example.com',
+    'school.test',
+    'example.invalid',
+    'hem.example',
+    'db.localhost',
+    'test',
+    'invalid',
+  ])('is %s', (domain) => {
+    expect(isReservedDomain(domain)).toBe(true);
+  });
+
+  it.each([
+    ['a real mail provider', 'gmail.com'],
+    ['a school domain', 'skola.stockholm.se'],
+    ['the reserved name as the start of another', 'example.com.evil.org'],
+    ['the reserved name as the end of a word', 'notexample.com'],
+    ['the reserved name with a prefix in the label', 'xexample.org'],
+    ['example with another top domain', 'example.co'],
+    ['example with a longer top domain', 'example.comm'],
+    ['example as a name on a real top domain', 'example.se'],
+    ['test as the start of a real domain', 'test.com'],
+    ['a real domain ending in a reserved word', 'invalid.se'],
+    ['an empty domain', ''],
+    ['a domain with an empty label', 'a..example.com'],
+    ['a trailing dot', 'example.com.'],
+    ['a leading dot', '.example.com'],
+    ['a top domain alone that is not reserved', 'com'],
+  ])('is not %s', (_label, domain) => {
+    expect(isReservedDomain(domain)).toBe(false);
+  });
+});
+
+describe('judgeDatabase', () => {
+  it('lets a demo school be made in a database with no school', () => {
+    expect(judgeDatabase([])).toBeNull();
+  });
+
+  it('lets it be made where every school is a made-up one, however many there are', () => {
+    expect(judgeDatabase([{ domains: ['demo-skola.example.com'] }, { domains: ['example.invalid', 'kommun.example.org'] }, { domains: ['x.test'] }])).toBeNull();
+  });
+
+  it('refuses a database with one school that has one person at a real address, and counts the schools and not the people', () => {
+    expect(judgeDatabase([{ domains: ['demo-skola.example.com'] }, { domains: ['example.invalid', 'gmail.com'] }])).toEqual({ code: 'DATABASE_HAS_A_REAL_SCHOOL', count: 1 });
+    expect(judgeDatabase([{ domains: ['gmail.com', 'hotmail.com'] }, { domains: ['kommun.se'] }, { domains: ['example.com'] }])).toEqual({ code: 'DATABASE_HAS_A_REAL_SCHOOL', count: 2 });
+  });
+
+  it('does not count a school with nobody in it: it holds no personal data', () => {
+    expect(judgeDatabase([{ domains: [] }, { domains: ['example.com'] }])).toBeNull();
+  });
+
+  it('counts a look-alike as real', () => {
+    expect(judgeDatabase([{ domains: ['example.com.evil.org'] }])).toEqual({ code: 'DATABASE_HAS_A_REAL_SCHOOL', count: 1 });
+    expect(judgeDatabase([{ domains: [''] }])).toEqual({ code: 'DATABASE_HAS_A_REAL_SCHOOL', count: 1 });
+  });
+});
+
 describe('refusalText', () => {
   it('names a count and never an address, a name or an id', () => {
     for (const refusal of [
@@ -110,11 +173,18 @@ describe('refusalText', () => {
       { code: 'PEOPLE_OUTSIDE_THE_DEMO' as const, count: 4 },
       { code: 'TIED_TO_A_HUVUDMAN' as const, count: 2 },
       { code: 'TIED_TO_ANOTHER_SCHOOL' as const, count: 1 },
+      { code: 'DATABASE_HAS_A_REAL_SCHOOL' as const, count: 1 },
+      { code: 'DATABASE_HAS_A_REAL_SCHOOL' as const, count: 2 },
     ]) {
       const text = refusalText(refusal);
-      expect(text).toMatch(/[Ii]ngenting är raderat/);
+      expect(text).toMatch(/[Ii]ngenting är (raderat|skapat)/);
       expect(text).not.toMatch(/[\w.+-]+@(?!demo-skola\.example\.com)[\w.-]+/);
     }
+  });
+
+  it('counts the schools of a database in the singular and the plural', () => {
+    expect(refusalText({ code: 'DATABASE_HAS_A_REAL_SCHOOL', count: 1 })).toContain('1 skola med personer');
+    expect(refusalText({ code: 'DATABASE_HAS_A_REAL_SCHOOL', count: 3 })).toContain('3 skolor med personer');
   });
 
   it('counts in the singular and the plural', () => {

@@ -14,6 +14,14 @@
  * the other end (a room lent to a real school, a teacher shared with one, a school a kommun owns).
  *
  * An empty school is refused: a school with nobody in it proves nothing, and the seed always makes people.
+ *
+ * THE DATABASE IS JUDGED TOO, when the demo school is not there to reset. `db:seed` and `db:seed --reset` run against whatever DIRECT_URL
+ * names, and a demo school made in a database that already holds a real school is a demo school in a real school's database. The
+ * production database holds one school and none with the demo's slug: a seed run against it by mistake would have added a
+ * school of eighty fictional pupils to it. So a demo school is made only in a database where no person has an address outside the names
+ * reserved for examples (`isReservedDomain`: example.com, example.net and example.org and what is under them, and the top domains
+ * .test, .example, .invalid and .localhost). A database that holds a real school is refused, and nothing is made. A demo school that
+ * is already there is reset as before: it is judged by its own people, and another school in the same database is not touched.
  */
 
 export interface DemoSpec {
@@ -38,6 +46,7 @@ export interface SchoolFacts {
 }
 
 export type Refusal =
+  | { code: 'DATABASE_HAS_A_REAL_SCHOOL'; count: number }
   | { code: 'NOT_THE_DEMO_SCHOOL' }
   | { code: 'NO_PEOPLE' }
   | { code: 'PEOPLE_OUTSIDE_THE_DEMO'; count: number }
@@ -56,6 +65,35 @@ export function isDemoAddress(email: string, domain: string = DEMO.domain): bool
   return email.slice(at + 1).toLowerCase() === domain.toLowerCase();
 }
 
+const RESERVED_TOP_DOMAINS: readonly string[] = ['test', 'example', 'invalid', 'localhost'];
+const RESERVED_EXAMPLE_DOMAINS: readonly string[] = ['example.com', 'example.net', 'example.org'];
+
+/**
+ * Whether a domain is one RFC 2606 and 6761 reserve for examples and tests, which no mailbox is behind: example.com, example.net and
+ * example.org and every name under them, and the top domains .test, .example, .invalid and .localhost. A look-alike is not one
+ * (`notexample.com`, `example.com.evil.org`, `example.co`), nor is an empty domain or one with an empty label.
+ */
+export function isReservedDomain(domain: string): boolean {
+  const labels = domain.toLowerCase().split('.');
+  if (labels.some((label) => label === '')) return false;
+  if (RESERVED_TOP_DOMAINS.includes(labels[labels.length - 1]!)) return true;
+  return RESERVED_EXAMPLE_DOMAINS.includes(labels.slice(-2).join('.'));
+}
+
+/** What a database holds of each school, as far as the guard looks: the domains of its people's addresses, each once. */
+export interface DatabaseSchool {
+  domains: readonly string[];
+}
+
+/**
+ * Null when a demo school may be made in the database: no school has a person at an address outside the reserved names. A school with
+ * nobody in it holds no personal data, and does not count.
+ */
+export function judgeDatabase(schools: readonly DatabaseSchool[]): Refusal | null {
+  const real = schools.filter((school) => school.domains.some((domain) => !isReservedDomain(domain))).length;
+  return real > 0 ? { code: 'DATABASE_HAS_A_REAL_SCHOOL', count: real } : null;
+}
+
 /** Null when the school may be reset; otherwise the first reason it may not, in the order a person would ask them. */
 export function judgeDemoSchool(facts: SchoolFacts, spec: DemoSpec = DEMO): Refusal | null {
   if (facts.slug !== spec.slug || facts.name !== spec.name) return { code: 'NOT_THE_DEMO_SCHOOL' };
@@ -70,6 +108,8 @@ export function judgeDemoSchool(facts: SchoolFacts, spec: DemoSpec = DEMO): Refu
 /** What the script says when it refuses: a count where there are people, never an address and never a name. */
 export function refusalText(refusal: Refusal, spec: DemoSpec = DEMO): string {
   switch (refusal.code) {
+    case 'DATABASE_HAS_A_REAL_SCHOOL':
+      return `Databasen har ${refusal.count} ${refusal.count === 1 ? 'skola' : 'skolor'} med personer på riktiga adresser, och en demoskola görs inte i en sådan databas. Kör db:seed mot en databas för demo och test. Ingenting är skapat.`;
     case 'NOT_THE_DEMO_SCHOOL':
       return `Skolan heter eller har en adress som inte är demoskolans (${spec.slug}, "${spec.name}"). Ingenting är raderat.`;
     case 'NO_PEOPLE':

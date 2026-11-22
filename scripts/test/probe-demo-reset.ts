@@ -26,7 +26,14 @@
  *   (6) LOGINS: one only the demo held is written back, on the same address; one another school also holds is not, and that school's
  *       row is untouched; a Supabase user is never a row here at all;
  *   (7) a dry run writes nothing and says what it would do, and a school that is not there is made;
- *   (8) the rows the read log leaves (PersonalDataAccess: append-only, no foreign key to the school) do not stop a reset.
+ *   (8) the rows the read log leaves (PersonalDataAccess: append-only, no foreign key to the school) do not stop a reset;
+ *   (9) A DATABASE WITH A REAL SCHOOL: where the demo school is not there, it is not made, by `db:seed` or by `--reset` or in a dry run, and
+ *       nothing is created; where it is there it is reset as before and the real school beside it is untouched. A school with nobody in
+ *       it, and one whose people are all at the names reserved for examples, are not a real school.
+ *
+ * It needs a database with no school that has a person at a real address when it starts (the CI database holds made-up schools only: the
+ * seed's, the RLS fixtures' and the probes'), because (7) makes a demo school where there is none, which is what (9) shows a real school
+ * stops. It drops a school with a real address as soon as the check that made it is done.
  *
  * It drops every school it made.
  */
@@ -90,6 +97,12 @@ const person = (schoolId: string, email: string, extra: Record<string, unknown> 
 
 const exists = async (schoolId: string) => (await owner.school.count({ where: { id: schoolId } })) === 1;
 
+/** Schools a check made with a real address, to drop the moment it is done. */
+const cleanupNow: string[] = [];
+async function dropNow(): Promise<void> {
+  for (const id of cleanupNow.splice(0)) await owner.school.delete({ where: { id } }).catch(() => undefined);
+}
+
 async function main(): Promise<void> {
   owner = new PrismaClient({ adapter: createPgAdapter(requiredEnv('PROBE_OWNER_URL')) });
   tables = (
@@ -131,9 +144,13 @@ async function main(): Promise<void> {
       ['a look-alike address', 'p3', (schoolId: string, spec: DemoSpec) => person(schoolId, `x@evil.${spec.domain}`)],
       ['the domain as the start of another', 'p4', (schoolId: string, spec: DemoSpec) => person(schoolId, `x@${spec.domain}.evil.org`)],
       ['a pupil on a real address', 'p5', (schoolId: string) => person(schoolId, `elev-${tag}@gmail.com`, { role: 'STUDENT' })],
+      ['a person on a school domain', 'p6', (schoolId: string) => person(schoolId, `rektor-${tag}@skola.stockholm.se`)],
     ] as const) {
       await check(`(2) the school with the demo's name and ${label} is refused, and nothing is deleted`, async () => {
         const { spec, schoolId } = await demoSchool(key);
+        // A real address is dropped with its school as soon as the check is done: while it is there the database holds a real school, which
+        // is (7)'s and (9)'s to settle, not (2)'s.
+        cleanupNow.push(schoolId);
         await make(schoolId, spec);
         const before = await snapshot(schoolId);
         const result = await resetDemoSchool(owner, { spec });
@@ -143,7 +160,7 @@ async function main(): Promise<void> {
         assert.ok(await exists(schoolId), 'the same school');
         // The domain the demo's people have is the spec's, said once; no person's address is.
         assert.doesNotMatch(describeResult(result, spec).replaceAll(`@${spec.domain}`, ''), /@|kommun|gmail|evil/, 'the refusal names no address');
-      });
+      }).finally(dropNow);
     }
 
     await check('(2) a school with no people is refused: nobody in it proves nothing', async () => {
@@ -355,7 +372,7 @@ async function main(): Promise<void> {
     });
 
     // (7) a dry run, and a school that is not there
-    await check('(7) a dry run writes nothing and says it may; for a school with a real person it refuses; for none it says there is none', async () => {
+    await check('(7) a dry run writes nothing and says it may; for a school with a real person it refuses; for none it says it may be made', async () => {
       const { spec, schoolId } = await demoSchool('x1');
       const before = await snapshot(schoolId);
       const dry = await resetDemoSchool(owner, { spec, write: false });
@@ -367,9 +384,12 @@ async function main(): Promise<void> {
       const dryRefused = await resetDemoSchool(owner, { spec, write: false });
       assert.equal(dryRefused.kind, 'REFUSED');
 
+      // No school with the slug, and no real school in the database: it may be made, and a dry run makes nothing.
       const none = specOf('none');
-      await assert.rejects(resetDemoSchool(owner, { spec: none, write: false }), /no school with the slug/);
+      const dryNone = await resetDemoSchool(owner, { spec: none, write: false });
+      assert.equal(dryNone.kind, 'MAY_BE_CREATED', 'a database with made-up schools only: the demo school may be made (a real school in it would be (9)\'s)');
       assert.equal(await owner.school.count({ where: { slug: none.slug } }), 0, 'a dry run makes nothing');
+      assert.match(describeResult(dryNone, none), /Nothing was written/);
       const made = await resetDemoSchool(owner, { spec: none });
       assert.equal(made.kind, 'CREATED');
       if (made.kind === 'CREATED') created.push(made.schoolId);
@@ -385,6 +405,47 @@ async function main(): Promise<void> {
       const result = await resetDemoSchool(owner, { spec });
       assert.equal(result.kind, 'RESET');
       if (result.kind === 'RESET') created.push(result.schoolId);
+    });
+
+    // (9) a database with a real school
+    await check('(9) where the demo school is not there and the database holds a real school, nothing is made: not by a seed, a reset or a dry run', async () => {
+      const spec = specOf('db9');
+      const real = await owner.school.create({ data: { name: `Probe riktig skola ${tag}`, slug: `probe-real-db9-${tag}`, timezone: 'Europe/Stockholm' } });
+      cleanupNow.push(real.id);
+      await person(real.id, `rektor-${tag}@skola.stockholm.se`);
+      const before = await snapshot(real.id);
+      try {
+        for (const write of [true, false]) {
+          const result = await resetDemoSchool(owner, { spec, write });
+          assert.equal(result.kind, 'REFUSED');
+          if (result.kind === 'REFUSED') {
+            assert.equal(result.schoolId, null, 'no demo school to name');
+            assert.deepEqual(result.refusal, { code: 'DATABASE_HAS_A_REAL_SCHOOL', count: 1 });
+          }
+          assert.match(describeResult(result, spec), /^NOT SEEDED\. Databasen har 1 skola med personer på riktiga adresser/);
+          assert.doesNotMatch(describeResult(result, spec), /@|stockholm|rektor/, 'the refusal names no address');
+        }
+        assert.equal(await owner.school.count({ where: { slug: spec.slug } }), 0, 'no demo school was made');
+        assert.deepEqual(await snapshot(real.id), before, 'the real school is as it was');
+
+        // A demo school that is already there is reset as before, and the real school beside it is untouched.
+        const there = await demoSchool('db9b');
+        const reset = await resetDemoSchool(owner, { spec: there.spec });
+        assert.equal(reset.kind, 'RESET');
+        if (reset.kind === 'RESET') created.push(reset.schoolId);
+        assert.deepEqual(await snapshot(real.id), before, 'the real school, row for row, after a reset of the demo school beside it');
+      } finally {
+        await dropNow();
+      }
+    });
+
+    await check('(9) a school with nobody in it, and schools whose people are all at the names reserved for examples, are not a real school', async () => {
+      const empty = await owner.school.create({ data: { name: `Probe tom ${tag}`, slug: `probe-empty-db9-${tag}`, timezone: 'Europe/Stockholm' } });
+      created.push(empty.id);
+      const made = specOf('db9c');
+      const result = await resetDemoSchool(owner, { spec: made });
+      assert.equal(result.kind, 'CREATED');
+      if (result.kind === 'CREATED') created.push(result.schoolId);
     });
   } finally {
     for (const id of created.reverse()) {
