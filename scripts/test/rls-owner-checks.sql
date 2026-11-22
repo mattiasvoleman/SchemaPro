@@ -8175,3 +8175,176 @@ BEGIN
   RAISE NOTICE 'vo 554: % checks', current_setting('vo.checks');
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 564: the owner's side of the ordinance's reference data (20270301090000; the API's side is sections 560-563 of
+-- rls-policies.sql). What the API's role cannot ask of itself, because it may not write the tables at all:
+--
+--   * two lydelser never hold the same day (EXCLUDE), the day before a successor starts is the last of the one before, and a
+--     version that another names as its successor cannot be removed;
+--   * two bands of one lydelse, school form and numbering never share a grade, so a grade finds at most one band; another
+--     numbering or school form may hold the same grades;
+--   * the CHECKs: a span that is a span, a floor that is a share, grades that are grades, sections and notes that say something;
+--   * a version removed takes its bands with it;
+--   * what no API role may do to the tables even with a privilege it holds elsewhere: lock them above ACCESS SHARE (MAINTAIN on
+--     17, UPDATE and DELETE on 16 would open it), asked as each role.
+--
+-- Everything is planted and rolled back; the seeded version and its two bands are read back before and after.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.ut_tick() RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('ut.checks', (coalesce(nullif(current_setting('ut.checks', true), ''), '0')::integer + 1)::text, true);
+$f$;
+CREATE FUNCTION pg_temp.ut_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.ut_tick();
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'ut %: got\n%\nwanted\n%', p_label, p_got, p_want USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+-- A statement and what became of it: ok, or the SQLSTATE and the constraint's name. A failed statement leaves nothing.
+CREATE FUNCTION pg_temp.ut_try(p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  st text;
+  con text;
+BEGIN
+  BEGIN
+    EXECUTE p_stmt;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, con = CONSTRAINT_NAME;
+  END;
+  RETURN CASE WHEN coalesce(con, '') <> '' THEN st || ' ' || con ELSE st END;
+END $f$;
+
+BEGIN;
+DO $$
+DECLARE
+  v1 uuid;
+  r text;
+  mode text;
+  before_rows text;
+BEGIN
+  SELECT id INTO v1 FROM "AssignmentScopeVersions" WHERE code = 'SFS2026:1487';
+  IF v1 IS NULL THEN RAISE EXCEPTION 'ut 564: the migration''s version is not there'; END IF;
+  SELECT string_agg(concat_ws('|', "gradeFrom", "gradeTo", "teachingHoursLow", "teachingHoursHigh", "planningFloorPercent"), ';' ORDER BY "gradeFrom") INTO before_rows
+    FROM "AssignmentScopeBands" WHERE "versionId" = v1;
+  PERFORM pg_temp.ut_expect('564 the seeded bands, before', before_rows, '1|6|550|650|100;7|9|500|600|110');
+
+  -- Versions: a second lydelse on a day the first holds is refused, the first being open-ended.
+  PERFORM pg_temp.ut_expect('564 a lydelse from the day after the first has begun is refused (the first holds for ever)',
+    pg_temp.ut_try($q$INSERT INTO "AssignmentScopeVersions" (code, sfs, title, "validFrom", source) VALUES ('UT-A', 'x', 'x', DATE '2030-01-01', 'x')$q$),
+    '23P01 AssignmentScopeVersions_validity_does_not_overlap');
+  PERFORM pg_temp.ut_expect('564 a lydelse that ends before the first begins is no overlap',
+    pg_temp.ut_try($q$INSERT INTO "AssignmentScopeVersions" (code, sfs, title, "validFrom", "validTo", source) VALUES ('UT-OLD', 'x', 'x', DATE '2020-01-01', DATE '2027-06-30', 'x')$q$), 'ok');
+  PERFORM pg_temp.ut_expect('564 ... and one day more is',
+    pg_temp.ut_try($q$INSERT INTO "AssignmentScopeVersions" (code, sfs, title, "validFrom", "validTo", source) VALUES ('UT-OLD2', 'x', 'x', DATE '2019-01-01', DATE '2027-07-01', 'x')$q$),
+    '23P01 AssignmentScopeVersions_validity_does_not_overlap');
+  -- A successor: the first is closed, and the next starts the day after. Inclusive end: no day is held twice, none is held by nobody.
+  UPDATE "AssignmentScopeVersions" SET "validTo" = DATE '2029-12-31' WHERE id = v1;
+  PERFORM pg_temp.ut_expect('564 a successor from the day after the first one''s last day is accepted',
+    pg_temp.ut_try($q$INSERT INTO "AssignmentScopeVersions" (code, sfs, title, "validFrom", source) VALUES ('UT-B', 'x', 'x', DATE '2030-01-01', 'x')$q$), 'ok');
+  PERFORM pg_temp.ut_expect('564 a successor from the last day itself is refused',
+    pg_temp.ut_try($q$INSERT INTO "AssignmentScopeVersions" (code, sfs, title, "validFrom", source) VALUES ('UT-C', 'x', 'x', DATE '2029-12-31', 'x')$q$),
+    '23P01 AssignmentScopeVersions_validity_does_not_overlap');
+  PERFORM pg_temp.ut_expect('564 a lydelse can name its successor, and the successor must be there',
+    pg_temp.ut_try($q$UPDATE "AssignmentScopeVersions" SET "supersededByCode" = 'UT-B' WHERE id = (SELECT id FROM "AssignmentScopeVersions" WHERE code = 'SFS2026:1487')$q$), 'ok');
+  PERFORM pg_temp.ut_expect('564 ... a successor that is not there is refused',
+    pg_temp.ut_try($q$UPDATE "AssignmentScopeVersions" SET "supersededByCode" = 'UT-NOWHERE' WHERE code = 'SFS2026:1487'$q$),
+    '23503 AssignmentScopeVersions_supersededByCode_fkey');
+  PERFORM pg_temp.ut_expect('564 ... itself is refused',
+    pg_temp.ut_try($q$UPDATE "AssignmentScopeVersions" SET "supersededByCode" = 'UT-B' WHERE code = 'UT-B'$q$),
+    '23514 AssignmentScopeVersions_does_not_supersede_itself');
+  PERFORM pg_temp.ut_expect('564 a successor cannot be removed while a lydelse names it (RESTRICT)',
+    pg_temp.ut_try($q$DELETE FROM "AssignmentScopeVersions" WHERE code = 'UT-B'$q$), '23503 AssignmentScopeVersions_supersededByCode_fkey');
+  PERFORM pg_temp.ut_expect('564 a lydelse that ends before it begins is refused',
+    pg_temp.ut_try($q$INSERT INTO "AssignmentScopeVersions" (code, sfs, title, "validFrom", "validTo", source) VALUES ('UT-D', 'x', 'x', DATE '2040-02-01', DATE '2040-01-31', 'x')$q$),
+    '23514 AssignmentScopeVersions_validity_is_a_range');
+  PERFORM pg_temp.ut_expect('564 a code says something',
+    pg_temp.ut_try($q$INSERT INTO "AssignmentScopeVersions" (code, sfs, title, "validFrom", source) VALUES ('  ', 'x', 'x', DATE '2050-01-01', 'x')$q$),
+    '23514 AssignmentScopeVersions_code_is_not_blank');
+  PERFORM pg_temp.ut_expect('564 a code is unique',
+    pg_temp.ut_try($q$INSERT INTO "AssignmentScopeVersions" (code, sfs, title, "validFrom", "validTo", source) VALUES ('UT-B', 'x', 'x', DATE '1990-01-01', DATE '1990-01-02', 'x')$q$),
+    '23505 AssignmentScopeVersions_code_key');
+
+  -- Bands.
+  PERFORM pg_temp.ut_expect('564 a band over a grade another band of the lydelse holds is refused',
+    pg_temp.ut_try(format($q$INSERT INTO "AssignmentScopeBands" ("versionId", "schoolForm", "gradeNumbering", "gradeFrom", "gradeTo", "teachingHoursLow", "teachingHoursHigh", "planningFloorPercent", "teachingSection", "planningSection")
+                             VALUES (%L, 'GRUNDSKOLA', 'NIOARIG', 6, 8, 500, 600, 100, 'x', 'x')$q$, v1)),
+    '23P01 AssignmentScopeBands_grades_do_not_overlap');
+  PERFORM pg_temp.ut_expect('564 ... the same grades in the other numbering are no overlap',
+    pg_temp.ut_try(format($q$INSERT INTO "AssignmentScopeBands" ("versionId", "schoolForm", "gradeNumbering", "gradeFrom", "gradeTo", "teachingHoursLow", "teachingHoursHigh", "planningFloorPercent", "teachingSection", "planningSection")
+                             VALUES (%L, 'GRUNDSKOLA', 'TIOARIG', 1, 6, 550, 650, 100, 'x', 'x')$q$, v1)), 'ok');
+  PERFORM pg_temp.ut_expect('564 ... nor in another school form',
+    pg_temp.ut_try(format($q$INSERT INTO "AssignmentScopeBands" ("versionId", "schoolForm", "gradeNumbering", "gradeFrom", "gradeTo", "teachingHoursLow", "teachingHoursHigh", "planningFloorPercent", "teachingSection", "planningSection")
+                             VALUES (%L, 'SPECIALSKOLA', 'NIOARIG', 1, 7, 550, 650, 100, 'x', 'x')$q$, v1)), 'ok');
+  PERFORM pg_temp.ut_expect('564 ... nor in another lydelse',
+    pg_temp.ut_try($q$INSERT INTO "AssignmentScopeBands" ("versionId", "schoolForm", "gradeNumbering", "gradeFrom", "gradeTo", "teachingHoursLow", "teachingHoursHigh", "planningFloorPercent", "teachingSection", "planningSection")
+                      SELECT id, 'GRUNDSKOLA', 'NIOARIG', 1, 6, 550, 650, 100, 'x', 'x' FROM "AssignmentScopeVersions" WHERE code = 'UT-B'$q$), 'ok');
+  PERFORM pg_temp.ut_expect('564 ... and the grades next to a band are free',
+    pg_temp.ut_try(format($q$INSERT INTO "AssignmentScopeBands" ("versionId", "schoolForm", "gradeNumbering", "gradeFrom", "gradeTo", "teachingHoursLow", "teachingHoursHigh", "planningFloorPercent", "teachingSection", "planningSection")
+                             VALUES (%L, 'GRUNDSKOLA', 'NIOARIG', 10, 10, 500, 600, 110, 'x', 'x')$q$, v1)), 'ok');
+  FOR r, mode IN SELECT * FROM (VALUES
+      ('a span whose bottom is above its top',      '11, 11, 650, 600, 100, ''x'', ''x'', NULL'),
+      ('a span that starts at nothing',             '11, 11, 0, 600, 100, ''x'', ''x'', NULL'),
+      ('a span above 2 500 hours',                  '11, 11, 600, 2501, 100, ''x'', ''x'', NULL'),
+      ('a planning floor above 300 per cent',       '11, 11, 500, 600, 301, ''x'', ''x'', NULL'),
+      ('a planning floor below nothing',            '11, 11, 500, 600, -1, ''x'', ''x'', NULL'),
+      ('a grade range upside down',                 '12, 11, 500, 600, 100, ''x'', ''x'', NULL'),
+      ('a grade above 12',                          '13, 13, 500, 600, 100, ''x'', ''x'', NULL'),
+      ('a grade below 0',                           '-1, 0, 500, 600, 100, ''x'', ''x'', NULL'),
+      ('a teaching section that says nothing',      '11, 11, 500, 600, 100, '' '', ''x'', NULL'),
+      ('a planning section that says nothing',      '11, 11, 500, 600, 100, ''x'', '''', NULL'),
+      ('a note that says nothing',                  '11, 11, 500, 600, 100, ''x'', ''x'', '' ''')
+    ) w(a, b) LOOP
+    PERFORM pg_temp.ut_expect('564 ' || r || ' is refused',
+      split_part(pg_temp.ut_try(format($q$INSERT INTO "AssignmentScopeBands" ("versionId", "schoolForm", "gradeNumbering", "gradeFrom", "gradeTo", "teachingHoursLow", "teachingHoursHigh", "planningFloorPercent", "teachingSection", "planningSection", "note")
+                                          VALUES (%L, 'GRUNDSKOLA', 'NIOARIG', %s)$q$, v1, mode)), ' ', 1), '23514');
+  END LOOP;
+
+  -- A lydelse removed takes its bands: the seeded lydelse is closed above and now has an open successor naming nobody, so remove the
+  -- successor's own first, then the seeded one, and count.
+  UPDATE "AssignmentScopeVersions" SET "supersededByCode" = NULL WHERE code = 'SFS2026:1487';
+  PERFORM pg_temp.ut_expect('564 the bands of the lydelse that is removed go with it',
+    (SELECT count(*) FROM "AssignmentScopeBands" WHERE "versionId" = (SELECT id FROM "AssignmentScopeVersions" WHERE code = 'UT-B'))::text, '1');
+  DELETE FROM "AssignmentScopeVersions" WHERE code = 'UT-B';
+  PERFORM pg_temp.ut_expect('564 ... all of them', (SELECT count(*) FROM "AssignmentScopeBands" WHERE "versionId" NOT IN (SELECT id FROM "AssignmentScopeVersions"))::text, '0');
+
+  -- A key's code that changes follows to the lydelse naming it (ON UPDATE CASCADE).
+  INSERT INTO "AssignmentScopeVersions" (code, sfs, title, "validFrom", "supersededByCode", source) VALUES ('UT-E', 'x', 'x', DATE '2031-01-01', NULL, 'x');
+  UPDATE "AssignmentScopeVersions" SET "supersededByCode" = 'UT-E' WHERE code = 'SFS2026:1487';
+  UPDATE "AssignmentScopeVersions" SET code = 'UT-E2' WHERE code = 'UT-E';
+  PERFORM pg_temp.ut_expect('564 a code that is renamed is followed by the lydelse that names it',
+    (SELECT "supersededByCode" FROM "AssignmentScopeVersions" WHERE code = 'SFS2026:1487'), 'UT-E2');
+  RAISE NOTICE 'ut 564 (constraints): % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- The seeded rows are as they were: all of the above was rolled back.
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('564 the seeded lydelse is still open-ended and unnamed as a predecessor',
+    (SELECT concat_ws('|', code, "validFrom", coalesce("validTo"::text, '-'), coalesce("supersededByCode", '-')) FROM "AssignmentScopeVersions"), 'SFS2026:1487|2027-07-01|-|-');
+  PERFORM pg_temp.ut_expect('564 ... with its two bands, and nothing else', (SELECT count(*) FROM "AssignmentScopeBands")::text, '2');
+END $$;
+
+-- What no API role may do to the tables, even with a privilege it holds elsewhere: lock them above ACCESS SHARE. A lock that blocks
+-- every read of the ordinance, for every school, until it ends, is a denial of service that needs no write.
+DO $$
+DECLARE
+  r text;
+  t text;
+  m text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'service_role', 'anon'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH t IN ARRAY ARRAY['AssignmentScopeVersions', 'AssignmentScopeBands'] LOOP
+      FOREACH m IN ARRAY ARRAY['ACCESS EXCLUSIVE', 'EXCLUSIVE', 'SHARE ROW EXCLUSIVE', 'SHARE UPDATE EXCLUSIVE', 'SHARE', 'ROW EXCLUSIVE', 'ROW SHARE'] LOOP
+        PERFORM pg_temp.ut_expect(format('564 %s locking %s in %s mode', r, t, m),
+          (SELECT pg_temp.ut_try(format('SET LOCAL ROLE %I; LOCK TABLE %I IN %s MODE', r, t, m))), '42501');
+        RESET ROLE;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  RAISE NOTICE 'ut 564 (locks): % checks', current_setting('ut.checks');
+END $$;
