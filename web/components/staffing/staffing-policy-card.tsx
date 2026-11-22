@@ -100,7 +100,10 @@ export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) 
     }
   };
 
-  const showsRefuse = draft.qualificationMode === "REFUSE" || draft.overAllocationMode === "REFUSE";
+  const showsRefuse =
+    draft.qualificationMode === "REFUSE" ||
+    draft.overAllocationMode === "REFUSE" ||
+    draft.assignmentScopeMode === "REFUSE";
 
   return (
     <SectionCard
@@ -226,6 +229,29 @@ export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) 
               <Select
                 value={draft.overAllocationMode}
                 onValueChange={(value) => patch({ overAllocationMode: value as StaffingCheckMode })}
+              >
+                <SelectTrigger {...control}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CHECK_MODES.map((mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      {t(`mode${mode}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </FormField>
+          <FormField
+            id={`${id}-assignment-scope-mode`}
+            label={t("assignmentScopeMode")}
+            hint={t("assignmentScopeModeHint")}
+          >
+            {(control) => (
+              <Select
+                value={draft.assignmentScopeMode}
+                onValueChange={(value) => patch({ assignmentScopeMode: value as StaffingCheckMode })}
               >
                 <SelectTrigger {...control}>
                   <SelectValue />

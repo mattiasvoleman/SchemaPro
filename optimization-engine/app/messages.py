@@ -1512,6 +1512,26 @@ MESSAGES: dict[str, str] = {
         "{tolerance} % tolerance. The minutes are shown to the principal, a full "
         "administrator and anyone with HR read access."
     ),
+    # The ordinance's highest level of a teacher's teaching time per school year
+    # (SFS 2026:1487 section 3, in force from 2027-07-01; gateway
+    # assignment-scope.ts and staffing-checks.ts overScopeFinding). Hours, the
+    # lessons' own time, unweighted: not the target of the question above, which
+    # is the school's own measure. `hours` and `limit` are printed as the gateway
+    # writes them, whole or with one decimal and a comma.
+    "STAFF_TEACHER_OVER_SCOPE": (
+        "{role, select, CO_TEACHER {The co-teacher} SUBSTITUTE {The substitute} "
+        "other {The teacher}} would get {hours} hours of teaching over the school "
+        "year against the ordinance's highest level of {limit} hours "
+        "(SFS 2026:1487 section 3)."
+    ),
+    # The same verdict for a reader without HR read access: the highest level is
+    # the ordinance's span times the post, which would give the post back.
+    "STAFF_TEACHER_OVER_SCOPE_HIDDEN": (
+        "{role, select, CO_TEACHER {The co-teacher} SUBSTITUTE {The substitute} "
+        "other {The teacher}} would get more teaching than the ordinance's highest "
+        "level for the post (SFS 2026:1487 section 3). The hours are shown to the "
+        "principal, a full administrator and anyone with HR read access."
+    ),
     # Refused by the GATEWAY before the engine is woken
     # (optimization-proxy.service.ts groupConflictsRefusal): a week whose
     # groupConflicts pass the request's max_length. Here because this is the

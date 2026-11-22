@@ -58,18 +58,25 @@ describe('toScopeVersion', () => {
 });
 
 describe('readScopeVersions', () => {
-  it('reads every lydelse with its bands in one call, oldest first', async () => {
-    const findMany = jest.fn().mockResolvedValue([row()]);
-    const tx = { assignmentScopeVersion: { findMany } } as unknown as PrismaClient;
-    const versions = await readScopeVersions(tx);
-    expect(findMany).toHaveBeenCalledTimes(1);
-    expect(findMany).toHaveBeenCalledWith({ include: { bands: true }, orderBy: { validFrom: 'asc' } });
+  it('asks the database for the lydelse that holds on the year\'s first day, with its bands, and answers a list of one', async () => {
+    const findFirst = jest.fn().mockResolvedValue(row());
+    const tx = { assignmentScopeVersion: { findFirst } } as unknown as PrismaClient;
+    const versions = await readScopeVersions(tx, '2027-08-16');
+    expect(findFirst).toHaveBeenCalledTimes(1);
+    const day = new Date('2027-08-16T00:00:00.000Z');
+    expect(findFirst).toHaveBeenCalledWith({
+      where: { validFrom: { lte: day }, OR: [{ validTo: null }, { validTo: { gte: day } }] },
+      orderBy: { validFrom: 'desc' },
+      include: { bands: true },
+    });
     expect(versions).toHaveLength(1);
     expect(versions[0]!.code).toBe('SFS2026:1487');
   });
 
-  it('answers none for an empty table', async () => {
-    const tx = { assignmentScopeVersion: { findMany: jest.fn().mockResolvedValue([]) } } as unknown as PrismaClient;
-    expect(await readScopeVersions(tx)).toEqual([]);
+  it('answers none when no lydelse holds that day (a läsår that begins before the ordinance): one statement, no bands read', async () => {
+    const findFirst = jest.fn().mockResolvedValue(null);
+    const tx = { assignmentScopeVersion: { findFirst } } as unknown as PrismaClient;
+    expect(await readScopeVersions(tx, '2026-08-17')).toEqual([]);
+    expect(findFirst).toHaveBeenCalledTimes(1);
   });
 });

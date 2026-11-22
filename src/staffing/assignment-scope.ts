@@ -440,6 +440,28 @@ export function buildScopeReport(
 }
 
 /**
+ * One teacher's scope over the year as `input` states it, for a write's before and after: the same figures the report gives
+ * (buildScopeReport), computed over the rows that name the teacher alone, so the cost of asking is the teacher's own rows and not
+ * the school's. The report passed in is empty, so the working time left and whether it holds the planning floor are not
+ * asked: a write is judged on the teaching hours and the span.
+ */
+export function scopeOfTeacher(
+  input: LoadInput,
+  versions: readonly ScopeVersion[],
+  userId: string,
+  options: { ownLevelHours?: ReadonlyMap<string, number> } = {},
+): TeacherScope | null {
+  const mine: LoadInput = {
+    ...input,
+    requirements: input.requirements.filter(
+      (row) => row.teacherId === userId || row.coTeacherId === userId || (row.shares ?? []).some((share) => share.teacherId === userId),
+    ),
+    employments: input.employments.filter((row) => row.userId === userId),
+  };
+  return buildScopeReport(mine, { teachers: [] }, versions, options).teachers.find((row) => row.userId === userId) ?? null;
+}
+
+/**
  * The same teacher's figures for a reader who may not read the post's percentages (hr-visibility.ts): the verdict
  * stays, and every figure that is the span × the post, or the working time less the teaching, goes, because with the
  * ordinance's span known either gives the percentage back.

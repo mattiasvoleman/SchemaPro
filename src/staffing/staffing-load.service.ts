@@ -161,7 +161,7 @@ export class StaffingLoadService {
       // The ordinance's omfattning over the same rows, in the same transaction, so that its hours and the report's minutes
       // are about one moment.
       const scope =
-        options.scope === false ? null : buildScopeReport(read.input, built, await readScopeVersions(tx));
+        options.scope === false ? null : buildScopeReport(read.input, built, await readScopeVersions(tx, read.year.startDate));
       return { year: read.year, report: built, travel, supervision, scope };
     });
 

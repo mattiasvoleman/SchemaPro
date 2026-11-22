@@ -498,6 +498,8 @@ export interface PolicyDraft {
   semesterHoursPerWeek: string;
   qualificationMode: StaffingCheckMode;
   overAllocationMode: StaffingCheckMode;
+  /** What a write over the ordinance's highest level of teaching time may do (SFS 2026:1487 3 §). */
+  assignmentScopeMode: StaffingCheckMode;
   overAllocationTolerancePercent: string;
   loadModel: StaffingLoadModel;
   unstaffedGeneration: UnstaffedGenerationMode;
@@ -514,6 +516,7 @@ export const DEFAULT_POLICY_DRAFT: PolicyDraft = {
   semesterHoursPerWeek: "40",
   qualificationMode: "WARN",
   overAllocationMode: "WARN",
+  assignmentScopeMode: "WARN",
   overAllocationTolerancePercent: "10",
   loadModel: "MINUTES",
   unstaffedGeneration: "ALLOW",
@@ -528,6 +531,11 @@ export interface PolicyBody {
   semesterHoursPerWeek: number;
   qualificationMode: StaffingCheckMode;
   overAllocationMode: StaffingCheckMode;
+  /**
+   * Always sent, for unstaffedGeneration's reason: an omitted field is the default WARN, so a card that forgot it would
+   * switch a school's REFUSE of the ordinance's highest level off on every save.
+   */
+  assignmentScopeMode: StaffingCheckMode;
   overAllocationTolerancePercent: number;
   loadModel: StaffingLoadModel;
   /**
@@ -595,6 +603,7 @@ export function policyDraftToBody(draft: PolicyDraft): PolicyBody {
     semesterHoursPerWeek: parseDecimal(draft.semesterHoursPerWeek, 1) ?? 0,
     qualificationMode: draft.qualificationMode,
     overAllocationMode: draft.overAllocationMode,
+    assignmentScopeMode: draft.assignmentScopeMode,
     overAllocationTolerancePercent: wholeNumber(draft.overAllocationTolerancePercent) ?? 0,
     loadModel: draft.loadModel,
     unstaffedGeneration: draft.unstaffedGeneration,
@@ -610,6 +619,8 @@ export function policyToDraft(row: {
   semesterHoursPerWeek: number;
   qualificationMode: StaffingCheckMode;
   overAllocationMode: StaffingCheckMode;
+  /** Absent from a gateway older than the column (20270301090000): read as WARN, the table's default. */
+  assignmentScopeMode?: StaffingCheckMode;
   overAllocationTolerancePercent: number;
   loadModel: StaffingLoadModel;
   unstaffedGeneration?: UnstaffedGenerationMode;
@@ -627,6 +638,7 @@ export function policyToDraft(row: {
     semesterHoursPerWeek: String(row.semesterHoursPerWeek),
     qualificationMode: row.qualificationMode,
     overAllocationMode: row.overAllocationMode,
+    assignmentScopeMode: row.assignmentScopeMode ?? "WARN",
     overAllocationTolerancePercent: String(row.overAllocationTolerancePercent),
     loadModel: row.loadModel,
     // A row read from a gateway older than the column reads as today's rule.

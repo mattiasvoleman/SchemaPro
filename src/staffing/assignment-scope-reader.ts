@@ -5,10 +5,8 @@ import type { ScopeBand, ScopeVersion } from './assignment-scope';
  * The ordinance's lydelser and their bands (AssignmentScopeVersions, AssignmentScopeBands; migration 20270301090000),
  * read in the caller's own RLS transaction.
  *
- * Global reference data, a handful of rows: every lydelse is read and the year's first day picks one (versionInForce),
- * so no date arithmetic lives in SQL and a year before the ordinance simply finds none. Two statements, the lydelser and then
- * their bands (Prisma 7 reads a relation as a statement of its own, and `relationLoadStrategy: 'join'` is not on), which every
- * report that asks for the scope pays.
+ * Global reference data, a handful of rows. The lydelse that holds on the year's first day is asked for by that day, and the
+ * arithmetic that decides between two (versionInForce) stays in the pure module for the callers that hold several.
  */
 
 type VersionRow = {
@@ -61,11 +59,17 @@ export function toScopeVersion(row: VersionRow): ScopeVersion {
   };
 }
 
-/** Every lydelse of the ordinance with its bands, oldest first. */
-export async function readScopeVersions(tx: PrismaClient): Promise<ScopeVersion[]> {
-  const rows = await tx.assignmentScopeVersion.findMany({
+/**
+ * The lydelse that holds on a year's first day, with its bands, as a list of one; empty when none holds (every läsår that begins
+ * before 2027-07-01). The database picks it, so a year the ordinance does not reach costs ONE statement and never reads a band: under
+ * Prisma 7 a relation read is a statement of its own, and every report and every guarded write that asks for the scope pays it.
+ */
+export async function readScopeVersions(tx: PrismaClient, yearStart: string): Promise<ScopeVersion[]> {
+  const day = new Date(`${yearStart}T00:00:00.000Z`);
+  const row = await tx.assignmentScopeVersion.findFirst({
+    where: { validFrom: { lte: day }, OR: [{ validTo: null }, { validTo: { gte: day } }] },
+    orderBy: { validFrom: 'desc' },
     include: { bands: true },
-    orderBy: { validFrom: 'asc' },
   });
-  return (rows ?? []).map(toScopeVersion);
+  return row ? [toScopeVersion(row)] : [];
 }

@@ -1,6 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import type { StaffingCheckMode } from '@prisma/client';
 import { changesDuringYear } from './employment-periods';
+import { scopeOfTeacher, type ScopeVersion, type TeacherScope } from './assignment-scope';
 import {
   countedMinutesByTeacher,
   loadStatus,
@@ -36,6 +37,13 @@ import {
  *     figures the matrix's status and the picker's wouldExceed read — loadStatus
  *     judging their whole minutes, as all three print them — so the threshold
  *     here is the threshold there, and `minutes` is never at or under `limit`.
+ *
+ *   STAFF_TEACHER_OVER_SCOPE — would the write take the teacher's teaching hours over the läsår past the upper
+ *     edge of the ordinance's span for their stage (SFS 2026:1487 3 §, assignment-scope.ts)? The same arithmetic as the
+ *     report's `scope` block, in clock hours, unweighted: NOT the riktmärke of the question above, which is the school's
+ *     own measure, so the two answer for themselves and a teacher can be inside one and over the other. Only the upper edge
+ *     is asked: inside the span is the rektor's judgement (8 §), never a refusal. Asked only when the caller hands the
+ *     lydelser in (`scopeVersions`), and only of a teacher who ends up over AND with more hours than before.
  *
  * Each is governed by its own policy mode. OFF asks nothing; WARN lets the write
  * through and hands back `warnings: [{ code, params }]`; REFUSE answers 409 with
@@ -84,6 +92,13 @@ export const STAFF_TEACHER_OVER_TARGET_IN_PERIOD = 'STAFF_TEACHER_OVER_TARGET_IN
  * (CheckPolicy.showsPeriods): no minutes, target, limit or dates.
  */
 export const STAFF_TEACHER_OVER_TARGET_HIDDEN = 'STAFF_TEACHER_OVER_TARGET_HIDDEN' as const;
+/** The ordinance's highest level of teaching time per läsår (SFS 2026:1487 3 §); see assignment-scope.ts. */
+export const STAFF_TEACHER_OVER_SCOPE = 'STAFF_TEACHER_OVER_SCOPE' as const;
+/**
+ * The same verdict for a reader without HR-läs (CheckPolicy.showsPeriods): the upper edge is the ordinance's span times the
+ * post, which gives the post's percentage back, so no hours and no limit.
+ */
+export const STAFF_TEACHER_OVER_SCOPE_HIDDEN = 'STAFF_TEACHER_OVER_SCOPE_HIDDEN' as const;
 /** The generate pre-flight's refusal; see OptimizationProxyService. */
 export const STAFF_UNSTAFFED_REQUIREMENTS = 'STAFF_UNSTAFFED_REQUIREMENTS' as const;
 
@@ -91,7 +106,9 @@ export type StaffingCheckCode =
   | typeof STAFF_TEACHER_NOT_QUALIFIED
   | typeof STAFF_TEACHER_OVER_TARGET
   | typeof STAFF_TEACHER_OVER_TARGET_IN_PERIOD
-  | typeof STAFF_TEACHER_OVER_TARGET_HIDDEN;
+  | typeof STAFF_TEACHER_OVER_TARGET_HIDDEN
+  | typeof STAFF_TEACHER_OVER_SCOPE
+  | typeof STAFF_TEACHER_OVER_SCOPE_HIDDEN;
 
 /** Which of a write's teachers a finding is about. */
 export type StaffingRole = 'TEACHER' | 'CO_TEACHER' | 'SUBSTITUTE';
@@ -119,6 +136,11 @@ export interface CheckPolicy {
   overAllocationTolerancePercent: number;
   fullTimeTeachingMinutesPerWeek: number | null;
   /**
+   * What a write that takes a teacher over the ordinance's highest level of teaching time may do (STAFF_TEACHER_OVER_SCOPE).
+   * Absent reads as OFF, so a policy built before the column asks nothing new; the table's own default is WARN.
+   */
+  assignmentScopeMode?: StaffingCheckMode;
+  /**
    * Whether the reader may see when and how a post changes during the year
    * (Roller i skolan: rektor, full and HR-läs, src/staffing/hr-visibility.ts).
    * False words a changing post's finding as STAFF_TEACHER_OVER_TARGET_HIDDEN:
@@ -140,11 +162,17 @@ export const DEFAULT_CHECK_POLICY: CheckPolicy = {
   overAllocationMode: 'WARN',
   overAllocationTolerancePercent: 10,
   fullTimeTeachingMinutesPerWeek: null,
+  assignmentScopeMode: 'WARN',
 };
 
-/** Whether a policy asks either question at all. */
+/** The ordinance question's mode: OFF when the policy says nothing (a policy from before the column). */
+export function scopeModeOf(policy: CheckPolicy): StaffingCheckMode {
+  return policy.assignmentScopeMode ?? 'OFF';
+}
+
+/** Whether a policy asks any of the questions at all. */
 export function checksAnything(policy: CheckPolicy): boolean {
-  return policy.qualificationMode !== 'OFF' || policy.overAllocationMode !== 'OFF';
+  return policy.qualificationMode !== 'OFF' || policy.overAllocationMode !== 'OFF' || scopeModeOf(policy) !== 'OFF';
 }
 
 /**
@@ -338,6 +366,42 @@ function overTargetOfWrite(args: {
 }
 
 /**
+ * Question three, for one teacher: `before` and `after` are their scope over the year (scopeOfTeacher) without and with the
+ * write. It answers only when the teacher ends OVER the ordinance's highest level (3 §) AND the write added hours: a write
+ * that adds nothing is never refused for a state the school is already in, which would refuse the very fix. The levels
+ * under the upper edge, a teacher's own level (8 §) and the planning floor are the report's to show, never a write's to
+ * refuse.
+ */
+export function overScopeFinding(args: {
+  policy: CheckPolicy;
+  userId: string;
+  role: StaffingRole;
+  before: TeacherScope | null;
+  after: TeacherScope | null;
+}): StaffingFinding | null {
+  const mode = scopeModeOf(args.policy);
+  if (mode === 'OFF') return null;
+  const after = args.after;
+  if (after === null || after.verdict !== 'OVER_MAX' || after.ordinanceHighestHours === null) return null;
+  // The printed hours: a write that moves them by less than a tenth added nothing a person could read.
+  if (after.teachingHours <= (args.before?.teachingHours ?? 0) + 1e-9) return null;
+  if (args.policy.showsPeriods === false) {
+    return { code: STAFF_TEACHER_OVER_SCOPE_HIDDEN, mode, userId: args.userId, params: { role: args.role } };
+  }
+  return {
+    code: STAFF_TEACHER_OVER_SCOPE,
+    mode,
+    userId: args.userId,
+    params: { role: args.role, hours: hoursText(after.teachingHours), limit: hoursText(after.ordinanceHighestHours) },
+  };
+}
+
+/** Hours as a sentence prints them: whole when whole, else one decimal with the Swedish comma ("602", "478,1"). */
+export function hoursText(hours: number): string {
+  return Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace('.', ',');
+}
+
+/**
  * Both questions for one timplanspost write.
  *
  * `input` is the year as read BEFORE the write — an update's own row
@@ -358,6 +422,11 @@ export function judgeRequirementWrite(args: {
   before: LoadRequirement | null;
   after: LoadRequirement;
   subjectName: string;
+  /**
+   * Every lydelse of the ordinance (readScopeVersions), for STAFF_TEACHER_OVER_SCOPE. Absent: the question is not asked,
+   * whatever the policy's mode says (a caller that has not read them).
+   */
+  scopeVersions?: readonly ScopeVersion[];
 }): StaffingFinding[] {
   const { input, policy, before, after } = args;
   if (!checksAnything(policy)) return [];
@@ -410,6 +479,16 @@ export function judgeRequirementWrite(args: {
         role,
         before: () => countedBefore.get(userId) ?? 0,
         after: () => countedAfter.get(userId) ?? 0,
+      });
+      if (finding) findings.push(finding);
+    }
+    if (args.scopeVersions && scopeModeOf(policy) !== 'OFF') {
+      const finding = overScopeFinding({
+        policy,
+        userId,
+        role,
+        before: scopeOfTeacher(input, args.scopeVersions, userId),
+        after: scopeOfTeacher({ ...input, requirements: requirementsAfter }, args.scopeVersions, userId),
       });
       if (finding) findings.push(finding);
     }
@@ -469,6 +548,8 @@ export function judgeRequirementBatch(args: {
   policy: CheckPolicy;
   changes: readonly BatchChange[];
   restoring?: ReadonlyMap<string, string | null>;
+  /** Every lydelse of the ordinance, for STAFF_TEACHER_OVER_SCOPE; absent: not asked (see judgeRequirementWrite). */
+  scopeVersions?: readonly ScopeVersion[];
 }): BatchFinding[] {
   const { input, policy } = args;
   if (!checksAnything(policy)) return [];
@@ -561,6 +642,40 @@ export function judgeRequirementBatch(args: {
       if (finding) findings.push({ ...finding, requirementIds: gained.get(userId)! });
     }
   }
+
+  if (args.scopeVersions && scopeModeOf(policy) !== 'OFF') {
+    const gained = new Map<string, string[]>();
+    for (const change of changes) {
+      const row = rowOf(change.requirementId);
+      if (change.teacherId === null || change.teacherId === row.teacherId) continue;
+      const rows = gained.get(change.teacherId);
+      if (rows) rows.push(row.id);
+      else gained.set(change.teacherId, [row.id]);
+    }
+    const requirementsAfter = input.requirements.map((row) => {
+      const change = changeById.get(row.id);
+      return change ? { ...row, teacherId: change.teacherId } : row;
+    });
+    const requirementsFound =
+      restoring.size === 0
+        ? null
+        : input.requirements.map((row) => (restoring.has(row.id) ? { ...row, teacherId: restoring.get(row.id)! } : row));
+    for (const userId of [...gained.keys()].sort()) {
+      const today = scopeOfTeacher(input, args.scopeVersions, userId);
+      // An undo is asked what the state the apply FOUND would be asked, as the load question is: a teacher grows only past
+      // the larger of today's hours and the hours they had before the batch being undone.
+      const then = requirementsFound ? scopeOfTeacher({ ...input, requirements: requirementsFound }, args.scopeVersions, userId) : null;
+      const before = then && today && then.teachingHours > today.teachingHours ? then : today;
+      const finding = overScopeFinding({
+        policy,
+        userId,
+        role: 'TEACHER',
+        before,
+        after: scopeOfTeacher({ ...input, requirements: requirementsAfter }, args.scopeVersions, userId),
+      });
+      if (finding) findings.push({ ...finding, requirementIds: gained.get(userId)! });
+    }
+  }
   return findings;
 }
 
@@ -582,6 +697,18 @@ export function staffingSentence(warning: StaffingWarning): string {
     const grades = String(warning.params.grades);
     const span = grades === 'any' ? '' : ` för åk ${grades}`;
     return `${role} saknar behörighet i ${warning.params.subject}${span}.`;
+  }
+  if (warning.code === STAFF_TEACHER_OVER_SCOPE) {
+    return (
+      `${role} skulle få ${warning.params.hours} timmars undervisning under läsåret mot förordningens ` +
+      `högsta nivå ${warning.params.limit} timmar (SFS 2026:1487 3 §).`
+    );
+  }
+  if (warning.code === STAFF_TEACHER_OVER_SCOPE_HIDDEN) {
+    return (
+      `${role} skulle få mer undervisning än förordningens högsta nivå för tjänsten (SFS 2026:1487 3 §). ` +
+      `Timmarna visas för rektor, en fullständig administratör och den som har HR-läs.`
+    );
   }
   const { minutes, target, limit, tolerance } = warning.params;
   if (warning.code === STAFF_TEACHER_OVER_TARGET_HIDDEN) {

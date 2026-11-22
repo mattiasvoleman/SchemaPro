@@ -4942,7 +4942,7 @@ async function runChecks(
       // so the verdict path is not asked here, and the bands are read below, as the teacher and as the administrator.
       assert.equal(load.scope.yearReason, 'NUMBERING_NOT_COVERED');
       for (const reader of [principal, tjAdmin]) {
-        const lydelser = await api.withRls(reader, (tx) => readScopeVersions(tx));
+        const lydelser = await api.withRls(reader, (tx) => readScopeVersions(tx, load.year.startDate));
         assert.deepEqual(lydelser.map((one) => one.code), ['SFS2026:1487'], `${reader.role} read the lydelser`);
         assert.deepEqual(
           lydelser[0]!.bands.map((band) => [band.schoolForm, band.gradeNumbering, band.gradeFrom, band.gradeTo, band.teachingHoursLow, band.teachingHoursHigh, band.planningFloorPercent]),
@@ -5756,7 +5756,17 @@ async function runChecks(
           // requirementId, the primary key's first column); nothing more is sent
           // when the post is not released, as here, and a PATCH that leaves the
           // lead as it is sends nothing of it.
-          'give a timplanspost a teacher': 27,
+          // +2 since Undervisningsuppdragets omfattning (20270301090000): the
+          // ordinance's highest level of teaching time is asked of a teacher with
+          // a post, in the school's mode WARN (the default), so the lydelse that
+          // holds on the year's first day is asked for, and its bands: two
+          // statements in a läsår the ordinance reaches, as this school's is (a
+          // relation read is a statement of its own under Prisma 7), and ONE in a
+          // läsår that begins before 2027-07-01, which finds none and reads no
+          // band. The post lock that precedes it was already sent for the
+          // over-target question; a school that has turned both questions OFF
+          // sends neither.
+          'give a timplanspost a teacher': 29,
           // +1 since Lärarens dag (20261123090000) on a create that names a
           // teacher, in a school without a cap, as here, and the one thing a
           // create pays for it: the teachers' caps, one indexed SELECT,

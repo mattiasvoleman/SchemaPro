@@ -438,3 +438,257 @@ describe('enforceRequirementWrite and RequirementImportChecks and the läsår’
     }
   });
 });
+
+/*
+ * The ordinance's highest level of teaching time (SFS 2026:1487 3 §) at the writes: STAFF_TEACHER_OVER_SCOPE through the single
+ * write and the requirements file. Anna is a full-time ferietjänst in årskurs 7 (upper edge 600 h) in the default year of 43 weeks, so
+ * 13 lessons a week of 60 minutes are 559 h and 14 are 602.
+ */
+describe('enforceRequirementWrite and RequirementImportChecks and the ordinance\'s highest level', () => {
+  const ANNA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const MA = 'ma';
+  const G7 = 'g-7a';
+  let tx: TxMock;
+  let world: ReturnType<typeof givenStaffingWorld>;
+
+  const band = (overrides: Record<string, unknown>) => ({
+    schoolForm: 'GRUNDSKOLA',
+    gradeNumbering: 'NIOARIG',
+    gradeFrom: 1,
+    gradeTo: 6,
+    teachingHoursLow: 550,
+    teachingHoursHigh: 650,
+    planningFloorPercent: 100,
+    teachingSection: '3 § p. 1',
+    planningSection: '4 § p. 1',
+    note: null,
+    ...overrides,
+  });
+  const ordinance = (validFrom: string) => ({
+    code: 'SFS2026:1487',
+    sfs: 'SFS 2026:1487',
+    title: 'Förordning',
+    validFrom: new Date(`${validFrom}T00:00:00.000Z`),
+    validTo: null,
+    source: 'https://example.invalid/sfs',
+    bands: [band({}), band({ gradeFrom: 7, gradeTo: 9, teachingHoursLow: 500, teachingHoursHigh: 600, planningFloorPercent: 110, teachingSection: '3 § p. 2' })],
+  });
+
+  beforeEach(() => {
+    tx = createTxMock();
+  });
+
+  const arrange = (policy: Record<string, unknown>, extra: { employments?: boolean; validFrom?: string } = {}) => {
+    // The database picks the lydelse that holds on the year's first day (2026-08-17): none when it begins later.
+    const validFrom = extra.validFrom ?? '2020-01-01';
+    tx.assignmentScopeVersion.findFirst.mockResolvedValue(validFrom <= '2026-08-17' ? ordinance(validFrom) : null);
+    world = givenStaffingWorld(tx, {
+      policy: { qualificationMode: 'OFF', overAllocationMode: 'OFF', ...policy },
+      employments: extra.employments === false ? [] : [{ id: 'emp-anna', userId: ANNA }],
+      groups: [{ id: G7, name: '7A', gradeLevel: 7 }],
+      subjects: [{ id: MA, name: 'Matematik' }],
+    });
+  };
+  const create = (lessonsPerWeek: number) =>
+    enforceRequirementWrite(tx as unknown as PrismaClient, {
+      viewer: testUser(),
+      showsPeriods: true,
+      schoolId: 'school',
+      academicYearId: WORLD_YEAR.id,
+      requirementId: null,
+      subjectId: MA,
+      studentGroupId: G7,
+      before: null,
+      patch: { teacherId: ANNA, lessonsPerWeek, minutesPerLesson: 60 },
+    });
+
+  it('refuses under REFUSE a row that takes the teacher past the edge, with the hours and the limit, and passes one that does not', async () => {
+    arrange({ assignmentScopeMode: 'REFUSE' });
+    await expect(create(13)).resolves.toEqual([]);
+    await expect(create(14)).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: 'STAFF_TEACHER_OVER_SCOPE',
+        params: { role: 'TEACHER', hours: '602', limit: '600' },
+        message: 'Läraren skulle få 602 timmars undervisning under läsåret mot förordningens högsta nivå 600 timmar (SFS 2026:1487 3 §).',
+      },
+    });
+  });
+
+  it('saves and warns under WARN, with the code and the params beside the row', async () => {
+    arrange({ assignmentScopeMode: 'WARN' });
+    await expect(create(14)).resolves.toEqual([
+      { code: 'STAFF_TEACHER_OVER_SCOPE', params: { role: 'TEACHER', hours: '602', limit: '600' } },
+    ]);
+  });
+
+  it('asks nothing under OFF: no post is locked and the lydelser are not read', async () => {
+    arrange({ assignmentScopeMode: 'OFF' });
+    await expect(create(14)).resolves.toEqual([]);
+    expect(world.locked).toEqual([]);
+    expect(tx.assignmentScopeVersion.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('locks the teacher\'s post before it reads the year, for this question alone, and reads the lydelser after the lock', async () => {
+    arrange({ assignmentScopeMode: 'WARN' });
+    await create(13);
+    expect(world.locked).toEqual([['emp-anna']]);
+    expect(world.order.indexOf('lock')).toBeLessThan(world.order.indexOf('year'));
+    expect(tx.assignmentScopeVersion.findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks nothing of a teacher with no post (no span to scale), and reads no lydelse for it', async () => {
+    arrange({ assignmentScopeMode: 'REFUSE' }, { employments: false });
+    await expect(create(14)).resolves.toEqual([]);
+    expect(tx.assignmentScopeVersion.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('asks nothing in a läsår the ordinance does not reach', async () => {
+    arrange({ assignmentScopeMode: 'REFUSE' }, { validFrom: '2027-07-01' });
+    await expect(create(14)).resolves.toEqual([]);
+  });
+
+  it('says only the verdict to a reader without HR-läs', async () => {
+    arrange({ assignmentScopeMode: 'REFUSE' });
+    await expect(
+      enforceRequirementWrite(tx as unknown as PrismaClient, {
+        viewer: testUser(),
+        showsPeriods: false,
+        schoolId: 'school',
+        academicYearId: WORLD_YEAR.id,
+        requirementId: null,
+        subjectId: MA,
+        studentGroupId: G7,
+        before: null,
+        patch: { teacherId: ANNA, lessonsPerWeek: 14, minutesPerLesson: 60 },
+      }),
+    ).rejects.toMatchObject({ response: { code: 'STAFF_TEACHER_OVER_SCOPE_HIDDEN', params: { role: 'TEACHER' } } });
+  });
+
+  it('a requirements file counts a row for the rows after it: 10 lessons, then 4 more, is 602 h on the second', async () => {
+    arrange({ assignmentScopeMode: 'REFUSE' });
+    const checks = await RequirementImportChecks.open(tx as unknown as PrismaClient, {
+      viewer: testUser(),
+      showsPeriods: true,
+      schoolId: 'school',
+      academicYearId: WORLD_YEAR.id,
+      teacherIds: [ANNA],
+      groupIds: [G7],
+    });
+    expect(tx.assignmentScopeVersion.findFirst).toHaveBeenCalledTimes(1);
+    const judge = (rowNumber: number, lessonsPerWeek: number, subjectId: string) =>
+      checks!.judge({
+        requirementId: null,
+        rowNumber,
+        subjectId,
+        subjectName: subjectId,
+        studentGroupId: G7,
+        groupName: '7A',
+        patch: { teacherId: ANNA, lessonsPerWeek, minutesPerLesson: 60 },
+      });
+    const first = judge(2, 10, 'ma');
+    expect(first.findings).toEqual([]);
+    checks!.apply(first.after);
+    const second = judge(3, 4, 'no');
+    expect(second.findings).toEqual([
+      { code: 'STAFF_TEACHER_OVER_SCOPE', mode: 'REFUSE', userId: ANNA, params: { role: 'TEACHER', hours: '602', limit: '600' } },
+    ]);
+  });
+});
+
+describe('enforceRequirementBatch and the ordinance\'s highest level', () => {
+  const ANNA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const BO = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const YEAR = { startDate: '2026-08-17', endDate: '2027-06-11' };
+  const version = {
+    code: 'SFS2026:1487',
+    sfs: 'SFS 2026:1487',
+    title: 'Förordning',
+    validFrom: '2020-01-01',
+    validTo: null,
+    source: 'https://example.invalid/sfs',
+    bands: [
+      { schoolForm: 'GRUNDSKOLA', gradeNumbering: 'NIOARIG' as const, gradeFrom: 7, gradeTo: 9, teachingHoursLow: 500, teachingHoursHigh: 600, planningFloorPercent: 110, teachingSection: '3 § p. 2', planningSection: '4 §', note: null },
+    ],
+  };
+  const row = (id: string, teacherId: string | null, lessonsPerWeek: number): LoadRequirement => ({
+    id,
+    subjectId: id,
+    subjectName: `Ämne ${id}`,
+    studentGroupId: 'g-7a',
+    groupName: '7A',
+    teacherId,
+    coTeacherId: null,
+    lessonsPerWeek,
+    minutesPerLesson: 60,
+    teacherLoadPercent: 100,
+    coTeacherLoadPercent: 100,
+    recurrence: 'ALL_WEEKS',
+    startDate: null,
+    endDate: null,
+    gradeSpan: { min: 7, max: 7 },
+  });
+  const input = (requirements: LoadRequirement[]): LoadInput => ({
+    year: YEAR,
+    policy: null,
+    employments: [
+      { userId: ANNA, employmentPercent: 100, reductionPercent: 0, contractKind: 'FERIE', teachingTargetMinutesPerWeek: null, signature: null },
+      { userId: BO, employmentPercent: 100, reductionPercent: 0, contractKind: 'FERIE', teachingTargetMinutesPerWeek: null, signature: null },
+    ],
+    requirements,
+    qualifications: [],
+    closures: [],
+    duties: [],
+  });
+  const batch = (extra: Partial<Parameters<typeof enforceRequirementBatch>[0]>) =>
+    enforceRequirementBatch({
+      input: input([row('ma', BO, 10), row('no', ANNA, 4)]),
+      policy: { ...DEFAULT_CHECK_POLICY, qualificationMode: 'OFF', overAllocationMode: 'OFF', assignmentScopeMode: 'REFUSE' },
+      postsLocked: 2,
+      changes: [{ requirementId: 'ma', teacherId: ANNA }],
+      rowName: (id) => `Ämne ${id} för 7A`,
+      scopeVersions: [version],
+      ...extra,
+    });
+
+  it('refuses a batch that gives Anna 10 more lessons on top of her 4 (602 h), naming the row, the teacher and the sentence', () => {
+    expect(() => batch({})).toThrow(ConflictException);
+    try {
+      batch({});
+    } catch (error) {
+      const body = (error as ConflictException).getResponse() as Record<string, unknown>;
+      expect(body.code).toBe('STAFF_TEACHER_OVER_SCOPE');
+      expect(body.params).toEqual({ role: 'TEACHER', hours: '602', limit: '600', userId: ANNA, requirementId: 'ma' });
+      expect(body.message).toMatch(/^Ämne ma för 7A: Läraren skulle få 602 timmars undervisning/);
+    }
+  });
+
+  it('warns under WARN with the rows it is about', () => {
+    expect(
+      batch({ policy: { ...DEFAULT_CHECK_POLICY, qualificationMode: 'OFF', overAllocationMode: 'OFF', assignmentScopeMode: 'WARN' } }),
+    ).toEqual([
+      { code: 'STAFF_TEACHER_OVER_SCOPE', params: { role: 'TEACHER', hours: '602', limit: '600' }, userId: ANNA, requirementIds: ['ma'] },
+    ]);
+  });
+
+  it('asks nothing without the lydelser or when no post was locked, whatever the mode says', () => {
+    expect(batch({ scopeVersions: undefined })).toEqual([]);
+    expect(batch({ postsLocked: 0 })).toEqual([]);
+  });
+
+  it('judges a swap as ONE write: Anna and Bo trading rows leave each where they were, so nobody is asked', () => {
+    const swap = [
+      { requirementId: 'ma', teacherId: ANNA },
+      { requirementId: 'no', teacherId: BO },
+    ];
+    expect(batch({ input: input([row('ma', BO, 14), row('no', ANNA, 14)]), changes: swap })).toEqual([]);
+  });
+
+  it('asks of an undo what the state the apply found would be asked: putting a row back is no growth past what they had', () => {
+    // Anna carried 14 + 14 before, the apply shed one row, and the undo puts it back.
+    const restoring = new Map<string, string | null>([['ma', ANNA]]);
+    expect(
+      batch({ input: input([row('ma', BO, 14), row('no', ANNA, 14)]), changes: [{ requirementId: 'ma', teacherId: ANNA }], restoring }),
+    ).toEqual([]);
+  });
+});

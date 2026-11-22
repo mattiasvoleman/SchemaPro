@@ -17,6 +17,8 @@ import type { TxMock } from './prisma-mock';
 export interface WorldPolicy {
   qualificationMode: 'OFF' | 'WARN' | 'REFUSE';
   overAllocationMode: 'OFF' | 'WARN' | 'REFUSE';
+  /** The ordinance's highest level of teaching time (20270301090000). Absent: the column's value is not in the row (OFF). */
+  assignmentScopeMode?: 'OFF' | 'WARN' | 'REFUSE';
   overAllocationTolerancePercent: number;
   fullTimeTeachingMinutesPerWeek: number | null;
   unstaffedGeneration: 'ALLOW' | 'REFUSE';

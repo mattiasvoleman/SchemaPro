@@ -34,6 +34,7 @@ export const STAFFING_POLICY_DEFAULTS = {
   semesterHoursPerWeek: 40,
   qualificationMode: 'WARN',
   overAllocationMode: 'WARN',
+  assignmentScopeMode: 'WARN',
   overAllocationTolerancePercent: 10,
   loadModel: 'MINUTES',
   unstaffedGeneration: 'ALLOW',
@@ -87,6 +88,8 @@ export class StaffingPolicyService {
       qualificationMode: dto.qualificationMode ?? STAFFING_POLICY_DEFAULTS.qualificationMode,
       overAllocationMode:
         dto.overAllocationMode ?? STAFFING_POLICY_DEFAULTS.overAllocationMode,
+      assignmentScopeMode:
+        dto.assignmentScopeMode ?? STAFFING_POLICY_DEFAULTS.assignmentScopeMode,
       overAllocationTolerancePercent:
         dto.overAllocationTolerancePercent ??
         STAFFING_POLICY_DEFAULTS.overAllocationTolerancePercent,

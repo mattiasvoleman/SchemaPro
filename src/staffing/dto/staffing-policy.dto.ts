@@ -74,6 +74,17 @@ export class UpsertStaffingPolicyDto {
   })
   overAllocationMode?: StaffingCheckMode;
 
+  /**
+   * What a write that takes a teacher over the ordinance's highest level of teaching time per school year may do
+   * (SFS 2026:1487 3 §; STAFF_TEACHER_OVER_SCOPE). Default WARN: REFUSE is the school's own choice, and nothing under the
+   * upper edge of the span is ever refused.
+   */
+  @IsOptional()
+  @IsEnum(StaffingCheckMode, {
+    message: 'Kontrollen mot förordningens högsta undervisningstid är OFF, WARN eller REFUSE.',
+  })
+  assignmentScopeMode?: StaffingCheckMode;
+
   /** How far over target a teacher may be before the mode fires. Default 10. */
   @IsOptional()
   @IsInt({ message: 'Toleransen anges i hela procent.' })
