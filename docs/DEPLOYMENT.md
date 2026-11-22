@@ -7348,12 +7348,28 @@ the sweep that got a timetable it is **4 % in the median (1 % to 18 %)**: 0.1 to
 
 ### 35.5 The production processor (roadmap decision 8, the user's)
 
-Nothing in §35.2 says how fast a production core is, and the engine runs its search on as many workers as production has cores (`num_workers` is left at its default). Not done, and
-proposed in a small form: **one calibration**, not the corpus. The production image copies only `app/`, so it takes a one-off instance (not the live service, which a school's Generera would then compete
-with for the cores) of the same plan, started from the engine image plus `benchmarks/`, running `python benchmarks/corpus_measure.py --profile gate --only n9-g5-m0-s1,n12-g3-m0-s1,n18-g0-m0-s1
---mode count --det-budget 4 --jobs 1 --json` and `nproc`. The ratio of its wall seconds to the deterministic work is the number that replaces 18 in §35.2, and turns every figure in the table
-into production seconds without running the corpus again. About three minutes of compute. A second run in clock mode (`--mode clock --budget 180`) on the same instance gives the clock table of §35.2 for production's
-own cores, which is the figure a school should be told.
+Nothing in §35.2 says how fast a production core is, and the engine runs its search on as many workers as production has cores (`num_workers` is left at its default). The user has approved one
+**calibration**, not the corpus, on a one-off instance of the engine's image with production's plan (not on the live service, which a school's Generera would then compete with for the cores, and
+with its own `API_KEY`, `SOLVER_MAX_TIME_SECONDS=180` as in production). The image copies only `app/`, so the measuring stick of §35.1 is not on it; what an instance has is the engine's HTTP route, which does
+not say deterministic time but says enough (`scripts/bench/solve-corpus-calibrate.mjs`, pure Node, tests that also run on every pull request):
+
+```
+ENGINE_API_KEY=<the instance's key> node scripts/bench/solve-corpus-calibrate.mjs measure \
+  --url https://<instance> --payloads <the three weeks> --label <name> --cores <vCPU of the plan> --ladder 10,20,40,80 --out prod.json
+node scripts/bench/solve-corpus-calibrate.mjs convert prod.json trajectory.json
+```
+
+- **The weeks** are three of the corpus's (`n12-g3-m0-s1`, `n15-g3-m0-s1`, `n9-g6-m0-s1`, written by `school_corpus.py --week <name>`): one that a single worker solves in a few seconds, one that a single worker cannot solve and eight cores can in about half
+  a minute, and one that neither can. They are synthetic: no school's data goes to the instance.
+- **Per week** the script runs `check-week` (wall time), a search with **one worker** and a fixed seed for 20 s (on a week the search gives up on, the TIMEOUT answer says how many conflicts that search made in how many
+  seconds: the engine's own account, M2), and a **ladder** with every core and budgets of 10, 20, 40 and 80 s until a timetable is found (the clock table of §35.2 for the instance's cores, at the ladder's resolution: a
+  solved request spends its phase 2 to the end of its budget, so its wall time says nothing about when the timetable was found).
+- **`convert`** turns the conflicts into seconds. One worker with a fixed seed makes the same conflicts at the same deterministic second on every machine, and `benchmarks/corpus_trajectory.py` writes that table for a week
+  (conflicts at 0.25, 0.5, 1, 2 and 4 deterministic seconds); the probe's conflicts are read against it, by straight lines and never beyond its end, to the work they took, and the probe's seconds divided by it are
+  the instance's **seconds per deterministic second**: the number that replaces 18 in §35.2 and turns every row of the table into production seconds without running the corpus again. It needs no baseline on a quiet
+  machine and gives the same answer on a loaded one.
+- **Never a secret in the output.** The key is read from the environment, sent as `X-API-Key` and never printed or written; the result names the run by its label and not by the address.
+- About six minutes of compute on the instance, a quarter of an hour to start and tear it down. The number of cores is not in the engine's answer: `--cores` is what the person running it writes.
 
 ### 35.6 Not done
 
