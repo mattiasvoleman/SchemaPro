@@ -11363,6 +11363,7 @@
       "field": "Field",
       "fieldOf": "Field for the column {column}",
       "noHeader": "(no header)",
+      "noHeaderAt": "(no header, column {number})",
       "hiddenHeader": "(header not shown)"
     },
     "option": {

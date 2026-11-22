@@ -125,9 +125,11 @@ describe("a file with no header row", () => {
     const user = userEvent.setup();
     const { state } = renderPanel("guardians", PARENTS);
     expect(screen.getByRole("button", { name: "format.use" })).toBeInTheDocument();
-    // Read as X2 reads a file, the first guardian is the header row; the picker offers every row of the first ten.
-    expect(screen.getByLabelText("headerRow.label")).toBeInTheDocument();
-    expect(state().block.headerRowNumber).toBe(1);
+    // Only offered, so no column is placed, but the first guardian is a person and not the header row: there is none to choose.
+    expect(screen.queryByLabelText("headerRow.label")).not.toBeInTheDocument();
+    expect(state().block.headerRowNumber).toBe(0);
+    expect(state().block.body).toHaveLength(4);
+    expect(state().assignment.every((entry) => entry === undefined)).toBe(true);
 
     await user.click(screen.getByRole("button", { name: "format.use" }));
     expect(state().block.headerRowNumber).toBe(0);
