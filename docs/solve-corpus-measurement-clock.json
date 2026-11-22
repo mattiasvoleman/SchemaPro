@@ -1,0 +1,293 @@
+[
+  {
+    "name": "n12-g3-m0-s1",
+    "facts": {
+      "corpusVersion": 1,
+      "classes": 12,
+      "pupils": 264,
+      "requirements": 141,
+      "lessons": 270,
+      "groupConflicts": 404,
+      "teachers": 50,
+      "sharedTeachers": 0,
+      "sharedTeachersAsked": 0,
+      "groupSubjects": 3,
+      "languageGroups": 9,
+      "termSubjects": 0,
+      "termRequirements": 0,
+      "blockedRequirements": 0
+    },
+    "status": "FIRST_SCHEDULE",
+    "conflictCodes": [],
+    "firstScheduleSeconds": 11.84,
+    "firstScheduleDeterministic": 8.32,
+    "totalSeconds": 11.84,
+    "deterministicSeconds": 8.32,
+    "conflicts": 958,
+    "stages": {
+      "PRECHECKS": 0.12,
+      "BUILD": 0.14,
+      "SEARCH_CLEAN": 11.57
+    },
+    "searches": [
+      {
+        "status": "OPTIMAL",
+        "seconds": 11.57,
+        "deterministic": 8.32,
+        "conflicts": 958,
+        "firstOnly": false
+      }
+    ],
+    "load": [
+      27.5,
+      28.9
+    ],
+    "mode": "clock",
+    "deterministicBudget": null,
+    "seed": 1
+  },
+  {
+    "name": "n15-g3-m0-s1",
+    "facts": {
+      "corpusVersion": 1,
+      "classes": 15,
+      "pupils": 330,
+      "requirements": 177,
+      "lessons": 339,
+      "groupConflicts": 629,
+      "teachers": 61,
+      "sharedTeachers": 3,
+      "sharedTeachersAsked": 0,
+      "groupSubjects": 3,
+      "languageGroups": 12,
+      "termSubjects": 0,
+      "termRequirements": 0,
+      "blockedRequirements": 0
+    },
+    "status": "FIRST_SCHEDULE",
+    "conflictCodes": [],
+    "firstScheduleSeconds": 34.37,
+    "firstScheduleDeterministic": 28.886,
+    "totalSeconds": 34.37,
+    "deterministicSeconds": 28.886,
+    "conflicts": 1708,
+    "stages": {
+      "PRECHECKS": 0.18,
+      "BUILD": 0.19,
+      "SEARCH_CLEAN": 33.99
+    },
+    "searches": [
+      {
+        "status": "OPTIMAL",
+        "seconds": 33.99,
+        "deterministic": 28.886,
+        "conflicts": 1708,
+        "firstOnly": false
+      }
+    ],
+    "load": [
+      28.9,
+      33.5
+    ],
+    "mode": "clock",
+    "deterministicBudget": null,
+    "seed": 1
+  },
+  {
+    "name": "n18-g0-m0-s1",
+    "facts": {
+      "corpusVersion": 1,
+      "classes": 18,
+      "pupils": 396,
+      "requirements": 213,
+      "lessons": 408,
+      "groupConflicts": 89,
+      "teachers": 25,
+      "sharedTeachers": 3,
+      "sharedTeachersAsked": 0,
+      "groupSubjects": 0,
+      "languageGroups": 15,
+      "termSubjects": 0,
+      "termRequirements": 0,
+      "blockedRequirements": 0
+    },
+    "status": "FIRST_SCHEDULE",
+    "conflictCodes": [],
+    "firstScheduleSeconds": 11.64,
+    "firstScheduleDeterministic": 3.309,
+    "totalSeconds": 11.64,
+    "deterministicSeconds": 3.309,
+    "conflicts": 1369,
+    "stages": {
+      "PRECHECKS": 0.06,
+      "BUILD": 0.22,
+      "SEARCH_CLEAN": 11.35
+    },
+    "searches": [
+      {
+        "status": "OPTIMAL",
+        "seconds": 11.35,
+        "deterministic": 3.309,
+        "conflicts": 1369,
+        "firstOnly": false
+      }
+    ],
+    "load": [
+      33.5,
+      35.5
+    ],
+    "mode": "clock",
+    "deterministicBudget": null,
+    "seed": 1
+  },
+  {
+    "name": "n9-g6-m0-s1",
+    "facts": {
+      "corpusVersion": 1,
+      "classes": 9,
+      "pupils": 198,
+      "requirements": 108,
+      "lessons": 207,
+      "groupConflicts": 735,
+      "teachers": 64,
+      "sharedTeachers": 0,
+      "sharedTeachersAsked": 0,
+      "groupSubjects": 6,
+      "languageGroups": 9,
+      "termSubjects": 0,
+      "termRequirements": 0,
+      "blockedRequirements": 0
+    },
+    "status": "TIMEOUT",
+    "conflictCodes": [],
+    "firstScheduleSeconds": null,
+    "firstScheduleDeterministic": null,
+    "totalSeconds": 180.41,
+    "deterministicSeconds": 135.094,
+    "conflicts": 84496,
+    "stages": {},
+    "searches": [
+      {
+        "status": "UNKNOWN",
+        "seconds": 60.04,
+        "deterministic": 49.46,
+        "conflicts": 10548,
+        "firstOnly": false
+      },
+      {
+        "status": "UNKNOWN",
+        "seconds": 120.14,
+        "deterministic": 85.634,
+        "conflicts": 73948,
+        "firstOnly": false
+      }
+    ],
+    "load": [
+      35.5,
+      87.3
+    ],
+    "mode": "clock",
+    "deterministicBudget": null,
+    "seed": 1
+  },
+  {
+    "name": "n12-g4-m0-s1",
+    "facts": {
+      "corpusVersion": 1,
+      "classes": 12,
+      "pupils": 264,
+      "requirements": 141,
+      "lessons": 270,
+      "groupConflicts": 623,
+      "teachers": 61,
+      "sharedTeachers": 0,
+      "sharedTeachersAsked": 0,
+      "groupSubjects": 4,
+      "languageGroups": 9,
+      "termSubjects": 0,
+      "termRequirements": 0,
+      "blockedRequirements": 0
+    },
+    "status": "FIRST_SCHEDULE",
+    "conflictCodes": [],
+    "firstScheduleSeconds": 31.97,
+    "firstScheduleDeterministic": 15.347,
+    "totalSeconds": 31.97,
+    "deterministicSeconds": 15.347,
+    "conflicts": 1412,
+    "stages": {
+      "PRECHECKS": 0.55,
+      "BUILD": 0.26,
+      "SEARCH_CLEAN": 31.16
+    },
+    "searches": [
+      {
+        "status": "OPTIMAL",
+        "seconds": 31.16,
+        "deterministic": 15.347,
+        "conflicts": 1412,
+        "firstOnly": false
+      }
+    ],
+    "load": [
+      87.3,
+      82.3
+    ],
+    "mode": "clock",
+    "deterministicBudget": null,
+    "seed": 1
+  },
+  {
+    "name": "n12-g3-m2-s1",
+    "facts": {
+      "corpusVersion": 1,
+      "classes": 12,
+      "pupils": 264,
+      "requirements": 141,
+      "lessons": 270,
+      "groupConflicts": 404,
+      "teachers": 46,
+      "sharedTeachers": 2,
+      "sharedTeachersAsked": 2,
+      "groupSubjects": 3,
+      "languageGroups": 9,
+      "termSubjects": 0,
+      "termRequirements": 0,
+      "blockedRequirements": 0
+    },
+    "status": "TIMEOUT",
+    "conflictCodes": [
+      "TEACHER_SHARED_BY_PARALLEL_GROUPS",
+      "TIGHT_WEEK_LOAD"
+    ],
+    "firstScheduleSeconds": null,
+    "firstScheduleDeterministic": null,
+    "totalSeconds": 180.46,
+    "deterministicSeconds": 124.275,
+    "conflicts": 100753,
+    "stages": {},
+    "searches": [
+      {
+        "status": "UNKNOWN",
+        "seconds": 60.01,
+        "deterministic": 48.316,
+        "conflicts": 15416,
+        "firstOnly": false
+      },
+      {
+        "status": "UNKNOWN",
+        "seconds": 120.0,
+        "deterministic": 75.959,
+        "conflicts": 85337,
+        "firstOnly": false
+      }
+    ],
+    "load": [
+      82.3,
+      75.9
+    ],
+    "mode": "clock",
+    "deterministicBudget": null,
+    "seed": 1
+  }
+]

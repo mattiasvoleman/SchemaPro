@@ -120,6 +120,24 @@ and the two searches of a solve about 144 s, close to the production budget of 1
 | 9 | 2 | 0 | 2 | 0 | - | - | - | - |
 
 
+## A clock check with every core
+
+Count mode is one worker. Production runs CP-SAT on every core it has, and CP-SAT's portfolio may find what one worker cannot. Six weeks were run in **clock mode**
+(all eight cores of this Mac, a budget of 180 s as in production), one run each, **at load 28 to 87** (other sessions were using the machine, so every figure is slower than a quiet machine's;
+a week solved here would be solved at least as fast on a quiet one, and a week that timed out proves nothing about a quiet machine). The data is `docs/solve-corpus-measurement-clock.json`.
+
+| Week | One worker (count mode) | All cores (clock mode, 180 s) |
+|---|---|---|
+| 12 classes, three subjects in groups | 0.45 work (≈ 8 s) | timetable in 11.8 s (load 28) |
+| 18 classes, every subject by class | 1.3 work (≈ 24 s) | timetable in 11.6 s (load 34) |
+| **15 classes, three subjects in groups** | **timeout** | **timetable in 34 s** (load 29–34) |
+| **12 classes, four subjects in groups** | **timeout** | **timetable in 32 s** (load 82–87) |
+| 9 classes, six subjects in groups | timeout | timeout at 180 s (load 35–87) |
+| 12 classes, three subjects in groups, **2 shared teachers** | timeout | timeout at 180 s (load 76–82) |
+
+So **the lines in the tables are one core's, and they move up with the cores**: two of the four weeks that one worker gave up on get a timetable in about half a minute on eight cores. The two that
+do not are the ones the findings below call walls (shared teachers; six subjects in groups at nine classes). How far production's cores take each line is what the calibration of docs/DEPLOYMENT.md §35.5 would say.
+
 ## What the first measurement found
 
 1. **Classes are not what stops the engine.** Every subject by class gets a timetable at every size tried, up to 24 classes (546 lessons), in 1.4 to 23 estimated seconds.
@@ -135,7 +153,8 @@ and the two searches of a solve about 144 s, close to the production budget of 1
 
 ## What was not measured
 
-- **Clock mode** (every core, as production runs) on the whole sweep: it was started and stopped because the machine's load reached 125, and wall-clock seconds at that load say nothing. Whether the
-  portfolio of an eight-core run gets a timetable in the weeks that one worker gives up on is open.
+- **Clock mode on the whole sweep**: it was started twice and stopped because the machine's load reached 125 and then 75, and wall-clock seconds at that load say nothing. The six-week check above is
+  all there is, one run each: it shows that the portfolio helps, not by how much on a quiet machine or on production's cores.
 - **The production processor.** docs/DEPLOYMENT.md §35.5 proposes one small calibration run there (decision 8).
+- A second seed for the clock check, and clock mode for the term, block and half-group weeks.
 - Lessons of other lengths than the högstadium's, the production school's rooms (one kitchen, one laboratory), and its pupils' exact group lists: the corpus has the shape and not those details.

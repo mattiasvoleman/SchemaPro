@@ -7197,7 +7197,7 @@ load average). **`count`** is one worker and a fixed seed, so CP-SAT repeats the
 Measured 2026-11-22 (the record, tables and conditions are in docs/solve-corpus-measurement.md, the data in docs/solve-corpus-measurement.json): the `sweep` profile, 68 weeks, count mode, a budget of 4 deterministic seconds a
 search. **Seconds are estimates** ("within" is the slowest week of the row): the work times 18 s per deterministic second, which is what one worker took on this Mac when it was quiet (11 weeks, 8–25). By that figure the budget is
 about 72 s a search and 144 s for a solve's two searches, close to production's 180 s, so "no timetable" means *none in about what production gives a run, on one core of this machine*.
-**Production's processor is not measured** (§35.5), and neither is an eight-core run of the weeks one worker gave up on.
+**Production's processor is not measured** (§35.5). **The tables are one core's**: a clock check with all eight cores of this Mac (six weeks, one run each, load 28–87, 180 s) gave a timetable in 34 s for 15 classes with three subjects in groups and in 32 s for 12 classes with four, both of which one worker gave up on; it did not for six subjects in groups at nine classes or for two shared teachers at twelve. The lines move up with the cores, and the walls (shared teachers, many subjects in groups) did not move in that check (docs/solve-corpus-measurement.md).
 
 | A school with … | gets a timetable within | in |
 |---|---|---|
@@ -7269,12 +7269,11 @@ Nothing in §35.2 says how fast a production core is, and the engine runs its se
 proposed in a small form: **one calibration**, not the corpus. The production image copies only `app/`, so it takes a one-off instance (not the live service, which a school's Generera would then compete
 with for the cores) of the same plan, started from the engine image plus `benchmarks/`, running `python benchmarks/corpus_measure.py --profile gate --only n9-g5-m0-s1,n12-g3-m0-s1,n18-g0-m0-s1
 --mode count --det-budget 4 --jobs 1 --json` and `nproc`. The ratio of its wall seconds to the deterministic work is the number that replaces 18 in §35.2, and turns every figure in the table
-into production seconds without running the corpus again. About three minutes of compute. A second run in clock mode (`--mode clock --budget 180`) on the same instance answers whether
-the portfolio of its cores gets a timetable in the weeks that one worker gives up on, which this measurement left open.
+into production seconds without running the corpus again. About three minutes of compute. A second run in clock mode (`--mode clock --budget 180`) on the same instance answers how far the portfolio of its cores takes the lines: on this Mac's eight cores it took two of the four weeks that one worker gave up on (§35.2), at a load that made every figure slower than a quiet machine's.
 
 ### 35.6 Not done
 
-- Clock mode on the whole sweep (started, stopped at a load of 125: the seconds said nothing).
+- Clock mode on the whole sweep (started twice, stopped at loads of 125 and 75: the seconds said nothing). Six weeks were run in clock mode at load 28–87 and are in docs/solve-corpus-measurement-clock.json.
 - The corpus has the production school's shape and not its details: lessons of 40 to 130 minutes (here every lesson is a högstadium lesson), one kitchen and one laboratory, and the exact group
   lists of its pupils (110 different lists for 111 pupils; the corpus's are what `mixing` makes them). A second school is the only real second opinion.
 - The weeks the search gives up on are measured to the budget twice over (two searches) and are left out of the gate for what they cost; when one of them starts to solve, the sweep shows it and
