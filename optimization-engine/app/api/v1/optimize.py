@@ -89,8 +89,15 @@ async def run_solver(
         )
     except asyncio.TimeoutError:
         logger.error("optimization_timed_out", request_id=str(payload.request_id))
+        # The solve's thread is still running (it cannot be stopped from here),
+        # and its clock says which step it is in: what the 503 tells the school
+        # instead of only that the longest wait passed.
+        where = solver.stage_where()
         raise SolverTimeoutError(
             "Optimization timed out.", route="optimize", ceiling_seconds=timeout,
+            stage=None if where is None else where[0],
+            stage_seconds=None if where is None else where[1],
+            elapsed_seconds=None if where is None else where[2],
         ) from None
 
 

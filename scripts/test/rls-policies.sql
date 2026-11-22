@@ -69124,6 +69124,120 @@ ROLLBACK;
 \setenv PGDATABASE
 
 -- ---------------------------------------------------------------------------
+-- Section 555: en körning som fick slut på tid sparar var tiden gick (20270228090000).
+--
+-- OptimizationJobs fick en kolumn, "report" (jsonb, nullbar, utan standardvärde), och en CHECK: ett objekt på högst 8 KiB. Inga armar
+-- och inga rättigheter ändrades: de fyra administratörsarmarna ligger kvar hos API:ts roll ensam (section 162) och kolumnen lyds av dem
+-- som tabellens övriga. Här läses kolumnen och kontrollen ur katalogen, kontrollens kanter prövas som schemaläggaren (hennes arm skriver
+-- raden), och PostgREST:s roll och en lärare läser ingen rapport alls.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  run uuid;
+  got text;
+  n bigint;
+BEGIN
+  -- Kolumnen: jsonb, nullbar, utan standardvärde.
+  SELECT string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod) || ' ' || CASE WHEN a.attnotnull THEN 'not null' ELSE 'null' END
+                    || ' ' || coalesce(pg_get_expr(d.adbin, d.adrelid), 'no default'), ', ' ORDER BY a.attname) INTO got
+    FROM pg_attribute a
+    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = 'public."OptimizationJobs"'::regclass AND a.attname = 'report' AND NOT a.attisdropped;
+  IF got IS DISTINCT FROM 'report jsonb null no default' THEN
+    RAISE EXCEPTION 'fx 555: the report column is %', got;
+  END IF;
+
+  -- Kontrollen, validerad: namnet, objektet och taket (utan parenteser: Postgres 16 och 17 sätter dem olika).
+  SELECT c.convalidated::text || ' ' || translate(regexp_replace(pg_get_constraintdef(c.oid), '\s+', ' ', 'g'), '()', '') INTO got
+    FROM pg_constraint c
+   WHERE c.conrelid = 'public."OptimizationJobs"'::regclass AND c.contype = 'c' AND c.conname = 'OptimizationJobs_report_is_a_small_object';
+  IF got IS NULL OR got NOT LIKE 'true CHECK report IS NULL OR %' OR position('jsonb_typeof' IN got) = 0
+     OR position('''object''' IN got) = 0 OR position('octet_length' IN got) = 0 OR position('<= 8192' IN got) = 0 THEN
+    RAISE EXCEPTION 'fx 555: the check on report is %', coalesce(got, 'missing');
+  END IF;
+
+  -- Armarna som förut: de fyra, API:ts rolls ensam, och ingen nämner kolumnen (en arm som gjorde det vore en ny dörr).
+  SELECT string_agg(policyname || ' ' || cmd || ' ' || roles::text, ', ' ORDER BY policyname) INTO got
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'OptimizationJobs';
+  IF got IS DISTINCT FROM 'optimization_jobs_admin_delete DELETE {app_authenticated}, '
+                       || 'optimization_jobs_admin_insert INSERT {app_authenticated}, '
+                       || 'optimization_jobs_admin_select SELECT {app_authenticated}, '
+                       || 'optimization_jobs_admin_update UPDATE {app_authenticated}' THEN
+    RAISE EXCEPTION 'fx 555: OptimizationJobs'' arms are %', got;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'OptimizationJobs'
+                AND (coalesce(qual, '') || coalesce(with_check, '')) ~ 'report') THEN
+    RAISE EXCEPTION 'fx 555: an arm of OptimizationJobs reads the report';
+  END IF;
+
+  -- Schemaläggaren skriver raden: en körning, och rapporten som API:t skriver den (ett objekt), tas bort igen och skrivs över.
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt")
+  VALUES (school, yr, app.current_user_id(), 'SUCCEEDED', 'TIMEOUT', now()) RETURNING id INTO run;
+  UPDATE "OptimizationJobs"
+     SET "report" = '{"totalSeconds": 109, "budgetSeconds": 100, "stages": [{"stage": "BUILD", "seconds": 4}]}'::jsonb
+   WHERE id = run;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'fx 555: the administrator''s write of a report changed % row(s)', n; END IF;
+  UPDATE "OptimizationJobs" SET "report" = NULL WHERE id = run;
+  UPDATE "OptimizationJobs" SET "report" = '{}'::jsonb WHERE id = run;
+
+  -- Kontrollens kanter, en i taget: ett objekt och inte mer än 8 192 tecken som text. `{"x": "` och `"}` är nio av dem.
+  BEGIN
+    UPDATE "OptimizationJobs" SET "report" = '[1, 2]'::jsonb WHERE id = run;
+    RAISE EXCEPTION 'fx 555: an array was accepted as a report';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "report" = '7'::jsonb WHERE id = run;
+    RAISE EXCEPTION 'fx 555: a number was accepted as a report';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "report" = '"text"'::jsonb WHERE id = run;
+    RAISE EXCEPTION 'fx 555: a text was accepted as a report';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "report" = 'null'::jsonb WHERE id = run;
+    RAISE EXCEPTION 'fx 555: a JSON null was accepted as a report (a run with none has a database NULL)';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  UPDATE "OptimizationJobs" SET "report" = jsonb_build_object('x', repeat('y', 8183)) WHERE id = run;
+  IF NOT EXISTS (SELECT 1 FROM "OptimizationJobs" WHERE id = run AND octet_length("report"::text) = 8192) THEN
+    RAISE EXCEPTION 'fx 555: the largest report the check accepts is not 8192 characters as text';
+  END IF;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "report" = jsonb_build_object('x', repeat('y', 8184)) WHERE id = run;
+    RAISE EXCEPTION 'fx 555: a report of 8193 characters was accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+
+  -- En lärare ser ingen körning och därmed ingen rapport, och ändrar ingen.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000111')::text, true);
+  SELECT count(*) INTO n FROM "OptimizationJobs" WHERE "report" IS NOT NULL;
+  IF n <> 0 THEN RAISE EXCEPTION 'fx 555: a teacher reads % report(s)', n; END IF;
+  UPDATE "OptimizationJobs" SET "report" = '{}'::jsonb;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'fx 555: a teacher wrote % report(s)', n; END IF;
+
+  -- PostgREST:s roll, med schemaläggarens claims: ingen läsning och ingen skrivning av just den nya kolumnen.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+  SET LOCAL ROLE authenticated;
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'fx 555: could not act as authenticated'; END IF;
+  SELECT count(*) INTO n FROM (SELECT "report" FROM "OptimizationJobs") AS r;
+  IF n <> 0 THEN RAISE EXCEPTION 'fx 555: as PostgREST''s role the schemaläggare reads % report(s)', n; END IF;
+  UPDATE "OptimizationJobs" SET "report" = '{}'::jsonb;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'fx 555: as PostgREST''s role the schemaläggare wrote % report(s)', n; END IF;
+  SET LOCAL ROLE app_authenticated;
+
+  RAISE NOTICE 'fx 555: the report column and its check hold at their edges, and nobody but the API''s role reads or writes it';
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Undervisningsuppdragets omfattning (20270301090000), sections 560-563. The owner's side is section 564 in rls-owner-checks.sql.
 --
 --   560  the catalogue as the migration wrote it: the two reference tables, their keys, checks, indexes, arms and privileges

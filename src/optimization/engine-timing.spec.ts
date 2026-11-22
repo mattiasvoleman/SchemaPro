@@ -13,6 +13,7 @@ import {
   candidateCallMs,
   candidateTimesOf,
   deadlineSecondsOf,
+  engineCeilingParams,
   isEngineCeilingBody,
   parseEngineTiming,
   routeOf,
@@ -36,7 +37,7 @@ import { PRODUCTION_BODY } from './__fixtures__/engine-timing-body';
 
 const SHARED = JSON.parse(
   readFileSync(join(__dirname, '../../optimization-engine/tests/data/solver_timeout_body.json'), 'utf8'),
-) as { code: string; sentences: Record<string, string> };
+) as { code: string; sentences: Record<string, string>; detailsWithStage: Record<string, string | number> };
 
 const production = (): EngineTiming => parseEngineTiming(PRODUCTION_BODY)!;
 
@@ -287,5 +288,58 @@ describe('the engine’s 503 at its ceiling (the body both sides’ tests read)'
     expect(isEngineCeilingBody(null)).toBe(false);
     expect(isEngineCeilingBody(undefined)).toBe(false);
     expect(isEngineCeilingBody({ message: ['Optimization timed out.'] })).toBe(false);
+  });
+});
+
+describe('engineCeilingParams (omgång 13, M2: where the engine’s solve was when its ceiling fell)', () => {
+  it('reads the body both sides share: the ceiling and the step with its two figures, never the route', () => {
+    expect(engineCeilingParams({ details: SHARED.detailsWithStage })).toEqual({
+      ceilingSeconds: 230,
+      stage: 'SEARCH_CLONE',
+      stageSeconds: 160,
+      elapsedSeconds: 230,
+    });
+  });
+
+  it('carries the ceiling alone when no step is named, and nothing when there are no details', () => {
+    expect(engineCeilingParams({ details: { route: 'optimize', ceilingSeconds: 230 } })).toEqual({ ceilingSeconds: 230 });
+    expect(engineCeilingParams({})).toBeUndefined();
+    expect(engineCeilingParams(null)).toBeUndefined();
+    expect(engineCeilingParams(undefined)).toBeUndefined();
+    expect(engineCeilingParams({ details: null })).toBeUndefined();
+    expect(engineCeilingParams({ details: 'soon' })).toBeUndefined();
+    expect(engineCeilingParams({ details: [230] })).toBeUndefined();
+    expect(engineCeilingParams({ details: { route: 'optimize' } })).toBeUndefined();
+  });
+
+  it.each(['PRECHECKS', 'BUILD', 'SITES', 'SEARCH_CLEAN', 'SEARCH_CLONE', 'PROBE'])('knows the step %s', (stage) => {
+    expect(engineCeilingParams({ details: { ceilingSeconds: 40, stage, stageSeconds: 1, elapsedSeconds: 2 } })).toMatchObject({ stage });
+  });
+
+  it('carries the three figures of a step together or not at all', () => {
+    const said = { ceilingSeconds: 230, stage: 'BUILD', stageSeconds: 4, elapsedSeconds: 5 };
+    expect(engineCeilingParams({ details: { ...said, stageSeconds: undefined } })).toEqual({ ceilingSeconds: 230 });
+    expect(engineCeilingParams({ details: { ...said, elapsedSeconds: undefined } })).toEqual({ ceilingSeconds: 230 });
+    expect(engineCeilingParams({ details: { ...said, stage: undefined } })).toEqual({ ceilingSeconds: 230 });
+    expect(engineCeilingParams({ details: { ...said, stage: 'THINKING' } })).toEqual({ ceilingSeconds: 230 });
+    expect(engineCeilingParams({ details: { ...said, stage: 7 } })).toEqual({ ceilingSeconds: 230 });
+  });
+
+  it('leaves out a figure that is not a finite number of seconds, and rounds the rest to a tenth', () => {
+    expect(
+      engineCeilingParams({
+        details: { ceilingSeconds: -1, stage: 'BUILD', stageSeconds: Number.NaN, elapsedSeconds: Number.POSITIVE_INFINITY },
+      }),
+    ).toBeUndefined();
+    expect(engineCeilingParams({ details: { ceilingSeconds: '230' } })).toBeUndefined();
+    expect(
+      engineCeilingParams({ details: { ceilingSeconds: 230.04, stage: 'PROBE', stageSeconds: 112.26, elapsedSeconds: 0 } }),
+    ).toEqual({ ceilingSeconds: 230, stage: 'PROBE', stageSeconds: 112.3, elapsedSeconds: 0 });
+  });
+
+  it('carries no key of its own choosing: a body can add whatever it likes and none of it reaches the run', () => {
+    expect(
+      engineCeilingParams({ details: { ceilingSeconds: 230, requirementId: 'abc', note: 'x'.repeat(500), route: 'optimize' } }),
+    ).toEqual({ ceilingSeconds: 230 });
   });
 });

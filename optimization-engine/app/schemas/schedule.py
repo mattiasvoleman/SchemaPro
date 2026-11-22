@@ -2236,6 +2236,86 @@ class ConflictAnalysis(CamelModel):
         return self
 
 
+#: The steps of one solve, in the order they run, as a TIMEOUT's report names the
+#: time spent in each (app/solver/stage_clock.py):
+#: `PRECHECKS`: the request's own checks, the arithmetic verdicts, the lunch
+#: stage and the year's week load, which all run before a model is built.
+#: `BUILD`: the two models. `SITES`: the walk's planned-sites search (a school
+#: that keeps Restid i generatorn). `SEARCH_CLEAN` and `SEARCH_CLONE`: phase 1a
+#: and 1b, the two satisfaction searches (the clone's setup counts with its
+#: search). `PROBE`: the timeout probe that names a rule which does not fit.
+TimeoutStageName = Literal[
+    "PRECHECKS", "BUILD", "SITES", "SEARCH_CLEAN", "SEARCH_CLONE", "PROBE",
+]
+
+#: The satisfaction searches that report their effort: phase 1a and phase 1b.
+TimeoutPhaseName = Literal["CLEAN", "CLONE"]
+
+
+class TimeoutStage(CamelModel):
+    """The seconds one step of a timed-out solve took, by the solve's own clock."""
+
+    stage: TimeoutStageName
+    seconds: float = Field(ge=0)
+
+
+class TimeoutSearchPhase(CamelModel):
+    """One satisfaction search that ended without a timetable, and what it had done.
+
+    `conflicts` and `branches` are what CP-SAT counted (its `NumConflicts` and
+    `NumBranches`): effort, not progress. A satisfaction search has no
+    objective, so it has no bound either, and nothing here says "X % of the
+    way". None when CP-SAT had no response to read (the solve threw, and the
+    guard answered UNKNOWN in its place).
+    """
+
+    phase: TimeoutPhaseName
+    seconds: float = Field(ge=0)
+    conflicts: int | None = Field(default=None, ge=0)
+    branches: int | None = Field(default=None, ge=0)
+
+
+class TimeoutSearch(CamelModel):
+    """How far the search got: the searches that ran, and that none found a timetable."""
+
+    #: Always 0 on a TIMEOUT, which is the answer of a solve that found none;
+    #: said anyway so that a reader never has to infer it from an empty list.
+    solutions: int = Field(default=0, ge=0)
+    phases: list[TimeoutSearchPhase]
+
+
+class TimeoutReport(CamelModel):
+    """Where a timed-out solve's time went and how far its search got (omgång 13, M2).
+
+    ONLY ON A TIMEOUT ANSWER, and measured, never a rule: nothing in it changes
+    what the solve does. A school reads it as "the search had 94 s of the 180
+    it is set for, the builds took 38, and no search found a timetable" instead
+    of a status and a hint. The cause it is read with is the page's to say, from
+    this and from `conflicts`.
+    """
+
+    #: From the route's entry to the answer, builds and the probe included.
+    total_seconds: float = Field(alias="totalSeconds", ge=0)
+    #: What the search was given, in whole seconds: the same number the TIMEOUT's
+    #: summaries call {budget}. Less than the next one when the request's clock
+    #: could not hold the deployment's budget (a caller that waits less than
+    #: the settings need, or a slow build).
+    budget_seconds: int = Field(alias="budgetSeconds", ge=0)
+    #: What the engine is set to search for a request of this kind.
+    configured_budget_seconds: int = Field(alias="configuredBudgetSeconds", ge=0)
+    #: How long the caller said it waits (`deadlineSeconds`), if it said.
+    caller_wait_seconds: float | None = Field(
+        default=None, alias="callerWaitSeconds", ge=0,
+    )
+    #: In the order they ran; a step that did not run is not listed.
+    stages: list[TimeoutStage]
+    search: TimeoutSearch
+    #: The year's week load stopped at its deadline before it had counted every
+    #: year: a year with no row in `conflicts` was NOT counted, which is not the
+    #: same as being under the tight threshold.
+    week_load_cut: bool = Field(default=False, alias="weekLoadCut")
+
+
 class OptimizeScheduleResponse(CamelModel):
     request_id: UUID4 = Field(alias="requestId")
     status: SolverStatus
@@ -2264,5 +2344,13 @@ class OptimizeScheduleResponse(CamelModel):
     #: byte what it was. A refusal never carries it: it names the HARD rule
     #: that stopped the week, under `conflicts`, as it always did.
     deviations: list[ConflictDetail] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+    #: Where a TIMEOUT's time went and how far its search got (TimeoutReport).
+    #: PRESENT ONLY ON A TIMEOUT, OMITTED on every other response, so an answer
+    #: with a timetable or a refusal is byte for byte what it was. An older
+    #: gateway ignores it; an older engine never sends it, and the page then
+    #: shows the rows a TIMEOUT has always carried.
+    report: TimeoutReport | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
