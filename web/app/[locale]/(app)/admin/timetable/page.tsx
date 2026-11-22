@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { toast } from "sonner";
@@ -20,190 +20,21 @@ import {
   Undo2,
   Upload,
 } from "lucide-react";
-import {
-  useAcademicYears,
-  useConstraints,
-  useCreateMasterLesson,
-  useDeleteMasterLesson,
-  useGroups,
-  useMasterLessons,
-  usePeople,
-  useLunchSettings,
-  useRequirements,
-  useRooms,
-  useSubjects,
-  useUpdateMasterLesson,
-  type CreateMasterLessonInput,
-  useGroupMemberships,
-  useFrameTimes,
-  useLunchSittings,
-  useLunchSittingMutations,
-  useRoomPreferences,
-  useRasts,
-  useSchoolBreaks,
-} from "@/lib/queries";
-/*
- * The two exports are imported where they are pressed, not here, and so are
- * the rows this page feeds them (./timetable-exports.ts). Neither is needed to
- * SHOW the week — the school asks for a file. lib/pdf.ts already reasons this
- * way about jspdf inside its own export function; this moves the wrapper the
- * same distance.
- */
+import { useCreateMasterLesson, useDeleteMasterLesson, useUpdateMasterLesson } from "@/lib/queries";
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
-import { closedWeeksOf } from "@/lib/closed-weeks";
-import { usePlanningYear } from "@/lib/planning-year";
-import { withProjectedHomes } from "@/lib/projected-rosters";
-import {
-  PlanningYearPicker,
-  ProjectedRostersBanner,
-} from "@/components/schedule/planning-year";
-import { ApiError } from "@/lib/api";
-import { LESSON_IS_PLACED } from "@/lib/lesson-is-placed";
+import { PlanningYearPicker, ProjectedRostersBanner } from "@/components/schedule/planning-year";
 import type { MessageLookup } from "@/lib/engine-message";
-import { refusalText, savedToast, staffingRefusal } from "@/lib/staffing-warnings";
+import { savedToast } from "@/lib/staffing-warnings";
 import { FilterPicker } from "@/components/schedule/filter-picker";
-/*
- * Fetched when the school asks to optimise rooms, not when the page loads.
- *
- * This page carries the most JavaScript in the app, and the dialog is the one
- * part of it a school opens rarely: a grundschema is set once a term, and the
- * rooms are redistributed after that. Its code took the route's own initial JS
- * from 190.1KB to 191.9KB gzipped, past the 190KB admin budget — the same
- * reasoning lib/pdf.ts already applies to jspdf, which it imports inside the
- * export function rather than at the top of the module.
- *
- * React's own lazy(), not next/dynamic — here and for the two splits below.
- * next/dynamic brings its loader runtime (BailoutToCSR, PreloadChunks,
- * loadable) into the route, 1.4KB gzipped, most of what the splits save; and
- * once the people page stopped sharing that runtime it sat in a chunk of its
- * own here and compressed worse, 190.0 -> 190.1KB, past the budget by the
- * decimal. React is in every route already, so lazy() costs nothing on top.
- * No lazy component is reachable during SSR: every *Used latch below
- * (confirm, edit, create, suggest, versions, rooms, publish) is false at first
- * render, and each lazy dialog is mounted only behind its latch. The
- * selection's bar is drawn once the lessons are read, which they are not at
- * first render either.
- */
-const RoomOptimizationDialog = lazy(() =>
-  import("@/components/schedule/room-optimization-dialog").then((module) => ({
-    default: module.RoomOptimizationDialog,
-  })),
-);
-import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
-/*
- * Fetched the first time Versioner is pressed, like the room optimisation
- * dialog above and for its reason: the version diff is most of the dialog's
- * code, and nothing on the grid needs it (see versions-dialog.tsx).
- */
-const VersionsDialog = lazy(() =>
-  import("@/components/schedule/versions-dialog").then((module) => ({
-    default: module.VersionsDialog,
-  })),
-);
-/*
- * Byten och flyttar, fetched the first time "Föreslå byten" is pressed in
- * Justera: the swap search is asked a few times a day and the grid needs none
- * of its code (see swap-dialog.tsx).
- */
-const SwapDialog = lazy(() =>
-  import("@/components/schedule/swap-dialog").then((module) => ({
-    default: module.SwapDialog,
-  })),
-);
-/*
- * The lesson dialogs — Lägg till, Justera, Publicera and the shared-move and
- * placement questions after a drag — fetched as one chunk right after the page
- * mounts (see components/schedule/lesson-dialogs.ts for why one). Justera,
- * Publicera and the two questions used to be written out at the bottom of this
- * page; with them went the route's whole copy of @radix-ui/react-dialog, the
- * Switch and the date picker, none of which the grid draws on load. The two
- * draft types are imported as types only, which brings no code with them.
- */
-const loadLessonDialogs = () => import("@/components/schedule/lesson-dialogs");
-/*
- * Made by a function, and made again when one fails: lazy() keeps a rejected
- * fetch for good and rethrows it on every later render, so retrying a chunk
- * that did not arrive takes new lazy() wrappers (see lessonDialogsFailed in the
- * page). Kept at module level between failures so a later visit in the same
- * tab renders the already resolved ones without suspending.
- */
-const lazyLessonDialogs = () => ({
-  CreateLessonDialog: lazy(() =>
-    loadLessonDialogs().then((module) => ({ default: module.CreateLessonDialog })),
-  ),
-  LessonEditDialog: lazy(() =>
-    loadLessonDialogs().then((module) => ({ default: module.LessonEditDialog })),
-  ),
-  PublishReviewDialog: lazy(() =>
-    loadLessonDialogs().then((module) => ({ default: module.PublishReviewDialog })),
-  ),
-  PublicationBadge: lazy(() =>
-    loadLessonDialogs().then((module) => ({ default: module.PublicationBadge })),
-  ),
-  SharedMoveDialog: lazy(() =>
-    loadLessonDialogs().then((module) => ({ default: module.SharedMoveDialog })),
-  ),
-  SuggestPlacementsDialog: lazy(() =>
-    loadLessonDialogs().then((module) => ({ default: module.SuggestPlacementsDialog })),
-  ),
-});
-let lessonDialogs = lazyLessonDialogs();
-/*
- * Lektionstid — schemalagt mot planerat for the groups in view — fetched on
- * the first press of its button, with the layer-2 module and the week
- * arithmetic it brings (components/timplan/schedule-delta-panel.tsx). Made
- * again after a failed fetch, for the reason lazyLessonDialogs is.
- */
-const lazyLessonTime = () =>
-  lazy(() =>
-    import("@/components/timplan/schedule-delta-panel").then((module) => ({
-      default: module.ScheduleDeltaPanel,
-    })),
-  );
-let LessonTimePanel = lazyLessonTime();
-/*
- * The selection's bar (components/schedule/selection-bar.tsx), from the lesson
- * dialogs' chunk but with a lazy() of its own: a dialog that fails to load
- * remakes lazyLessonDialogs, and a bar on screen would go with it. Made again
- * after its own failed fetch, for the reason lazyLessonDialogs is.
- */
-const lazySelectionBar = () =>
-  lazy(() => loadLessonDialogs().then((module) => ({ default: module.SelectionBar })));
-let SelectionBar = lazySelectionBar();
 import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
 import type { CreateDraft } from "@/components/schedule/create-lesson-dialog";
 import type { LessonEditDraft } from "@/components/schedule/lesson-edit-dialog";
-import type { LessonRecurrence, MasterLesson, StaffingWarning } from "@/lib/types";
-import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
-import { rastWindows } from "@/lib/rasts";
-import {
-  audienceFor,
-  buildRosterIndex,
-  homeClassesReached,
-  showsFraction,
-  type Audience,
-} from "@/lib/lesson-audience";
-import {
-  buildGroupConflictMap,
-  buildPupilBufferMap,
-  detectConflicts,
-  type LunchOf,
-  type Meal,
-  pupilBufferOf,
-  teacherIdsOf,
-  toPlacement,
-  validatePlacement,
-  type Placement,
-} from "@/lib/conflicts";
-import { mealDayFormatter, mealWeeksOf } from "@/lib/lunch-window";
+import type { MasterLesson, StaffingWarning } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { homeClassesReached } from "@/lib/lesson-audience";
+import { pupilBufferOf, validatePlacement, type Placement } from "@/lib/conflicts";
 import type { OpenSlotMatch, PlacementSuggestion } from "@/lib/placement-search";
-import { buildGradeSpans } from "@/lib/grade-span";
-import { restorableInput } from "@/lib/lesson-restore";
-import { breaksRoomLock } from "@/lib/room-locks";
-import {
-  useHistoryKeyboard,
-  useScheduleHistory,
-} from "@/lib/use-schedule-history";
+import { useScheduleHistory } from "@/lib/use-schedule-history";
 import { NextStep } from "@/components/layout/next-step";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
@@ -212,7 +43,6 @@ import type { BlockKit } from "@/components/schedule/block-cards";
 import {
   TimetableGrid,
   type LessonChange,
-  type TimetableLesson,
   type TimetableGridHandle,
 } from "@/components/schedule/timetable-grid";
 import { Badge } from "@/components/ui/badge";
@@ -239,51 +69,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
-const NONE = "__none__";
-
-/** Normalizes DB time values ("HH:MM:SS") to input-friendly "HH:MM". */
-function toHHMM(time: string): string {
-  return time.slice(0, 5);
-}
-
-function minutesToHHMM(minutes: number): string {
-  const h = String(Math.floor(minutes / 60)).padStart(2, "0");
-  const m = String(minutes % 60).padStart(2, "0");
-  return `${h}:${m}`;
-}
-
-/** The editable fields of a lesson, as a gateway-ready patch. */
-interface LessonSnapshot {
-  dayOfWeek: number;
-  startTime: string;
-  endTime: string;
-  roomId: string | null;
-  teacherId: string | null;
-  isLocked: boolean;
-  isParked: boolean;
-  recurrence: LessonRecurrence;
-  startDate: string | null;
-  endDate: string | null;
-}
-
-function snapshotOf(lesson: MasterLesson): LessonSnapshot {
-  return {
-    dayOfWeek: lesson.dayOfWeek,
-    startTime: toHHMM(lesson.startTime),
-    endTime: toHHMM(lesson.endTime),
-    roomId: lesson.roomId,
-    teacherId: lesson.teacherId,
-    isLocked: lesson.isLocked,
-    isParked: lesson.isParked,
-    recurrence: lesson.recurrence,
-    startDate: lesson.startDate,
-    endDate: lesson.endDate,
-  };
-}
-
-
-type GroupBy = "none" | "teacher" | "room" | "group";
+import {
+  RoomOptimizationDialog,
+  VersionsDialog,
+  SwapDialog,
+  loadLessonDialogs,
+  lessonDialogs,
+  resetLessonDialogs,
+  LessonTimePanel,
+  resetLessonTimePanel,
+  SelectionBar,
+  resetSelectionBar,
+} from "./timetable-lazy";
+import { NONE, toHHMM, minutesToHHMM, type GroupBy } from "./timetable-helpers";
+import { useTimetableReads } from "./use-timetable-reads";
+import { useScheduleEngine } from "./use-schedule-engine";
+import { useTimetableView } from "./use-timetable-view";
+import { useUndoableEdits } from "./use-undoable-edits";
+import { useLunchEdits } from "./use-lunch-edits";
 
 export default function TimetablePage() {
   const t = useTranslations("timetable");
@@ -293,49 +96,13 @@ export default function TimetablePage() {
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   const tDays = useTranslations("days");
   const tNav = useTranslations("nav");
-  /*
-   * The grundschema on screen: this year's, or next year's before its
-   * activation (lib/planning-year.ts). Every year-keyed read and write below
-   * follows it — the lessons, the timplan, the meals, the versions, the room
-   * proposal, publishing.
-   */
-  const planning = usePlanningYear();
-  const shownYear = planning.year;
-  /*
-   * The years themselves, for the state ladder only (usePlanningYear reads
-   * the same cached query). Without them a school whose years were still on
-   * their way, or had failed, or had no active year was told "no
-   * grundschema yet — generate one": a page that could not know saying so.
-   * Pending includes the one render usePlanningYear holds the year back
-   * for, so the empty state does not flash before the grid.
-   */
-  const yearsQuery = useAcademicYears();
-  const yearPending = yearsQuery.isLoading || (planning.active !== null && shownYear === null);
+  const reads = useTimetableReads();
   const {
-    data: lessons,
-    isLoading,
-    isError: lessonsFailed,
-    dataUpdatedAt: lessonsReadAt,
-  } = useMasterLessons(shownYear?.id ?? null);
-  const { data: subjects } = useSubjects();
-  const { data: groups } = useGroups();
-  const { data: rooms } = useRooms();
-  /*
-   * Next year's classes have no home pupils before its activation, so the
-   * people are read with the class the activation will give each pupil it
-   * moves — the overlay the gateway checks a drag against, laid over the rows
-   * as it comes (lib/projected-rosters.ts). Everything derived from a pupil's
-   * class below — studentGroupOf, the clash map, the grade spans, the roster
-   * index — then sees next year's 8A as the server does. For this year the
-   * same array comes back.
-   */
-  const { data: storedPeople } = usePeople();
-  const people = useMemo(
-    () => withProjectedHomes(storedPeople, planning.rosters),
-    [storedPeople, planning.rosters],
-  );
-  const { data: constraints } = useConstraints();
-  const { data: requirements } = useRequirements(shownYear?.id ?? null);
+    planning, shownYear, yearsQuery, yearPending, lessons,
+    isLoading, lessonsFailed, lessonsReadAt, subjects, groups,
+    rooms, people, constraints, requirements, lunchSettings,
+    frameTimes, lunchSittings,
+  } = reads;
   /*
    * Block i schemat: a parallel block drawn as one card per slot, moved and
    * locked as one (components/schedule/block-cards.tsx). Fetched once the
@@ -378,8 +145,6 @@ export default function TimetablePage() {
     removedCalendarLessons?: number;
     warnings?: StaffingWarning[];
   }): void => savedToast(tEngine, editSavedMessage(result), result.warnings);
-
-  const { data: lunchSettings } = useLunchSettings();
   const updateLesson = useUpdateMasterLesson();
   const createLesson = useCreateMasterLesson();
   const deleteLesson = useDeleteMasterLesson();
@@ -537,74 +302,32 @@ export default function TimetablePage() {
     setSelectedIds(new Set());
   };
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
-
-
-  /*
-   * The groups, split by kind. A school has a couple of dozen classes and can
-   * have hundreds of teaching groups — Kunskapsskolan has 24 and 300 — so one
-   * flat list buries the class a rektor is looking for.
-   */
-  /** The groups of the year on screen: a lesson added here belongs to it. */
-  const yearGroups = useMemo(
-    () => (groups ?? []).filter((group) => group.academicYearId === shownYear?.id),
-    [groups, shownYear?.id],
-  );
-  /*
-   * The weeks of the läsår no lesson is written in (jullov, sportlov): two lessons that can meet only in
-   * such weeks are no clash, as the gateway's hand edit and the publish gate read them (lib/closed-weeks.ts).
-   * Undefined until the breaks are read and for a year none of whose weeks a lov closes.
-   */
-  const { data: schoolBreaks } = useSchoolBreaks(shownYear?.id ?? null);
-  const closedWeeks = useMemo(
-    () =>
-      shownYear && schoolBreaks
-        ? closedWeeksOf(
-            { startDate: shownYear.startDate, endDate: shownYear.endDate },
-            schoolBreaks,
-            yearGroups.map((group) => group.gradeLevel),
-          )
-        : undefined,
-    [shownYear, schoolBreaks, yearGroups],
-  );
-  const groupSections = useMemo(() => {
-    const named = (group: { id: string; name: string }) => ({ id: group.id, name: group.name });
-    // The schedule on screen is one year's, so its groups are the filter's:
-    // another year's 8A (next year's, after a rollover) has no lesson here
-    // and would only stand beside this year's under one name.
-    const shown = yearGroups;
-    return [
-      {
-        label: t("filterKindClasses"),
-        options: shown.filter((group) => group.kind === "CLASS").map(named),
-      },
-      {
-        label: t("filterKindTeachingGroups"),
-        options: shown.filter((group) => group.kind !== "CLASS").map(named),
-      },
-    ];
-  }, [yearGroups, t]);
-
-  // The grid's teacher rows, the lesson dialogs' teacher pick and the name on a
-  // lesson: a teacher, or an administrator who teaches (Users.teaches). Written
-  // out and not through lib/teaching-staff.ts: this page sits close to its bundle
-  // budget. Not the substitute pick, which is the cover board's and stays TEACHER.
-  const teachers = useMemo(
-    () => (people ?? []).filter((person) => person.role === "TEACHER" || (person.role === "SCHOOL_ADMIN" && person.teaches === true)),
-    [people],
-  );
-  const students = useMemo(
-    () => (people ?? []).filter((person) => person.role === "STUDENT" && person.isActive),
-    [people],
-  );
-  /** studentId → their class id (participant-aware conflict checks). */
-  const studentGroupOf = useMemo(
-    () => new Map(students.map((student) => [student.id, student.studentGroupId])),
-    [students],
-  );
-  const { data: memberships } = useGroupMemberships();
-  const { data: frameTimes } = useFrameTimes();
-  const { data: lunchSittings } = useLunchSittings(shownYear?.id ?? null);
-  const lunchMutations = useLunchSittingMutations();
+  const engine = useScheduleEngine({ ...reads, peers, editing });
+  const {
+    yearGroups, closedWeeks, teachers, students, studentGroupOf,
+    gradeSpanOf, homeClassIds, rosterIndex, groupConflictMap, subjectById,
+    groupById, roomById, teacherById, personById, lessonById,
+    lunchOf, pupilBuffers, conflictMap, remoteEditors, placements,
+    validateChange,
+  } = engine;
+  const view = useTimetableView({
+    ...reads,
+    ...engine,
+    t,
+    tLunch,
+    locale,
+    onlyGroup,
+    groupFilters,
+    teacherFilters,
+    roomFilters,
+    blockKit,
+    groupBy,
+  });
+  const {
+    groupSections, lunchBands, audienceByLesson, filtered, groupLabel,
+    shareLabelOf, toGridLesson, gridLessons, validateGridChange, parked,
+    lessonName, resourceBoards,
+  } = view;
   /*
    * The Lektionstid panel, open or not. Remembered for the tab
    * (sessionStorage, read after mount so the server render and the first
@@ -636,669 +359,20 @@ export default function TimetablePage() {
   const canPlaceLunch =
     onlyGroup !== null && lunchSettings?.lunchEnabled === true && shownYear != null;
   const lunchMode = placingLunch && canPlaceLunch;
-  const { data: roomRules } = useRoomPreferences();
-  const { data: rasts } = useRasts();
-  /**
-   * groupId -> the years it holds, so a GRADE_LEVEL rule can reach it.
-   *
-   * A teaching group has no year of its own, so it is derived from its members'
-   * home classes — the same derivation the server does for the solver payload.
-   * Without this the rule matches nothing and is ignored in silence; see
-   * lib/grade-span.ts.
-   */
-  //
-  // In NIOARIG (grade-numbering.ts): every rule these spans meet here — year
-  // rules, frames, lunch, rasts, room locks — is school-wide and stated so,
-  // and a tioårig läsår's 10A is the 9 a "7–9" frame binds, as the solver
-  // payload sends it.
-  const gradeSpanOf = useMemo(
-    () =>
-      buildGradeSpans({
-        // The shown year's groups only, as the server reads them: a home class
-        // of another year (the active one, while the projection loads) would
-        // lend a teaching group a grade in another numbering.
-        groups: (groups ?? []).filter((group) => group.academicYearId === shownYear?.id),
-        membersByGroup: (memberships ?? []).reduce((map, row) => {
-          const list = map.get(row.studentGroupId);
-          if (list) list.push(row.studentId);
-          else map.set(row.studentGroupId, [row.studentId]);
-          return map;
-        }, new Map<string, string[]>()),
-        homeClassOf: studentGroupOf,
-        numbering: shownYear?.gradeNumbering,
-      }),
-    [groups, memberships, studentGroupOf, shownYear?.id, shownYear?.gradeNumbering],
-  );
-
-  /** Groups sharing students — the manual-edit twin of the engine's pairs, halves included. */
-  const pupilRelation = useMemo(
-    () => buildGroupConflictMap(studentGroupOf, memberships ?? [], groups),
-    [studentGroupOf, memberships, groups],
-  );
-
-  /** The groups that are somebody's home. A teaching group is not one. */
-  const homeClassIds = useMemo(
-    () => (groups ?? []).filter((g) => g.kind === "CLASS").map((g) => g.id),
-    [groups],
-  );
-
-  /**
-   * The same pupils, counted rather than merely paired.
-   *
-   * Deliberately not built on pupilRelation above: that is a BOOLEAN "these
-   * two groups share at least one pupil", which cannot tell a two-pupil choir
-   * from a fourteen-pupil maths half and never reads a lesson's individually
-   * named studentIds at all. Both indexes are wanted — one answers "may these
-   * collide", this one answers "how much of this class is in the room".
-   */
-  const rosterIndex = useMemo(
-    () => buildRosterIndex(studentGroupOf, memberships, groups),
-    [studentGroupOf, memberships, groups],
-  );
-
-  /*
-   * Delade salar: two classes in a hall the school lets be shared are no ROOM
-   * clash while their pupils fit its seats. The check is fetched on demand,
-   * only once Skolregler hold the rule on, so a school that never does pays no
-   * byte for it (lib/shared-rooms-board.ts); until it has arrived every room is
-   * exclusive, the safe reading. The relation it lays on is the one above.
-   */
-  const sharedMode = lunchSettings?.placementSharedMode;
-  const sharing = sharedMode === "SOFT" || sharedMode === "HARD";
-  const [withSharing, setWithSharing] = useState<
-    typeof import("@/lib/shared-rooms-board").withSharedRooms | null
-  >(null);
-  useEffect(() => {
-    if (sharing) {
-      import("@/lib/shared-rooms-board").then((board) => setWithSharing(() => board.withSharedRooms), () => {});
-    }
-  }, [sharing]);
-  const groupConflictMap = useMemo(
-    () => (withSharing ? withSharing(pupilRelation, rooms ?? [], sharedMode, rosterIndex) : pupilRelation),
-    [withSharing, pupilRelation, rooms, sharedMode, rosterIndex],
-  );
-
-  const subjectById = useMemo(
-    () => new Map((subjects ?? []).map((subject) => [subject.id, subject])),
-    [subjects],
-  );
-  const groupById = useMemo(
-    () => new Map((groups ?? []).map((group) => [group.id, group])),
-    [groups],
-  );
-  const roomById = useMemo(
-    () => new Map((rooms ?? []).map((room) => [room.id, room])),
-    [rooms],
-  );
-  // The look-up of the name a lesson already carries takes everybody in the list, not the pick's: a mark taken off
-  // later leaves her on her lessons, and a lesson without its teacher's name reads as one nobody has.
-  const teacherById = useMemo(
-    () => new Map((people ?? []).map((person) => [person.id, person])),
-    [people],
-  );
-  /** Everyone, pupils who have left included: a saved version still names them. */
-  const personById = useMemo(
-    () => new Map((people ?? []).map((person) => [person.id, person])),
-    [people],
-  );
-  const lessonById = useMemo(
-    () => new Map((lessons ?? []).map((lesson) => [lesson.id, lesson])),
-    [lessons],
-  );
-
-  // -------------------------------------------------------------------
-  // Live conflict engine: highlight existing clashes, validate drags.
-  // Validation always runs against ALL lessons, not just the filtered view.
-  // -------------------------------------------------------------------
-
-  /**
-   * Each group's meal, keyed `groupId:weekday` for the conflict check.
-   *
-   * Built from every sitting, not only the filtered group's: the check runs on
-   * the lesson's own groups, and a lesson for a class that is not the one being
-   * looked at is still a lesson on that class's meal.
-   */
-  const lunchOf = useMemo<LunchOf | undefined>(() => {
-    if (!lunchSittings) return undefined;
-    // A class may eat at another time in another part of the läsår, so a day
-    // can hold several meals; the check holds a lesson to those of its weeks.
-    const meals = new Map<string, Meal[]>();
-    for (const sitting of lunchSittings) {
-      const key = `${sitting.studentGroupId}:${sitting.dayOfWeek}`;
-      const meal: Meal = {
-        startMinutes: timeToMinutes(sitting.startTime),
-        endMinutes: timeToMinutes(sitting.endTime),
-        startDate: sitting.startDate,
-        endDate: sitting.endDate,
-      };
-      const held = meals.get(key);
-      if (held) held.push(meal);
-      else meals.set(key, [meal]);
-    }
-    return meals;
-  }, [lunchSittings]);
-
-  /**
-   * The pupils' ombyte and dusch, per (class, subject).
-   *
-   * `undefined` while the timplan has not answered, which is the file's own
-   * convention for "not checked" — and the honest reading: a buffer nobody has
-   * loaded yet must not be reported as 0 and let a drag through that the API
-   * then refuses with a 409. `useRequirements` is keyed on the läsår, so this
-   * follows the year the grid is showing.
-   */
-  const pupilBuffers = useMemo(
-    () => (requirements ? buildPupilBufferMap(requirements) : undefined),
-    [requirements],
-  );
-
-  /**
-   * Whether a placement sits in a room its subject's locks forbid.
-   *
-   * The subject comes off the lesson and the stage off its group, so this is a
-   * closure over the page's own maps rather than another argument list.
-   */
-  const roomLock = useMemo(() => {
-    const locks = (roomRules ?? []).filter((rule) => rule.kind === "LOCK");
-    if (locks.length === 0) return undefined;
-    return (placement: Placement) => {
-      const lesson = placement.id ? lessonById.get(placement.id) : undefined;
-      if (!lesson) return false;
-      return breaksRoomLock(
-        locks,
-        lesson.subjectId,
-        gradeSpanOf.get(lesson.studentGroupId),
-        placement.roomId,
-      );
-    };
-  }, [roomRules, lessonById, gradeSpanOf]);
-
-  const conflictMap = useMemo(
-    () =>
-      detectConflicts(
-        lessons ?? [],
-        constraints ?? [],
-        studentGroupOf,
-        groupConflictMap,
-        gradeSpanOf,
-        frameTimes,
-        lunchOf,
-        roomLock,
-        pupilBuffers,
-        closedWeeks,
-      ),
-    [
-      lessons,
-      constraints,
-      studentGroupOf,
-      groupConflictMap,
-      gradeSpanOf,
-      frameTimes,
-      lunchOf,
-      roomLock,
-      pupilBuffers,
-      closedWeeks,
-    ],
-  );
-
-  /** lessonId → collaborator label (soft edit-locks from presence). */
-  const remoteEditors = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const peer of peers) {
-      if (peer.editingLessonId && (!editing || peer.editingLessonId !== editing.id)) {
-        map.set(peer.editingLessonId, peer.label);
-      }
-    }
-    return map;
-  }, [peers, editing]);
-
-  /**
-   * Everything that OCCUPIES a slot. A parked lesson does not: it is on the
-   * tray, and its remembered day and time are not a placement. Reading them
-   * as one would refuse B the very slot A was lifted out of.
-   */
-  const placements = useMemo(
-    () =>
-      (lessons ?? [])
-        .filter((lesson) => !lesson.isParked)
-        .map((lesson) => toPlacement(lesson, pupilBuffers)),
-    [lessons, pupilBuffers],
-  );
-
-  const validateChange = useCallback(
-    (id: string, change: LessonChange, without?: ReadonlySet<string>): boolean => {
-      const lesson = lessonById.get(id);
-      if (!lesson) return false;
-      // A lesson written from a förläggning is changed in Förlägg i veckan: refused during the drag, not after the drop (409). Let go
-      // where it already is it stands, as the server lets it (assertPlacedLessonStands): a parked one put back on its own slot, and a
-      // drag that ends where it began.
-      if (lesson.fromPlacement) {
-        const own = toPlacement(lesson);
-        return change.dayOfWeek === own.dayOfWeek && change.startMinutes === own.startMinutes && change.endMinutes === own.endMinutes;
-      }
-      return (
-        validatePlacement(
-          {
-            id,
-            dayOfWeek: change.dayOfWeek,
-            startMinutes: change.startMinutes,
-            endMinutes: change.endMinutes,
-            teacherId: lesson.teacherId,
-            coTeacherId: lesson.coTeacherId,
-            roomId: lesson.roomId,
-            studentGroupId: lesson.studentGroupId,
-            // Ersättande grupper: SvA7 may be dragged beside 7A's svenska.
-            subjectId: lesson.subjectId,
-            extraGroupIds: lesson.extraGroupIds,
-            studentIds: lesson.studentIds,
-            // The dragged lesson's OWN ombyte and dusch. Left off, the
-            // candidate would be checked without the minutes every other
-            // placement on the grid is carrying: the drag would be let into a
-            // slot the API then refuses with a 409, and only after the move
-            // has visibly happened.
-            ...pupilBufferOf(pupilBuffers, lesson),
-          },
-          // A block card's lessons move together: none is in another's way.
-          without ? placements.filter((placement) => !without.has(placement.id ?? "")) : placements,
-          constraints ?? [],
-          studentGroupOf,
-          groupConflictMap,
-          gradeSpanOf,
-          frameTimes,
-          lunchOf,
-          // NO room lock here, and the omission is the design. This predicate
-          // BLOCKS a drag, and it builds its candidate with the lesson's
-          // current room because a drag moves time and not place. Pass the lock
-          // in and the day a school writes one, every lesson of that subject
-          // already sitting elsewhere becomes undraggable in time — silently,
-          // for a reason that has nothing to do with the move. The violation
-          // shows as a conflict on the grid instead.
-          undefined,
-          // The weeks of a lov: a lesson dragged beside one it meets only in jullov is no clash.
-          closedWeeks,
-        ).length === 0
-      );
-    },
-    [
-      lessonById,
-      placements,
-      constraints,
-      studentGroupOf,
-      groupConflictMap,
-      gradeSpanOf,
-      frameTimes,
-      lunchOf,
-      pupilBuffers,
-      closedWeeks,
-    ],
-  );
-
-  /**
-   * "Lunch", and the weeks it holds when it holds only some: a class that eats
-   * at another time in another part of the läsår has a band for each, and the
-   * label is what tells them apart.
-   */
-  const mealDay = useMemo(() => mealDayFormatter(locale), [locale]);
-  const mealLabel = useCallback(
-    (sitting: { startDate: string | null; endDate: string | null }): string => {
-      const weeks = mealWeeksOf(sitting, mealDay);
-      if (weeks === null) return tLunch("bandLabel");
-      return weeks.kind === "between"
-        ? tLunch("bandLabelBetween", { from: weeks.from, to: weeks.to })
-        : weeks.kind === "from"
-          ? tLunch("bandLabelFrom", { from: weeks.from })
-          : tLunch("bandLabelTo", { to: weeks.to });
-    },
-    [mealDay, tLunch],
-  );
-
-  /**
-   * The lunch drawn behind the lessons — but ONLY when one class is in view.
-   *
-   * A sitting belongs to a group. The default view is every group at once, and
-   * a stripe across that grid would say "everyone eats at 11:40" when the whole
-   * point of the flow is that they do not. Shown for a single group and hidden
-   * otherwise is the honest reading; the flow as a whole is on its own page.
-   */
-  const lunchBands = useMemo(() => {
-    if (onlyGroup === null) return undefined;
-    const meals = (lunchSittings ?? [])
-      .filter((sitting) => sitting.studentGroupId === onlyGroup)
-      .map((sitting) => ({
-        id: sitting.id,
-        dayOfWeek: sitting.dayOfWeek,
-        startMinutes: timeToMinutes(sitting.startTime),
-        endMinutes: timeToMinutes(sitting.endTime),
-        label: mealLabel(sitting),
-        // Every meal can be moved — touching one makes it the school's — and
-        // only one the school placed can be removed: the solver's own is
-        // replaced by the next run, and removing it would leave the day blank.
-        movable: true,
-        handPlaced: !sitting.isGenerated,
-        moveLabel: t("lunchMove"),
-        removeLabel: sitting.isGenerated ? undefined : t("lunchRemove"),
-      }));
-
-    /*
-     * The class's rasts, drawn the same way and for a sharper reason.
-     *
-     * This lands one commit BEFORE the engine obeys them, and that order is the
-     * safety mechanism: a school declaring rasts across its existing
-     * hand-placed lessons sees the collisions here, while they are still
-     * something to look at, rather than as an INFEASIBLE on the next
-     * generation run.
-     *
-     * Resolved through lib/rasts.ts rather than by filtering rows, because an
-     * every-day row and a weekday row that overlaps it are two rows and one
-     * day: the band has to show what the pair MEANS.
-     */
-    const span = gradeSpanOf.get(onlyGroup);
-    const breaks = [1, 2, 3, 4, 5].flatMap((dayOfWeek) =>
-      rastWindows(rasts ?? [], span, dayOfWeek).map((window) => ({
-        id: `${window.id}:${dayOfWeek}`,
-        dayOfWeek,
-        startMinutes: window.startMinutes,
-        endMinutes: window.endMinutes,
-        label: window.name,
-      })),
-    );
-
-    return [...meals, ...breaks];
-  }, [lunchSittings, rasts, gradeSpanOf, onlyGroup, mealLabel, t]);
-
-  /**
-   * lessonId → what this lesson means for the class in view. Empty for "all".
-   *
-   * Resolved ONCE here rather than inside toGridLesson, which runs for every
-   * card on every frame of a drag; the cards only ever read this map.
-   */
-  const audienceByLesson = useMemo(() => {
-    const map = new Map<string, Audience>();
-    if (onlyGroup === null) return map;
-    for (const lesson of lessons ?? []) {
-      const audience = audienceFor(lesson, onlyGroup, rosterIndex);
-      if (audience) map.set(lesson.id, audience);
-    }
-    return map;
-  }, [lessons, onlyGroup, rosterIndex]);
-
-  /**
-   * The lessons that reach ANY of the chosen groups, by id.
-   *
-   * The same reach `audienceByLesson` works out for one class — a lesson filed
-   * under 4ma1 holds 4.1's pupils — asked of each chosen group in turn. Its
-   * own memo rather than a widening of that one, because the two answer
-   * different questions: this one is "is it shown", which four classes can
-   * answer together, and that one is "what does it MEAN for the class in
-   * view", which they cannot.
-   */
-  const shownGroups = useMemo(() => {
-    const shown = new Set<string>();
-    if (groupFilters.length === 0) return shown;
-    for (const lesson of lessons ?? []) {
-      if (groupFilters.some((groupId) => audienceFor(lesson, groupId, rosterIndex))) {
-        shown.add(lesson.id);
-      }
-    }
-    return shown;
-  }, [lessons, groupFilters, rosterIndex]);
-
-  const filtered = useMemo(
-    () =>
-      (lessons ?? []).filter(
-        (lesson) =>
-          // Not the tray. `filtered` feeds the grid, the boards and both
-          // exports, and a parked lesson belongs on none of them.
-          !lesson.isParked &&
-          // Every lesson holding one of this class's pupils, not only the ones
-          // filed under its name: 4.1's maths is filed under 4ma1, and the
-          // pupils in it already saw it on their own phones — the RLS policy
-          // calendar_lessons_teaching_group_select grants exactly that — while
-          // the administrator filtering to 4.1 did not.
-          (groupFilters.length === 0 || shownGroups.has(lesson.id)) &&
-          // Both teachers. A lesson somebody only CO-taught was missing from
-          // their own view — the filter asked a name question where the data
-          // is a set.
-          (teacherFilters.length === 0 ||
-            teacherIdsOf(toPlacement(lesson)).some((id) => teacherFilters.includes(id))) &&
-          // A lesson with no room is in none of the rooms picked, which is the
-          // honest reading of "show me what is in the slöjd rooms".
-          (roomFilters.length === 0 ||
-            (lesson.roomId !== null && roomFilters.includes(lesson.roomId))),
-      ),
-    [lessons, groupFilters, teacherFilters, roomFilters, shownGroups],
-  );
-
-  /**
-   * Every class in the room, by name — "4.2 + 4.1".
-   *
-   * Shared by the card, the ICS and the PDF because they were three copies of
-   * one sentence and only the card's was ever corrected. A subscriber to 4.1's
-   * calendar got "Idrott — 4.2" with nothing saying 4.1 was in the hall too.
-   */
-  const groupLabel = useCallback(
-    (lesson: Pick<MasterLesson, "studentGroupId" | "extraGroupIds">) =>
-      [
-        groupById.get(lesson.studentGroupId)?.name,
-        ...lesson.extraGroupIds.map((id) => groupById.get(id)?.name),
-      ]
-        .filter(Boolean)
-        .join(" + "),
-    [groupById],
-  );
-
-  /** "2/4" when the class in view is only partly here, else nothing. */
-  const shareLabelOf = useCallback(
-    (lesson: MasterLesson) => {
-      const audience = audienceByLesson.get(lesson.id);
-      if (!audience || !showsFraction(audience)) return null;
-      return `${audience.attending}/${audience.cohortSize}`;
-    },
-    [audienceByLesson],
-  );
-
-  /**
-   * "Eleverna upptagna 07:50–09:20: 10 min ombyte före, 20 min dusch och ombyte
-   * efter" — or nothing at all, which is every lesson at nearly every school.
-   *
-   * The wording is the API's own (master-lessons.service.ts, ombyteOf), because
-   * the 409 an admin may read next says the same thing about the same minutes
-   * and two spellings of one rule is one too many. The SPAN is here and not
-   * there: the grid's reader is looking at a rectangle and needs to know how far
-   * past it the class is gone, which is exactly what the rectangle cannot show.
-   */
-  const pupilTimeNoteOf = useCallback(
-    (lesson: MasterLesson): string | undefined => {
-      const buffer = pupilBufferOf(pupilBuffers, lesson);
-      if (!buffer) return undefined;
-      const sides = [
-        buffer.minutesBefore > 0
-          ? t("pupilTimeBefore", { minutes: buffer.minutesBefore })
-          : null,
-        buffer.minutesAfter > 0
-          ? t("pupilTimeAfter", { minutes: buffer.minutesAfter })
-          : null,
-      ].filter((side): side is string => side !== null);
-      if (sides.length === 0) return undefined;
-      return t("pupilTime", {
-        start: minutesToHHMM(timeToMinutes(lesson.startTime) - buffer.minutesBefore),
-        end: minutesToHHMM(timeToMinutes(lesson.endTime) + buffer.minutesAfter),
-        detail: sides.join(", "),
-      });
-    },
-    [pupilBuffers, t],
-  );
-
-  const toGridLesson = useCallback(
-    (lesson: MasterLesson): TimetableLesson => {
-      const subject = subjectById.get(lesson.subjectId);
-      const group = groupById.get(lesson.studentGroupId);
-      const teacher = lesson.teacherId ? teacherById.get(lesson.teacherId) : undefined;
-      const room = lesson.roomId ? roomById.get(lesson.roomId) : undefined;
-      const audience = audienceByLesson.get(lesson.id);
-      return {
-        id: lesson.id,
-        dayOfWeek: lesson.dayOfWeek,
-        startMinutes: timeToMinutes(lesson.startTime),
-        endMinutes: timeToMinutes(lesson.endTime),
-        title: subject?.name ?? "",
-        subtitle: [
-          [
-            // The classes by NAME. "+1" told a reader that some other class was
-            // in the room without telling them which, and the one thing worth
-            // knowing about a shared lesson is who you are sharing it with.
-            groupLabel(lesson),
-            lesson.studentIds.length > 0 ? `⊕${lesson.studentIds.length}` : null,
-          ]
-            .filter(Boolean)
-            .join(" "),
-          teacher ? `${teacher.firstName[0]}. ${teacher.lastName}` : null,
-          lesson.fromPlacement ? t("placedMark") : null,
-        ]
-          .filter(Boolean)
-          .join(" · "),
-        room: room?.name,
-        color: subjectColor(lesson.subjectId, subject?.color),
-        locked: lesson.isLocked,
-        recurrenceNote: recurrenceBadge(lesson, t) ?? undefined,
-        conflicted: conflictMap.has(lesson.id),
-        // Hover text only — the rectangle keeps showing the teaching time. A
-        // buffer the grid shows nowhere makes the refusal of the next slot look
-        // like a bug in the grid.
-        pupilTimeNote: pupilTimeNoteOf(lesson),
-        remoteEditor: remoteEditors.get(lesson.id),
-        // Only when the class is PARTLY here. "28/28" on every one of a class's
-        // own lessons is noise on the common case, and a lesson that names the
-        // class holds all of it but those a replacing group takes off (SvA7's
-        // on 7A's svenska, "24/28") — showsFraction is the library's rule.
-        ...(audience && showsFraction(audience)
-          ? {
-              share: `${audience.attending}/${audience.cohortSize}`,
-              shareLabel: t("sharePupils", {
-                attending: audience.attending,
-                total: audience.cohortSize,
-                group: onlyGroup ? (groupById.get(onlyGroup)?.name ?? "") : "",
-              }),
-            }
-          : {}),
-      };
-    },
-    [
-      subjectById,
-      groupById,
-      teacherById,
-      roomById,
-      conflictMap,
-      remoteEditors,
-      audienceByLesson,
-      onlyGroup,
-      groupLabel,
-      pupilTimeNoteOf,
-      t,
-    ],
-  );
-
-  const gridLessons: TimetableLesson[] = useMemo(
-    () => (blockKit ? blockKit.grid(filtered, toGridLesson) : filtered.map(toGridLesson)),
-    [filtered, toGridLesson, blockKit],
-  );
-  const validateGridChange = useCallback(
-    (id: string, change: LessonChange) =>
-      blockKit ? blockKit.validate(id, change, validateChange) : validateChange(id, change),
-    [blockKit, validateChange],
-  );
-
-  /** The tray: lessons set aside, in the order they were lifted. */
-  const parked = useMemo(() => (lessons ?? []).filter((lesson) => lesson.isParked), [lessons]);
   const trayRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<TimetableGridHandle>(null);
-
-  /**
-   * A lesson as a reader names it — "Matematik · 4.1 · K. Ek · A12".
-   *
-   * The edit dialog used to open on "Justera lektion" and nothing else, so
-   * an administrator with three maths lessons on Tuesday had to remember which
-   * one they had clicked. The same line names a card on the tray.
-   */
-  const lessonName = useCallback(
-    (lesson: MasterLesson): string => {
-      const teacher = lesson.teacherId ? teacherById.get(lesson.teacherId) : undefined;
-      const room = lesson.roomId ? roomById.get(lesson.roomId) : undefined;
-      return [
-        subjectById.get(lesson.subjectId)?.name,
-        groupLabel(lesson),
-        teacher ? `${teacher.firstName[0]}. ${teacher.lastName}` : null,
-        room?.name,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-    },
-    [subjectById, groupLabel, teacherById, roomById],
-  );
-
-  /** Resource lanes when the "group by" view is active. */
-  const resourceBoards = useMemo(() => {
-    if (groupBy === "none") return null;
-    const boards: Array<{ key: string; label: string; lessons: TimetableLesson[] }> = [];
-    const push = (key: string, label: string, match: (l: MasterLesson) => boolean) => {
-      const matching = filtered.filter(match);
-      if (matching.length > 0) {
-        // A parallel block's lessons named as on the grid (block-cards.tsx).
-        const drawn = blockKit ? blockKit.grid(matching, toGridLesson) : matching.map(toGridLesson);
-        boards.push({ key, label, lessons: drawn });
-      }
-    };
-    if (groupBy === "teacher") {
-      for (const teacher of teachers) {
-        push(
-          teacher.id,
-          `${teacher.firstName} ${teacher.lastName}`,
-          (l) => teacherIdsOf(toPlacement(l)).includes(teacher.id),
-        );
-      }
-      // "No teacher at all", which is not the same as "no primary teacher".
-      // This lane used to catch a lesson carrying only a coTeacherId and file
-      // it here — actively mis-filed, not merely absent from its own lane.
-      push(
-        "__none__",
-        t("noTeacher"),
-        (l) => teacherIdsOf(toPlacement(l)).length === 0,
-      );
-    } else if (groupBy === "room") {
-      for (const room of rooms ?? []) {
-        push(room.id, room.name, (l) => l.roomId === room.id);
-      }
-      push("__none__", t("noRoom"), (l) => l.roomId === null);
-    } else {
-      for (const group of groups ?? []) {
-        push(group.id, group.name, (l) => l.studentGroupId === group.id);
-      }
-    }
-    return boards;
-  }, [groupBy, filtered, toGridLesson, teachers, rooms, groups, t, blockKit]);
-
-  // -------------------------------------------------------------------
-  // Undoable mutations
-  // -------------------------------------------------------------------
-
-  const showError = useCallback(
-    (error: unknown) => {
-      // The staffing policy's REFUSE is a 409 too, but no clash: its own
-      // sentence, from the catalogue, without "Schemakonflikt" in front.
-      const refusal = staffingRefusal(error);
-      if (refusal) {
-        toast.error(refusalText(tEngine, refusal));
-      } else if (error instanceof ApiError && error.code === LESSON_IS_PLACED) {
-        // No clash either: the lesson is its förläggning's, and is changed there.
-        toast.error(t("lessonIsPlaced"));
-      } else if (error instanceof ApiError && error.status === 409) {
-        toast.error(`${t("editConflict")}: ${error.message}`);
-      } else {
-        toast.error(error instanceof Error ? error.message : tCommon("error"));
-      }
-    },
-    [t, tCommon, tEngine],
-  );
+  const {
+    showError, undoableUpdate, undoableCreate, undoableDelete, doUndo,
+    doRedo,
+  } = useUndoableEdits({
+    t,
+    tCommon,
+    tEngine,
+    updateLesson,
+    createLesson,
+    deleteLesson,
+    history,
+  });
 
   /*
    * A lesson dialog that could not be fetched (or threw while it drew) says so
@@ -1312,7 +386,7 @@ export default function TimetablePage() {
   const lessonDialogsFailed = useCallback(
     (error: unknown) => {
       showError(error);
-      lessonDialogs = lazyLessonDialogs();
+      resetLessonDialogs();
       setLessonDialogs((previous) => ({
         dialogs: lessonDialogs,
         attempt: previous.attempt + 1,
@@ -1332,92 +406,6 @@ export default function TimetablePage() {
     },
     [showError, setRemoteEditing],
   );
-
-  /** Applies a patch and registers the inverse operation in history. */
-  const undoableUpdate = useCallback(
-    async (lesson: MasterLesson, patch: Partial<LessonSnapshot>) => {
-      const before = snapshotOf(lesson);
-      const result = await updateLesson.mutateAsync({ id: lesson.id, ...patch });
-      const after = { ...before, ...patch };
-      history.push({
-        label: "update",
-        undo: async () => {
-          await updateLesson.mutateAsync({ id: lesson.id, ...before });
-        },
-        redo: async () => {
-          await updateLesson.mutateAsync({ id: lesson.id, ...after });
-        },
-      });
-      return result;
-    },
-    [updateLesson, history],
-  );
-
-  const undoableCreate = useCallback(
-    async (input: CreateMasterLessonInput) => {
-      const created = await createLesson.mutateAsync(input);
-      const ref = { id: created.id };
-      history.push({
-        label: "create",
-        undo: async () => {
-          await deleteLesson.mutateAsync(ref.id);
-        },
-        redo: async () => {
-          const again = await createLesson.mutateAsync(input);
-          ref.id = again.id;
-        },
-      });
-      return created;
-    },
-    [createLesson, deleteLesson, history],
-  );
-
-  const undoableDelete = useCallback(
-    async (lesson: MasterLesson) => {
-      const input: CreateMasterLessonInput = restorableInput(lesson);
-      const result = await deleteLesson.mutateAsync(lesson.id);
-      const ref = { id: lesson.id };
-      history.push({
-        label: "delete",
-        undo: async () => {
-          const again = await createLesson.mutateAsync(input);
-          ref.id = again.id;
-        },
-        redo: async () => {
-          await deleteLesson.mutateAsync(ref.id);
-        },
-      });
-      return result;
-    },
-    [deleteLesson, createLesson, history],
-  );
-
-  useHistoryKeyboard(
-    history,
-    (kind, entry) => {
-      if (entry) toast.info(kind === "undo" ? t("undone") : t("redone"));
-    },
-    // The same report doUndo/doRedo give below: Ctrl+Z is not a quieter way
-    // to hit a 409 than the toolbar button.
-    (_kind, error) => showError(error),
-  );
-
-  const doUndo = async () => {
-    try {
-      const entry = await history.undo();
-      if (entry) toast.info(t("undone"));
-    } catch (error) {
-      showError(error);
-    }
-  };
-  const doRedo = async () => {
-    try {
-      const entry = await history.redo();
-      if (entry) toast.info(t("redone"));
-    } catch (error) {
-      showError(error);
-    }
-  };
 
   // -------------------------------------------------------------------
   // Grid interactions
@@ -1672,115 +660,13 @@ export default function TimetablePage() {
    * replay over it, so it goes, as after the room optimisation.
    */
   const afterSwap = useCallback(() => history.clear(), [history]);
-
-  const lunchError = (error: unknown) =>
-    toast.error(error instanceof ApiError ? error.message : tCommon("error"));
-
-  const sittingOn = (dayOfWeek: number) =>
-    (lunchSittings ?? []).find(
-      (sitting) => sitting.studentGroupId === onlyGroup && sitting.dayOfWeek === dayOfWeek,
-    );
-
-  /**
-   * The class's meal on that day, placed where the school clicked.
-   *
-   * Undone to what the day MEANT before, not merely to where the band was. A
-   * day with a meal the school had placed goes back to that start. A day the
-   * solver had fed goes back to the solver: the hand row is removed and the
-   * next run places the meal again. A day with no meal goes back to none.
-   */
-  const placeLunch = async (dayOfWeek: number, startMinutes: number) => {
-    if (!onlyGroup || !shownYear) return;
-    const before = sittingOn(dayOfWeek);
-    const body = {
-      academicYearId: shownYear.id,
-      studentGroupId: onlyGroup,
-      dayOfWeek,
-      startTime: minutesToHHMM(startMinutes),
-    };
-    try {
-      const placed = (await lunchMutations.create.mutateAsync(body)) as { id: string };
-      const ref = { id: placed.id };
-      history.push({
-        label: "lunch",
-        undo: async () => {
-          if (before && !before.isGenerated) {
-            await lunchMutations.update.mutateAsync({
-              id: ref.id,
-              startTime: before.startTime.slice(0, 5),
-            });
-          } else {
-            await lunchMutations.remove.mutateAsync(ref.id);
-          }
-        },
-        redo: async () => {
-          const again = (await lunchMutations.create.mutateAsync(body)) as { id: string };
-          ref.id = again.id;
-        },
-      });
-    } catch (error) {
-      lunchError(error);
-    }
-  };
-
-  /**
-   * A meal dragged to another day or time.
-   *
-   * Onto a day that already has a meal for this class it is refused HERE, not
-   * left to the server — which would replace the other meal, and a drag that
-   * silently deleted Wednesday's lunch is the worst thing this gesture could do.
-   */
-  const moveLunch = async (id: string, dayOfWeek: number, startMinutes: number) => {
-    const sitting = (lunchSittings ?? []).find((row) => row.id === id);
-    if (!sitting) return;
-    if (dayOfWeek !== sitting.dayOfWeek && sittingOn(dayOfWeek)) {
-      toast.error(t("lunchDayTaken"));
-      return;
-    }
-    const before = { dayOfWeek: sitting.dayOfWeek, startTime: sitting.startTime.slice(0, 5) };
-    const after = { dayOfWeek, startTime: minutesToHHMM(startMinutes) };
-    try {
-      await lunchMutations.update.mutateAsync({ id, ...after });
-      history.push({
-        label: "lunch",
-        undo: async () => {
-          await lunchMutations.update.mutateAsync({ id, ...before });
-        },
-        redo: async () => {
-          await lunchMutations.update.mutateAsync({ id, ...after });
-        },
-      });
-    } catch (error) {
-      lunchError(error);
-    }
-  };
-
-  const removeLunch = async (id: string) => {
-    const sitting = (lunchSittings ?? []).find((row) => row.id === id);
-    if (!sitting || !shownYear) return;
-    const body = {
-      academicYearId: shownYear.id,
-      studentGroupId: sitting.studentGroupId,
-      dayOfWeek: sitting.dayOfWeek,
-      startTime: sitting.startTime.slice(0, 5),
-    };
-    const ref = { id };
-    try {
-      await lunchMutations.remove.mutateAsync(id);
-      history.push({
-        label: "lunch",
-        undo: async () => {
-          const again = (await lunchMutations.create.mutateAsync(body)) as { id: string };
-          ref.id = again.id;
-        },
-        redo: async () => {
-          await lunchMutations.remove.mutateAsync(ref.id);
-        },
-      });
-    } catch (error) {
-      lunchError(error);
-    }
-  };
+  const { placeLunch, moveLunch, removeLunch } = useLunchEdits({
+    ...reads,
+    t,
+    tCommon,
+    onlyGroup,
+    history,
+  });
 
   const openCreate = (dayOfWeek: number, startMinutes: number) => {
     setSlotMatches(null);
@@ -1937,7 +823,14 @@ export default function TimetablePage() {
   // Export
   // -------------------------------------------------------------------
 
-  /** ICS or PDF of what the filters show, built where it is fetched: ./timetable-exports.ts. */
+  /**
+   * ICS or PDF of what the filters show, built where it is fetched: ./timetable-exports.ts.
+   *
+   * The two exports are imported where they are pressed, not at the top, and so
+   * are the rows this page feeds them. Neither is needed to SHOW the week — the
+   * school asks for a file. lib/pdf.ts already reasons this way about jspdf
+   * inside its own export function; this moves the wrapper the same distance.
+   */
   const doExport = async (kind: "exportIcs" | "exportPdf") => {
     try {
       const files = await import("./timetable-exports");
@@ -2240,7 +1133,7 @@ export default function TimetablePage() {
         <DialogLoadBoundary
           onError={(error) => {
             showError(error);
-            LessonTimePanel = lazyLessonTime();
+            resetLessonTimePanel();
             setLessonTimeOpen(false);
           }}
         >
@@ -2320,7 +1213,7 @@ export default function TimetablePage() {
         <DialogLoadBoundary
           key={`selection-${barFailures}`}
           onError={() => {
-            SelectionBar = lazySelectionBar();
+            resetSelectionBar();
             setBarFailures((failures) => failures + 1);
             if (selectedIds.size === 0) return;
             toast.error(t("selectionReleased"));
