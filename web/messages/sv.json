@@ -1775,7 +1775,7 @@
       "offerTimeout": "Tiden tog slut, så ingenting är bevisat om veckan än. Motorn kan göra en kortare körning där fem av skolans egna regler får ge vika, och säga om veckan då går att lägga och med vilka ändringar. Det tar ungefär en och en halv minut, lägger inget schema och ändrar ingenting.",
       "offerAction": "Räkna fram förslag",
       "again": "Räkna om",
-      "running": "Motorn räknar fram förslag. Det tar ungefär en och en halv minut. Stanna kvar på sidan: lämnar du den visas inte svaret när du kommer tillbaka.",
+      "running": "Motorn räknar fram förslag. Det tar ungefär en och en halv minut. Du kan lämna sidan: svaret sparas på körningen och visas under Senaste körning när du kommer tillbaka, så länge körningen är årets senaste.",
       "failed": {
         "ENGINE_LACKS_SUGGESTIONS": "Förslag kan inte räknas fram just nu: schemamotorn har inte den funktionen än. Försök igen om några minuter.",
         "ENGINE_BUSY": "Motorn räknar fram förslag åt någon annan just nu. Försök igen om en stund.",
