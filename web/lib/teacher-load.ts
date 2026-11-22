@@ -49,6 +49,7 @@ import {
 import {
   peakPerWeekByKey,
   teachingWeeks,
+  teachingWeeksByDays,
   type ClosedRange,
   type TeachingPeriod,
   type YearBounds,
@@ -736,7 +737,7 @@ export function stretchLoads(input: StretchInput, employment: ShownEmployment): 
     stretch,
     target: targetMinutesPerWeek({ ...employment, ...stretch.figures }, policy),
     counted: stretch.window ? countedInWindow(employment.userId, input, stretch.window) : 0,
-    weeks: stretch.window ? teachingWeeks(stretch.window, input.year, input.closures, null) : 0,
+    weeks: stretch.window ? teachingWeeksByDays(stretch.window, input.year, input.closures, null) : 0,
   }));
 }
 
@@ -800,7 +801,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   const { year, closures } = input;
   // The year's teaching weeks with school-wide lov out: the frame an undated
   // uppdrag, which runs every week, is taken over.
-  const schoolTeachingWeeks = teachingWeeks({}, year, closures, null);
+  const schoolTeachingWeeks = teachingWeeksByDays({}, year, closures, null);
 
   const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
   const accumulators = new Map<string, Accumulator>();
@@ -837,7 +838,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
     if (duty.countsAsTeaching) acc.countedDutyMinutes += minutes;
     if (isDated(duty)) {
       acc.datedDutyAnnualMinutes +=
-        duty.minutesPerWeek * teachingWeeks(dutyPeriod(duty), year, closures, null);
+        duty.minutesPerWeek * teachingWeeksByDays(dutyPeriod(duty), year, closures, null);
     } else {
       acc.undatedDutyMinutes += duty.minutesPerWeek;
     }
@@ -879,7 +880,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   for (const requirement of input.requirements) {
     const weeklyMinutes = weeklyMinutesOf(requirement);
     const charged = chargedMinutes(requirement, year, closures);
-    const weeks = teachingWeeks(requirement, year, closures, singleGrade(requirement.gradeSpan));
+    const weeks = teachingWeeksByDays(requirement, year, closures, singleGrade(requirement.gradeSpan));
     const yearMinutes = weeklyMinutes * weeks;
     lessonMinutesPerWeek += charged.lesson;
     const shared = hasShares(requirement);

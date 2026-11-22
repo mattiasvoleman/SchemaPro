@@ -108,3 +108,53 @@ describe("the load report in a tioårig läsår", () => {
     expect(strongestCoveringQualification(held, ANNA, tenA, UNNUMBERED)).toBe("LEGITIMATION");
   });
 });
+
+/**
+ * The annual figures of a läsår that starts on a Saturday (granskningen av #382, L-5): the weeks are counted in school days, as in
+ * the gateway (src/staffing/assignment-scope.spec.ts), so the browser's annual card says the hours the gateway's report says.
+ */
+describe("the annual figures count school days", () => {
+  const SATURDAY = { startDate: "2026-08-15", endDate: "2027-06-11" };
+  const fifteenLessons = { ...requirement({ min: 4, max: 6 }), lessonsPerWeek: 15, minutesPerLesson: 60, teacherLoadPercent: 100, startDate: null, endDate: null };
+  const employment = {
+    userId: ANNA,
+    employmentPercent: 100,
+    reductionPercent: 0,
+    contractKind: "FERIE" as const,
+    teachingTargetMinutesPerWeek: null,
+    signature: null,
+  };
+  const policy = {
+    fullTimeTeachingMinutesPerWeek: 1080,
+    overAllocationTolerancePercent: 10,
+    fullTimeRegulatedHoursPerYear: 1360,
+    workDaysPerYear: 194,
+    qualificationMode: "OFF" as const,
+  };
+  const annualOf = (year: typeof SATURDAY, extra: Partial<Parameters<typeof buildTeacherLoadReport>[0]> = {}) =>
+    buildTeacherLoadReport({
+      year,
+      policy,
+      employments: [employment],
+      requirements: [{ ...fifteenLessons, teacherId: ANNA }],
+      qualifications: [],
+      closures: [],
+      duties: [],
+      ...extra,
+    }).teachers.find((teacher) => teacher.userId === ANNA)!.annual;
+
+  it("is 43 weeks and 645 h in a year that starts on a Saturday, as in one that starts on the Monday", () => {
+    const saturday = annualOf(SATURDAY);
+    const monday = annualOf({ startDate: "2026-08-17", endDate: "2027-06-11" });
+    expect([saturday.teachingWeeksPerYear, saturday.assignedHoursPerYear]).toEqual([43, 645]);
+    expect([monday.teachingWeeksPerYear, monday.assignedHoursPerYear]).toEqual([43, 645]);
+  });
+
+  it("weights a post that halves from a Monday by the school days of each stretch: 62.8 % of 1 360 h is 854 h, and not 63.6 %", () => {
+    const changing = {
+      ...employment,
+      periods: [{ validFrom: "2026-11-02", validTo: "2027-06-11", employmentPercent: 50, reductionPercent: 0, teachingTargetMinutesPerWeek: null }],
+    };
+    expect(annualOf(SATURDAY, { employments: [changing] }).regulatedHoursPerYear).toBe(854);
+  });
+});

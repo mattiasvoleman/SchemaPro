@@ -4675,7 +4675,7 @@
       "unregulatedNote": "Hours in preschool class count in the teaching time but lie outside the stages: the ordinance gives no level for them.",
       "fitsNotShown": "Whether the annual working time holds the planning floor is not shown here: it is only worked out for a term-time contract, and only shown to someone who may see the size of the post.",
       "interpretation": "Interpretation ({section}), as recorded in Swedish: {note}",
-      "notAnnual": "May differ from Teaching per school year under Annual working time, which counts whole weeks and applies percentage and factor. This figure is the lessons' own time in school days.",
+      "notAnnual": "May differ from Teaching per school year under Annual working time, which applies percentage and factor. This figure is the lessons' own time, unweighted. Both count school days.",
       "caption": "Computed from the teaching posts: the lessons' own time over the weeks they run, unweighted and without duties. Not the target, which is the school's own measure. Source: {sfs}, in force from {from}.",
       "source": "Read the ordinance",
       "opensInNewTab": "(opens in a new tab)",

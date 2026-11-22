@@ -428,6 +428,36 @@ export function teachingWeeks(
 }
 
 /**
+ * The period's weeks counted in the school days it holds: every Mon-Fri day inside the period's window that is not closed, in a
+ * week the recurrence runs, is a fifth of a week. Port of teachingWeeksByDays in src/staffing/teaching-weeks.ts, replayed against
+ * the same list of cases (teaching-weeks-by-days-cases.json). teachingWeeks charges a week WHOLE when the window covers any day of
+ * it (a year that starts on a Saturday, a term that ends on a Monday), which is right for a standard week and wrong for an annual
+ * figure: a week with no school day in the window holds no lesson. The two agree wherever the window runs from a Monday to a
+ * Friday. Summed as whole days and divided once, like teachingWeeks.
+ */
+export function teachingWeeksByDays(
+  period: TeachingPeriod,
+  year: YearBounds,
+  closures?: ClosedRange[],
+  gradeLevel?: number | null,
+): number {
+  const window = clampToYear(period, year);
+  if (!window) return 0;
+  const applicable = (closures ?? []).filter((closure) => closesForGrade(closure, gradeLevel));
+  let days = 0;
+  for (const monday of mondaysBetween(window.from, window.to)) {
+    if (!teachesInWeek(window, monday)) continue;
+    for (let offset = 0; offset < TEACHING_DAYS_IN_WEEK; offset += 1) {
+      const day = toDateString(addDays(monday, offset));
+      if (day < window.from || day > window.to) continue;
+      if (applicable.some((closure) => day >= closure.startDate && day <= closure.endDate)) continue;
+      days += 1;
+    }
+  }
+  return days / TEACHING_DAYS_IN_WEEK;
+}
+
+/**
  * Non-finite and negative loads read as zero.
  *
  * A requirement arriving mid-edit with an empty number field parses to NaN, and

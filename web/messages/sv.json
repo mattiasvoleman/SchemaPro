@@ -4675,7 +4675,7 @@
       "unregulatedNote": "Timmar i förskoleklass räknas i undervisningstiden men ligger utanför stadierna: förordningen anger ingen nivå för dem.",
       "fitsNotShown": "Om årsarbetstiden rymmer planeringens golv visas inte här: det räknas bara för en ferietjänst, och visas bara för den som får se tjänstens omfattning.",
       "interpretation": "{note} ({section})",
-      "notAnnual": "Kan skilja sig från Undervisning per läsår under Årsarbetstid, som räknar hela veckor och med procent och faktor. Den här siffran är lektionernas egen tid i skoldagar.",
+      "notAnnual": "Kan skilja sig från Undervisning per läsår under Årsarbetstid, som räknar med procent och faktor. Den här siffran är lektionernas egen tid, oviktad. Båda räknar skoldagar.",
       "caption": "Räknat ur timplansposterna: lektionernas egen tid över de veckor de löper, oviktad och utan uppdrag. Inte riktmärket, som är skolens eget mått. Källa: {sfs}, i kraft från {from}.",
       "source": "Läs förordningen",
       "opensInNewTab": "(öppnas i en ny flik)",

@@ -420,6 +420,77 @@ describe('a teacher\'s own level within the span (8 §)', () => {
   });
 });
 
+describe('the report\'s annual figures count school days, as the scope block does (granskningen av #382, L-5)', () => {
+  // A läsår that starts on Saturday 2026-08-15 holds no lesson in the week before its first Monday: 15 lessons of 60 minutes are 645 h over
+  // the 43 weeks that hold a school day, in the annual figures of the report as in `scope`, and not 660 h over a 44th week of nothing.
+  const saturday = { startDate: '2026-08-15', endDate: '2027-06-11' };
+
+  it('says the same hours and weeks in `annual` and in `scope` for a year that starts on a Saturday: 645 h over 43 weeks', () => {
+    const full: LoadInput = {
+      year: saturday,
+      policy: { ...DEFAULT_LOAD_POLICY, fullTimeTeachingMinutesPerWeek: 1080 },
+      employments: [employment()],
+      requirements: [row()],
+      qualifications: [],
+      closures: [],
+      duties: [],
+    };
+    const load = buildTeacherLoadReport(full);
+    const annual = load.teachers.find((teacher) => teacher.userId === ANNA)!.annual;
+    expect(annual.teachingWeeksPerYear).toBe(43);
+    expect(annual.assignedHoursPerYear).toBe(645);
+    expect(of(buildScopeReport(full, load, [VERSION])).teachingHours).toBe(annual.assignedHoursPerYear);
+  });
+
+  it('counts a year from Monday to Friday exactly as it always did, 43 weeks and 645 h', () => {
+    const full: LoadInput = {
+      year: YEAR,
+      policy: { ...DEFAULT_LOAD_POLICY, fullTimeTeachingMinutesPerWeek: 1080 },
+      employments: [employment()],
+      requirements: [row()],
+      qualifications: [],
+      closures: [],
+      duties: [],
+    };
+    const annual = buildTeacherLoadReport(full).teachers.find((teacher) => teacher.userId === ANNA)!.annual;
+    expect([annual.teachingWeeksPerYear, annual.assignedHoursPerYear]).toEqual([43, 645]);
+  });
+
+  it('weights a post that halves from a Monday by the school days of each stretch: 11 weeks at 100 % and 32 at 50 % is 62.8 %, in a year that starts on a Saturday', () => {
+    // The first stretch is Saturday 2026-08-15 to Sunday 2026-11-01: 11 weeks of school days (a whole-week count would charge a 12th for
+    // the week before the first Monday, and give 63.6 %). Active share (100 x 11 + 50 x 32) / 43 = 62.79 %, so 650 h x 0.6279 = 408.1 h.
+    const changing = employment({
+      employmentPercent: 100,
+      periods: [{ validFrom: '2026-11-02', validTo: '2027-06-11', employmentPercent: 50, reductionPercent: 0, teachingTargetMinutesPerWeek: null } as never],
+    });
+    const full: LoadInput = {
+      year: saturday,
+      policy: { ...DEFAULT_LOAD_POLICY, fullTimeTeachingMinutesPerWeek: 1080, fullTimeRegulatedHoursPerYear: 1360 },
+      employments: [changing],
+      requirements: [row()],
+      qualifications: [],
+      closures: [],
+      duties: [],
+    };
+    const load = buildTeacherLoadReport(full);
+    expect(of(buildScopeReport(full, load, [VERSION])).ordinanceHighestHours).toBe(408.1);
+    expect(load.teachers.find((teacher) => teacher.userId === ANNA)!.annual.regulatedHoursPerYear).toBe(854);
+  });
+
+  it('counts an uppdrag that runs the whole year the same days: 30 minutes a week over 43 weeks is 21.5 h in a year that starts on a Saturday', () => {
+    const full: LoadInput = {
+      year: saturday,
+      policy: { ...DEFAULT_LOAD_POLICY, fullTimeTeachingMinutesPerWeek: 1080 },
+      employments: [employment()],
+      requirements: [],
+      qualifications: [],
+      closures: [],
+      duties: [{ id: 'd1', userId: ANNA, kind: 'RASTVAKT', label: 'Rastvakt', minutesPerWeek: 30, countsAsTeaching: false, validFrom: null, validTo: null } as LoadDuty],
+    };
+    expect(buildTeacherLoadReport(full).teachers.find((teacher) => teacher.userId === ANNA)!.annual.dutyHoursPerYear).toBe(21.5);
+  });
+});
+
 describe('hours outside the stages are no reason to say OVER_MAX (T7, the user\'s decision on the review of #382, L-3)', () => {
   // 15 lessons of 60 minutes over the year's 43 weeks are 645 h; a lesson a week is 43 h. The edge is 650 h in årskurs 4-6.
   const inStage = (lessons: number) => row({ lessonsPerWeek: lessons });
