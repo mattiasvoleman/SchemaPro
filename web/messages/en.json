@@ -1775,7 +1775,7 @@
       "offerTimeout": "Time ran out, so nothing is proved about the week yet. The engine can make a shorter run in which five of the school's own rules may give way, and say whether the week can then be laid and with which changes. It takes about a minute and a half, places no timetable and changes nothing.",
       "offerAction": "Work out suggestions",
       "again": "Work out again",
-      "running": "The engine is working out suggestions. It takes about a minute and a half. You can leave the page: the answer is saved on the run and shown under Last run when you come back, as long as the run is the year's newest.",
+      "running": "The engine is working out suggestions. It takes about a minute and a half. You can leave the page: the answer is saved on the run and shown under Last run when you come back with the same school year chosen, as long as the run is the year's newest.",
       "failed": {
         "ENGINE_LACKS_SUGGESTIONS": "Suggestions cannot be worked out right now: the scheduling engine does not have that function yet. Try again in a few minutes.",
         "ENGINE_BUSY": "The engine is working out suggestions for someone else right now. Try again in a moment.",

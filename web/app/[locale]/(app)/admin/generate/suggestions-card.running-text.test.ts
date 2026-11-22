@@ -25,6 +25,11 @@ describe("the line shown while the engine counts", () => {
     expect(running(en)).toMatch(/as long as the run is the year's newest/);
   });
 
+  it("says that the läsår must be the same one: the page does not keep the läsår that was chosen, and a run made for next year is not on the active year", () => {
+    expect(running(sv)).toMatch(/när du kommer tillbaka och har samma läsår valt/);
+    expect(running(en)).toMatch(/when you come back with the same school year chosen/);
+  });
+
   it("no longer says that the answer is lost, or asks the reader to stay", () => {
     expect(running(sv)).not.toMatch(/Stanna kvar på sidan|visas inte svaret/);
     expect(running(en)).not.toMatch(/Stay on the page|not shown when you come back/);
