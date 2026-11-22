@@ -15,6 +15,7 @@ const updateSession = vi.hoisted(() => vi.fn());
 vi.mock("@/utils/supabase/middleware", () => ({ updateSession }));
 
 const { proxy } = await import("./proxy");
+const { pseudonymiserarePolicy } = await import("@/lib/pseudonym-policy");
 const { NextResponse } = await import("next/server");
 
 describe("proxy", () => {
@@ -116,6 +117,66 @@ describe("proxy", () => {
       const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
       expect(response.headers.get("location")).toBeNull();
     }
+  });
+
+  describe("the pseudonymiser's page (/sv|en/pseudonymisera)", () => {
+    it("lets a visitor without a session use it, in either language: a school that is not a customer yet is who it is for", async () => {
+      for (const path of ["/sv/pseudonymisera", "/en/pseudonymisera"]) {
+        const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
+        expect(response.headers.get("location"), path).toBeNull();
+      }
+    });
+
+    it("gives it a policy that refuses every request the page could make, and no referrer", async () => {
+      const response = await proxy(new NextRequest("https://schema.example.se/sv/pseudonymisera"));
+      const policy = response.headers.get("content-security-policy")!;
+      expect(policy).toContain("connect-src 'none'");
+      expect(policy).toContain("form-action 'none'");
+      expect(policy).toContain("default-src 'none'");
+      expect(policy).toBe(pseudonymiserarePolicy());
+      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    });
+
+    it("gives the policy to that page and to no other: the app's own pages have to reach the gateway, so a policy that refuses it would be the end of them", async () => {
+      for (const path of ["/sv/login", "/sv/tillganglighet", "/sv/admin/timetable", "/en/pseudonymisera/other", "/sv/pseudonymiserare"]) {
+        const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
+        expect(response.headers.get("content-security-policy"), path).toBeNull();
+      }
+    });
+
+    it("does not touch the session refresh's result: a visitor with no session and one with a session both get the page, and neither is sent to the login", async () => {
+      updateSession.mockResolvedValue({ sub: "x" });
+      const response = await proxy(new NextRequest("https://schema.example.se/en/pseudonymisera"));
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("content-security-policy")).toContain("connect-src 'none'");
+    });
+
+    it("is told not to be indexed in the response too, and no other page of the app is", async () => {
+      for (const path of ["/sv/pseudonymisera", "/en/pseudonymisera"]) {
+        const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
+        expect(response.headers.get("x-robots-tag"), path).toBe("noindex, nofollow");
+      }
+      for (const path of ["/sv/login", "/sv/tillganglighet"]) {
+        const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
+        expect(response.headers.get("x-robots-tag"), path).toBeNull();
+      }
+    });
+
+    it("makes public that path and what is under it, and not a path that only begins like one", async () => {
+      for (const path of ["/sv/pseudonymiserare", "/sv/pseudonymisera-x", "/sv/loginhjalp", "/sv/authors", "/sv/tillganglighetx", "/en/forgot-passwordx"]) {
+        const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
+        expect(response.headers.get("location"), path).toContain("/login");
+      }
+      for (const path of ["/sv/login", "/sv/login/", "/sv/auth/callback", "/sv/forgot-password", "/en/update-password", "/sv/tillganglighet", "/sv/pseudonymisera", "/sv/pseudonymisera/x"]) {
+        const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
+        expect(response.headers.get("location"), path).toBeNull();
+      }
+    });
+
+    it("still sends a visitor without a session from an app page to the login, with the page public beside it", async () => {
+      const response = await proxy(new NextRequest("https://schema.example.se/sv/admin/timetable"));
+      expect(response.headers.get("location")).toContain("/sv/login");
+    });
   });
 
   it("lets no website frame a viewer page", async () => {

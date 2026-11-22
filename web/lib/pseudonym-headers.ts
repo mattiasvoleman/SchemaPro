@@ -155,6 +155,8 @@ export interface ColumnStats {
   shapes: Record<ValueShape, number>;
   /** Whole numbers of seven digits or more, counted among the `number` shapes: a telephone number whose leading 0 a spreadsheet dropped (701234567), a personnummer of someone born after 1999 in the same way. */
   longNumbers: number;
+  /** Days from the first to the last of the dates written as YYYY-MM-DD in the column, or null when fewer than two are. A column of lesson dates spans a term; one of birth dates, years. */
+  dateSpanDays: number | null;
   /** Cells that hold a personnummer or samordningsnummer, an address, a telephone number. */
   withPersonalNumber: number;
   withAddress: number;
@@ -173,12 +175,16 @@ export function columnStats(cells: readonly string[]): ColumnStats {
     distinct: 0,
     shapes: { number: 0, time: 0, date: 0, code: 0, word: 0, text: 0 },
     longNumbers: 0,
+    dateSpanDays: null,
     withPersonalNumber: 0,
     withAddress: 0,
     withTelephone: 0,
     samples: [],
   };
   const seen = new Set<string>();
+  let first = Infinity;
+  let last = -Infinity;
+  let dates = 0;
   for (const raw of cells) {
     const cell = raw.trim();
     if (cell === "") continue;
@@ -186,6 +192,12 @@ export function columnStats(cells: readonly string[]): ColumnStats {
     const shape = shapeOf(cell);
     stats.shapes[shape] += 1;
     if (shape === "number" && /^[+-]?\d{7,}$/.test(cell)) stats.longNumbers += 1;
+    const day = isoDay(cell);
+    if (day !== null) {
+      dates += 1;
+      if (day < first) first = day;
+      if (day > last) last = day;
+    }
     const found = findPersonalData(cell);
     // A TF number counts as one: a column of Skola24's ID numbers under the header Id or Kod is a column of personnummer, and is proposed as one.
     if (found.some((f) => f.kind === "pnr" || f.kind === "sam" || f.kind === "tf")) stats.withPersonalNumber += 1;
@@ -197,7 +209,32 @@ export function columnStats(cells: readonly string[]): ColumnStats {
     }
   }
   stats.distinct = seen.size;
+  if (dates >= 2) stats.dateSpanDays = Math.round((last - first) / 86_400_000);
   return stats;
+}
+
+/** The day of a cell written YYYY-MM-DD (a time after it is allowed), as a UTC time, or null. */
+function isoDay(cell: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/.exec(cell);
+  if (match === null) return null;
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return Date.UTC(Number(match[1]), month - 1, day);
+}
+
+/** A column of dates that spans more than a year is asked about: lesson dates span a term, birth dates span years, and nothing but the column's own header tells them apart. */
+export const DATE_SPAN_ASKED = 366;
+
+/**
+ * True when a row that was taken for the header has cells that a header does not have: a number, a time or a date. A file with no header row begins with a
+ * record ("Mån;08:10;Anna Exempel;7A"), and the page says so and asks, because only a person can tell the two apart.
+ */
+export function headerLooksLikeData(cells: readonly string[]): boolean {
+  return cells.some((cell) => {
+    const shape = cell.trim() === "" ? null : shapeOf(cell);
+    return shape === "number" || shape === "time" || shape === "date";
+  });
 }
 
 /** The kind a column's values prove it to be: at least one cell, and at least half of the filled cells. */
@@ -223,7 +260,9 @@ export function proposalFor(header: string, stats: ColumnStats): Proposal | null
   const plain = stats.shapes.number + stats.shapes.time + stats.shapes.date;
   // A column of numbers is kept without asking only when none of them is long enough to be somebody's: Excel stores 0701234567 as the number 701234567,
   // and a column of those under a header the lists do not know (Ring, Kontakt2) was kept, whole, with no choice for the user to make.
-  if (plain === stats.filled && stats.longNumbers === 0 && stats.withPersonalNumber + stats.withAddress + stats.withTelephone === 0) {
+  // Nor are dates that span more than a year: birth dates look like lesson dates, and the user is asked what a column of them is.
+  const spansYears = stats.dateSpanDays !== null && stats.dateSpanDays > DATE_SPAN_ASKED;
+  if (plain === stats.filled && stats.longNumbers === 0 && !spansYears && stats.withPersonalNumber + stats.withAddress + stats.withTelephone === 0) {
     return { treatment: KEEP, reason: "values", detail: "numbers" };
   }
   return null;

@@ -17,7 +17,7 @@
 import { MAX_TABLE_TEXT, readSource } from "@/lib/column-source";
 import { readTable, type TableDelimiter } from "@/lib/column-table";
 import { encodingFromName, endsWithLineBreak, lineEndingOf, type LineEnding, type OutputEncoding } from "@/lib/pseudonym-write";
-import { readWorkbook, XlsxRefusal, type XlsxProblem } from "@/lib/pseudonym-xlsx";
+import { readWorkbook, XLSX_LIMITS, XlsxRefusal, type XlsxProblem } from "@/lib/pseudonym-xlsx";
 
 export interface InputFacts {
   origin: "paste" | "file" | "xlsx";
@@ -103,6 +103,10 @@ export async function parseSource(source: InputSource): Promise<ParseResult> {
 
   const head = new Uint8Array(await source.file.slice(0, 16).arrayBuffer());
   const kind = sniff(head);
+  // A file is turned back by its size BEFORE it is read: a workbook may unpack to no more than the reader's total, and text is at most four bytes a character,
+  // so a file of gigabytes costs the person's own tab nothing but this sentence (L-8 of the review of #377).
+  if ((kind === "xlsx" || kind === "ole2") && source.file.size > XLSX_LIMITS.total) return { ok: false, reason: "workbook", problem: "tooBig" };
+  if (kind === null && source.file.size > MAX_TABLE_TEXT * 4) return { ok: false, reason: "tooLong" };
   if (kind === "xlsx" || kind === "ole2") return parseWorkbook(new Uint8Array(await source.file.arrayBuffer()));
   if (kind !== null) return { ok: false, reason: "unsupported", kind };
 

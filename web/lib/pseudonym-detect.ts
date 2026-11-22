@@ -181,7 +181,7 @@ export const isMarkerAddress = (address: string): boolean => MARKER_ADDRESS.test
  * hyphen, a blank or a slash between. Eight digits that begin with 0 are a national telephone number's length, and every lesson of a timetable was replaced by
  * TEL-n. A Swedish number does not have two groups of four with a valid time in both: its numbers have nine or ten digits.
  */
-const TIME_RANGE = /^(?:[01]\d|2[0-3])[0-5]\d[ /-]{1,2}(?:[01]\d|2[0-3])[0-5]\d$/;
+const TIME_RANGE = /^(?:[01]\d|2[0-3])[0-5]\d[ /-]{1,3}(?:[01]\d|2[0-3])[0-5]\d$/;
 const DATE_LIKE = /^(?:\d{4}-\d{2}-\d{2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})$/;
 /** A date wherever it stands in a text: 2026-08-17, and 17-08-2026 or 17.8.2026 with a year of four digits. */
 const DATE_SPAN = /\d{4}-\d{2}-\d{2}|(?<!\d)\d{1,2}[-/.]\d{1,2}[-/.]\d{4}(?!\d)/g;
@@ -276,6 +276,9 @@ function findTelephones(original: string, existing: readonly { start: number; en
       groups.push({ start: at, end, digits: end - (plus && groups.length === 0 ? at + 1 : at) });
       let next = end;
       while (next < text.length && next - end < 2 && SEPARATOR.has(text[next]!)) next += 1;
+      // A hyphen with a blank on each side ("070 - 123 45 67", and the en dash a word processor makes of it) is one separator written wide: three characters,
+      // where two are what a sentence is allowed to put between two numbers.
+      if (text[end] === " " && text[end + 1] === "-" && text[end + 2] === " " && isDigit(text[end + 3])) next = end + 3;
       if (next === end || !isDigit(text[next])) break;
       at = next;
     }
