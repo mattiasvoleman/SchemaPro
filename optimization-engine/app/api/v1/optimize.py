@@ -10,6 +10,7 @@ from app.dependencies import get_app_settings, verify_api_key
 from app.exceptions import SolverTimeoutError
 from app.logging_config import get_logger
 from app.schemas.schedule import OptimizeScheduleRequest, OptimizeScheduleResponse, SearchOptions
+from app.solve_load import ANALYSIS, GENERATION, SOLVE_LOAD
 from app.solver.scheduler_solver import SchedulerSolver, settings_for_search
 from app.timing import BUILD_HEADROOM_SECONDS, ceiling_seconds, generation_limits
 
@@ -82,9 +83,24 @@ async def run_solver(
     settings = settings_for_search(settings, payload.search)
     solver = SchedulerSolver(settings)
     timeout = solve_ceiling_seconds(settings, payload.search, payload.deadline_seconds)
+
+    def counted() -> OptimizeScheduleResponse:
+        # The thread's life is what is counted (app.solve_load): a 503 ends the wait, not this.
+        with SOLVE_LOAD.running(GENERATION):
+            beside = SOLVE_LOAD.count(ANALYSIS)
+            if beside:
+                # The one case the count does not close: an analysis is already running on the cores this solve
+                # asks for. Said in the log so that how often it happens is measured and not guessed.
+                logger.warning(
+                    "generation_beside_analysis",
+                    request_id=str(payload.request_id),
+                    analyses_running=beside,
+                )
+            return solver.solve(payload)
+
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(solver.solve, payload),
+            asyncio.to_thread(counted),
             timeout=timeout,
         )
     except asyncio.TimeoutError:
