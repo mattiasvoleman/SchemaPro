@@ -773,10 +773,14 @@ def sweep_shapes(seeds: tuple[int, ...] = (1, 2)) -> list[SchoolShape]:
 #: they cost the whole budget twice and say nothing until one of them solves. Nor are there weeks
 #: the engine refuses on arithmetic alone: the sweep has none (a corpus week the engine refuses
 #: would measure the refusal), and a refusal that appears is the gate's "refused" verdict.
+#: Nor is n9-g5-m0-s1: picked at seed 1 (0.49), it finds nothing in 8 deterministic seconds at 2 of 7
+#: seeds (0.49, none, 0.48, none, 0.69, 0.34, 0.21), so any change that re-throws the search's dice can
+#: flip it to a timeout. n12-g3-m0-s1-t3 is on the same edge (none at 4 of 7) and stays only because it
+#: is the gate's one week with terms: the gate's rule keeps a week like that from deciding alone
+#: (solve-corpus-gate.mjs, with `corpus_measure.py --seeds`).
 GATE_WEEKS: tuple[str, ...] = (
     "n9-g3-m0-s2",
     "n9-g4-m0-s1",
-    "n9-g5-m0-s1",
     "n12-g2-m0-s2",
     "n12-g3-m0-s1",
     "n12-g3-m0-s2",

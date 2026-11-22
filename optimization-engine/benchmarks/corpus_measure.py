@@ -31,6 +31,13 @@ TWO MODES.
          deterministic time is the same on every machine, which is what lets a
          nightly gate compare a tree with a floor without trusting a runner's
          speed (scripts/bench/solve-corpus-gate.mjs).
+
+SEVERAL SEEDS (`--seeds 3`, count mode). One seed is one throw of the search's dice: the same week
+needed 0.49 deterministic seconds at one seed and found nothing in 8 at the next, and a change to the
+model is exactly such a new throw. A gate that compares one throw of a tree with one throw of its floor
+reads the dice. With `--seeds K` every week is searched at seeds 1..K and its row is the MIDDLE
+measurement (the median of the work, a week no search found counting as worse than any that did), so a
+week is a timeout only when most seeds time out, and `seedWork` lists what each seed needed.
 """
 
 from __future__ import annotations
@@ -70,6 +77,8 @@ from app.solver.scheduler_solver import SchedulerSolver  # noqa: E402
 COUNT_WALL_MULTIPLE = 1000.0
 #: How near its budget a search must have got for a TIMEOUT to be the budget's.
 BUDGET_REACHED = 0.95
+#: The status of a week that got a first timetable.
+SOLVED = "FIRST_SCHEDULE"
 
 
 class FirstScheduleReached(BaseException):
@@ -147,11 +156,18 @@ class MeasuringSolver(SchedulerSolver):
         self._seed = seed
 
     def _stage_seconds(self, now: float) -> list[tuple[str, float]]:
-        clock = self._stages
+        """The engine's own step seconds so far; none from an engine that keeps no such account.
+
+        Called by the recording solver the moment the first timetable is found, from inside `Solve`. An
+        engine from before the stage clock (the nightly's floor is a week old) has no `_stages`, and an
+        AttributeError there is taken by `_solve_guarded` for a CP-SAT crash: it solves once more without
+        presolve and logs a warning per week before the stop is raised. The measurement came out right
+        and by that detour; this way it does not take it."""
+        clock = getattr(self, "_stages", None)
         if clock is None:
             return []
-        out = [(name, seconds) for name, seconds in clock._done]
-        opened = clock._open
+        out = [(name, seconds) for name, seconds in getattr(clock, "_done", [])]
+        opened = getattr(clock, "_open", None)
         if opened is not None:
             out.append((opened[0], max(0.0, now - opened[1])))
         return out
@@ -261,10 +277,31 @@ def measure_request(
     return result
 
 
+def median_run(runs: list[dict[str, object]]) -> dict[str, object]:
+    """The middle of several measurements of one week at different seeds.
+
+    A week no search found a timetable for ranks below every week one did, so with three seeds the
+    week is solved when two of them solve it, and its work is the middle one's. A failed measurement
+    (ERROR) is never averaged away: it is what the week answers."""
+    errors = [run for run in runs if run["status"] == "ERROR"]
+    if errors:
+        return errors[0]
+    solved = sorted(
+        (run for run in runs if run["status"] == SOLVED),
+        key=lambda run: float(run["firstScheduleDeterministic"]),  # type: ignore[arg-type]
+    )
+    unsolved = sorted((run for run in runs if run["status"] != SOLVED), key=lambda run: str(run["status"]))
+    ranked = [*solved, *unsolved]
+    return ranked[len(ranked) // 2]
+
+
 def measure_shape(
-    shape, *, mode: str, budget: float, deterministic_budget: float, seed: int = 1,
+    shape, *, mode: str, budget: float, deterministic_budget: float, seed: int = 1, seeds: int = 1,
 ) -> dict[str, object]:
-    """One corpus week: its name, its facts, and the measurement. Top level so a process pool can run it."""
+    """One corpus week: its name, its facts, and the measurement. Top level so a process pool can run it.
+
+    With `seeds` above one (count mode) the week is searched at seed, seed + 1, ... and the row is
+    the middle measurement (`median_run`), with `seeds` and `seedWork` added."""
     from school_corpus import CORPUS_VERSION, build_week
 
     try:
@@ -279,19 +316,28 @@ def measure_shape(
             "firstScheduleDeterministic": None, "mode": mode,
             "deterministicBudget": deterministic_budget if mode == "count" else None, "seed": seed,
         }
-    result = measure_request(
-        week.request, mode=mode, budget=budget, deterministic_budget=deterministic_budget, seed=seed,
-    )
+    runs = [
+        measure_request(
+            week.request, mode=mode, budget=budget, deterministic_budget=deterministic_budget,
+            seed=seed + offset,
+        )
+        for offset in range(max(1, seeds))
+    ]
+    result = runs[0] if len(runs) == 1 else {
+        **median_run(runs), "seeds": len(runs), "seedWork": [run["firstScheduleDeterministic"] for run in runs],
+    }
     return {"name": week.name, "facts": week.facts, **result}
 
 
 def run_profile(
-    shapes, *, mode: str, budget: float, deterministic_budget: float, jobs: int,
+    shapes, *, mode: str, budget: float, deterministic_budget: float, jobs: int, seeds: int = 1,
 ) -> list[dict[str, object]]:
     """Every shape of a profile, `jobs` at a time, in the profile's order."""
     if jobs <= 1:
         return [
-            measure_shape(shape, mode=mode, budget=budget, deterministic_budget=deterministic_budget)
+            measure_shape(
+                shape, mode=mode, budget=budget, deterministic_budget=deterministic_budget, seeds=seeds,
+            )
             for shape in shapes
         ]
     from concurrent.futures import ProcessPoolExecutor
@@ -300,7 +346,7 @@ def run_profile(
         futures = [
             pool.submit(
                 measure_shape, shape, mode=mode, budget=budget,
-                deterministic_budget=deterministic_budget,
+                deterministic_budget=deterministic_budget, seeds=seeds,
             )
             for shape in shapes
         ]
@@ -318,9 +364,13 @@ def main() -> int:
     parser.add_argument("--only", default=None,
                         help="only these weeks: names, comma separated; a name ending in * is a prefix")
     parser.add_argument("--jobs", type=int, default=1, help="weeks measured side by side")
+    parser.add_argument("--seeds", type=int, default=1,
+                        help="count mode: search each week at this many seeds and report the middle one")
     parser.add_argument("--week", default=None, help="'hogstadium' (the existing bench)")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+    if args.seeds < 1 or (args.seeds > 1 and args.mode != "count"):
+        parser.error("--seeds must be at least 1, and above 1 only in --mode count (clock mode has no seed)")
     if args.week == "hogstadium":
         from hogstadium import build_request
 
@@ -346,7 +396,7 @@ def main() -> int:
         parser.error(f"no week of {args.profile} matches {args.only}")
     results = run_profile(
         shapes, mode=args.mode, budget=args.budget, deterministic_budget=args.det_budget,
-        jobs=args.jobs,
+        jobs=args.jobs, seeds=args.seeds,
     )
     print(json.dumps(results, indent=2 if args.json else None))
     return 0

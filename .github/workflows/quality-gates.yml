@@ -57,6 +57,13 @@ on:
         description: 'Solver corpus: the ref to compare this tree with (empty: main a week ago)'
         type: string
         default: ''
+      # The solver-corpus job alone, as latency_floor is the latency job alone: a dispatch for the
+      # corpus A/B would otherwise start the visual baselines, Lighthouse, the benchmark and the
+      # latency stack too (and the mutation job, unless run_mutation is switched off).
+      corpus_only:
+        description: 'Run only the solver corpus job'
+        type: boolean
+        default: false
 
 # Nothing here writes to the repository: the artifacts go through the runtime
 # token that upload-artifact uses, not GITHUB_TOKEN. The mutation job runs
@@ -72,7 +79,7 @@ jobs:
   visual-baselines:
     name: Regenerate visual baselines (native runner)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && !inputs.latency_floor
+    if: github.event_name == 'workflow_dispatch' && !inputs.latency_floor && !inputs.corpus_only
     timeout-minutes: 40
     env:
       NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
@@ -141,7 +148,7 @@ jobs:
   mutation-plan:
     name: API — mutation, which slices
     runs-on: ubuntu-latest
-    if: (github.event_name == 'schedule' || inputs.run_mutation) && !inputs.latency_floor
+    if: (github.event_name == 'schedule' || inputs.run_mutation) && !inputs.latency_floor && !inputs.corpus_only
     timeout-minutes: 5
     outputs:
       slices: ${{ steps.plan.outputs.slices }}
@@ -174,7 +181,7 @@ jobs:
     name: API — mutation score, slice ${{ matrix.slice }} of ${{ needs.mutation-plan.outputs.of }} (against its floor)
     needs: mutation-plan
     runs-on: ubuntu-latest
-    if: (github.event_name == 'schedule' || inputs.run_mutation) && !inputs.latency_floor
+    if: (github.event_name == 'schedule' || inputs.run_mutation) && !inputs.latency_floor && !inputs.corpus_only
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -249,7 +256,7 @@ jobs:
     name: Web — Lighthouse (LCP/TTI/a11y)
     runs-on: ubuntu-latest
     # Wrapped in ${{ }}: a YAML value that opens with `!` is a tag.
-    if: ${{ !inputs.latency_floor }}
+    if: ${{ !inputs.latency_floor && !inputs.corpus_only }}
     timeout-minutes: 30
     defaults:
       run:
@@ -305,7 +312,7 @@ jobs:
   solver-benchmark:
     name: Solver — generation gate & §2 report
     runs-on: ubuntu-latest
-    if: ${{ !inputs.latency_floor }}
+    if: ${{ !inputs.latency_floor && !inputs.corpus_only }}
     timeout-minutes: 30
     defaults:
       run:
@@ -354,7 +361,7 @@ jobs:
   # fails on, and what it cannot see: several workers, and the build's Python time).
   #
   # Cost: two measurements of the corpus (four searches at a time on the four vCPUs) and
-  # the install; the figure is in docs/DEPLOYMENT.md §33.
+  # the install; the figure is in docs/DEPLOYMENT.md §35.
   solver-corpus:
     name: Solver corpus — deterministic work against the floor
     runs-on: ubuntu-latest
@@ -363,6 +370,13 @@ jobs:
     env:
       # CP-SAT deterministic seconds a search may spend: the same budget for both trees.
       SOLVE_CORPUS_DET_BUDGET: '4'
+      # Seeds each week is searched at (corpus_measure.py --seeds): the row is the middle one. One seed
+      # is one throw of the search's dice, and a change to the model is a new throw: two weeks of the
+      # fourteen go from 0.5 and 1.9 deterministic seconds to no timetable in 8 at another seed. Seven
+      # seeds of the gate's weeks, every disjoint pair read as floor and tree: one seed failed the
+      # verdict in 43 % of the pairs of a change that does nothing; the middle of three seeds, with a
+      # week lost only when no seed finds it, in 13 % (5 % without n9-g5-m0-s1, which times out at 2 of 7).
+      SOLVE_CORPUS_SEEDS: '3'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -402,7 +416,7 @@ jobs:
         working-directory: optimization-engine
         run: >-
           python benchmarks/corpus_measure.py --profile gate --mode count
-          --det-budget "$SOLVE_CORPUS_DET_BUDGET" --jobs 4 --json
+          --det-budget "$SOLVE_CORPUS_DET_BUDGET" --seeds "$SOLVE_CORPUS_SEEDS" --jobs 4 --json
           > "$RUNNER_TEMP/head.json"
 
       # The same script and the same corpus, run against the floor's engine.
@@ -412,7 +426,7 @@ jobs:
           ENGINE_ROOT: ${{ runner.temp }}/floor/optimization-engine
         run: >-
           python benchmarks/corpus_measure.py --profile gate --mode count
-          --det-budget "$SOLVE_CORPUS_DET_BUDGET" --jobs 4 --json
+          --det-budget "$SOLVE_CORPUS_DET_BUDGET" --seeds "$SOLVE_CORPUS_SEEDS" --jobs 4 --json
           > "$RUNNER_TEMP/floor.json"
 
       - name: "Gate: this tree's work against the floor's"
@@ -422,6 +436,25 @@ jobs:
           node scripts/bench/solve-corpus-gate.mjs
           --head "$RUNNER_TEMP/head.json" --floor "$RUNNER_TEMP/floor.json"
           --floor-ref "$FLOOR_SHA"
+
+      # Both trees ran on THIS tree's OR-Tools (one install), so what a changed pin does to the search is in
+      # neither number: the gate compares the engine's code and cannot see the solver's. Say so on the
+      # night the pin has moved since the floor, so that a green verdict is not read as "the upgrade is
+      # harmless". (What the upgrade did is in the artifact: compare its head.json with an earlier night's.)
+      - name: OR-Tools pin since the floor
+        if: always()
+        env:
+          FLOOR_SHA: ${{ steps.floor.outputs.sha }}
+        run: |
+          [ -n "$FLOOR_SHA" ] || exit 0
+          pin() { git show "$1:optimization-engine/requirements.txt" 2>/dev/null | grep -i '^ortools==' || echo '(no pin)'; }
+          pin_here="$(pin HEAD)"
+          pin_floor="$(pin "$FLOOR_SHA")"
+          echo "OR-Tools: $pin_here (both trees ran on it); the floor's own pin: $pin_floor"
+          if [ "$pin_here" != "$pin_floor" ]; then
+            echo "::warning title=OR-Tools pin moved since the floor::The pin is $pin_floor at the floor and $pin_here here. Both trees ran on $pin_here, so this verdict says nothing about what the new OR-Tools does to the search."
+          fi
+          printf '\nOR-Tools: `%s`; the floor pin: `%s`\n' "$pin_here" "$pin_floor" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the measurements
         if: always()
@@ -436,6 +469,7 @@ jobs:
   api-latency:
     name: API — latency (read share ≥ 0.80 of the authenticated floor)
     runs-on: ubuntu-latest
+    if: ${{ !inputs.corpus_only }}
     timeout-minutes: 40
     env:
       POSTGRES_PASSWORD: postgres_local

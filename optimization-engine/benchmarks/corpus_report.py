@@ -6,12 +6,16 @@
 
 `corpus_measure.py --profile sweep --json` writes a list of weeks; this reads one or two such
 lists (the second measured in clock mode, for seconds) and prints what the handbook and
-DEPLOYMENT.md §33 quote. Nothing here measures anything.
+DEPLOYMENT.md §35 quote. Nothing here measures anything.
 
 A WEEK'S OUTCOME is one of three: `schema` (a first timetable inside the budget), `timeout` (none
 inside it) and `vägran` (the engine proved the week impossible, or refused it before it built a
 model). A refusal is not a failure of the search and is not counted as one: the table says
 how many weeks of a size cannot be timetabled at all, apart from how many the search gave up on.
+A fourth status, ERROR, is a measurement that failed (the hook never called, a wall-clock limit that
+decided, a tree that could not be handed the week): it is no outcome of the week, and the report
+refuses it by name rather than count it as a refusal, which would put "the engine proved it
+impossible" in a table nobody proved.
 
 THE UNIT of the work column is CP-SAT's deterministic second (count mode), the same on every
 machine; the seconds column, when a clock measurement is given, is the wall-clock seconds of the
@@ -61,11 +65,18 @@ TEXT: dict[str, dict[str, str]] = {
 
 
 def outcome(row: dict[str, object]) -> str:
-    """`schema`, `timeout` or `vägran` for one measured week."""
+    """`schema`, `timeout` or `vägran` for one measured week; an ERROR week has none and raises ValueError."""
     if row["status"] == SOLVED:
         return "schema"
     if row["status"] == "TIMEOUT":
         return "timeout"
+    if row["status"] == "ERROR":
+        codes = ", ".join(str(code) for code in list(row.get("conflictCodes") or [])[:1])
+        msg = (
+            f"{row.get('name')}: ERROR ({codes or 'no code'}) is a measurement that failed, not an outcome "
+            "of the week: measure it again"
+        )
+        raise ValueError(msg)
     return "vägran"
 
 
@@ -169,6 +180,8 @@ def report(
 ) -> list[str]:
     """The tables the handbook and DEPLOYMENT.md quote, as markdown lines."""
     w = TEXT[lang]
+    for row in [*rows, *(clock or [])]:
+        outcome(row)  # an ERROR week stops the report here, by name, in either measurement
     seconds = (
         {str(r["name"]): float(r["firstScheduleSeconds"]) for r in clock if r["status"] == SOLVED}  # type: ignore[arg-type]
         if clock else None

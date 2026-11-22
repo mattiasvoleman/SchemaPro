@@ -14,7 +14,7 @@ import { mkdtempSync, symlinkSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { LADDER, compare, convert, measureWeek, reportOf, timingOf, withSearch, workAt } from './solve-corpus-calibrate.mjs';
+import { LADDER, checkEngineUrl, compare, convert, measureWeek, reportOf, timingOf, withSearch, workAt } from './solve-corpus-calibrate.mjs';
 
 const KEY = 'a-key-that-must-never-appear-in-an-output';
 
@@ -183,4 +183,56 @@ test('run through a symbolic link the script still runs (it said nothing and exi
   const run = spawnSync(process.execPath, [link], { encoding: 'utf8' });
   assert.equal(run.status, 2);
   assert.match(run.stderr, /usage/);
+});
+
+// ---- the key goes to one address, and nowhere else -----------------------------------------------
+
+/** Two servers: A redirects every request to B, which is another origin (another port). */
+async function redirecting() {
+  const seen = [];
+  const other = http.createServer((req, res) => {
+    seen.push({ url: req.url, key: req.headers['x-api-key'] });
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ verdict: 'OK', status: 'TIMEOUT' }));
+  });
+  await new Promise((resolve) => other.listen(0, '127.0.0.1', resolve));
+  const target = `http://127.0.0.1:${other.address().port}`;
+  const first = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => res.writeHead(307, { location: target + req.url }).end());
+  });
+  await new Promise((resolve) => first.listen(0, '127.0.0.1', resolve));
+  const close = () => { first.closeAllConnections(); other.closeAllConnections(); first.close(); other.close(); };
+  return { seen, url: `http://127.0.0.1:${first.address().port}`, close };
+}
+
+test('a redirect to another origin is refused and the key never reaches it (fetch forwards X-API-Key, and strips only Authorization)', async () => {
+  const { seen, url, close } = await redirecting();
+  try {
+    await assert.rejects(measureWeek({ url, key: KEY, name: 'w', request: {}, ladder: [10], probeSeconds: 5 }));
+    assert.equal(await timingOf({ url, key: KEY }), null, 'the timing request does not follow it either');
+    assert.deepEqual(seen, [], 'nothing reached the other origin');
+  } finally {
+    close();
+  }
+});
+
+test('the key is sent only over https, or over http to this machine', () => {
+  for (const ok of ['https://engine.example', 'https://engine.example/prefix', 'http://127.0.0.1:8000', 'http://localhost:8000', 'http://[::1]:8000']) {
+    assert.doesNotThrow(() => checkEngineUrl(ok), ok);
+  }
+  for (const bad of ['http://engine.example', 'http://10.0.0.5:8000', 'ftp://engine.example', 'engine.example']) {
+    assert.throws(() => checkEngineUrl(bad), /https|not a URL/, bad);
+  }
+});
+
+test('measure from the command line refuses plain http to another host and does not print the address', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'calib-'));
+  writeFileSync(join(dir, 'one.json'), JSON.stringify({ requestId: 'x' }));
+  const script = new URL('./solve-corpus-calibrate.mjs', import.meta.url).pathname;
+  const run = spawnSync(process.execPath, [script, 'measure', '--url', 'http://engine.invalid:8000', '--payloads', dir, '--out', join(dir, 'out.json')], {
+    encoding: 'utf8', env: { ...process.env, ENGINE_API_KEY: KEY },
+  });
+  assert.equal(run.status, 2);
+  assert.ok(!run.stderr.includes('engine.invalid') && !run.stderr.includes(KEY), run.stderr);
 });

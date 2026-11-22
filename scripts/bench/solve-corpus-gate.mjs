@@ -19,17 +19,21 @@
  * seconds. With one worker and a fixed seed (count mode) the same search runs
  * the same operations on every machine, so a week's number is the same on a
  * runner as on a laptop, and two trees compare exactly. The floor is a second
- * tree measured by the same job on the same runner (a commit named in
- * scripts/bench/solve-corpus-floor.json), so nothing is stored in the repository
- * but a commit; a hardware difference cancels, and a drift of the corpus or of
- * OR-Tools between the two cannot happen because both ran in one job.
+ * tree measured by the same job on the same runner (main as it was seven days
+ * ago, or the ref the dispatch input `corpus_floor` names: quality-gates.yml's
+ * solver-corpus job), so nothing is stored in the repository; a hardware
+ * difference cancels, and the corpus and OR-Tools are the same for both because
+ * both ran in one job on this tree's requirements. The last is also a blind spot:
+ * a change of OR-Tools' pin changes the search of both trees alike and is NOT seen
+ * here.
  *
  * WHAT IT FAILS ON. Only what does not depend on a lucky search:
  *   1. a week the floor gives a timetable and this tree REFUSES (a rule got
  *      stricter: a proof, not a search);
  *   2. weeks that the floor solves and this tree does not (TIMEOUT within the
  *      same deterministic budget): one is a failure when the floor was clearly
- *      inside it (under half of the two searches' budgets), and two are in any case, since a
+ *      inside it (under half of the two searches' budgets; with several seeds: at every
+ *      seed, and this tree at none), and two are in any case, since a
  *      week near the edge flips on the smallest change to the model (CP-SAT's
  *      search is chaotic: +-2x on one week is ordinary);
  *   3. the geometric mean of the weeks both solve, this tree / the floor, above
@@ -68,6 +72,9 @@ export const exitCodeOf = ({ failed, invalid }) => (invalid ? 2 : failed ? 1 : 0
 
 const solved = (row) => row.status === SOLVED && typeof row.firstScheduleDeterministic === 'number';
 
+/** The work each seed a week was searched at needed (null: no timetable), when the measurement ran several. */
+const seedsOf = (row) => (Array.isArray(row.seedWork) && row.seedWork.length > 1 ? row.seedWork : null);
+
 /** Why the two lists cannot be compared at all, or null. */
 export function invalidReason(head, floor) {
   if (!Array.isArray(head) || !Array.isArray(floor) || head.length === 0 || floor.length === 0) {
@@ -104,8 +111,23 @@ export function invalidReason(head, floor) {
     return `the gate compares count mode only (modes seen: ${[...modes].join(', ')})`;
   }
   const budgets = new Set([...head, ...floor].map((row) => row.deterministicBudget));
-  if (budgets.size !== 1 || budgets.has(undefined)) {
+  if (budgets.size !== 1 || budgets.has(undefined) || budgets.has(null)) {
     return `the two trees did not run on one deterministic budget (${[...budgets].join(', ')})`;
+  }
+  // The producer (corpus_measure.py) and this verdict meet in the names of a few fields. A week answered
+  // FIRST_SCHEDULE with no number of work is that seam broken (a field renamed on one side): every week
+  // would read as unsolved in both trees, "same", and the gate would pass having compared nothing.
+  const numberless = [...head, ...floor]
+    .filter((row) => row.status === SOLVED && typeof row.firstScheduleDeterministic !== 'number')
+    .map((row) => row.name);
+  if (numberless.length) {
+    return `weeks answered ${SOLVED} without a number of work in firstScheduleDeterministic: ${[...new Set(numberless)].join(', ')} (the measurement and this verdict disagree on a field's name)`;
+  }
+  // A floor that solves no week has nothing for this tree to be held to: every week would read as
+  // gained or the same, and the gate would pass having guarded nothing.
+  if (!floor.some(solved)) {
+    const seen = [...new Set(floor.map((row) => `${row.status} ${code(row)}`.trim()))].join('; ');
+    return `the floor solves no week (${seen}): there is nothing to hold this tree to until the floor does`;
   }
   return null;
 }
@@ -127,7 +149,13 @@ export function compareWeek(head, floor, budget) {
   }
   if (solved(floor)) {
     if (head.status === 'TIMEOUT') {
-      const inside = floor.firstScheduleDeterministic < CLEARLY_INSIDE * ceiling;
+      // With several seeds a week is lost for certain only when the floor found it at EVERY seed, each
+      // well inside the budget, and this tree at none: a week that times out at some seeds of the floor
+      // itself is on the edge, and the edge is where a change that does nothing flips it.
+      const floorSeeds = seedsOf(floor) ?? [floor.firstScheduleDeterministic];
+      const headSeeds = seedsOf(head);
+      const inside = floorSeeds.every((work) => typeof work === 'number' && work < CLEARLY_INSIDE * ceiling)
+        && (headSeeds === null || headSeeds.every((work) => work === null));
       return { name, kind: 'lost', clear: inside, floorWork: floor.firstScheduleDeterministic,
         note: `the floor solves it in ${floor.firstScheduleDeterministic} of at most ${ceiling}; this tree times out` };
     }

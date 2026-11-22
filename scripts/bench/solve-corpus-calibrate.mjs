@@ -37,6 +37,11 @@
  * NEVER A SECRET IN THE OUTPUT. The key is read from the environment, sent as X-API-Key and never
  * printed or written; the output names the run by its label, not by the URL. The weeks are the
  * corpus's own, built from no school's data.
+ *
+ * NEVER A SECRET TO ANOTHER ADDRESS. fetch strips `Authorization` when a redirect crosses to another
+ * origin and nothing else: X-API-Key goes along. So no request follows a redirect (an engine that
+ * redirects is an error, not a detour), and the key is sent only over https, or over http to this
+ * machine's own address (a local engine).
  */
 
 import { readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -75,12 +80,28 @@ export function reportOf(answer) {
   return { totalSeconds: report.totalSeconds, stages, phases };
 }
 
+/** The address the key is sent to: https, or http on this machine; anything else throws (without naming the address). */
+export function checkEngineUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('the engine address is not a URL');
+  }
+  const here = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && here)) {
+    throw new Error('the engine address must be https (or http on this machine): the key goes with every request');
+  }
+  return parsed;
+}
+
 async function post(fetchFn, base, key, path, body, seconds) {
   const started = performance.now();
   const response = await fetchFn(new URL(path, base), {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': key },
     body: JSON.stringify(body),
+    redirect: 'error',
     signal: AbortSignal.timeout((seconds + 90) * 1000),
   });
   const wall = (performance.now() - started) / 1000;
@@ -119,7 +140,7 @@ export async function measureWeek({ fetchFn = fetch, url, key, name, request, la
 /** The engine's own statement of its limits, to read the run by (GET /api/v1/timing); null when it has none. */
 export async function timingOf({ fetchFn = fetch, url, key }) {
   try {
-    const response = await fetchFn(new URL('/api/v1/timing', url), { headers: { 'x-api-key': key }, signal: AbortSignal.timeout(15000) });
+    const response = await fetchFn(new URL('/api/v1/timing', url), { headers: { 'x-api-key': key }, redirect: 'error', signal: AbortSignal.timeout(15000) });
     return response.ok ? await response.json() : null;
   } catch {
     return null;
@@ -238,6 +259,12 @@ async function main(argv = process.argv.slice(2)) {
   const out = argOf('--out', rest);
   if (!key || !url || !dir || !out) {
     console.error('measure needs ENGINE_API_KEY in the environment, and --url, --payloads and --out');
+    return 2;
+  }
+  try {
+    checkEngineUrl(url);
+  } catch (error) {
+    console.error(error.message);
     return 2;
   }
   const only = argOf('--only', rest)?.split(',');
