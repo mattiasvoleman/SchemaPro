@@ -287,12 +287,12 @@ test('--warn-bytes moves the threshold and 0 turns the warning off', () => {
   }
 });
 
-test('--json carries the margins and the near-budget rows, and nothing but the report on stdout\'s first object', () => {
+test('--json carries the margins and the near-budget rows, and stdout is the report and nothing else', () => {
   const f = fixture({ routeLeft: 1500, sharedLeft: 9000 });
   try {
     const run = gate(f.dir, ['--json']);
     assert.equal(run.code, 0, run.err);
-    const report = JSON.parse(run.out.slice(0, run.out.lastIndexOf('\n}') + 2));
+    const report = JSON.parse(run.out);
     assert.equal(report.warnBytes, 2048);
     assert.equal(report.sharedMarginBytes, f.sharedLeft);
     assert.deepEqual(
@@ -335,7 +335,7 @@ test('the public tier is 6 KB: Next\'s own 3 534 B has room, and 5 000 B does no
   try {
     const ok = gate(roomy.dir, ['--json']);
     assert.equal(ok.code, 0, ok.err);
-    const report = JSON.parse(ok.out.slice(0, ok.out.lastIndexOf('\n}') + 2));
+    const report = JSON.parse(ok.out);
     const page = report.routes.find((r) => r.route === '/v/[token]/page');
     assert.equal(page.tier, 'public');
     assert.equal(page.budgetKb, 6);
@@ -347,5 +347,112 @@ test('the public tier is 6 KB: Next\'s own 3 534 B has room, and 5 000 B does no
   } finally {
     roomy.cleanup();
     tight.cleanup();
+  }
+});
+
+// ---- every tier is measured against its own budget ------------------------
+
+/** gzip of every route the gate reads is `budgetKb * 1024 - left`, so a route's margin is `left`, give or take a few bytes. */
+const TIER_ROUTES = [
+  { route: '/v/[token]/page', tier: 'public', budgetKb: 6, left: 1200 },
+  { route: '/[locale]/(auth)/login/page', tier: 'auth', budgetKb: 110, left: 1300 },
+  { route: '/[locale]/(app)/teacher/page', tier: 'core', budgetKb: 170, left: 1400 },
+  { route: '/[locale]/(app)/notifications/page', tier: 'other', budgetKb: 170, left: 1500 },
+  { route: '/[locale]/page', tier: 'system', budgetKb: 50, left: 1600 },
+  { route: '/[locale]/(app)/admin/x/page', tier: 'admin', budgetKb: 190, left: 1700 },
+];
+
+/** A `.next` with a shared chunk and one route per entry of TIER_ROUTES (each with a chunk of its own). */
+function tierFixture({ sharedLeft = 20000 } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'bundle-margin-tiers-'));
+  const next = join(dir, '.next');
+  mkdirSync(join(next, 'static', 'chunks'), { recursive: true });
+  const shared = chunkOfGzipSize(SHARED_CAP - sharedLeft, 1);
+  writeFileSync(join(next, 'static', 'chunks', 'shared.js'), shared.bytes);
+  writeFileSync(
+    join(next, 'build-manifest.json'),
+    JSON.stringify({ rootMainFiles: ['static/chunks/shared.js'], polyfillFiles: [] }),
+  );
+  const left = new Map();
+  TIER_ROUTES.forEach((entry, index) => {
+    const own = chunkOfGzipSize(entry.budgetKb * 1024 - entry.left, 10 + index);
+    writeFileSync(join(next, 'static', 'chunks', `route-${index}.js`), own.bytes);
+    const manifestDir = join(next, 'server', 'app', `r${index}`);
+    mkdirSync(manifestDir, { recursive: true });
+    writeFileSync(
+      join(manifestDir, 'page_client-reference-manifest.js'),
+      `globalThis.__RSC_MANIFEST = globalThis.__RSC_MANIFEST || {};\n` +
+        `globalThis.__RSC_MANIFEST[${JSON.stringify(entry.route)}] = ` +
+        `{"entryJSFiles":{"/x":["static/chunks/shared.js","static/chunks/route-${index}.js"]}};\n`,
+    );
+    left.set(entry.route, entry.budgetKb * 1024 - own.size);
+  });
+  return { dir: next, left, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+const grouped = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+
+test('each tier (public, auth, core, other, system, admin) is measured against its own budget', () => {
+  const f = tierFixture();
+  try {
+    const run = gate(f.dir);
+    assert.equal(run.code, 0, run.err);
+    for (const { route, tier, budgetKb } of TIER_ROUTES) {
+      const left = f.left.get(route);
+      assert.ok(
+        run.err.includes(`WARNING: ${route} — ${grouped(left)} B left of ${grouped(budgetKb * 1024)} B (${tier}, ${budgetKb} KB)`),
+        `${tier}: ${route} should warn with ${left} B left of ${budgetKb} KB\n${run.err}`,
+      );
+    }
+    assert.match(run.err, /6 budget\(s\) with under 2048 B left\. Not a failure/);
+
+    const json = gate(f.dir, ['--json']);
+    assert.equal(json.code, 0, json.err);
+    const report = JSON.parse(json.out.slice(0, json.out.lastIndexOf('\n}') + 2));
+    assert.deepEqual(
+      report.nearBudget.map((row) => [row.scope, row.tier, row.budgetKb, row.marginBytes]).sort(),
+      TIER_ROUTES.map(({ route, tier, budgetKb }) => [route, tier, budgetKb, f.left.get(route)]).sort(),
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+// ---- what a warning must never do ------------------------------------------
+
+test('the shared runtime over its budget is a failure, reported once and not also as a warning', () => {
+  const f = fixture({ sharedLeft: -3000 });
+  try {
+    const run = gate(f.dir);
+    assert.equal(run.code, 1, 'exit code unchanged: 1 for the shared runtime over budget');
+    assert.match(run.err, /FAIL: shared runtime is /);
+    assert.doesNotMatch(run.err, /WARNING/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a step summary that cannot be written does not fail the gate', () => {
+  const f = fixture({ routeLeft: 1500 });
+  const summary = join(dirname(f.dir), 'no-such-directory', 'summary.md');
+  try {
+    const run = gate(f.dir, [], { GITHUB_ACTIONS: 'true', GITHUB_STEP_SUMMARY: summary });
+    assert.equal(run.code, 0, run.err);
+    assert.match(run.err, /WARNING: /);
+    assert.match(run.out, /^PASS: /m);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('the flat mode (--max-kb) has no margins to warn about and prints none', () => {
+  const f = fixture({ routeLeft: 1500, sharedLeft: 1500 });
+  try {
+    const run = gate(f.dir, ['--max-kb', '100000']);
+    assert.equal(run.code, 0, run.err);
+    assert.doesNotMatch(run.err, /WARNING/);
+    assert.doesNotMatch(run.out, /Tightest margins/);
+  } finally {
+    f.cleanup();
   }
 });

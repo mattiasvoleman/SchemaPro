@@ -269,7 +269,8 @@ budget a page could contain 24KB of its own code and still fail, which makes
 the gate unactionable and teaches everyone to ignore CI.
 
 Budgets therefore apply to each route's **own** JavaScript, with the shared
-runtime gated separately at 130KB. The split makes both numbers actionable:
+runtime gated separately (at 130KB then, 132KB since 2026-11-22, see the comment
+on `SHARED_BUDGET_KB`). The split makes both numbers actionable:
 route budgets catch a page importing something heavy, and the shared budget
 catches application code leaking into the root layout — which is exactly how
 react-query and sonner ended up on the login page.

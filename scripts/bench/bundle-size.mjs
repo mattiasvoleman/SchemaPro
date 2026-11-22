@@ -249,7 +249,10 @@ const TIERS = [
  * (main 1516129a), of which `next` is 127 589 B (react-dom's client alone
  * 63 572, the Flight client 6 656, the segment cache ≈13 000), the Turbopack
  * runtime 3 908 and @swc/helpers 192 — attributed with browser source maps, and
- * no byte from this repository. It therefore moves with the Next and React
+ * no byte from this repository. (Those three add up to 131 689, not 131 780:
+ * the attribution is made on a source-map build of the same tree, whose shared
+ * chunks measured 131 696 B on a re-run on 2026-11-22. Repeat it on the next
+ * Next upgrade.) It therefore moves with the Next and React
  * versions and cannot be given room by lazy-loading our code; the 130 KB it had
  * left 1 340 B, so the margin warning stood on every build. 132 KB since
  * 2026-11-22, which is 3 388 B above what it measures, a Next upgrade's worth.
@@ -409,7 +412,8 @@ if (report.sharedOverBudget) {
   exitCode = 1;
 }
 
-if (exitCode === 0) {
+// Not in the JSON mode: stdout there is one JSON document and nothing after it (jq, JSON.parse).
+if (exitCode === 0 && !asJson) {
   console.log(
     flatMode
       ? `\nPASS: all ${report.routeCount} routes within the ${maxKb}KB total budget.`
