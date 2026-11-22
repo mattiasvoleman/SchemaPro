@@ -366,6 +366,21 @@ export async function readWorkbook(bytes: Uint8Array): Promise<Workbook> {
   return { sheets, hidden };
 }
 
+/**
+ * A number as the digits it is. A writer that prints a double the way Java does (Apache POI, which a school system's export may be made with) stores the
+ * personnummer 8001011234 as 8.001011234E9, and the reader passed that on as it stood: ten digits with a point and an exponent in them, which no search for
+ * a personnummer reads. A whole number in that form is written out; anything else (a fraction, 1.5E-3, an absurd exponent) stays as stored.
+ */
+export function plainNumber(raw: string): string {
+  const match = /^([+-]?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(raw);
+  if (match === null) return raw;
+  const fraction = match[3] ?? "";
+  const exponent = Number(match[4]);
+  if (exponent < fraction.length || exponent > 30) return raw;
+  const digits = (match[2]! + fraction + "0".repeat(exponent - fraction.length)).replace(/^0+(?=\d)/, "");
+  return (match[1] === "-" ? "-" : "") + digits;
+}
+
 function readSheet(name: string, worksheet: Element, shared: readonly string[], dateStyle: readonly boolean[], date1904: boolean): Sheet {
   const textOf = (cell: Element): string => {
     const type = attr(cell, "t") || "n";
@@ -390,7 +405,7 @@ function readSheet(name: string, worksheet: Element, shared: readonly string[], 
       case "d":
         return decodeEscapes(stored);
       default: {
-        const number = stored.trim();
+        const number = plainNumber(stored.trim());
         return dateStyle[Number(attr(cell, "s") || "0")] === true ? (excelSerialToText(number, date1904) ?? number) : number;
       }
     }

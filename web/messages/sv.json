@@ -11735,7 +11735,7 @@
     "promise": {
       "heading": "Filen lämnar aldrig din dator",
       "offline": "Allt sker i den här webbläsarfliken. Filen skickas inte till Rastra eller någon annan, och ingen server ser den.",
-      "policy": "Sidan har en säkerhetspolicy som gör att webbläsaren vägrar alla nätverksanrop från den (connect-src 'none'). Du eller er IT-avdelning kan läsa policyn i webbläsarens utvecklarverktyg under Nätverk, och prova själva: koppla bort nätverket när sidan har laddats, så fungerar verktyget ändå.",
+      "policy": "Sidan har en säkerhetspolicy (bland annat connect-src 'none') som gör att webbläsaren vägrar att sidans kod skickar något med fetch, XMLHttpRequest, WebSocket eller sendBeacon, och vägrar bilder, ramar och teckensnitt som hämtas utifrån och formulär som skickas. Du eller er IT-avdelning kan läsa policyn i webbläsarens utvecklarverktyg under Nätverk, och prova själva: koppla bort nätverket när sidan har laddats, så fungerar verktyget ändå.",
       "nothingKept": "Ingenting om din fil sparas, varken i webbläsarens lagring eller i kakor. Det enda sidan kan sätta är en kaka för vilket språk du valt. När du stänger fliken eller trycker Rensa allt är allt du lagt in borta.",
       "cannotJudge": "Verktyget hittar personnummer, samordningsnummer, TF-nummer, e-postadresser och telefonnummer på hur de ser ut, och namn i de kolumner du eller rubriken pekar ut. Det kan inte avgöra allt: läs listan Det här kan verktyget inte bedöma, och förhandsvisningen, innan du skickar något."
     },

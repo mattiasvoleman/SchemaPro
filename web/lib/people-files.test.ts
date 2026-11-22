@@ -62,5 +62,9 @@ describe("every file the web hands out is decided for a protected identity", () 
     expect(DOWNLOADS.test("anchor.download = 'elever.csv';")).toBe(true);
     expect(DOWNLOADS.test("const blob = new Blob([file]);")).toBe(true);
     expect(DOWNLOADS.test("onClick={() => window.print()}")).toBe(true);
+    // The pseudonymiser's primitives (#398): a page of the signed-in app that calls them is a download like any other, and was not seen.
+    expect(DOWNLOADS.test('saveBytes("alla-elever.csv", bytes, "text/csv")')).toBe(true);
+    expect(DOWNLOADS.test('saveText("rapport.txt", text)')).toBe(true);
+    expect(DOWNLOADS.test("const useSaveText = 1; mySaveBytesLater(1)")).toBe(false);
   });
 });

@@ -44,6 +44,19 @@ describe("the page", () => {
     expect(promise).toHaveTextContent("Det kan inte avgöra allt");
   });
 
+  it("says of its policy what the browser does with it and no more: the page does not claim every network request is refused", async () => {
+    // Measured in Chromium against the production build (the review of #398): connect-src 'none' and its neighbours refuse fetch, XHR, beacon, EventSource, WebSocket,
+    // pictures, frames, fonts and forms; they do NOT refuse a navigation (window.open, a link, a meta refresh, location), a WebRTC connection, or what the page loads
+    // from its own origin. "Every network request" is therefore more than the policy does, and the school's IT department is who the sentence invites to try it.
+    for (const [locale, messages] of [["sv", sv], ["en", en]] as const) {
+      await renderPage(locale);
+      const promise = screen.getByRole("region", { name: messages.pseudonymiserare.promise.heading });
+      expect(promise.textContent, locale).not.toMatch(/alla nätverksanrop|alla anrop|every network request|every request/i);
+      for (const api of ["fetch", "XMLHttpRequest", "WebSocket", "sendBeacon"]) expect(promise, `${locale}: ${api}`).toHaveTextContent(api);
+      cleanup();
+    }
+  });
+
   it("names the TF number among what it finds, and says which form of it it knows, in both languages", async () => {
     // Skola24's own course files hold ÅÅÅÅMMDDTFnn where a personnummer goes (X3, 2026-11-22): a school must be able to read on the page that it is replaced.
     await renderPage("sv");

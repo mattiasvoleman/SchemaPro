@@ -151,6 +151,28 @@ describe("proxy", () => {
       expect(response.headers.get("content-security-policy")).toContain("connect-src 'none'");
     });
 
+    it("is told not to be indexed in the response too, and no other page of the app is", async () => {
+      for (const path of ["/sv/pseudonymisera", "/en/pseudonymisera"]) {
+        const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
+        expect(response.headers.get("x-robots-tag"), path).toBe("noindex, nofollow");
+      }
+      for (const path of ["/sv/login", "/sv/tillganglighet"]) {
+        const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
+        expect(response.headers.get("x-robots-tag"), path).toBeNull();
+      }
+    });
+
+    it("makes public that path and what is under it, and not a path that only begins like one", async () => {
+      for (const path of ["/sv/pseudonymiserare", "/sv/pseudonymisera-x", "/sv/loginhjalp", "/sv/authors", "/sv/tillganglighetx", "/en/forgot-passwordx"]) {
+        const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
+        expect(response.headers.get("location"), path).toContain("/login");
+      }
+      for (const path of ["/sv/login", "/sv/login/", "/sv/auth/callback", "/sv/forgot-password", "/en/update-password", "/sv/tillganglighet", "/sv/pseudonymisera", "/sv/pseudonymisera/x"]) {
+        const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
+        expect(response.headers.get("location"), path).toBeNull();
+      }
+    });
+
     it("still sends a visitor without a session from an app page to the login, with the page public beside it", async () => {
       const response = await proxy(new NextRequest("https://schema.example.se/sv/admin/timetable"));
       expect(response.headers.get("location")).toContain("/sv/login");

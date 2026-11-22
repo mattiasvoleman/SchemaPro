@@ -98,7 +98,9 @@ export async function proxy(request: NextRequest) {
   const pathWithoutLocale = localeMatch
     ? pathname.slice(localeMatch[0].length) || "/"
     : pathname;
-  const isPublic = PUBLIC_PATHS.some((path) => pathWithoutLocale.startsWith(path));
+  // A public path is that path and what is under it, not whatever begins with the same letters: a later page called /pseudonymiserare, /loginhjalp or
+  // /authors would otherwise be public the day it is made, with no one having decided it.
+  const isPublic = PUBLIC_PATHS.some((path) => pathWithoutLocale === path || pathWithoutLocale.startsWith(`${path}/`));
 
   if (!claims && !isPublic) {
     const locale = localeMatch?.[1] ?? routing.defaultLocale;
@@ -113,6 +115,8 @@ export async function proxy(request: NextRequest) {
   if (isPseudonymiseraPath(pathname)) {
     response.headers.set("Content-Security-Policy", pseudonymiserarePolicy({ development: process.env.NODE_ENV === "development" }));
     response.headers.set("Referrer-Policy", "no-referrer");
+    // Noindex in the header as well as in the page's meta tag, as the viewer's pages have it: a crawler or a link preview that does not read the markup is told too.
+    response.headers.set("X-Robots-Tag", "noindex, nofollow");
   }
 
   return response;

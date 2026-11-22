@@ -54,7 +54,8 @@ export function ResultView({
 
   return (
     <div className="space-y-6">
-      <section className={CARD} aria-labelledby={`${id}-counts`}>
+      {/* Not a landmark of its own: the scrollable table below it is the region of this name, and two regions with one name cannot be told apart (axe landmark-unique). */}
+      <section className={CARD}>
         <h3 id={`${id}-counts`} className="text-base font-semibold">
           {say("result.countsHeading")}
         </h3>

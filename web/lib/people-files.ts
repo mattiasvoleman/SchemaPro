@@ -44,7 +44,7 @@ export interface PeopleFile {
  * does).
  */
 export const DOWNLOADS =
-  /\b(downloadCsv|downloadIcs|downloadScbText|downloadScbCsv|saveBase64|downloadTemplate)\(|URL\.createObjectURL\(|\bdoc\.save\(|\.download\s*=|["'`]data:|new Blob\(|window\.print\(/;
+  /\b(downloadCsv|downloadIcs|downloadScbText|downloadScbCsv|saveBase64|downloadTemplate|saveBytes|saveText)\(|URL\.createObjectURL\(|\bdoc\.save\(|\.download\s*=|["'`]data:|new Blob\(|window\.print\(/;
 
 /** The export button's kinds that name people: built from the unmarked only. */
 export const PEOPLE_KINDS = [
@@ -186,6 +186,11 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
     files: "registerutdrag-<datum>-<id>.zip",
     rule: "ONE_PERSON",
     why: "One person's own data (GDPR art. 15), built by the gateway: the person is never held out of their own extract, but an extract of a marked person carries no one else, and a marked relative is left out and counted.",
+  },
+  "app/[locale]/pseudonymisera/result-view.tsx": {
+    files: "the pseudonymised file and its report (Pseudonymiseraren, /pseudonymisera)",
+    rule: "NAMES_NOBODY",
+    why: "Calls saveBytes and saveText (lib/pseudonym-download.ts), which are in DOWNLOADS so that a page of the signed-in app that calls them is decided here too. This page is public and reads nothing of a school's: what it hands out is the visitor's own file with every name, number, address and telephone number replaced in the browser before the bytes exist.",
   },
   "lib/pseudonym-download.ts": {
     files: "the pseudonymised file and its report (Pseudonymiseraren, /pseudonymisera)",

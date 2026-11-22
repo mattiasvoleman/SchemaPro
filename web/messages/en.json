@@ -11735,7 +11735,7 @@
     "promise": {
       "heading": "The file never leaves your computer",
       "offline": "Everything happens in this browser tab. The file is not sent to Rastra or anyone else, and no server sees it.",
-      "policy": "The page has a security policy that makes the browser refuse every network request from it (connect-src 'none'). You or your IT department can read the policy in the browser's developer tools under Network, and try it yourselves: disconnect the network once the page has loaded and the tool still works.",
+      "policy": "The page has a security policy (among other things connect-src 'none') that makes the browser refuse anything the page's code tries to send with fetch, XMLHttpRequest, WebSocket or sendBeacon, and any picture, frame or font that is loaded from elsewhere and any form that is submitted. You or your IT department can read the policy in the browser's developer tools under Network, and try it yourselves: disconnect the network once the page has loaded and the tool still works.",
       "nothingKept": "Nothing about your file is stored, neither in the browser's storage nor in cookies. The only thing the page may set is a cookie for the language you chose. When you close the tab or press Clear everything, everything you added is gone.",
       "cannotJudge": "The tool finds personal identity numbers, coordination numbers, TF numbers, e-mail addresses and phone numbers by how they look, and names in the columns you or the header point out. It cannot judge everything: read the list What the tool cannot judge, and the preview, before you send anything."
     },

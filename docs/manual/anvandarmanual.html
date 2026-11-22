@@ -11013,9 +11013,11 @@
       webbläsarens egna funktioner och skrivs om i minnet. Den skickas inte till
       Rastra eller någon annan, och ingen server ser den.</li>
     <li><strong>Webbläsaren vägrar själv.</strong> Sidan har en
-      säkerhetspolicy (<em>Content-Security-Policy</em>, med
-      <em>connect-src 'none'</em>) som gör att webbläsaren avvisar alla
-      nätverksanrop från den. Skolans IT-avdelning kan läsa policyn i
+      säkerhetspolicy (<em>Content-Security-Policy</em>, bland annat
+      <em>connect-src 'none'</em>) som gör att webbläsaren vägrar att sidans kod
+      skickar något med fetch, XMLHttpRequest, WebSocket eller sendBeacon, och
+      vägrar bilder, ramar och teckensnitt som hämtas utifrån och formulär som
+      skickas. Skolans IT-avdelning kan läsa policyn i
       webbläsarens utvecklarverktyg under <em>Nätverk</em>, och prova själv: koppla
       bort nätverket när sidan har laddats, och verktyget fungerar ändå.</li>
     <li><strong>Ingenting om filen sparas.</strong> Varken i webbläsarens lagring eller
