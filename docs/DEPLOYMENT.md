@@ -345,6 +345,18 @@ When the numbers disagree, in the order of how soon it is said:
 
 A deploy brings the engine and the API up together, in either order (both deploy on every merge), and every combination of old and new is the old behaviour or better: an API older than this reads nothing and sends no deadline, and an engine older than this answers 404 on `/api/v1/timing`, after which the API waits as it always did and sends no field the engine would refuse. An engine that is rolled back after its times were read answers the first request with a 422 naming `deadlineSeconds`; the API sends it again without the field and reads the times again.
 
+### 5.2 Where a timed-out run's time went
+
+A run that ends without a timetable because time ran out says where the time went. The engine only **measures** it: no limit above reads it and no answer changes but by the fields below.
+
+| What | Where | When |
+| --- | --- | --- |
+| `report` on the response (`TimeoutReport`): the seconds of each step (`PRECHECKS`, `BUILD`, `SITES`, `SEARCH_CLEAN`, `SEARCH_CLONE`, `PROBE`), what the search was given (`budgetSeconds`) against what the engine is set to (`configuredBudgetSeconds`), the caller's wait (`callerWaitSeconds`), what CP-SAT counted in each satisfaction search (`conflicts`, `branches`: effort, not progress, and no bound, since a satisfaction search has no objective), and `weekLoadCut` | `POST /api/v1/optimize` | on a `TIMEOUT` answer only, strict and best-effort alike; every other response is byte for byte what it was |
+| The row `WEEK_LOAD_NOT_COUNTED` among a TIMEOUT's conflicts | the same answer | when the year's week load stopped at its 4 s before every year was counted: a year with no line is then **not counted**, which is not the same as being under 85 % |
+| `stage`, `stageSeconds` and `elapsedSeconds` in the 503's `details` (beside `route` and `ceilingSeconds`) | the generation route's 503 `SOLVER_TIMEOUT` | when the solve the ceiling gave up on was in a step; absent from the other three routes, and from a 503 whose solve had closed its last step |
+
+All of it is additive: `app.openapi()` gains `OptimizeScheduleResponse.report` and four schemas (`TimeoutReport`, `TimeoutStage`, `TimeoutSearch`, `TimeoutSearchPhase`) and loses and changes nothing; an API older than this ignores the fields, and an engine older than this never sends them, so the page shows what a TIMEOUT has always carried. The 503's body is pinned by `optimization-engine/tests/data/solver_timeout_body.json`, which the engine's tests and the API's read.
+
 ## 6. Deploy the web app
 
 On Vercel: import the repo, set the **root directory to `web/`**, and add:

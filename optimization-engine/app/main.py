@@ -206,14 +206,24 @@ def register_exception_handlers(application: FastAPI) -> None:
         # (an older one reads the sentence).
         logger.error(
             "solver_timed_out", path=request.url.path, route=exc.route,
-            ceiling_seconds=exc.ceiling_seconds,
+            ceiling_seconds=exc.ceiling_seconds, stage=exc.stage,
+            stage_seconds=exc.stage_seconds, elapsed_seconds=exc.elapsed_seconds,
         )
+        details: dict[str, str | float] = {"route": exc.route, "ceilingSeconds": exc.ceiling_seconds}
+        # Where the solve was, for the route that can say (generation): flat
+        # scalars, since the gateway carries them to the page as a refusal's
+        # params, which are flat. Absent for the others and for an answer that
+        # was on its way out.
+        if exc.stage is not None and exc.stage_seconds is not None and exc.elapsed_seconds is not None:
+            details.update(
+                stage=exc.stage, stageSeconds=exc.stage_seconds, elapsedSeconds=exc.elapsed_seconds,
+            )
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content=error_payload(
                 code="SOLVER_TIMEOUT",
                 message=str(exc),
-                details={"route": exc.route, "ceilingSeconds": exc.ceiling_seconds},
+                details=details,
             ),
         )
 
