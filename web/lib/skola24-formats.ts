@@ -8,7 +8,10 @@
  * a school's own export carries may read differently. That is why every spelling after the first is TOLKAT, and why a file is
  * applied on exact labels only (skola24-format.ts `exact`).
  *
- * Seven pages were read for this, in the browser pane, on 2026-11-21 (`read`). `updated` is the date each page carries.
+ * Eight support pages and seven published course files (Skola24's "Filer för kurser") were read for this, on 2026-11-21 and 2026-11-22
+ * (`read`). `updated` is the date a page carries; a file carries none. A course file is an example made for a course, in Excel: it SHOWS
+ * what Skola24's own example holds (no header row, the code page, TF numbers) and does not specify what the platform exports or imports,
+ * so what only a file shows is a fact about that file, and an encoding from one is TOLKAT.
  *
  * Contract: web/lib/skola24-formats.test.ts holds this to the importers (every `field` is a field of the format's `kind`),
  * to `normalizeHeader` (every synonym is already normalised, the first is the label's), and to its fixtures.
@@ -43,6 +46,9 @@ const PAGE = {
   releases: { url: `${SUPPORT}plattformen/uppdateringar-skola24-schema/`, updated: "2026-04-17" },
 } as const satisfies Record<string, Page>;
 
+/** One of the course files Skola24 publishes under "Filer för kurser" (read for its shape only: no cell of it is kept anywhere). */
+const course = (file: string): Page => ({ url: `https://www.skola24.com/globalassets/support/kursdokument/${file}`, updated: null });
+
 const source = (page: Page, status: FactSource["status"]): FactSource => ({ url: page.url, updated: page.updated, read: READ, status });
 /** A page says it. */
 const doc = <T>(page: Page, value: T): Fact<T> => ({ value, source: source(page, "DOKUMENTERAT") });
@@ -67,9 +73,11 @@ const PARENTS: FormatDescriptor = {
   product: "Skola24 Plattformen",
   kind: "guardians",
   separator: doc(PAGE.parents, ";"),
-  encoding: null,
-  // The page describes every row as a pupil and a link to a guardian, and its example row has four values and no header.
-  headerRow: read(PAGE.parents, "no"),
+  // Seen in the three course files for guardians (all with åäö or é in them): not UTF-8, and Latin-1 or Windows-1252 by their bytes.
+  encoding: read(course("nova_forskola_foralder.csv"), "windows-1252"),
+  // The page describes every row as a pupil and a link to a guardian, and its example row has four values and no header; all three course
+  // files for guardians begin with a guardian's row.
+  headerRow: read(course("nova_forskola_foralder.csv"), "no"),
   order: doc(PAGE.parents, "fixed"),
   columns: [
     column(PAGE.parents, "pupilPersonalNumber", "Personnummer för elev", ["personnummerforelev"], { required: doc(PAGE.parents, true), personalNumber: true }),
@@ -86,8 +94,9 @@ const PARENTS: FormatDescriptor = {
     doc(PAGE.parents, "Personnummer får skrivas ÅÅÅÅMMDD-XXXX, ÅÅÅÅMMDDXXXX, ÅÅMMDD-XXXX eller ÅÅMMDDXXXX."),
     // The older page of the Förskola/Fritidshem product lists five columns, without the mobile number. The newer one is followed.
     read(PAGE.imports, "Förskola/Fritidshem-sidan (2023-10-16) räknar upp fem kolumner, utan mobilnummer. Plattformssidan (2024-04-08) räknar upp sex."),
+    doc(course("csv-foraldrar-gy2.csv"), "Skola24:s tre kursfiler för vårdnadshavare (csv-foraldrar-gy2.csv, nova_forskola_foralder.csv, grundskolan_foralder.csv) har fem kolumner och ingen mobilkolumn, ingen rubrikrad, radbrytning CRLF, och TF-nummer (ÅÅÅÅMMDDTFnn, inte ett personnummer) i de två första kolumnerna. E-postadressen är tom på drygt hälften av raderna."),
   ],
-  fixtures: ["foraldrar.csv"],
+  fixtures: ["foraldrar.csv", "foraldrar-tf.csv"],
 };
 
 // ---------------------------------------------------------------------------
@@ -100,8 +109,8 @@ const STAFF: FormatDescriptor = {
   product: "Skola24 Förskola/Fritidshem",
   kind: "teachers",
   separator: doc(PAGE.staff, ";"),
-  encoding: null,
-  headerRow: null,
+  encoding: read(course("nova_forskola_personal.csv"), "windows-1252"),
+  headerRow: read(course("nova_forskola_personal.csv"), "no"),
   order: doc(PAGE.staff, "fixed"),
   columns: [
     column(PAGE.staff, "school", "skolans namn", ["skolansnamn", "skola"], { required: read(PAGE.staff, true), unread: "school" }),
@@ -120,8 +129,9 @@ const STAFF: FormatDescriptor = {
     doc(PAGE.staff, "En fil per skola, och filen ska innehålla all personal på skolan. Skolnamnet i filen ska stämma med skolans namn i Skola24."),
     doc(PAGE.staff, "En person med sekretessmarkering (siffran 1 i sista kolumnen) tas inte in av Skola24; dialogen visar vilka rader som inte lästes in."),
     doc(PAGE.imports, "Samma kolumner i samma ordning står på sidan Import av uppgifter (2023-10-16). Excels 'CSV (kommaavgränsad)' sparar med semikolon."),
+    doc(course("nova_forskola_personal.csv"), "Skola24:s två kursfiler för personal (nova_forskola_personal.csv, grundskolan_personal.csv) har åtta kolumner, ingen rubrikrad, CRLF, TF-nummer i den tredje kolumnen, och i den åttonde siffran 0 eller tomt (aldrig 1 i exemplen). Avdelning och signatur är tomma på en del rader."),
   ],
-  fixtures: ["personal.csv"],
+  fixtures: ["personal.csv", "personal-tf.csv"],
 };
 
 // ---------------------------------------------------------------------------
@@ -135,8 +145,8 @@ const CHILDREN: FormatDescriptor = {
   // Rastra has no import of children of a preschool or an after-school home: the file is described so that it is named, not read.
   kind: null,
   separator: doc(PAGE.imports, ";"),
-  encoding: null,
-  headerRow: null,
+  encoding: read(course("nova_forskola_barn.csv"), "windows-1252"),
+  headerRow: read(course("nova_forskola_barn.csv"), "no"),
   order: doc(PAGE.imports, "fixed"),
   columns: [
     column(PAGE.imports, "school", "skolans namn", ["skolansnamn", "skola"], { unread: "noImport" }),
@@ -149,8 +159,9 @@ const CHILDREN: FormatDescriptor = {
   facts: [
     doc(PAGE.imports, "En person med sekretessmarkering (siffran 1 i sista fältet) tas inte in av Skola24. Nya avdelningar kan läggas till via filen."),
     read(PAGE.imports, "Sidan ger inte skolnamnets, avdelningens, namnens eller personnumrets krav, bara att sekretessmarkeringen är frivillig."),
+    doc(course("nova_forskola_barn.csv"), "Kursfilen nova_forskola_barn.csv har sex kolumner, ingen rubrikrad, TF-nummer i den tredje och 0 eller tomt i den sjätte. Kursfilen grundskolan_barn.csv har TJUGO kolumner: de sex första som ovan och de fjorton sista tomma på alla 58 rader. Vad de är säger ingen sida."),
   ],
-  fixtures: ["barn.csv"],
+  fixtures: ["barn.csv", "barn-tf.csv"],
 };
 
 // ---------------------------------------------------------------------------

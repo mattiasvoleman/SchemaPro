@@ -79,6 +79,27 @@ export interface ReadOptions {
 }
 
 // ---------------------------------------------------------------------------
+// Identity numbers: personnummer, and Skola24's TF numbers
+// ---------------------------------------------------------------------------
+
+/**
+ * A TF number as Skola24's own files hold one in the columns where a personnummer goes: eight digits, TF, two digits (ÅÅÅÅMMDDTFnn),
+ * seen in all seven of the course files Skola24 publishes and named on the Extens page ("även elever med så kallade TF-nummer"). It does
+ * NOT have the shape of a personnummer (web/lib/personal-number.ts), so a file whose ID columns hold only these is not recognised as
+ * a file whose first row is data, and its first row becomes the header: one person lost, and the numbers named as columns.
+ */
+const TF_NUMBER = /(?<!\d)\d{8}TF\d{2}(?!\d)/i;
+
+/**
+ * Whether a cell is the kind of number Skola24 puts in an ID column: a personnummer or a TF number. Used to tell a data row from a header
+ * and to recognise a file; never to place or to keep a value (a column the description marks as an ID column is dropped, whatever its cells).
+ */
+export function isIdentityNumber(cell: string | null | undefined): boolean {
+  if (!cell) return false;
+  return hasPersonalNumber(cell) || TF_NUMBER.test(cell.replace(/\s/g, ""));
+}
+
+// ---------------------------------------------------------------------------
 // A file with no header row
 // ---------------------------------------------------------------------------
 
@@ -96,11 +117,11 @@ export function blockWithoutHeader(table: RawTable, labels: readonly string[]): 
   return chooseHeaderRow({ ...table, rows: [headers, ...table.rows], rowNumbers: [0, ...table.rowNumbers] }, 0);
 }
 
-/** Whether a file's first row is data, for a description that has a fixed order: one of its personnummer columns holds a personnummer. */
+/** Whether a file's first row is data, for a description that has a fixed order: one of its personnummer columns holds an identity number. */
 function firstRowIsData(table: RawTable, columns: readonly FormatColumn[]): boolean {
   const first = table.rows[0];
   if (first === undefined) return false;
-  return columns.some((column, at) => column.personalNumber === true && hasPersonalNumber(first[at]));
+  return columns.some((column, at) => column.personalNumber === true && isIdentityNumber(first[at]));
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +258,7 @@ function requiredWidth(columns: readonly FormatColumn[]): number {
 /**
  * Which descriptions a table may be a file of: OFFERED, never applied. A header fit is a file whose headers are at least 60 % (and at
  * least three) of a description's; a position fit is a file with no header row whose rows are no wider than the description and at
- * least as wide as its required columns, and whose personnummer columns hold personnummer in most of the first rows. Two
+ * least as wide as its required columns, and whose personnummer columns hold a personnummer or a TF number in most of the first rows. Two
  * descriptions that fit equally (a six-column staff file and a six-column children's file) are both returned: the user chooses.
  */
 export function detectFormats(table: RawTable, descriptors: readonly FormatDescriptor[] = SKOLA24_FORMATS): FormatFit[] {
@@ -263,7 +284,7 @@ export function detectFormats(table: RawTable, descriptors: readonly FormatDescr
     if (descriptor.order !== null && firstRowIsData(table, columns)) {
       const numbers = columns.flatMap((column, at) => (column.personalNumber === true ? [at] : []));
       const wide = requiredWidth(columns);
-      const dataRows = sample.filter((row) => row.length <= of && row.length >= wide && numbers.every((at) => hasPersonalNumber(row[at])));
+      const dataRows = sample.filter((row) => row.length <= of && row.length >= wide && numbers.every((at) => isIdentityNumber(row[at])));
       if (dataRows.length * 5 >= sample.length * 4) fits.push({ format: descriptor.id, by: "position", matched: numbers.length, of, exact: false });
     }
   }

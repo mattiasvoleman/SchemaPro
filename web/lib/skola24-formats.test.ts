@@ -44,22 +44,29 @@ describe("every description", () => {
 
   it.each(SKOLA24_FORMATS.map((format) => [format.id, format] as const))("%s: every fact has a page, the day it was read, and the date the page carries", (_id, format) => {
     for (const { where, fact } of factsOf(format)) {
-      expect(fact.source.url, where).toMatch(/^https:\/\/www\.skola24\.com\/support\//);
+      // A support page, or a file Skola24 publishes under "Filer för kurser".
+      expect(fact.source.url, where).toMatch(/^https:\/\/www\.skola24\.com\/(support|globalassets\/support)\//);
       expect(fact.source.read, where).toBe("2026-11-21");
       expect(fact.source.updated === null || /^\d{4}-\d{2}-\d{2}$/.test(fact.source.updated), where).toBe(true);
       expect(["DOKUMENTERAT", "TOLKAT"], where).toContain(fact.source.status);
     }
   });
 
-  it.each(SKOLA24_FORMATS.map((format) => [format.id, format] as const))("%s: a width or an encoding is only ever DOKUMENTERAT, never our reading", (_id, format) => {
+  it.each(SKOLA24_FORMATS.map((format) => [format.id, format] as const))("%s: a width is only ever DOKUMENTERAT, and an encoding is DOKUMENTERAT or seen in a file Skola24 publishes", (_id, format) => {
     for (const { where, fact } of factsOf(format)) {
-      if (where.endsWith(".width") || where.endsWith(" encoding")) expect(fact.source.status, where).toBe("DOKUMENTERAT");
+      if (where.endsWith(".width")) expect(fact.source.status, where).toBe("DOKUMENTERAT");
+      // No page says a code page; a published course file shows one, which is our reading of what an export holds, and says so.
+      if (where.endsWith(" encoding") && fact.source.status === "TOLKAT") expect(fact.source.url, where).toMatch(/\/globalassets\/support\/kursdokument\/[\w-]+\.csv$/);
     }
   });
 
-  it("states no width and no encoding: no page read says one", () => {
-    // If this fails, a page now says one: add it WITH its page, and say so in the design note. Do not loosen the test.
-    expect(SKOLA24_FORMATS.flatMap(factsOf).filter(({ where }) => where.endsWith(".width") || where.endsWith(" encoding"))).toEqual([]);
+  it("states no width, and an encoding only for the three CSV files Skola24 publishes examples of: Windows-1252, from a file", () => {
+    // If a width appears, a page now says one: add it WITH its page, and say so in the design note. Do not loosen the test.
+    const stated = SKOLA24_FORMATS.flatMap(factsOf);
+    expect(stated.filter(({ where }) => where.endsWith(".width"))).toEqual([]);
+    const encodings = stated.filter(({ where }) => where.endsWith(" encoding"));
+    expect(encodings.map(({ where }) => where.split(" ")[0])).toEqual(["skola24-foraldrar-csv", "skola24-personal-csv", "skola24-barn-csv"]);
+    expect(encodings.every(({ fact }) => fact.value === "windows-1252" && fact.source.status === "TOLKAT")).toBe(true);
   });
 });
 

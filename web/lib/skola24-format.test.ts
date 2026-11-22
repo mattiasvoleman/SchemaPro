@@ -4,7 +4,9 @@ import { readTable, writeMappedTable } from "@/lib/column-table";
 import { mapTeacherRows } from "@/lib/csv";
 import { hasPersonalNumber } from "@/lib/personal-number";
 import { readFixture } from "@/lib/__fixtures__/skola24-read";
-import { blockWithoutHeader, detectFormats, readFormat, type Verdict } from "@/lib/skola24-format";
+import { readFixtureBytes } from "@/lib/__fixtures__/skola24-read";
+import { decodeCsvBytes } from "@/lib/csv-encoding";
+import { blockWithoutHeader, detectFormats, isIdentityNumber, readFormat, type Verdict } from "@/lib/skola24-format";
 import { SKOLA24_FORMATS, formatById } from "@/lib/skola24-formats";
 import type { FormatDescriptor } from "@/lib/skola24-format-types";
 
@@ -289,8 +291,69 @@ describe("nothing is said twice or not at all", () => {
   );
 });
 
+describe("an identity number, and Skola24's own files", () => {
+  it("is a personnummer or a TF number, in any spacing, and nothing else", () => {
+    for (const yes of ["19000101-0001", "190001010001", "000101-0001", "19000101TF01", "19000101 TF 01", " 19000101tf01 ", "x 19000101TF01 y"]) expect(isIdentityNumber(yes), yes).toBe(true);
+    for (const no of ["", "   ", "TF01", "19000101TF", "19000101TFAB", "190001011TF01", "19000101TF012", "Åsa", "12345", "2026-11-22", "0", null, undefined]) expect(isIdentityNumber(no), String(no)).toBe(false);
+  });
+
+  // The files Skola24 publishes for its courses hold TF numbers in the ID columns (ÅÅÅÅMMDDTFnn), have no header row, and are Windows-1252.
+  // The first reader took the first row of every one of them for a header: nothing was recognised, one person was lost, and the first
+  // guardian's TF numbers were named as columns.
+  it("reads a file whose ID columns hold only TF numbers, and loses no row", () => {
+    const bytes = readFixtureBytes("foraldrar-tf.csv");
+    expect(decodeCsvBytes(bytes).encoding).toBe("windows-1252");
+    const parsed = table("foraldrar-tf.csv");
+    expect(parsed.rows).toHaveLength(4);
+    // What X2 alone does with it, which is the reason the description exists:
+    expect(chooseHeaderRow(parsed, null)!.body).toHaveLength(3);
+    expect(detectFormats(parsed).map((fit) => `${fit.format}/${fit.by}`)).toEqual(["skola24-foraldrar-csv/position"]);
+
+    const reading = readFormat(parsed, format("skola24-foraldrar-csv"))!;
+    expect(reading.by).toBe("position");
+    expect(reading.block.body).toHaveLength(4);
+    expect(reading.block.rowNumbers).toEqual([1, 2, 3, 4]);
+    // Five columns, as Skola24's own files have: no mobile, and the description says so.
+    expect(statuses(reading.columns)).toEqual(["personalNumber", "personalNumber", "placed", "placed", "placed"]);
+    expect(reading.assignment).toEqual([null, null, "firstName", "lastName", "email"]);
+    expect(reading.missing.map((column) => column.id)).toEqual(["mobile"]);
+    expect(reading.block.body[0]![2]).toBe("Åsa");
+  });
+
+  it("reads the staff and children's files in that form: the mark is 0 or empty, which is not 1, and so no row is held", () => {
+    const staff = readFormat(table("personal-tf.csv"), format("skola24-personal-csv"))!;
+    expect(staff.by).toBe("position");
+    expect(staff.block.body).toHaveLength(3);
+    expect(staff.heldRows).toEqual([]);
+    expect(staff.assignment).toEqual([null, null, null, "firstName", "lastName", null, "email", null]);
+    expect(detectFormats(table("personal-tf.csv")).map((fit) => fit.format)).toEqual(["skola24-personal-csv"]);
+
+    const children = readFormat(table("barn-tf.csv"), format("skola24-barn-csv"))!;
+    expect(children.block.body).toHaveLength(2);
+    expect(children.heldRows).toEqual([]);
+    // Six columns fit the children's description and the staff's (whose last two are optional): both are offered, the more specific first.
+    expect(detectFormats(table("barn-tf.csv")).map((fit) => fit.format)).toEqual(["skola24-barn-csv", "skola24-personal-csv"]);
+  });
+
+  it("holds back a row the file marks with a 1, in a file of TF numbers too", () => {
+    const marked = "Testskolan;Avd A;19000103TF01;Åsa;Provsson;ASP;asa@example.invalid;0\r\nTestskolan;Avd B;19000103TF02;Maria;Fiktiv;MFI;maria@example.invalid;1\r\n";
+    expect(readFormat(readTable(marked), format("skola24-personal-csv"))!.heldRows).toEqual([2]);
+  });
+
+  it("does not take a header row for data: a file with the description's labels over TF numbers is read on its headers", () => {
+    const labels = format("skola24-foraldrar-csv").columns!.map((column) => column.label.value).join(";");
+    const reading = readFormat(readTable(`${labels}\n19000101TF01;19000102TF01;Åsa;Testsson;asa@example.invalid;\n`), format("skola24-foraldrar-csv"))!;
+    expect(reading.by).toBe("header");
+    expect(reading.block.body).toHaveLength(1);
+  });
+
+  it("still offers nothing for a file of TF numbers that no description lists: nothing is guessed", () => {
+    expect(detectFormats(readTable("19000101TF01;Åsa;x\n19000101TF02;Bo;y\n"))).toEqual([]);
+  });
+});
+
 describe("no personnummer is shown, sent or kept in a result", () => {
-  it.each(["foraldrar.csv", "personal.csv", "barn.csv", "elever-klass.tsv", "extens-franvaro.txt"])("%s: what the reading says of its columns holds none", (name) => {
+  it.each(["foraldrar.csv", "personal.csv", "barn.csv", "elever-klass.tsv", "extens-franvaro.txt", "foraldrar-tf.csv", "personal-tf.csv", "barn-tf.csv"])("%s: what the reading says of its columns holds none", (name) => {
     const descriptor = detectFormats(table(name)).map((fit) => format(fit.format))[0]!;
     const reading = readFormat(table(name), descriptor)!;
     // `block` is X2's own and keeps the table's cells, as X2's does; what is SAID about the columns does not.

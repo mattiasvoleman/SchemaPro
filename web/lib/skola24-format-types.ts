@@ -11,8 +11,10 @@
  * without a source cannot be written (the type forbids it, and web/lib/skola24-formats.test.ts reads every one). What no
  * page says is `null`, never a guess: there is no field called "probably semicolon".
  *
- *   DOKUMENTERAT   a page at the vendor says it, and the page was read on `read`.
- *   TOLKAT         our reading of a page, or something a page implies and does not say.
+ *   DOKUMENTERAT   the vendor's own material says or shows it, and it was read on `read`: a support page, or a file Skola24 publishes
+ *                  (the course files under "Filer för kurser"). A published file SHOWS what it holds and does not specify what an
+ *                  export holds: such a fact says "the file has", never "the format is".
+ *   TOLKAT         our reading of a page or of a file, or something they imply and do not say.
  */
 
 import type { TemplateKind } from "@/lib/column-fields";
