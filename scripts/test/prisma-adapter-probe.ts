@@ -134,6 +134,7 @@ import { reportingRateChecks, sweepReportingRateSchool } from './probe-rapporter
 import { absenceStatsChecks, sweepAbsenceStatsSchool } from './probe-franvarostatistik';
 import { calendarFeedChecks, sweepCalendarFeedSchool } from './probe-calendar-feed';
 import { generateQueueChecks, sweepGenerateQueueSchool } from './probe-generera-ko';
+import { suggestionsChecks, sweepSuggestionsSchools } from './probe-forslag-vagran';
 import { leaveChecks, sweepLeaveSchool } from './probe-leave';
 import { skolenheterChecks, sweepSkolenheterSchool } from './probe-skolenheter';
 import { importTemplatesChecks, sweepImportTemplatesSchools } from './probe-import-templates';
@@ -6139,6 +6140,7 @@ async function runChecks(
   await absenceStatsChecks(owner, api, MARKER, check);
   await calendarFeedChecks(owner, api, MARKER, check);
   await generateQueueChecks(owner, api, MARKER, check);
+  await suggestionsChecks(owner, api, MARKER, check);
   await leaveChecks(owner, api, MARKER, check);
   await skolenheterChecks(owner, api, MARKER, check);
   await adminAreaChecks(owner, api, MARKER, check, open, appUrl);
@@ -6659,6 +6661,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // Kalenderprenumeration's school, likewise.
   await sweepCalendarFeedSchool(owner, MARKER);
   await sweepGenerateQueueSchool(owner, MARKER);
+  // Åtgärdsförslag vid vägran's two schools, likewise.
+  await sweepSuggestionsSchools(owner, MARKER);
   // Mentorns ledighetsbeslut's two schools, likewise.
   await sweepLeaveSchool(owner, MARKER);
   // Skolenheter's school, likewise.

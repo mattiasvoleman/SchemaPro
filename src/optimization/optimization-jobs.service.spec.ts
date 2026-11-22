@@ -1099,6 +1099,8 @@ describe('OptimizationJobsService', () => {
         errorNames: [],
         // Not a TIMEOUT: no account of its time.
         report: null,
+        suggestions: null,
+        suggestionsOffered: false,
         // No notes, so no change log read: nothing to say they were replaced.
         supersededBy: null,
         createdAt: '2026-08-07T10:00:00.000Z',
@@ -1249,6 +1251,8 @@ describe('OptimizationJobsService', () => {
           errorParams: null,
           errorNames: [],
           report: null,
+          suggestions: null,
+          suggestionsOffered: false,
           supersededBy: null,
           createdAt: '2026-08-07T09:00:00.000Z',
           finishedAt: null,
