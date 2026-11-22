@@ -82,6 +82,16 @@ describe('cleanTemplateName', () => {
     expect(refused).toEqual({ status: 400, code: TEMPLATE_PERSONAL_NUMBER, params: { in: 'name' } });
     expect(JSON.stringify(refused)).not.toContain('19800101');
   });
+
+  // A TF number is the number Skola24's own files hold where a personnummer goes (X3, 2026-11-22): a template of a file read with no header row
+  // had its first person's TF number as a header before the door knew it, and so as a stored key.
+  it('refuses a name that is or holds a TF number, without quoting it', () => {
+    for (const name of ['Mall 19800101TF01', '19800101tf01', 'Mall 19800101-TF01']) {
+      const refused = refusal(() => cleanTemplateName(name));
+      expect(refused).toEqual({ status: 400, code: TEMPLATE_PERSONAL_NUMBER, params: { in: 'name' } });
+      expect(JSON.stringify(refused)).not.toMatch(/19800101|TF01/i);
+    }
+  });
 });
 
 describe('checkPlacements', () => {
@@ -141,6 +151,9 @@ describe('checkPlacements', () => {
     ['a label with a samordningsnummer', post('namn', 'firstName', '800161-1234')],
     ['a label in another spelling', post('namn', 'firstName', '1980 01 01 1234')],
     ['a key', post('198001011234', null, '')],
+    ['a label that is a TF number', post('namn', 'firstName', '19800101TF01')],
+    ['a label with a TF number in lower case', post('namn', 'firstName', 'Elev 19800101tf01')],
+    ['a key that is a TF number, as a header is keyed (letters and digits only)', post('19800101tf01', null, '')],
   ])('refuses %s that has the shape of a personnummer, naming its place and not its text', (_what, bad) => {
     const refused = refusal(() => checkPlacements('students', [post('a', 'lastName'), bad]));
     expect(refused).toEqual({ status: 400, code: TEMPLATE_PERSONAL_NUMBER, params: { index: 1 } });

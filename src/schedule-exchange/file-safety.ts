@@ -54,8 +54,27 @@
  * with them. A date followed by four digits is a number only when those four
  * digits do not begin another date.
  *
+ * THE TF NUMBER (CHOICE, X3, 2026-11-22). Skola24's own files put a TF number
+ * where a personnummer goes: eight digits, "TF" and two digits (ÅÅÅÅMMDDTFnn).
+ * It is in the ID columns of all seven course files Skola24 publishes ("Filer
+ * för kurser", read for their shape on 2026-11-22), and the Extens page names
+ * "så kallade TF-nummer" without giving the form. It is a number someone meant
+ * as a person's, so it is refused like a personnummer. It has not the shape of
+ * one, and a file whose ID column held only these passed every door.
+ *
+ * ONLY ONE FORM IS KNOWN, and that is DOKUMENTERAT: eight digits, TF in upper
+ * case, two digits, nothing between. The spellings added are what the door does
+ * for a personnummer, and are our reading (TOLKAT): TF in any case, and one
+ * blank or hyphen between the date and TF (after the fold also '.', '/', '_'
+ * and every dash-like character). NOT counted, because no file has shown them,
+ * and listed as unknown: a blank inside the date or between TF and the two
+ * digits, a date of six digits, any other number of digits, a hyphen after TF,
+ * and any other temporary or reserve number a school or another system uses.
+ * The cases (personal-number-cases.json) say each of these.
+ *
  * Source of the shape: Skatteverket, "Personnummer" and "Samordningsnummer"
- * (skatteverket.se), and SKV 704 for the format of the number.
+ * (skatteverket.se), and SKV 704 for the format of the number. The TF number:
+ * Skola24's published course files, as above.
  */
 import type { ReadProblem } from './exchange-model';
 
@@ -78,7 +97,9 @@ const DAY = `(?:0${SP}[1-9]|[12]${SP}\\d|3${SP}[01]|6${SP}[1-9]|[78]${SP}\\d|9${
 const COMPACT = `(?<!\\d)(?:\\d${SP}\\d${SP})?\\d${SP}\\d${SP}${MONTH}${SP}${DAY}[ +\\-]{0,8}\\d${SP}\\d${SP}\\d${SP}\\d(?!\\d)`;
 /** The date form: [YY]YY-MM-DD, a hyphen or a space, NNNN, and those four digits do not begin another date. */
 const ISO = `(?<!\\d)(?:\\d{2}|\\d{4})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01]|6[1-9]|[78]\\d|9[01])[- ]\\d{4}(?!\\d)(?!-\\d{2}-\\d{2})`;
-const SHAPE = new RegExp(`${COMPACT}|${ISO}`);
+/** The TF number: eight digits, one blank or hyphen at most, TF in any case, two digits. Not preceded and not followed by a digit. */
+const TF = `(?<!\\d)\\d{8}[ \\-]?[Tt][Ff]\\d{2}(?!\\d)`;
+const SHAPE = new RegExp(`${COMPACT}|${ISO}|(?<tf>${TF})`);
 const SHAPE_ALL = new RegExp(SHAPE.source, 'g');
 
 /**

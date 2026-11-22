@@ -511,3 +511,52 @@ describe("a telephone number is no personnummer in a telephone column", () => {
     expect([...personalNumberColumns(ids)]).toEqual([4]);
   });
 });
+
+/**
+ * A TF number is a personnummer to the mapping (X3, 2026-11-22). Skola24's own files hold TF numbers (ÅÅÅÅMMDDTFnn) where a personnummer goes, and without a
+ * description to read the file by, X2 took the first row of such a file for its header: the first person's two TF numbers were NAMED AS COLUMNS, shown, and
+ * stored as the key and the label of a saved template. The door (lib/personal-number.ts) knows the number now, and every place that asks it follows.
+ */
+describe("a TF number in a table the mapping reads", () => {
+  const TF1 = "19000101TF01";
+  const TF2 = "19000102TF01";
+  const FILE = `${TF1};${TF2};Åsa;Testsson;asa@example.invalid\n19000101TF02;19000102TF02;Bo;Provsson;bo@example.invalid\n19000101TF03;19000102TF03;Cia;Fiktiv;\n`;
+
+  it("is never a key and never a label: a header that is one is named by its place, not shown, and not saved in a template", () => {
+    const b = block(FILE);
+    expect(b.keys.slice(0, 2)).toEqual(["kolumn1", "kolumn2"]);
+    expect(JSON.stringify(b.keys)).not.toMatch(/tf0/i);
+    const states = describeColumns(b, "guardians", aliasAssignment(b, "guardians"));
+    expect(states[0]!.label).toBeNull();
+    expect(states[1]!.label).toBeNull();
+    const saved = placementsOf(b, "guardians", [null, null, "firstName", "lastName", "email"]);
+    expect(JSON.stringify(saved)).not.toMatch(/tf0|1900/i);
+    expect(saved.slice(0, 2)).toEqual([
+      { key: "kolumn1", label: "", field: null },
+      { key: "kolumn2", label: "", field: null },
+    ]);
+  });
+
+  it("makes a column of them a personnummer column: dropped, never sampled, whatever its header says", () => {
+    const b = block(`Id;Kod;Namn\n${TF1};x;Åsa\n19000101TF02;y;Bo\n19000101TF03;z;Cia\n`);
+    expect([...personalNumberColumns(b)]).toEqual([0]);
+    const states = describeColumns(b, "students", [undefined, undefined, undefined]);
+    expect(states[0]).toMatchObject({ status: "personalNumber", sample: [] });
+    expect(JSON.stringify(states)).not.toMatch(/tf0/i);
+  });
+
+  it("holds back a row with one in a column that is read, and says where and not what", () => {
+    const b = block(`fornamn;efternamn;epost;klass\nAlma;Berg;alma@example.com;7A\nNils;${TF1};nils@example.com;7B\nEva;Lind;eva@example.com;7C\nOla;Ek;ola@example.com;7D\n`);
+    const applied = applyMapping(b, "students", aliasAssignment(b, "students"));
+    expect(applied.rowProblems.map((problem) => [problem.row, problem.code])).toEqual([[3, "PERSONAL_NUMBER_IN_CELL"]]);
+    expect(JSON.stringify(applied)).not.toMatch(/tf0|1900/i);
+    expect(applied.rows.map((row) => row[0])).toEqual(["Alma", "Eva", "Ola"]);
+  });
+
+  it("does not hold a row for a code a school writes that is a little like one", () => {
+    const b = block("fornamn;efternamn;epost;klass\nAlma;Berg;alma@example.com;7ATF12\nNils;Ek;nils@example.com;TF2026\n");
+    const applied = applyMapping(b, "students", aliasAssignment(b, "students"));
+    expect(applied.rowProblems).toEqual([]);
+    expect(applied.rows).toHaveLength(2);
+  });
+});

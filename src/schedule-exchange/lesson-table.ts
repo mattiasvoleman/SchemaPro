@@ -244,8 +244,8 @@ for (const column of COLUMNS) {
 }
 
 /** Headers of a personal-number column. Exact for the short forms (so "ssn" is not found inside a word), contained for the long. */
-const PERSONAL_EXACT = new Set(['pnr', 'personnr', 'ssn']);
-const PERSONAL_CONTAINS = ['personnummer', 'samordningsnummer', 'socialsecuritynumber', 'civicnumber', 'personalnumber'];
+const PERSONAL_EXACT = new Set(['pnr', 'personnr', 'ssn', 'tfnr']);
+const PERSONAL_CONTAINS = ['personnummer', 'samordningsnummer', 'socialsecuritynumber', 'civicnumber', 'personalnumber', 'tfnummer'];
 
 function isPersonalNumberHeader(normalized: string): boolean {
   return PERSONAL_EXACT.has(normalized) || PERSONAL_CONTAINS.some((word) => normalized.includes(word));

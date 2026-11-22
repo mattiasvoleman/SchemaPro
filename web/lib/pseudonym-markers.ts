@@ -21,12 +21,13 @@
 
 import { MARKER_DOMAIN, normaliseTelephone } from "@/lib/pseudonym-detect";
 
-export const MARKER_KINDS = ["pnr", "sam", "epost", "tel", "namn", "fornamn", "efternamn", "sign", "text"] as const;
+export const MARKER_KINDS = ["pnr", "sam", "tf", "epost", "tel", "namn", "fornamn", "efternamn", "sign", "text"] as const;
 export type MarkerKind = (typeof MARKER_KINDS)[number];
 
 const PREFIX: Readonly<Record<MarkerKind, string>> = {
   pnr: "PNR",
   sam: "SAM",
+  tf: "TF",
   epost: "epost",
   tel: "TEL",
   namn: "NAMN",
@@ -48,7 +49,7 @@ export const MARKER_DIGITS = "4,6";
  * Every marker as it stands in text. The sweep for known names and the check on the finished file both take it out first: a marker
  * is made of words a name could be (Text, Sign), and running the pseudonymiser on its own output must change nothing.
  */
-export const MARKER_PATTERN = new RegExp(`\\b(?:PNR|SAM|TEL|NAMN|FORNAMN|EFTERNAMN|SIGN|TEXT)-\\d{${MARKER_DIGITS}}\\b|\\bepost-\\d{${MARKER_DIGITS}}@${MARKER_DOMAIN.replace(/\./g, "\\.")}`, "gi");
+export const MARKER_PATTERN = new RegExp(`\\b(?:PNR|SAM|TF|TEL|NAMN|FORNAMN|EFTERNAMN|SIGN|TEXT)-\\d{${MARKER_DIGITS}}\\b|\\bepost-\\d{${MARKER_DIGITS}}@${MARKER_DOMAIN.replace(/\./g, "\\.")}`, "gi");
 
 /** True for a text that is exactly one marker: a cell that has been through the pseudonymiser already, which is left as it is. */
 export function isMarker(text: string): boolean {
@@ -73,6 +74,11 @@ export function keyOf(kind: MarkerKind, value: string): string {
   if (kind === "pnr" || kind === "sam") {
     const digits = value.replace(/\D/g, "");
     return digits.length >= 10 ? digits.slice(-10) : normaliseText(value);
+  }
+  if (kind === "tf") {
+    // A TF number is its eight digits of date and its two after TF, as lib/personal-number.ts keys it: 19000101-tf01 and 19000101TF01 are one.
+    const folded = value.replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+    return /^\d{8}TF\d{2}$/.test(folded) ? folded : normaliseText(value);
   }
   if (kind === "tel") {
     return /\d/.test(value) ? normaliseTelephone(value) : normaliseText(value);

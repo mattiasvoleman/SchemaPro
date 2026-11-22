@@ -1669,7 +1669,12 @@
       ser ut som personnummer, eller vars rubrik säger det, släpps innan något
       skickas, och sammanfattningen säger att den släpptes. Har en kolumn som
       läses en enstaka cell med ett personnummer läses inte den raden in, och
-      importen väntar: meddelandet nämner raden och kolumnen men aldrig numret.</li>
+      importen väntar: meddelandet nämner raden och kolumnen men aldrig numret.
+      Skola24:s <em>TF-nummer</em>, som står där ett personnummer står i
+      Skola24:s egna filer (åtta siffror, <em>TF</em> och två siffror, till
+      exempel <em>19800101TF01</em>), behandlas på samma sätt: en kolumn av dem,
+      eller vars rubrik är <em>TF-nummer</em>, släpps, och en enstaka cell i en
+      kolumn som läses håller raden.</li>
     <li><strong>Filer från Skola24.</strong> För elever, vårdnadshavare och
       lärare finns en väljare <span class="ui">Filen kommer från Skola24</span>.
       Den känner till tre filer som Skola24:s egna supportsidor beskriver:
@@ -10746,12 +10751,13 @@
       läraren, och förhandsvisningen säger det.</li>
     <li><strong>Inga personnummer.</strong> Rastra Schema tar inte emot
       personnummer, inte ens som kontrollsumma. En kolumn som heter
-      personnummer, samordningsnummer eller liknande läses inte, sparas inte
-      och visas inte; förhandsvisningen säger att kolumnen hoppades över. Står
-      något som <em>ser ut</em> som ett personnummer eller samordningsnummer
-      (hela eller inne i en längre text, med streck, plus, punkt, snedstreck,
-      mellanslag eller radbrytning mellan siffrorna, eller skrivet som ett
-      datum) i en kolumn
+      personnummer, samordningsnummer, TF-nummer eller liknande läses inte,
+      sparas inte och visas inte; förhandsvisningen säger att kolumnen
+      hoppades över. Står något som <em>ser ut</em> som ett personnummer,
+      samordningsnummer eller TF-nummer (Skola24:s nummer: åtta siffror,
+      <em>TF</em> och två siffror; hela eller inne i en längre text, med streck,
+      plus, punkt, snedstreck, mellanslag eller radbrytning mellan siffrorna,
+      eller skrivet som ett datum) i en kolumn
       som <em>läses</em>, till exempel i <em>Lärare</em> eller <em>Block</em>,
       läses den raden inte alls: förhandsvisningen säger vilken rad och vilken
       kolumn, men återger aldrig numret. Rastra Schema behöver bara signatur,
@@ -10787,7 +10793,8 @@
       ser ut som personnummer, eller vars rubrik säger det, släpps innan något
       skickas, och sammanfattningen säger att den släpptes. Har en kolumn som
       läses en enstaka cell med ett personnummer läses inte den raden in, och
-      meddelandet nämner raden och kolumnen men aldrig numret.</li>
+      meddelandet nämner raden och kolumnen men aldrig numret. Det gäller
+      också Skola24:s TF-nummer (åtta siffror, <em>TF</em> och två siffror).</li>
     <li><strong>Mallar.</strong> Under <span class="ui">Spara som mall</span> ger
       du mappningen ett namn. Nästa gång en tabell har samma kolumner (i vilken
       ordning som helst, med annan versalisering) används mallen av sig själv, och

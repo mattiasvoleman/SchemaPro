@@ -19,7 +19,7 @@
 
 import { findPersonalNumbers } from "@/lib/personal-number";
 
-export type FindingKind = "pnr" | "sam" | "epost" | "tel";
+export type FindingKind = "pnr" | "sam" | "tf" | "epost" | "tel";
 
 export interface Finding {
   kind: FindingKind;
@@ -28,9 +28,9 @@ export interface Finding {
   end: number;
   /** The value's identity: the same value written two ways has one key. Never shown. */
   key: string;
-  /** pnr and sam only: whether the check digit (Luhn over the ten last digits) holds. */
+  /** pnr and sam only: whether the check digit (Luhn over the ten last digits) holds. A TF number has none. */
   checkDigit?: boolean;
-  /** pnr and sam only: how it was written, as a pattern with no digits of the value in it. */
+  /** pnr, sam and tf only: how it was written, as a pattern with no digits of the value in it. */
   spelling?: string;
 }
 
@@ -51,6 +51,15 @@ export function luhnHolds(ten: string): boolean {
 
 /** True for the day of a samordningsnummer: 61-91 (the day plus 60) in the ten last digits. */
 const isCoordinationDay = (ten: string): boolean => Number(ten.slice(4, 6)) >= 61;
+
+/**
+ * How a TF number was written, as a pattern: the separator before TF, and the two letters as they stood (TF, tf or Tf). It holds no digit of the
+ * value. (lib/personal-number.ts: these are the only things the shape lets differ.)
+ */
+function tfSpellingOf(folded: string): string {
+  const parts = /^\d{8}([ -])?([Tt][Ff])\d{2}$/.exec(folded);
+  return `ÅÅÅÅMMDD${parts?.[1] ?? ""}${parts?.[2] ?? "TF"}NN`;
+}
 
 /**
  * How a personnummer was written, as a pattern: the century or not, the separator, and whether blanks stood between digits.
@@ -298,7 +307,7 @@ function isRatherATelephoneNumber(folded: string, digits: string, checkDigit: bo
 }
 
 /** Which finding gives a merged span its kind and key: an address first, then a personnummer, then a telephone number. */
-const PRIORITY: Readonly<Record<FindingKind, number>> = { epost: 0, pnr: 1, sam: 1, tel: 2 };
+const PRIORITY: Readonly<Record<FindingKind, number>> = { epost: 0, pnr: 1, sam: 1, tf: 1, tel: 2 };
 
 /**
  * Every personnummer, samordningsnummer, e-mail address and telephone number in the text, in order of position and not overlapping.
@@ -319,6 +328,11 @@ export function findPersonalData(original: string): Finding[] {
     }
   }
   for (const found of findPersonalNumbers(text)) {
+    // A TF number is no person's date and serial and has no check digit: nothing below that reads a personnummer's digits may read it.
+    if (found.kind === "tf") {
+      all.push({ kind: "tf", start: found.start, end: found.end, key: found.key, spelling: tfSpellingOf(found.folded) });
+      continue;
+    }
     const ten = found.digits.slice(-10);
     const checkDigit = luhnHolds(ten);
     if (isRatherATelephoneNumber(found.folded, found.digits, checkDigit)) {
@@ -328,7 +342,7 @@ export function findPersonalData(original: string): Finding[] {
         continue;
       }
     }
-    all.push({ kind: isCoordinationDay(ten) ? "sam" : "pnr", start: found.start, end: found.end, key: ten, checkDigit, spelling: spellingOf(found.folded, found.digits) });
+    all.push({ kind: found.kind === "samordning" ? "sam" : "pnr", start: found.start, end: found.end, key: found.key, checkDigit, spelling: spellingOf(found.folded, found.digits) });
   }
   if (/\d/.test(text)) all.push(...findTelephones(text, all).map((found) => ({ kind: "tel" as const, ...found })));
 

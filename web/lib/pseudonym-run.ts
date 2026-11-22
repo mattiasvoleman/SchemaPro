@@ -279,8 +279,9 @@ const wholeKind = (kind: MarkerKind, value: string): MarkerKind => (kind === "pn
 
 /** How a personnummer was written and whether its check digit holds: counted for every number found by shape, in a marked column or a free cell. */
 function recordNumber(found: Finding, ctx: Context): void {
-  if (found.kind !== "pnr" && found.kind !== "sam") return;
-  ctx.checks[found.kind][found.checkDigit ? "holds" : "fails"] += 1;
+  if (found.kind !== "pnr" && found.kind !== "sam" && found.kind !== "tf") return;
+  // A TF number has no check digit: it is counted by how it was written and never as a number whose digit does not hold.
+  if (found.kind !== "tf") ctx.checks[found.kind][found.checkDigit ? "holds" : "fails"] += 1;
   if (found.spelling !== undefined) ctx.spellings.set(found.spelling, (ctx.spellings.get(found.spelling) ?? 0) + 1);
 }
 
@@ -290,7 +291,8 @@ function replaceMarked(value: string, kind: MarkerKind, ctx: Context): string {
   if (value.trim() === "" || isMarker(value)) return value;
   if (kind === "pnr" || kind === "epost" || kind === "tel") {
     // A cell that is what the column says it is (one or several, with separators) keeps each as its own marker; anything else in it is replaced whole.
-    const sameKind = findPersonalData(value).filter((f) => (kind === "pnr" ? f.kind === "pnr" || f.kind === "sam" : f.kind === kind));
+    // A column of personnummer holds TF numbers too (Skola24's ID columns do): each is its own marker, counted as TF and not as a number with a bad check digit.
+    const sameKind = findPersonalData(value).filter((f) => (kind === "pnr" ? f.kind === "pnr" || f.kind === "sam" || f.kind === "tf" : f.kind === kind));
     const rest = applySpans(
       value,
       sameKind.map((f) => ({ start: f.start, end: f.end, marker: "" })),

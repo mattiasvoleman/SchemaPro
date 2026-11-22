@@ -187,7 +187,8 @@ export function columnStats(cells: readonly string[]): ColumnStats {
     stats.shapes[shape] += 1;
     if (shape === "number" && /^[+-]?\d{7,}$/.test(cell)) stats.longNumbers += 1;
     const found = findPersonalData(cell);
-    if (found.some((f) => f.kind === "pnr" || f.kind === "sam")) stats.withPersonalNumber += 1;
+    // A TF number counts as one: a column of Skola24's ID numbers under the header Id or Kod is a column of personnummer, and is proposed as one.
+    if (found.some((f) => f.kind === "pnr" || f.kind === "sam" || f.kind === "tf")) stats.withPersonalNumber += 1;
     if (found.some((f) => f.kind === "epost")) stats.withAddress += 1;
     if (found.some((f) => f.kind === "tel")) stats.withTelephone += 1;
     if (seen.size < DISTINCT_CAP && !seen.has(cell)) {

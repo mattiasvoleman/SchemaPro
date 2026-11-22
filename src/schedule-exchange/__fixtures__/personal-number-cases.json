@@ -459,6 +459,236 @@
       "text": "x1980010112345678",
       "has": false,
       "redacted": "x1980010112345678"
+    },
+    {
+      "text": "19000101TF01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000102TF99",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000101tf01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000101Tf01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000101tF01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000101-TF01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000101 TF01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000101.TF01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000101/TF01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000101_TF01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000101 TF01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000101​TF01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000101–TF01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "１９０００１０１TF０１",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "Elev 19000101TF01 flyttad",
+      "has": true,
+      "redacted": "Elev [personnummer] flyttad"
+    },
+    {
+      "text": "19000101TF01 och 19000102TF02",
+      "has": true,
+      "redacted": "[personnummer] och [personnummer]"
+    },
+    {
+      "text": "a 19000101TF01 b 19000101-tf01 c",
+      "has": true,
+      "redacted": "a [personnummer] b [personnummer] c"
+    },
+    {
+      "text": "800101-1234 och 19000101TF01",
+      "has": true,
+      "redacted": "[personnummer] och [personnummer]"
+    },
+    {
+      "text": "ID19000101TF01",
+      "has": true,
+      "redacted": "ID[personnummer]"
+    },
+    {
+      "text": "19000101TF01X",
+      "has": true,
+      "redacted": "[personnummer]X"
+    },
+    {
+      "text": "Förnamn Efternamn 19000101TF01",
+      "has": true,
+      "redacted": "Förnamn Efternamn [personnummer]"
+    },
+    {
+      "text": "20261121 TF15",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "TF01",
+      "has": false,
+      "redacted": "TF01"
+    },
+    {
+      "text": "TF19000101",
+      "has": false,
+      "redacted": "TF19000101"
+    },
+    {
+      "text": "19000101TF",
+      "has": false,
+      "redacted": "19000101TF"
+    },
+    {
+      "text": "19000101TF1",
+      "has": false,
+      "redacted": "19000101TF1"
+    },
+    {
+      "text": "19000101TF123",
+      "has": false,
+      "redacted": "19000101TF123"
+    },
+    {
+      "text": "19000101TFAB",
+      "has": false,
+      "redacted": "19000101TFAB"
+    },
+    {
+      "text": "1900010TF01",
+      "has": false,
+      "redacted": "1900010TF01"
+    },
+    {
+      "text": "190001011TF01",
+      "has": false,
+      "redacted": "190001011TF01"
+    },
+    {
+      "text": "000101TF01",
+      "has": false,
+      "redacted": "000101TF01"
+    },
+    {
+      "text": "19000101 TF 01",
+      "has": false,
+      "redacted": "19000101 TF 01"
+    },
+    {
+      "text": "19000101TF 01",
+      "has": false,
+      "redacted": "19000101TF 01"
+    },
+    {
+      "text": "19000101-TF-01",
+      "has": false,
+      "redacted": "19000101-TF-01"
+    },
+    {
+      "text": "19000101 - TF01",
+      "has": false,
+      "redacted": "19000101 - TF01"
+    },
+    {
+      "text": "1900 0101TF01",
+      "has": false,
+      "redacted": "1900 0101TF01"
+    },
+    {
+      "text": "19000101TF0101",
+      "has": false,
+      "redacted": "19000101TF0101"
+    },
+    {
+      "text": "7ATF12",
+      "has": false,
+      "redacted": "7ATF12"
+    },
+    {
+      "text": "Ma7 TF12",
+      "has": false,
+      "redacted": "Ma7 TF12"
+    },
+    {
+      "text": "TF2026",
+      "has": false,
+      "redacted": "TF2026"
+    },
+    {
+      "text": "Sal TF12345678",
+      "has": false,
+      "redacted": "Sal TF12345678"
+    },
+    {
+      "text": "A12345678TF9",
+      "has": false,
+      "redacted": "A12345678TF9"
+    },
+    {
+      "text": "Åk 7 TF 12",
+      "has": false,
+      "redacted": "Åk 7 TF 12"
+    },
+    {
+      "text": "Block TF-12",
+      "has": false,
+      "redacted": "Block TF-12"
+    },
+    {
+      "text": "2026112TF12",
+      "has": false,
+      "redacted": "2026112TF12"
+    },
+    {
+      "text": "ＴＦ１２３４５６７８",
+      "has": false,
+      "redacted": "ＴＦ１２３４５６７８"
     }
   ]
 }
