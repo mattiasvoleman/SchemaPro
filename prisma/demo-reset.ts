@@ -67,7 +67,10 @@ const count = (rows: readonly { n: bigint | number }[]): number => Number(rows[0
 
 /** The facts the guard judges, read after the school's row is locked. */
 async function readFacts(tx: Db, spec: DemoSpec, schoolId: string, name: string): Promise<SchoolFacts> {
-  const people = await tx.$queryRaw<{ email: string }[]>(Prisma.sql`SELECT "email" FROM "Users" WHERE "schoolId" = ${schoolId}::uuid`);
+  // The people are locked as they are read. The school's row lock keeps a person from being ADDED, but nothing kept one who is already
+  // there from being CHANGED between this reading and the delete: an address set to a real one after the judgement is a real person the
+  // delete takes unseen. An update of the address waits for this transaction now, and finds the person gone.
+  const people = await tx.$queryRaw<{ email: string }[]>(Prisma.sql`SELECT "email" FROM "Users" WHERE "schoolId" = ${schoolId}::uuid FOR NO KEY UPDATE`);
   const huvudman = await tx.$queryRaw<{ n: bigint }[]>(Prisma.sql`
     SELECT (SELECT count(*) FROM "HuvudmanSchools" WHERE "schoolId" = ${schoolId}::uuid)
          + (SELECT count(*) FROM "HuvudmanSchoolRequests" WHERE "schoolId" = ${schoolId}::uuid)
@@ -79,10 +82,15 @@ async function readFacts(tx: Db, spec: DemoSpec, schoolId: string, name: string)
   return { slug: spec.slug, name, emails: people.map((row) => row.email), huvudmanTies: count(huvudman), otherSchoolTies: count(others) };
 }
 
-/** What each school of the database holds of people, as far as the guard looks: the domains of their addresses, each once. */
+/**
+ * What each school of the database holds of people, as far as the guard looks: the domains of their addresses, each once.
+ * An address with anything but one `@` has no domain to trust: `split_part(…, '@', 2)` of `a@example.com@gmail.com` is `example.com`, the
+ * part BETWEEN the two, and that address would pass as a reserved one. It is judged by the empty domain, which is not reserved.
+ */
 async function readDatabase(tx: Db): Promise<DatabaseSchool[]> {
   const rows = await tx.$queryRaw<{ domains: string[] }[]>(Prisma.sql`
-    SELECT array_agg(DISTINCT lower(split_part("email", '@', 2))) AS domains FROM "Users" GROUP BY "schoolId"`);
+    SELECT array_agg(DISTINCT CASE WHEN "email" ~ '^[^@]+@[^@]+$' THEN lower(split_part("email", '@', 2)) ELSE '' END) AS domains
+    FROM "Users" GROUP BY "schoolId"`);
   return rows.map((row) => ({ domains: row.domains }));
 }
 

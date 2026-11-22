@@ -196,6 +196,43 @@ async function main(): Promise<void> {
       }
     });
 
+    // The guard counts three tables for a huvudman, and the check above reaches one of them. A school a huvudman OWNS is the case the refusal exists for
+    // (the delete would take a kommun's school with it), and a school with an event in a huvudman's history has only that row to say so: a count that
+    // leaves either table out refused nothing until these.
+    for (const [label, key, table, tie] of [
+      [
+        'owns',
+        'h2',
+        'HuvudmanSchools',
+        (huvudmanId: string, schoolId: string) => owner.$executeRaw(Prisma.sql`INSERT INTO "HuvudmanSchools" ("huvudmanId", "schoolId") VALUES (${huvudmanId}::uuid, ${schoolId}::uuid)`),
+      ],
+      [
+        'has an event in its history for',
+        'h3',
+        'HuvudmanSchoolEvents',
+        (huvudmanId: string, schoolId: string) => owner.$executeRaw(Prisma.sql`INSERT INTO "HuvudmanSchoolEvents" ("huvudmanId", "schoolId", "kind") VALUES (${huvudmanId}::uuid, ${schoolId}::uuid, 'LEFT')`),
+      ],
+    ] as const) {
+      await check(`(3) a school a huvudman ${label} is refused, and the huvudman's rows are as they were`, async () => {
+        const { spec, schoolId } = await demoSchool(key);
+        const huvudman = await owner.huvudman.create({ data: { name: `Probe huvudman ${key} ${tag}` } });
+        try {
+          await tie(huvudman.id, schoolId);
+          const before = await snapshot(schoolId);
+          const result = await resetDemoSchool(owner, { spec });
+          assert.deepEqual(result.kind === 'REFUSED' ? result.refusal : null, { code: 'TIED_TO_A_HUVUDMAN', count: 1 });
+          assert.deepEqual(await snapshot(schoolId), before);
+          assert.ok(await exists(schoolId), 'the same school');
+          const rows = await owner.$queryRaw<{ n: bigint }[]>(Prisma.sql`SELECT count(*) AS n FROM ${Prisma.raw(`"${table}"`)} WHERE "schoolId" = ${schoolId}::uuid`);
+          assert.equal(Number(rows[0]!.n), 1, 'the huvudman\'s row is still there');
+        } finally {
+          // A huvudman that owns a school cannot be deleted: the ownership goes first.
+          await owner.$executeRaw(Prisma.sql`DELETE FROM "HuvudmanSchools" WHERE "huvudmanId" = ${huvudman.id}::uuid`);
+          await owner.huvudman.delete({ where: { id: huvudman.id } });
+        }
+      });
+    }
+
     await check('(3) a school with a travel time to another school is refused from either end, and neither school is touched', async () => {
       const first = await demoSchool('t1');
       const second = await demoSchool('t2');
@@ -311,6 +348,38 @@ async function main(): Promise<void> {
       const emails = (await owner.user.findMany({ where: { schoolId: school.id }, select: { email: true } })).map((row) => row.email);
       assert.ok(emails.length > 50 && emails.every((email) => email.endsWith(`@${spec.domain}`)), 'the school is the demo school, made again');
     });
+
+    await check('(4) a person who is CHANGED to a real address after the school is judged waits for the reset: nobody turns real unseen', async () => {
+      const { spec, schoolId } = await demoSchool('c3');
+      // A real address is dropped with its school as soon as the check is done, as in (2): the database must not hold one for (7) and (9).
+      cleanupNow.push(schoolId);
+      let update: Promise<unknown> | null = null;
+      let finishedEarly = false;
+      const result = await resetDemoSchool(owner, {
+        spec,
+        afterJudged: async () => {
+          // Another connection sets a demo person's address to a real one, now that the reset has judged the school and before it deletes it.
+          update = owner
+            .$executeRaw(
+              Prisma.sql`UPDATE "Users" SET "email" = ${`turned-${tag}@kommun.se`}, "updatedAt" = now() WHERE "schoolId" = ${schoolId}::uuid AND "role" = 'SCHOOL_ADMIN'`,
+            )
+            .then(
+              (value) => {
+                finishedEarly = true;
+                return value;
+              },
+              (error: unknown) => error,
+            );
+          await new Promise((resolve) => setTimeout(resolve, 600));
+          assert.equal(finishedEarly, false, 'the update waits: the people the reset judged are locked by it');
+        },
+      });
+      assert.equal(result.kind, 'RESET');
+      if (result.kind === 'RESET') created.push(result.schoolId);
+      // It found nobody: the person went with the school, as the demo's person it was when it was judged, and the address never took.
+      assert.equal(await update!, 0, 'the update changed no row');
+      assert.equal(await owner.user.count({ where: { email: `turned-${tag}@kommun.se` } }), 0, 'and no such person exists');
+    }).finally(dropNow);
 
     // (5) a failure after the delete
     await check('(5) a failure after the delete rolls everything back: the same school, with the same id and the same rows', async () => {
@@ -438,6 +507,28 @@ async function main(): Promise<void> {
         await dropNow();
       }
     });
+
+    // The database is judged by the domain of each address, and SQL's split_part takes the part BETWEEN the first and the second `@`: an
+    // address with two of them was a reserved one when it ends in `@gmail.com`. Every such shape is a real address (nothing mails it
+    // to the reserved domain), and none of them is one a mailbox is behind either.
+    for (const [label, address] of [
+      ['two @ with a reserved name first', `x-${tag}@example.com@gmail.com`],
+      ['two @ with a reserved name last', `x-${tag}@gmail.com@example.com`],
+      ['an empty local part', `@example.com`],
+      ['three @', `x-${tag}@example.com@example.org@gmail.com`],
+    ] as const) {
+      await check(`(9) an address with ${label} is a real address: the database refuses the demo school`, async () => {
+        const real = await owner.school.create({ data: { name: `Probe adress ${tag}`, slug: `probe-real-db9d-${tag}`, timezone: 'Europe/Stockholm' } });
+        cleanupNow.push(real.id);
+        try {
+          await person(real.id, address);
+          const result = await resetDemoSchool(owner, { spec: specOf('db9d'), write: false });
+          assert.deepEqual(result.kind === 'REFUSED' ? result.refusal : null, { code: 'DATABASE_HAS_A_REAL_SCHOOL', count: 1 });
+        } finally {
+          await dropNow();
+        }
+      });
+    }
 
     await check('(9) a school with nobody in it, and schools whose people are all at the names reserved for examples, are not a real school', async () => {
       const empty = await owner.school.create({ data: { name: `Probe tom ${tag}`, slug: `probe-empty-db9-${tag}`, timezone: 'Europe/Stockholm' } });
