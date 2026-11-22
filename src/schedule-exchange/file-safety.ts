@@ -104,7 +104,8 @@ const SHAPE_ALL = new RegExp(SHAPE.source, 'g');
 
 /**
  * The text as the shape is looked for in it: the same length, character for
- * character. Fullwidth digits become digits; whitespace of every kind and the
+ * character. Fullwidth digits become digits, and the fullwidth T and F of a TF
+ * number typed with the same keyboard mode become T and F; whitespace of every kind and the
  * invisible characters (soft hyphen, zero-width space, joiners, direction
  * marks, the byte order mark) become a space; every dash-like character, and
  * '.', '/' and '_', become a hyphen.
@@ -112,6 +113,7 @@ const SHAPE_ALL = new RegExp(SHAPE.source, 'g');
 function fold(text: string): string {
   return text
     .replace(/[\uff10-\uff19]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xff10 + 0x30))
+    .replace(/[\uff26\uff34\uff46\uff54]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xff00 + 0x20))
     .replace(/[\s\u00ad\u200b-\u200f\u2060\ufeff]/g, ' ')
     .replace(/[\u2010-\u2015\u2212\ufe58\ufe63\uff0d./_]/g, '-');
 }

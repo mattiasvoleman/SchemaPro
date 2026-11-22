@@ -689,6 +689,26 @@
       "text": "ＴＦ１２３４５６７８",
       "has": false,
       "redacted": "ＴＦ１２３４５６７８"
+    },
+    {
+      "text": "１９０００１０１ＴＦ０１",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "１９０００１０１ｔｆ０１",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19000101ＴＦ01",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "Elev １９０００１０１ＴＦ０１ flyttad",
+      "has": true,
+      "redacted": "Elev [personnummer] flyttad"
     }
   ]
 }

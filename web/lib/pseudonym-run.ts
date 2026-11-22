@@ -307,6 +307,12 @@ function replaceMarked(value: string, kind: MarkerKind, ctx: Context): string {
         sameKind.map((f) => ({ start: f.start, end: f.end, marker: ctx.book.marker(f.kind, f.key) })),
       );
     }
+    // A cell of a personnummer column that holds TF numbers and other text (and nothing else that is personal) is replaced whole, but as what it holds: the
+    // marker the number has on its own, and counted as TF. wholeKind reads the cell's digits for a day and would call it PNR, a second marker for the same TF.
+    if (kind === "pnr" && sameKind.length > 0 && sameKind.every((f) => f.kind === "tf")) {
+      ctx.tally.tf.column += 1;
+      return ctx.book.marker("tf", [...new Set(sameKind.map((f) => f.key))].sort().join("|"));
+    }
     const whole = wholeKind(kind, value);
     ctx.tally[whole].column += 1;
     return ctx.book.marker(whole, keyOf(whole, value));

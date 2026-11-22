@@ -43,6 +43,7 @@ const SHAPE_ALL = new RegExp(SHAPE.source, "g");
 function fold(text: string): string {
   return text
     .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xff10 + 0x30))
+    .replace(/[\uff26\uff34\uff46\uff54]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xff00 + 0x20))
     .replace(/[\s­​-‏⁠﻿]/g, " ")
     .replace(/[‐-―−﹘﹣－./_]/g, "-");
 }

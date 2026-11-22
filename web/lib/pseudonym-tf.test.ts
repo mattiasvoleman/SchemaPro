@@ -112,6 +112,18 @@ describe("a file of TF numbers through the pseudonymiser", () => {
     expect(lines[0]!.split(";")[0]).toMatch(/^TF-\d{4}$/);
   });
 
+  it("gives a TF number one marker in a personnummer column however much text stands in its cell, and counts it as TF and never as a personnummer", () => {
+    const text = "Personnummer;Namn\n19000101TF01;Anna\nID 19000101TF01;Bo\n19000101-tf01 (kopia);Cia\n19000101TF01 19000101TF01;Dan\n19000102TF01 vikarie;Eva\n19000102TF01;Fia\n";
+    const result = run(text, { 1: mark("namn") });
+    const markers = result.files[0]!.text.split("\n").filter((line) => line !== "").slice(1).map((line) => line.split(";")[0]);
+    // (A cell that is only TF numbers, with a separator, keeps each as its own marker: the fourth row.)
+    expect(markers).toEqual(["TF-0001", "TF-0001", "TF-0001", "TF-0001 TF-0001", "TF-0002", "TF-0002"]);
+    expect(result.report.totals.tf.distinct).toBe(2);
+    expect(result.report.totals.pnr).toEqual({ occurrences: 0, distinct: 0 });
+    expect(result.files[0]!.text).not.toMatch(/PNR-|1900|TF0/);
+    expect(result.check.passed).toBe(true);
+  });
+
   it.each(["Id", "Kod", "Elev", "Nummer", "Klass"])("with the header %s, which says nothing: a column of TF numbers is proposed as personnummer and replaced", (name) => {
     const text = `${name};Namn;Anteckning\n19000101TF01;Anna;ok\n19000101TF02;Bo;ok\n19000101TF03;Cia;ok\n`;
     const result = run(text, { 1: mark("namn"), 2: KEEP });
