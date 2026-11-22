@@ -7229,7 +7229,7 @@ This section is the measuring stick that tells a school, and the nightly gate, w
 
 | File | What it is |
 |---|---|
-| `optimization-engine/benchmarks/school_corpus.py` | The corpus: a deterministic generator `SchoolShape` → `OptimizeScheduleRequest` (fixed ids, a seeded generator, byte-identical on every machine and pinned by `test_school_corpus_pins.py`). Axes: **N** classes, **G** subjects taught in groups across the classes (0–10), **M** shared teachers (the engine's own reading, `week_load._shared_teachers`) and how many parallel groups each stands on, how far a group's pupils are mixed across the classes, språkval (teachers shared across the years, with or without a block), subjects that run one term only (`periods`, with two or six periods), blocks, a post count per teacher like production's, and grades of their own. `sweep_shapes()` moves one axis at a time from the base; `GATE_WEEKS` names the nightly's 14. A shape the engine would refuse (over 5,000 group pairs, over 2,000 requirements, a group no room holds, a week its own count proves impossible) is refused or left out, because a corpus week the engine refused would measure the refusal. |
+| `optimization-engine/benchmarks/school_corpus.py` | The corpus: a deterministic generator `SchoolShape` → `OptimizeScheduleRequest` (fixed ids, a seeded generator, byte-identical on every machine and pinned by `test_school_corpus_pins.py`). Axes: **N** classes, **G** subjects taught in groups across the classes (0–10), **M** shared teachers (the engine's own reading, `week_load._shared_teachers`) and how many parallel groups each stands on, how far a group's pupils are mixed across the classes, språkval (teachers shared across the years, with or without a block), subjects that run one term only (`periods`, with two or six periods), blocks, a post count per teacher like production's, and grades of their own. `sweep_shapes()` moves one axis at a time from the base; `GATE_WEEKS` names the nightly's 13. A shape the engine would refuse (over 5,000 group pairs, over 2,000 requirements, a group no room holds, a week its own count proves impossible) is refused or left out, because a corpus week the engine refused would measure the refusal. |
 | `optimization-engine/benchmarks/corpus_measure.py` | The measurer: seconds from `solve()`'s entry to the first timetable (prechecks, builds and phase 1a, or 1b where 1a gives up: what a school waits for, with phase 2 left out because it only spends the rest of the budget improving a timetable that exists), the outcome (`FIRST_SCHEDULE`, `TIMEOUT`, `INFEASIBLE`, `REFUSED`, or `ERROR` for a tree that cannot be handed the week), and the steps (`PRECHECKS`, `BUILD`, `SEARCH_CLEAN`, `SEARCH_CLONE`) from the engine's own `StageClock`. It changes nothing in the engine: a subclass of `SchedulerSolver` replaces `_generation_solver` and hands every generation search a recording `CpSolver`, which stops the solve at the first timetable. `tests/test_corpus_measure.py` keeps the hook: an engine that no longer calls it (`HOOK_NOT_CALLED`), one that swallows the stop, and a TIMEOUT that the wall clock and not the budget decided (`WALL_LIMIT_BEFORE_BUDGET`) are each an `ERROR` and a test failure, never a silent number. |
 | `optimization-engine/benchmarks/corpus_report.py` | The tables below, from the measurements. |
 | `scripts/bench/solve-corpus-gate.mjs` | The nightly gate's verdict, pure Node. |
@@ -7316,28 +7316,37 @@ What the numbers say, in order of weight:
 
 ### 35.3 The nightly gate: this tree against a floor, in work and not in seconds
 
-Job `solver-corpus` in `quality-gates.yml`, 30 minutes at most, about **6 minutes of runner time a night** (measured: 1.6 minutes a tree on this Mac at a load of 28 with four searches
-at a time, two trees, and about 1.5 minutes for the install and the checkouts; the nightly `solver-benchmark` takes 2.4, the latency job about 6). The repository is public, so a standard runner
-is not billed; the figure is runtime. The job has not run on a runner yet (it cannot before merge): the first night, or a dispatch with `corpus_floor=main`, shows the minutes.
+Job `solver-corpus` in `quality-gates.yml`, 30 minutes at most, about **12 to 18 minutes of runner time a night**: each of the two trees measures the gate's 13 weeks at **three seeds** (one seed took 1 to 3 minutes a tree on this Mac at loads of 23 to 57 with four searches
+at a time, so three seeds take three times that), plus about 1.5 minutes for the install and the checkouts. The nightly `solver-benchmark` takes 2.4 minutes and the
+latency job about 6. A change that makes every week time out at every seed would take the 30-minute ceiling, and the job is red then anyway. The repository is public, so a standard runner is not billed; the figure is
+runtime. The job has not run on a runner yet (it cannot before merge): the first night, or a dispatch, shows the minutes.
 
 - **Why not seconds.** ubuntu-latest is a mixed-CPU pool (the same tree's health throughput varied 2.6x between its machines; `scripts/bench/latency-gate.mjs` has the numbers), and a search
   takes as many seconds as the machine it drew. In count mode one worker with a fixed seed makes CP-SAT repeat the same search, so the operations it counts are the same everywhere.
 - **The floor** is `main` as it was a week ago (`git rev-list -1 --before='7 days ago' origin/main`), checked out as a second tree in the same job, or the ref a dispatch input `corpus_floor` names.
-  Nothing is stored and nothing is moved by hand. The same script and the same 14 weeks (`GATE_WEEKS`) run against both engines through `ENGINE_ROOT`, with one OR-Tools for both.
-  **Dispatched on a branch with `corpus_floor=main` it is an A/B of the branch against main** (`gh workflow run quality-gates.yml --ref <branch> -f corpus_floor=main`).
-- **What fails it** (`scripts/bench/solve-corpus-gate.mjs`, with tests that also run on every pull request): a week the floor gives a timetable and this tree refuses; weeks the floor solves and this tree
-  gives up on (one is enough when the floor was under half of what two searches may spend, and two always); and the geometric mean of this tree's work over the floor's, across the weeks both solve,
-  above 1.25. Printed, deciding nothing: refusals that changed code, weeks that gained a timetable, and the wall-clock ratio of the two trees.
-  Exit 2, not a pass, when the two cannot be compared: other weeks, another corpus version, another budget, or **a week that the two trees read differently** (an engine from before a field
-  drops it and measures another week under the same name).
-- **What it cannot see.** A regression that shows only with several workers (the portfolio production runs), and the Python time of the build (it is wall time: printed per step, not gated).
-  A floor older than the hook (`_generation_solver`, 2026-10-18) or than terms in the engine (2026-11-12) answers `ERROR` for what it does not support, which is a gain and not a failure.
-- **It is quiet, and shows the cause when it is not.** The gate's weeks measured on `main` at five points in time (2026-10-25, 11-01, 11-08, 11-14 and 11-22, 76 changes to the engine
-  between them, among them M1, M2, M3 and the time chain): **the work for the 13 weeks that solve is identical to the last digit at all five**. Search is chaotic (one week 0.05 to 1.3 times
-  as much after a change to the model), but only a change to how the model is built moves it, and the additive changes of those weeks did not.
+  Nothing is stored and nothing is moved by hand. The same script and the same 13 weeks (`GATE_WEEKS`) run against both engines through `ENGINE_ROOT`, with one OR-Tools for both.
+  **Dispatched on a branch with `corpus_floor=main` and `corpus_only=true` it is an A/B of the branch against main, and the only job that starts**
+  (`gh workflow run quality-gates.yml --ref <branch> -f corpus_floor=main -f corpus_only=true`; without `corpus_only` a dispatch also starts the screenshot, mutation, Lighthouse, solver and latency jobs).
+- **Three seeds, and the middle one.** A shape searched at another seed is another search, and that is what any change to how the model is built does to it: the same week, the same engine, another seed took from 0.11 to
+  7.9 work across the gate's weeks (one week 3.5 at seed 1 and 0.2 to 0.9 at the other six), and one seed against another failed the verdict in **18 of 42** ordered pairs (43 %) for a change that does nothing;
+  the request's `requirements` shuffled three times (same school, same seed) failed it all three times. `corpus_measure.py --seeds 3` searches each week at seeds 1 to 3 and the row is the middle one (a week is a TIMEOUT only when most seeds give up, and an `ERROR` is never diluted), and a week
+  is **lost for certain** only when the floor found it at every seed well inside the budget and this tree at none. With three seeds, that rule, and the one edge week taken out, the same experiment (every ordered pair of
+  disjoint three-seed sets out of seven seeds, read as floor and tree) fails **7 of 140 pairs (5 %)**, all of them on the geometric mean. The mean of the same pairs ranges from 0.74 to 1.36, so the limit of 1.25 catches a slowdown of about 1.5 and
+  hardly one of 1.25. (This is the review of #394's measurement: the first design showed the gate quiet only for changes that do not touch the model, and a change that does is a new throw for every week.)
+- **What fails it** (`scripts/bench/solve-corpus-gate.mjs`, with tests that also run on every pull request): a week the floor gives a timetable and this tree refuses; weeks lost for certain (above); and the
+  geometric mean of this tree's work over the floor's, across the weeks both solve, above 1.25. Printed, deciding nothing: refusals that changed code, weeks that gained a timetable, and the
+  wall-clock ratio of the two trees. Exit 2, not a pass, when the two cannot be compared (other weeks, another corpus version, another budget, or **a week that the two trees read differently**: an engine from before a
+  field drops it and measures another week under the same name) and when nothing was compared at all.
+- **What it cannot see.** A regression that shows only with several workers (the portfolio production runs); the Python time of the build (wall time: printed per step, not gated); and **a change of OR-Tools' pin**,
+  because both trees run on this tree's OR-Tools: a step prints a warning when the pin has moved since the floor, so that a green verdict is not read as "the upgrade is harmless". A floor older than the hook
+  (`_generation_solver`, 2026-10-18) or than terms in the engine (2026-11-12) answers `ERROR` for what it does not support, which is a gain and not a failure.
+- **Terms are barely in it.** The only gate week with term subjects is an edge week (it gets a timetable at three of seven seeds), and the sweep's other term weeks (the second seed at three term subjects, both seeds at five, the production's form) do not get one at a budget of 4 deterministic seconds. Whether the gate should cover terms is the user's: it would take a budget of 8 for the gate's weeks, which doubles the cost.
+- **Quiet when the model is not touched.** The gate's weeks measured on `main` at five points in time (2026-10-25, 11-01, 11-08, 11-14 and 11-22, 76 changes to the engine between them, among them M1, M2, M3 and
+  the time chain): **the work for the weeks that solve is identical to the last digit at all five** (measured at one seed). So changes that do not move how the model is built are silent; the first change that does is a new throw of the dice for
+  every week, which is what the seeds above are for.
 - **Tested to see a regression.** An engine with its search made worse on purpose (`FIXED_SEARCH`, no probing, no linearization) against the floor on four weeks: exit 1, three weeks lost, a mean of 2.22. One
   with presolve switched off scored 0.43 and passed, because the gate times the work to a first timetable and presolve is part of it.
-- **Running it by hand:** `ENGINE_ROOT=<other tree>/optimization-engine python benchmarks/corpus_measure.py --profile gate --mode count --det-budget 4 --jobs 4 --json > head.json`, the same for the floor,
+- **Running it by hand:** `ENGINE_ROOT=<other tree>/optimization-engine python benchmarks/corpus_measure.py --profile gate --mode count --det-budget 4 --seeds 3 --jobs 4 --json > head.json`, the same for the floor,
   then `node scripts/bench/solve-corpus-gate.mjs --head head.json --floor floor.json`. `corpus_report.py` turns a `--profile sweep` run into the tables of §35.2.
 
 ### 35.4 What it says about M7 (the engine in parts)
@@ -7368,7 +7377,7 @@ node scripts/bench/solve-corpus-calibrate.mjs convert prod.json trajectory.json
   (conflicts at 0.25, 0.5, 1, 2 and 4 deterministic seconds); the probe's conflicts are read against it, by straight lines and never beyond its end, to the work they took, and the probe's seconds divided by it are
   the instance's **seconds per deterministic second**: the number that replaces 18 in §35.2 and turns every row of the table into production seconds without running the corpus again. It needs no baseline on a quiet
   machine and gives the same answer on a loaded one.
-- **Never a secret in the output.** The key is read from the environment, sent as `X-API-Key` and never printed or written; the result names the run by its label and not by the address.
+- **Never a secret in the output, and never to another address.** The key is read from the environment, sent as `X-API-Key` and never printed or written; the result names the run by its label and not by the address. The script follows no redirect (`fetch` drops `Authorization` across origins but not `X-API-Key`) and refuses plain `http` to any address but its own machine, before the first call.
 - About six minutes of compute on the instance, a quarter of an hour to start and tear it down. The number of cores is not in the engine's answer: `--cores` is what the person running it writes.
 
 ### 35.6 Not done
