@@ -37,7 +37,7 @@ describe("the two languages say the same things", () => {
 
   it("has a sentence for every code the gateway sends: its five failures and its three refusals", () => {
     const failures = ["ENGINE_LACKS_SUGGESTIONS", "ENGINE_BUSY", "ENGINE_FAILED", "NOTHING_TO_PLACE", "ABANDONED"];
-    const refusals = ["SUGGESTIONS_NOT_FOR_THIS_RUN", "SUGGESTIONS_RUN_IS_OLD", "SUGGESTIONS_YEAR_BUSY", "OTHER"];
+    const refusals = ["SUGGESTIONS_NOT_FOR_THIS_RUN", "SUGGESTIONS_RUN_IS_OLD", "SUGGESTIONS_YEAR_BUSY", "THROTTLED", "OTHER"];
     expect(Object.keys(section(sv).failed as Node).sort()).toEqual([...failures].sort());
     expect(Object.keys(section(sv).refused as Node).sort()).toEqual([...refusals].sort());
     expect(Object.keys(section(en).failed as Node).sort()).toEqual([...failures].sort());

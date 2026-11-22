@@ -33,6 +33,32 @@ export const SHOWN_CHANGES = 3;
 /** How often a running analysis is read again. */
 const POLL_MS = 3000;
 
+/** From the weakest to the strongest the engine can say of a list. */
+const PROOF_ORDER: readonly SuggestionProof[] = ["MAY_HELP", "SOLVED_TOGETHER", "SOLVED"];
+
+/**
+ * What the engine has shown of the WHOLE list, which is all it ever shows: the weakest proof of any change of it, and nothing above MAY_HELP
+ * for a list the strict model did not accept (`verified`), whatever the changes say. "Just den här ändringen" is a list of ONE: a longer
+ * list is never SOLVED. The gateway already holds to this when it stores the analysis; the card does not rest on it, because "löser veckan"
+ * is the one thing it may not say by mistake.
+ */
+export function listProofOf(suggestions: Pick<Suggestions, "verified" | "total" | "changes">): SuggestionProof {
+  if (!suggestions.verified || suggestions.changes.length === 0) return "MAY_HELP";
+  const weakest = suggestions.changes.reduce((low, change) => Math.min(low, PROOF_ORDER.indexOf(change.proof)), PROOF_ORDER.length - 1);
+  const proof = PROOF_ORDER[weakest] ?? "MAY_HELP";
+  return proof === "SOLVED" && suggestions.total !== 1 ? "SOLVED_TOGETHER" : proof;
+}
+
+/** The refusals of a press the gateway words (src/optimization/suggestions.service.ts); any other code is a sentence this card has no key for. */
+const REFUSAL_CODES: readonly string[] = ["SUGGESTIONS_NOT_FOR_THIS_RUN", "SUGGESTIONS_RUN_IS_OLD", "SUGGESTIONS_YEAR_BUSY"];
+
+/** The key of the sentence a refused press is said in: the gateway's own codes, the throttle (three presses a minute), and the general one. */
+function refusalKey(error: unknown): string {
+  if (!(error instanceof ApiError)) return "OTHER";
+  if (error.status === 429) return "THROTTLED";
+  return error.code !== undefined && REFUSAL_CODES.includes(error.code) ? error.code : "OTHER";
+}
+
 const PAGE_LABEL_KEY: Record<SuggestionPage, string> = {
   people: "link.people",
   requirements: "link.requirements",
@@ -66,6 +92,7 @@ export function SuggestionsCard({ job }: { job: OptimizationJob }) {
 
   const hints = hintsOf(job);
   const listed = suggestions?.state === "DONE" && suggestions.verdict === "CHANGES" && suggestions.changes.length > 0;
+  const solvable = suggestions?.state === "DONE" && suggestions.verdict === "SOLVABLE_AS_IS" && suggestions.verified;
 
   return (
     <section aria-labelledby="suggestions-title" className="space-y-3">
@@ -75,7 +102,8 @@ export function SuggestionsCard({ job }: { job: OptimizationJob }) {
 
       {suggestions === null ? <p className="max-w-prose text-sm">{t(job.solverStatus === "TIMEOUT" ? "offerTimeout" : "offer")}</p> : null}
 
-      {!listed && hints.length > 0 ? <KnownBefore hints={hints} /> : null}
+      {/* What was known BEFORE the engine was asked is not said beside an answer that the week, as it stands now, can be laid. */}
+      {!listed && hints.length > 0 && !solvable ? <KnownBefore hints={hints} /> : null}
 
       {running ? (
         <p role="status" className="max-w-prose text-sm">
@@ -87,11 +115,11 @@ export function SuggestionsCard({ job }: { job: OptimizationJob }) {
         <p className="max-w-prose text-sm">{t(`failed.${suggestions.failure ?? "ENGINE_FAILED"}` as never)}</p>
       ) : null}
 
-      {suggestions?.state === "DONE" ? <Answer suggestions={suggestions} /> : null}
+      {suggestions?.state === "DONE" ? <Answer suggestions={suggestions} timedOut={job.solverStatus === "TIMEOUT"} /> : null}
 
       {ask.isError ? (
         <p role="alert" className="max-w-prose text-sm text-destructive">
-          {t(`refused.${ask.error instanceof ApiError && ask.error.code ? ask.error.code : "OTHER"}` as never)}
+          {t(`refused.${refusalKey(ask.error)}` as never)}
         </p>
       ) : null}
 
@@ -104,7 +132,7 @@ export function SuggestionsCard({ job }: { job: OptimizationJob }) {
   );
 }
 
-function Answer({ suggestions }: { suggestions: Suggestions }) {
+function Answer({ suggestions, timedOut }: { suggestions: Suggestions; timedOut: boolean }) {
   const t = useTranslations("generate.suggestions");
   switch (suggestions.verdict) {
     case "CHANGES":
@@ -112,8 +140,8 @@ function Answer({ suggestions }: { suggestions: Suggestions }) {
     case "SOLVABLE_AS_IS":
       return (
         <p className="max-w-prose text-sm">
-          {/* Said only for a week the engine checked: a timetable that holds every rule was found, so the run that ended was short of time. */}
-          {suggestions.verified ? t("verdict.SOLVABLE_AS_IS") : t("verdict.UNCHECKED")}
+          {/* Said only for a week the engine checked. "The run ran out of time" is said only of a run that did: a refusal was the engine's proof, and the week has been changed since. */}
+          {suggestions.verified ? t(timedOut ? "verdict.SOLVABLE_AS_IS" : "verdict.SOLVABLE_AS_IS_CHANGED") : t("verdict.UNCHECKED")}
         </p>
       );
     case "NOT_FOUND":
@@ -130,7 +158,7 @@ function ChangesList({ suggestions }: { suggestions: Suggestions }) {
   const locale = useLocale();
   const shown = suggestions.changes.slice(0, SHOWN_CHANGES);
   // One proof for the whole list: the engine checks the list, never a change of it.
-  const proof: SuggestionProof = shown[0]?.proof ?? "MAY_HELP";
+  const proof: SuggestionProof = listProofOf(suggestions);
   const more = Math.max(0, suggestions.total - shown.length);
   const when = suggestions.finishedAt === null ? null : formatWhen(suggestions.finishedAt, locale);
   return (
@@ -141,17 +169,17 @@ function ChangesList({ suggestions }: { suggestions: Suggestions }) {
       <ol className="space-y-2">
         {shown.map((change, index) => (
           <li key={`${change.rule}-${index}`}>
-            <ChangeCard change={change} index={index + 1} />
+            <ChangeCard change={change} index={index + 1} proof={proof} />
           </li>
         ))}
       </ol>
-      {more > 0 ? <p className="max-w-prose text-sm">{t("more", { count: more })}</p> : null}
+      {more > 0 ? <p className="max-w-prose text-sm">{t(proof === "MAY_HELP" ? "moreMayHelp" : "more", { count: more })}</p> : null}
       <p className="max-w-prose text-sm text-muted-foreground">{t("caveat", { when: when ?? "" })}</p>
     </div>
   );
 }
 
-function ChangeCard({ change, index }: { change: SuggestionChange; index: number }) {
+function ChangeCard({ change, index, proof }: { change: SuggestionChange; index: number; proof: SuggestionProof }) {
   const t = useTranslations("generate.suggestions");
   const tDays = useTranslations("days");
   const locale = useLocale();
@@ -163,7 +191,7 @@ function ChangeCard({ change, index }: { change: SuggestionChange; index: number
     <div className="space-y-1 rounded-md border p-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">{index}.</span>
-        <Badge variant={change.proof === "MAY_HELP" ? "warning" : "success"}>{t(`proof.${change.proof}` as never)}</Badge>
+        <Badge variant={proof === "MAY_HELP" ? "warning" : "success"}>{t(`proof.${proof}` as never)}</Badge>
       </div>
       <p className="max-w-prose">{sentence}</p>
       {change.hidden ? <p className="max-w-prose text-muted-foreground">{t("hidden")}</p> : null}
