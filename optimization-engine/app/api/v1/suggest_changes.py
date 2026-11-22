@@ -14,6 +14,13 @@ queue, and the caller backs off (the gateway reads it as "try again in a moment"
 the machine's cores, which is why the gateway does not start this while the school's
 own Generera is running and why the search is given at most the workers it names.
 
+THE GATE IS THE THREAD'S, NOT THE ANSWER'S. A solve's thread cannot be cancelled, so
+the 503 at the ceiling ends the wait and not the work. A gate that opened with the
+503 let a second analysis start beside the first one's still-running thread, and a
+third beside those: "one at a time" held only for analyses that answered in time. The
+gate now opens when the thread ends, whatever the caller has been told (review of
+#384).
+
 An engine older than this route answers 404 and the gateway says so; it is never
 sent a request that would reach a route that does not exist as anything but that.
 """
@@ -21,6 +28,7 @@ sent a request that would reach a route that does not exist as anything but that
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -79,7 +87,9 @@ async def suggest_changes_route(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Another analysis is running. Try again in a moment.",
         )
-    async with gate:
+    await gate.acquire()
+    work: asyncio.Future[SuggestChangesResponse] | None = None
+    try:
         logger.info(
             "suggest_changes_requested",
             request_id=str(payload.request_id),
@@ -90,22 +100,39 @@ async def suggest_changes_route(
         # shrink the deployment's.
         scoped = settings_for_search(settings, payload.search)
         ceiling = solve_ceiling_seconds(scoped, payload.search, payload.deadline_seconds)
+        work = asyncio.ensure_future(
+            asyncio.to_thread(suggest_changes, payload, settings, ceiling_seconds=ceiling),
+        )
+        # The gate opens when the THREAD ends (see the head of this module), and an error the nobody waits for
+        # any more is read here so that it is logged by the route and not by the event loop's "never retrieved".
+        work.add_done_callback(_open(gate))
         try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(suggest_changes, payload, settings, ceiling_seconds=ceiling),
-                timeout=ceiling,
-            )
+            response = await asyncio.wait_for(asyncio.shield(work), timeout=ceiling)
         except asyncio.TimeoutError:
             logger.error("suggest_changes_timed_out", request_id=str(payload.request_id))
             raise SolverTimeoutError(
                 "Suggestion run timed out.", route="suggest-changes", ceiling_seconds=ceiling,
             ) from None
-        logger.info(
-            "suggest_changes_completed",
-            request_id=str(response.request_id),
-            verdict=response.verdict,
-            changes=len(response.changes),
-            verified=response.verified,
-            elapsed_ms=response.elapsed_ms,
-        )
-        return response
+    finally:
+        if work is None:
+            gate.release()
+    logger.info(
+        "suggest_changes_completed",
+        request_id=str(response.request_id),
+        verdict=response.verdict,
+        changes=len(response.changes),
+        verified=response.verified,
+        elapsed_ms=response.elapsed_ms,
+    )
+    return response
+
+
+def _open(gate: asyncio.Semaphore) -> Callable[[asyncio.Future[SuggestChangesResponse]], None]:
+    """What runs when the analysis's thread has ended: the gate opens, and an error nobody awaited is read."""
+
+    def opened(done: asyncio.Future[SuggestChangesResponse]) -> None:
+        gate.release()
+        if not done.cancelled():
+            done.exception()
+
+    return opened

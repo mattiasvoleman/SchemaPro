@@ -52,10 +52,13 @@ SuggestedRule = Literal[
 SuggestionProof = Literal["SOLVED", "SOLVED_TOGETHER", "MAY_HELP"]
 
 #: `CHANGES`: the search placed the week by letting the rules of `changes` give way.
-#: `SOLVABLE_AS_IS`: the search placed the week and nothing gave way: the strict
-#: week has a timetable, whatever its own run said (a TIMEOUT searched too short).
+#: `SOLVABLE_AS_IS`: the search placed the week and nothing gave way, AND THE STRICT
+#: MODEL ACCEPTED THE TIMETABLE (`verified` is always true here): the strict week has
+#: a timetable, whatever its own run said (a TIMEOUT searched too short).
 #: `NOT_FOUND`: the search found no timetable in its time, even with the five
-#: rules free to give way. That is not a proof that none exists.
+#: rules free to give way, or found one on which nothing gave way that the strict
+#: model was not shown to accept (no time for the check). That is not a proof
+#: that none exists.
 #: `HARD_REFUSAL`: a rule that never gives way refuses the week (the strict
 #: explanation is in `conflicts`); no change of the five can help.
 SuggestChangesVerdict = Literal["CHANGES", "SOLVABLE_AS_IS", "NOT_FOUND", "HARD_REFUSAL"]
@@ -98,7 +101,9 @@ class SuggestChangesResponse(CamelModel):
     #: applied (also for SOLVABLE_AS_IS: with none). False says it was not checked or the
     #: check did not finish, and then no change is above MAY_HELP.
     verified: bool = False
-    #: Seconds the search for the timetable was given, and the check's, as the engine ran them.
+    #: Seconds the search for the timetable was given, and the check's, as the engine ran them. For NOT_FOUND it is the
+    #: budget the search REALLY had (a caller that waits less than the engine's budget leaves it less, down to none); for the
+    #: other verdicts the seconds it was asked for.
     search_seconds: float = Field(alias="searchSeconds", ge=0)
     verify_seconds: float | None = Field(default=None, alias="verifySeconds", ge=0)
     #: Wall-clock milliseconds the whole run took in the engine.

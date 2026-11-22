@@ -7120,14 +7120,14 @@ answer cannot ask itself: **does the strict model, with exactly those changes ma
 
 `POST /api/v1/suggest-changes` (`optimization-engine/app/api/v1/suggest_changes.py`, `app/solver/suggestions.py`, `app/schemas/suggestions.py`). The request is Generera's own
 (`OptimizeScheduleRequest`), so the gateway builds one payload and asks any route with it; `search.maxSeconds` is the search's budget (60 s when absent, never more than
-`SOLVER_MAX_TIME_SECONDS`), `search.workers` and `search.seed` pass through, `relaxation` is ignored and `probes` is always off. The answer is `verdict`, `changes` (the cheapest first),
+`SOLVER_MAX_TIME_SECONDS`), `search.workers` (four when the request names none, never every core of a shared engine) and `search.seed` pass through, `relaxation` is ignored and `probes` is always off. The answer is `verdict`, `changes` (the cheapest first),
 `verified`, the seconds the search and the check were given, and, for a refusal by a hard rule, the strict explanation. **It places nothing and stores nothing.**
 
 | `verdict` | Means |
 |---|---|
 | `CHANGES` | The search laid the week by letting the rules of `changes` give way |
-| `SOLVABLE_AS_IS` | The search laid it and nothing gave way: the week has a timetable, whatever its own run said (trust it only with `verified`) |
-| `NOT_FOUND` | No timetable in the search's time, even with the five rules free: **not** a proof that none exists |
+| `SOLVABLE_AS_IS` | The search laid it, nothing gave way, **and the strict model accepted the timetable** (`verified` is always true here): the week has a timetable, whatever its own run said |
+| `NOT_FOUND` | No timetable in the search's time, even with the five rules free, or one on which nothing gave way that the strict check was not shown to accept (no time for it): **not** a proof that none exists |
 | `HARD_REFUSAL` | A rule that never gives way refuses the week; `conflicts` is the strict explanation; no change of the five can help |
 
 A change names one of `SUBJECT_DAYS_APART`, `SUBJECT_PER_DAY`, `ROOM_LOCK`, `TEACHER_DAILY_CAP`, `TEACHER_WORK_DAYS` (the engine's own list, mildest first), the value the rule has
@@ -7145,6 +7145,7 @@ anonymous ids the request carried (`requirementIds`, `roomIds`, `resourceIds`: t
 - **It is a timetable that exists, not one the next Generera finds.** Generera has no hint, and the changed week may still run out of time.
 - **It is not the cheapest.** The search's first timetable is not its best one; on the högstadium week the priced search ended at 40 s with five deviations where the strict
   solver lays the week cleanly (`verification-baseline.md`). The list is what the engine found.
+- **"Found nothing in N seconds" says the N the search had.** For a `NOT_FOUND`, `searchSeconds` is the budget the search really ran on (the TIMEOUT report's own), not the one it was asked for: a caller that waits less than the engine's budget leaves it less, down to none.
 
 ### 33.3 Contract, deploy order, rolling back
 
@@ -7156,7 +7157,7 @@ anonymous ids the request carried (`requirementIds`, `roomIds`, `resourceIds`: t
 ### 33.4 Time and the machine
 
 The route is a solve and is held like one: **one at a time in a process**, answered 429 beyond it and never queued (the gateway backs off, as it does for `/week-bounds`).
-`/optimize` is not behind the gate; they share the cores, which is why the gateway (part 2) does not start an analysis while the school has a run active and passes `workers`.
+`/optimize` is not behind the gate; they share the cores, which is why the gateway (part 2) does not start an analysis while the school has a run active and passes `workers` (a request that names none gets four, in the search and in the check).
 Its ceiling is the search plus up to 30 s for the check plus two builds' headroom (`route_limits`), shortened by the caller's `deadlineSeconds`; the check is given what is left
 and is not started when that is under five seconds after the build. With the default 60 s search the ceiling is 60 + 30 + 60 = 150 s, well inside the API's 240 s wait for a Generera; a gateway that asks for a longer search (`maxSeconds` up to the engine's own budget) must keep its own wait above this sum.
 

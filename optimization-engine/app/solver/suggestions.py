@@ -96,6 +96,12 @@ logger = get_logger(__name__)
 #: check pins every start of a timetable that is already there.
 DEFAULT_SEARCH_SECONDS = 60
 VERIFY_SECONDS = 30
+#: The solver workers the search and the check use when the request names none: four, as the design
+#: note's D2 says and as a candidate run takes (CANDIDATE_SOLVER_WORKERS). The engine is one process
+#: shared by every school and /optimize is not behind this route's gate, so a request that names no
+#: workers must not take every core from a Generera that may be running beside it. A caller that
+#: names a number (up to SearchOptions' 16) gets it.
+DEFAULT_WORKERS = 4
 #: Under this a check is not started: a build and a solve cannot answer in less, and a
 #: check that stops at the clock says nothing.
 MIN_VERIFY_SECONDS = 5
@@ -458,7 +464,7 @@ def suggest_changes(
         settings.solver_max_time_seconds,
         DEFAULT_SEARCH_SECONDS if own is None or own.max_seconds is None else own.max_seconds,
     ))
-    workers = None if own is None else own.workers
+    workers = DEFAULT_WORKERS if own is None or own.workers is None else own.workers
     seed = None if own is None else own.seed
     search = SearchOptions(max_seconds=max(5, seconds), probes=False, workers=workers, seed=seed)
     relaxed = request.model_copy(update={"relaxation": Relaxation(mode="BEST_EFFORT"), "search": search})
@@ -473,8 +479,12 @@ def suggest_changes(
             elapsed_ms=elapsed(), conflicts=response.conflicts,
         )
     if response.status == "TIMEOUT" or not response.lessons:
+        # "NOTHING FOUND IN N SECONDS" IS TRUE ONLY FOR THE N THE SEARCH HAD. A caller that waits less than the
+        # budget leaves the search less (app.timing.Deadline): with a wait of 6 s it had none, and said "20".
+        # The account the search already made (M2's TimeoutReport) knows the budget it really ran on.
+        had = seconds if response.report is None else min(seconds, response.report.budget_seconds)
         return SuggestChangesResponse(
-            request_id=request.request_id, verdict="NOT_FOUND", search_seconds=seconds,
+            request_id=request.request_id, verdict="NOT_FOUND", search_seconds=had,
             elapsed_ms=elapsed(),
         )
 
@@ -503,6 +513,16 @@ def suggest_changes(
                 )
         else:
             logger.warning("suggestion_check_skipped", request_id=str(request.request_id), left=round(left, 1))
+
+    if not changes and not verified:
+        # NOTHING GAVE WAY IN THE TIMETABLE THE SEARCH FOUND, AND THE STRICT MODEL DID NOT SAY SO (no time for the
+        # check, or it did not accept the timetable). "Solvable as it is" is a claim that the strict week has a
+        # timetable, and a list of changes has MAY_HELP to fall back to where this has nothing: the verdict is
+        # only given with the proof, so a caller never has to remember to read `verified` beside it.
+        return SuggestChangesResponse(
+            request_id=request.request_id, verdict="NOT_FOUND", search_seconds=seconds,
+            verify_seconds=verify_seconds, elapsed_ms=elapsed(),
+        )
 
     proof: SuggestionProof = (
         "MAY_HELP" if not verified else "SOLVED" if len(changes) == 1 else "SOLVED_TOGETHER"
