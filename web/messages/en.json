@@ -4673,6 +4673,7 @@
       "overOnlyWithUnregulated": "Over the ordinance's highest level only when the hours outside the stages are counted in (preschool class or groups with no grade). The ordinance gives no level for those hours, so the teacher is not counted as over: an interpretation, stated below.",
       "unknownGradeNote": "Hours in groups with no grade count in the teaching time but cannot be placed in a stage.",
       "unregulatedNote": "Hours in preschool class count in the teaching time but lie outside the stages: the ordinance gives no level for them.",
+      "planningFloorOnStages": "The planning floor is worked out on the hours in the stages: the ordinance gives no level for the other hours, so they add nothing to the floor.",
       "fitsNotShown": "Whether the annual working time holds the planning floor is not shown here: it is only worked out for a term-time contract, and only shown to someone who may see the size of the post.",
       "interpretation": "Interpretation ({section}), as recorded in Swedish: {note}",
       "notAnnual": "May differ from Teaching per school year under Annual working time, which applies percentage and factor. This figure is the lessons' own time, unweighted. Both count school days.",

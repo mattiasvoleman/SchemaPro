@@ -137,6 +137,11 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
       {teacher.unknownGradeHours > 0 ? (
         <p className="text-xs text-muted-foreground">{t("unknownGradeNote")}</p>
       ) : null}
+      {judged && teacher.planningFloorHours !== null && (teacher.unregulatedHours > 0 || teacher.unknownGradeHours > 0) ? (
+        // The floor is worked out on the hours in the stages alone (the ordinance gives no level for the others, so there is no floor to count
+        // them against), while the total and the working time left count every hour: beside the floor row, so that it is not read as the total's.
+        <p className="text-xs text-muted-foreground">{t("planningFloorOnStages")}</p>
+      ) : null}
       {interpretations.length > 0 && yearReason === null
         ? interpretations.map((one) => (
             <p key={`${one.section}-${one.cause ?? ""}`} className="text-xs text-muted-foreground">

@@ -179,12 +179,38 @@ describe("ScopeCard", () => {
       expect(screen.getByText("unregulatedNote")).toBeInTheDocument();
     });
 
+    it("says that the planning floor is worked out on the hours in the stages, beside the floor row, for a teacher with hours outside them", () => {
+      render(<ScopeCard data={data({ teachingHours: 688, unregulatedHours: 43 })} />);
+      expect(rows()).toContain("planningFloor=hours(645)");
+      expect(screen.getByText("planningFloorOnStages")).toBeInTheDocument();
+      cleanup();
+      // Groups with no årskurs are outside the stages as well.
+      render(<ScopeCard data={data({ teachingHours: 665, unknownGradeHours: 20 })} />);
+      expect(screen.getByText("planningFloorOnStages")).toBeInTheDocument();
+    });
+
+    it("says it of no teacher whose hours all lie in the stages, and of no reader who is not shown the floor", () => {
+      render(<ScopeCard data={data()} />);
+      expect(screen.queryByText("planningFloorOnStages")).not.toBeInTheDocument();
+      cleanup();
+      // Without HR-läs the floor is not shown (null): a sentence about a row that is not there would explain nothing.
+      render(<ScopeCard data={data({ teachingHours: 688, unregulatedHours: 43, planningFloorHours: null, remainingHours: null, planningFits: null })} />);
+      expect(rows().map((row) => row.split("=")[0])).not.toContain("planningFloor");
+      expect(screen.queryByText("planningFloorOnStages")).not.toBeInTheDocument();
+      cleanup();
+      // The sentence sits beside the floor row and goes where it goes: a card that is not judged shows neither.
+      render(<ScopeCard data={data({ teachingHours: 688, unregulatedHours: 43 }, { yearReason: "NUMBERING_NOT_COVERED" })} />);
+      expect(rows().map((row) => row.split("=")[0])).not.toContain("planningFloor");
+      expect(screen.queryByText("planningFloorOnStages")).not.toBeInTheDocument();
+    });
+
     it("says it for no teacher without such hours, and not in a ten-year grundskola, where the row itself is left out", () => {
       render(<ScopeCard data={data({ unregulatedHours: 0 })} />);
       expect(screen.queryByText("unregulatedNote")).not.toBeInTheDocument();
       cleanup();
       render(<ScopeCard data={data({ verdict: "NOT_JUDGED", unregulatedHours: 645, stages: [], fullTimeHighestHours: null, fullTimeLowestHours: null, highestHours: null, ordinanceHighestHours: null, planningFloorHours: null, remainingHours: null, planningFits: null }, { yearReason: "NUMBERING_NOT_COVERED" })} />);
       expect(screen.queryByText("unregulatedNote")).not.toBeInTheDocument();
+      expect(screen.queryByText("planningFloorOnStages")).not.toBeInTheDocument();
       expect(rows()).toEqual(["teaching=hours(645)"]);
     });
   });
