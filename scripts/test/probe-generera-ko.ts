@@ -366,6 +366,62 @@ export async function generateQueueChecks(owner: Client, api: PrismaService, mar
       assert.equal((await row(id)).lease, 270);
       await settle();
     });
+
+    await check('(gq-k) a run that ran out of time keeps where its time went, through the adapter, and a run that did not keeps none (M2)', async () => {
+      // OptimizationJobs."report" (20270228090000): jsonb, written by run() as the gateway whitelisted it, read back by the page's view.
+      const report = {
+        totalSeconds: 109,
+        budgetSeconds: 100,
+        configuredBudgetSeconds: 100,
+        callerWaitSeconds: null,
+        stages: [
+          { stage: 'PRECHECKS', seconds: 0.4 },
+          { stage: 'SEARCH_CLEAN', seconds: 60 },
+          { stage: 'PROBE', seconds: 5 },
+        ],
+        search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: 60, conflicts: 118344, branches: null }] },
+        weekLoadCut: false,
+      };
+      const answerWith = (status: string) => {
+        for (const answer of calls.splice(0)) {
+          answer({ requestId: 'probe', status, lessons: [], conflicts: null, report: { ...report, injected: 'x'.repeat(50) } } as unknown as AiEngineScheduleResponse);
+        }
+        refuseCalls.length = 0;
+      };
+      const reportOf = (id: string) =>
+        one<{ report: unknown; type: string | null }>(`SELECT report, jsonb_typeof(report) AS type FROM "OptimizationJobs" WHERE id = $1`, [id]);
+
+      const timedOut = (await jobs.start(year, admin)).jobId;
+      await until('its heartbeat', async () => (await row(timedOut)).status === 'RUNNING');
+      answerWith('TIMEOUT');
+      await until('the run ends', async () => (await row(timedOut)).status === 'SUCCEEDED');
+      const stored = await reportOf(timedOut);
+      assert.equal(stored.type, 'object', 'a JSON object, not a JSON null');
+      assert.deepEqual(stored.report, report, 'the whitelisted report: nothing the engine added');
+      assert.deepEqual((await jobs.get(timedOut, admin)).report, report, 'and the page reads the same');
+
+      const solved = (await jobs.start(year, admin)).jobId;
+      await until('its heartbeat', async () => (await row(solved)).status === 'RUNNING');
+      answerWith('FEASIBLE');
+      await until('the run ends', async () => (await row(solved)).status === 'SUCCEEDED');
+      assert.deepEqual(await reportOf(solved), { report: null, type: null }, 'a database null, for an answer with a timetable');
+      assert.equal((await jobs.get(solved, admin)).report, null);
+
+      // The column's own CHECK: an object of at most 8 KiB, whoever writes it.
+      for (const [what, value] of [
+        ['an array', `'[1, 2]'::jsonb`],
+        ['a scalar', `'7'::jsonb`],
+        ['an object over 8 KiB', `jsonb_build_object('x', repeat('y', 9000))`],
+      ] as const) {
+        await assert.rejects(
+          owner.query(`UPDATE "OptimizationJobs" SET report = ${value} WHERE id = $1`, [solved]),
+          (error: { code?: string }) => error.code === '23514',
+          `${what} is refused by OptimizationJobs_report_is_a_small_object`,
+        );
+      }
+      await owner.query(`UPDATE "OptimizationJobs" SET report = jsonb_build_object('x', repeat('y', 8000)) WHERE id = $1`, [solved]);
+      await owner.query(`UPDATE "OptimizationJobs" SET report = NULL WHERE id = $1`, [solved]);
+    });
   } finally {
     answerAll();
     await jobs.onModuleDestroy().catch(() => undefined);

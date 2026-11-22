@@ -3039,6 +3039,15 @@
       klasserna högst har kvar att lägga, eller att de inga har kvar.
     </p>
     <p>
+      Siffrorna är <em>minst</em>-tal: räkningen visar att årskursens minsta
+      vecka är åtminstone så lång, och stannar när den vet om årskursen ligger
+      över 85 %. Två årskursers procent går därför inte att jämföra, och en
+      årskurs kan vara fullare än sin siffra säger. Hinner räkningen inte med
+      alla årskurser inom sina fyra sekunder (en mycket stor skola) står det som
+      en egen rad bland orsakerna: en årskurs utan rad är då <em>inte räknad</em>,
+      vilket inte är detsamma som att den ligger under 85 %.
+    </p>
+    <p>
       Två vägar ut. Ge varje språkgrupp en egen lärare och lägg posterna i
       ett parallellt block (ovan): då går de samtidigt, och språkvalet tar en tid
       per lektion i stället för en per grupp. Eller, när klasserna har egna
@@ -6126,6 +6135,43 @@
       med siffrorna, och skärmen sätter orden. Ser du en mening på engelska är
       det en mening som är ny i motorn och ännu inte översatt — innehållet
       stämmer, och den är värd att rapportera.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Så gick tiden: kortet efter <em>Lösaren hann inte klart</em></span>
+    <p>
+      Under <span class="ui">Senaste körning</span> står, när tiden tog slut,
+      kortet <span class="ui">Så gick tiden</span>. Det säger fyra saker, och
+      vad var och en vilar på står i texten:
+    </p>
+    <ul>
+      <li><strong>Var tiden gick.</strong> Kontrollerna före sökningen,
+        förberedelserna, sökningarna och förklaringen, var och en med sina
+        sekunder, och hur länge lösaren arbetade sammanlagt. Sekunderna är mätta.</li>
+      <li><strong>Hur långt sökningen kom.</strong> Att ingen sökning hittade
+        ett schema, hur många som kördes och hur länge, och hur länge sökningen
+        fick: står det att den fick mindre än motorn är inställd på har körningen
+        kortats, till exempel för att förberedelserna tog tid. Kortet
+        säger aldrig hur stor del av vägen sökningen kom, för en sökning efter
+        ett schema har ingen gräns att nå. Antalet konflikter och grenar ligger
+        under <span class="ui">Tekniska uppgifter</span> och är det arbete
+        lösaren gjorde, inte hur nära ett schema den kom.</li>
+      <li><strong>Sannolik orsak.</strong> En eller flera av: en regel som
+        gjorde veckan lösbar när den lättades (mätt, inte bevisat), en trång
+        vecka (årskurserna står i årskursordning med <em>minst</em> så här stor
+        del av ramtiderna), en sökning som fick kortare tid än vanligt, eller
+        förberedelser som tog en stor del av körningen. Hittas ingen står det
+        att ingen orsak kunde mätas, och kortet gissar inte.</li>
+      <li><strong>Nästa steg</strong> för varje orsak.</li>
+    </ul>
+    <p>
+      Två saker att läsa rätt. Procenten för en trång vecka är ett
+      <em>minst</em>-tal, och två årskursers procent går inte att jämföra:
+      kortet säger aldrig vilken som är trängst. Och står det att räkningen av
+      årskursernas veckor inte hann med alla årskurser är en årskurs utan siffra
+      <em>inte räknad</em>, vilket inte är detsamma som att den ligger under
+      85 %. Ett TIMEOUT från före kortet, eller från en motor som inte har det,
+      visar samma korta mening som förut.
     </p>
   </div>
   <div class="note">
@@ -11193,13 +11239,33 @@
       </tr>
       <tr>
         <td class="k">Lösaren hann inte klart</td>
-        <td>Problemet är stort men inte nödvändigtvis olösbart.</td>
-        <td>Kör om. Har ni ett tidigare schema, höj <span class="ui">Schemastabilitet</span> — då utgår motorn från det och blir betydligt snabbare. Säger diagnosen att en årskurs är trång räcker längre tid inte alltid; se raden ovan.</td>
+        <td>Problemet är stort men inte nödvändigtvis olösbart. Kortet <span class="ui">Så gick tiden</span> säger var tiden gick, hur länge sökningen fick och den sannolika orsaken.</td>
+        <td>Gör det kortets <span class="ui">Nästa steg</span> säger. Har ni ett tidigare schema, höj <span class="ui">Schemastabilitet</span> — då utgår motorn från det och blir betydligt snabbare. Säger diagnosen att en årskurs är trång räcker längre tid inte alltid; se raden ovan.</td>
       </tr>
       <tr>
         <td class="k">Lösaren hann inte klart, och restiden mellan skolområdena är påslagen</td>
         <td>Restiden gör en vecka med lektioner på två skolområden svårare att söka. Om det är restiden som gör att tiden inte räcker visar diagnosens rad bara när den hittade ett schema utan restiden (5.1).</td>
         <td>Läs raden om restiden. Säger den att ett schema hittades utan restiden är det restiden som är skillnaden: låt fler lektioner använda salar på ett skolområde, till exempel med en salsregel (4.4), och kör om, eller stäng av restiden i generatorn under Skolregler (5.1). Säger den att inget schema hittades utan restiden heller är skillnaden inte mätt. En körning med restiden avstängd visar om den är det, och en stor skola kan behöva en längre körning.</td>
+      </tr>
+      <tr>
+        <td class="k">Schemamotorn hann inte svara inom sin längsta väntetid, så inget schema sparades</td>
+        <td>Motorn svarade inte alls inom den tid den får, så det finns inte ens en förklaring att visa. Meddelandet säger vilket steg motorn var i när tiden tog slut och hur länge steget hade pågått, till exempel <em>den andra sökningen efter ett schema, 160 s av 230 s</em>. Motorn kan räkna klart i bakgrunden en stund till.</td>
+        <td>Vänta några minuter och kör om. Upprepas det på samma underlag: kör <span class="ui">Kontrollera veckan</span> (5.2) först, och hör av dig till den som driver tjänsten och ange vilket steg meddelandet nämnde.</td>
+      </tr>
+      <tr>
+        <td class="k">Tjänsten väntade ett antal sekunder på schemamotorn och fick inget svar</td>
+        <td>Tjänsten slutade vänta innan motorn svarade. Står det också att motorn kan behöva upp till ett högre antal sekunder är det väntetiden som är för kort. Den är en inställning i tjänsten och inget i schemat.</td>
+        <td>Vänta några minuter och kör om. Är väntetiden för kort: hör av dig till den som driver tjänsten.</td>
+      </tr>
+      <tr>
+        <td class="k">Tjänsten nådde inte schemamotorn</td>
+        <td>Motorn var nere eller startades om medan körningen pågick. Det händer vid en driftsättning av tjänsten.</td>
+        <td>Vänta en stund och kör om. Inget schema skrevs, och schemat är som det var.</td>
+      </tr>
+      <tr>
+        <td class="k">Körningen avbröts när tjänsten startades om</td>
+        <td>Varje driftsättning startar om tjänsten, och en körning som pågår då avbryts. Meddelandet säger ungefär hur länge den hade pågått när tjänsten sist hördes av.</td>
+        <td>Kör Generera igen. Inget schema skrevs, och schemat är som det var.</td>
       </tr>
       <tr>
         <td class="k">Läraren ser inget schema</td>

@@ -160,6 +160,12 @@ jobs:
         run: npm ci
         working-directory: web
 
+      # The gate's margin warning (a route or the shared runtime with under
+      # 2 KB left): its arithmetic, and the script on a made-up build, so that
+      # a warning is proven never to change the exit code. No build needed.
+      - name: Bundle margin warning (tests)
+        run: node --test scripts/bench/bundle-margin.test.mjs
+
       - name: Typecheck
         run: npm run typecheck
         working-directory: web

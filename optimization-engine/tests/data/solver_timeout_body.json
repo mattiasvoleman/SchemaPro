@@ -6,5 +6,13 @@
     "optimize-rooms": "Room optimization timed out.",
     "staff": "Staffing proposal timed out.",
     "plan-exams": "Exam planning timed out."
+  },
+  "_stage": "What the generation route's 503 adds when the solve it gave up on was in a step (omgång 13, M2; app/solver/stage_clock.py): the step, the seconds in it and the seconds since the request came in, flat numbers beside the route and the ceiling. The gateway carries them to the page as the run's error params (ENGINE_TIMED_OUT). Absent from the other routes' bodies and from a 503 whose solve had closed its last step, and from an engine older than the field.",
+  "detailsWithStage": {
+    "route": "optimize",
+    "ceilingSeconds": 230.0,
+    "stage": "SEARCH_CLONE",
+    "stageSeconds": 160.0,
+    "elapsedSeconds": 230.0
   }
 }

@@ -69,10 +69,26 @@ class SolverTimeoutError(OptimizationEngineError):
     is the one example both sides read).
     """
 
-    def __init__(self, message: str, *, route: str, ceiling_seconds: float) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        route: str,
+        ceiling_seconds: float,
+        stage: str | None = None,
+        stage_seconds: float | None = None,
+        elapsed_seconds: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.route = route
         self.ceiling_seconds = ceiling_seconds
+        # WHERE THE SOLVE WAS when the ceiling fell (app/solver/stage_clock.py),
+        # for the one route that keeps such an account: the step it was in, the
+        # seconds in it and the seconds since entry. None for the others, and
+        # for a solve that had closed its last step as the route gave up.
+        self.stage = stage
+        self.stage_seconds = stage_seconds
+        self.elapsed_seconds = elapsed_seconds
 
 
 def error_payload(

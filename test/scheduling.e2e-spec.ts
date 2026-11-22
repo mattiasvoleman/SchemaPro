@@ -171,6 +171,63 @@ describe('Scheduling surface (e2e)', () => {
         ]);
       });
 
+      it('carries where a TIMEOUT’s time went on the wire, as it was whitelisted, and null for a run that did not run out of time (omgång 13, M2)', async () => {
+        const stored = {
+          totalSeconds: 109,
+          budgetSeconds: 100,
+          configuredBudgetSeconds: 100,
+          callerWaitSeconds: null,
+          stages: [
+            { stage: 'BUILD', seconds: 4 },
+            { stage: 'SEARCH_CLEAN', seconds: 60 },
+          ],
+          search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: 60, conflicts: 118344, branches: null }] },
+          weekLoadCut: false,
+        };
+        harness.tx['optimizationJob']!['findMany']!.mockResolvedValue([
+          runningRow({ id: 'timed-out', status: 'SUCCEEDED', solverStatus: 'TIMEOUT', finishedAt: new Date(), report: { ...stored, injected: 'x'.repeat(300) } }),
+          runningRow({ id: 'plain', status: 'SUCCEEDED', solverStatus: 'OPTIMAL', finishedAt: new Date(), report: null }),
+          runningRow({ id: 'broken', status: 'SUCCEEDED', solverStatus: 'TIMEOUT', finishedAt: new Date(), report: { totalSeconds: 'soon' } }),
+        ]);
+
+        const history = await request(http())
+          .get(`/api/v1/optimization/jobs?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .expect(200);
+
+        expect(history.body.map((run: { id: string; report: unknown }) => [run.id, run.report])).toEqual([
+          ['timed-out', stored],
+          ['plain', null],
+          ['broken', null],
+        ]);
+        expect(JSON.stringify(history.body)).not.toContain('injected');
+      });
+
+      it('says how long an abandoned run had gone on by its last heartbeat, a figure and nothing else of the lease (omgång 13, M2)', async () => {
+        const createdAt = new Date(Date.now() - 6 * 60 * 1000);
+        harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(
+          runningRow({
+            createdAt,
+            leaseUntil: new Date(Date.now() - 90 * 1000),
+            heartbeatAt: new Date(createdAt.getTime() + 150 * 1000),
+            claimedBy: 'host:1:abcd',
+          }),
+        );
+
+        const response = await request(http())
+          .get(`/api/v1/optimization/jobs/${VERSION_ID}`)
+          .set('x-test-user', admin())
+          .expect(200);
+
+        expect(response.body).toMatchObject({
+          status: 'FAILED',
+          errorCode: 'ENGINE_RUN_ABANDONED',
+          errorParams: { lastSeenSeconds: 150 },
+        });
+        expect(JSON.stringify(response.body)).not.toContain('host:1:abcd');
+        expect(Object.keys(response.body)).not.toEqual(expect.arrayContaining(['heartbeatAt']));
+      });
+
       it('never puts the claimant or the lease on the wire', async () => {
         harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(
           runningRow({ claimedBy: 'host:1:abcd', heartbeatAt: new Date() }),

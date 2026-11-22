@@ -564,6 +564,81 @@ describe("a run that hit the time limit", () => {
     expect(screen.getByText("conflictCategories.TIMEOUT_PROBE")).toBeInTheDocument();
     expect(screen.getByText(/changeoverMinutes\) set to 0/)).toBeInTheDocument();
   });
+
+  /*
+   * Omgång 13, M2: a run that ran out of time says where the time went, how far the search got, the likely cause and the next step
+   * (timeout-account.tsx, behind a lazy import), from the engine's report. A run without one says what it always said.
+   */
+  describe("and says where the time went", () => {
+    const timedOut = (over: Record<string, unknown> = {}) => ({
+      id: "job-t",
+      status: "SUCCEEDED",
+      solverStatus: "TIMEOUT",
+      lessonsGenerated: 0,
+      conflictSummary: null,
+      conflictSummaryCode: null,
+      conflicts: [],
+      createdAt: "2026-11-21T08:00:00.000Z",
+      finishedAt: "2026-11-21T08:03:10.000Z",
+      report: {
+        totalSeconds: 109,
+        budgetSeconds: 100,
+        configuredBudgetSeconds: 100,
+        callerWaitSeconds: null,
+        stages: [
+          { stage: "BUILD", seconds: 4 },
+          { stage: "SEARCH_CLEAN", seconds: 60 },
+        ],
+        search: { solutions: 0, phases: [{ phase: "CLEAN", seconds: 60, conflicts: 12, branches: 34 }] },
+        weekLoadCut: false,
+      },
+      ...over,
+    });
+
+    it("draws the account in place of the one-sentence hint", async () => {
+      state.job = timedOut();
+      render(<GeneratePage />);
+
+      expect(await screen.findByRole("heading", { name: "generate.timeoutAccount.title" })).toBeInTheDocument();
+      expect(screen.getByText("generate.timeoutAccount.stage(BUILD|4)")).toBeInTheDocument();
+      expect(screen.queryByText("generate.timeoutHint")).toBeNull();
+    });
+
+    it("hands the account the run's rows, so that the tight years it lists are the ones the arithmetic found", async () => {
+      state.job = timedOut({
+        conflicts: [
+          { category: "REQUIREMENT_DEMAND", code: "TIGHT_WEEK_LOAD", message: "…", params: { grades: "8", percent: 93 }, resourceNames: [] },
+        ],
+      });
+      render(<GeneratePage />);
+
+      expect(await screen.findByText("generate.timeoutAccount.tightYear(8|93)")).toBeInTheDocument();
+    });
+
+    it("says the hint, as it always did, when the run carries no report: an older engine, a run from before the field", () => {
+      state.job = timedOut({ report: null });
+      render(<GeneratePage />);
+
+      expect(screen.getByText("generate.timeoutHint")).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "generate.timeoutAccount.title" })).toBeNull();
+    });
+
+    it("says the hint of a gateway that has no such field at all", () => {
+      const { report: _none, ...without } = timedOut();
+      state.job = without;
+      render(<GeneratePage />);
+
+      expect(screen.getByText("generate.timeoutHint")).toBeInTheDocument();
+    });
+
+    it("draws no account for a run that did not run out of time, even one that carries a report", () => {
+      state.job = timedOut({ solverStatus: "INFEASIBLE" });
+      render(<GeneratePage />);
+
+      expect(screen.queryByRole("heading", { name: "generate.timeoutAccount.title" })).toBeNull();
+      expect(screen.queryByText("generate.timeoutHint")).toBeNull();
+    });
+  });
 });
 
 describe("a refusal that names classes", () => {
@@ -1754,6 +1829,41 @@ describe("Schemaförslag beside Generera (design §6)", () => {
 
     expect(screen.getByText(`scheduleCandidates.jobErrors.${code}`)).toBeInTheDocument();
     expect(screen.queryByText("The draft changed during the run.")).toBeNull();
+  });
+
+  /*
+   * The runs that gave no answer say as much of their figures as the gateway has (run-ending.ts, omgång 13 M2): the
+   * stub echoes a sentence's figures after its key, in the order the sentence says them.
+   */
+  describe("a run that ended without an answer from the engine", () => {
+    const ended = (errorCode: string, errorParams: Record<string, string | number> | null) => ({
+      id: "job-9", status: "FAILED", solverStatus: null, lessonsGenerated: 0, conflicts: [],
+      error: "The AI engine did not respond in time.", errorCode, errorParams,
+      createdAt: "2026-11-21T08:00:00.000Z", finishedAt: "2026-11-21T08:04:30.000Z",
+    });
+
+    it.each([
+      ["the engine's ceiling, and the step its solve was in", "ENGINE_TIMED_OUT", { ceilingSeconds: 230, stage: "SEARCH_CLONE", stageSeconds: 160, elapsedSeconds: 230 }, "ENGINE_TIMED_OUT_AT(230|SEARCH_CLONE|160|230)"],
+      ["the engine's ceiling alone", "ENGINE_TIMED_OUT", { ceilingSeconds: 230 }, "ENGINE_TIMED_OUT_CEILING(230)"],
+      ["a wait shorter than the engine says it needs", "ENGINE_WAIT_EXPIRED", { waitSeconds: 120, engineCeilingSeconds: 230 }, "ENGINE_WAIT_EXPIRED_SHORT(120|230)"],
+      ["a wait that was long enough", "ENGINE_WAIT_EXPIRED", { waitSeconds: 240, engineCeilingSeconds: 230 }, "ENGINE_WAIT_EXPIRED_AFTER(240)"],
+      ["a wait with no figure", "ENGINE_WAIT_EXPIRED", null, "ENGINE_WAIT_EXPIRED"],
+      ["an engine that was not reached", "ENGINE_NOT_REACHED", null, "ENGINE_NOT_REACHED"],
+      ["a run abandoned after it had gone on a while", "ENGINE_RUN_ABANDONED", { lastSeenSeconds: 150 }, "ENGINE_RUN_ABANDONED_AFTER(150)"],
+    ])("says %s in its own words, never the English", (_name, code, params, shown) => {
+      state.job = ended(code, params);
+      render(<GeneratePage />);
+
+      expect(screen.getByText(`scheduleCandidates.jobErrors.${shown}`)).toBeInTheDocument();
+      expect(screen.queryByText("The AI engine did not respond in time.")).toBeNull();
+    });
+
+    it("says an abandoned run's figure after a reload too, when the newest run of the year is the one that went away", () => {
+      state.history = [ended("ENGINE_RUN_ABANDONED", { lastSeenSeconds: 95 })];
+      render(<GeneratePage />);
+
+      expect(screen.getByText("scheduleCandidates.jobErrors.ENGINE_RUN_ABANDONED_AFTER(95)")).toBeInTheDocument();
+    });
   });
 
   /*

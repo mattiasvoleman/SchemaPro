@@ -319,6 +319,47 @@ vi.mock("@/components/schedule/selection-bar", async (importOriginal) => {
   };
 });
 
+/*
+ * The code-split pieces (./timetable-lazy.ts) as they really are, except that a row can hand the page a wrapper
+ * that rejects: what lazy() holds after a fetch that did not arrive. A mocked module cannot be made to fail a
+ * dynamic import() the same way twice (the first fetch of a chunk is the only one a factory can fail), so the
+ * failure is put on the wrapper the page reads, and it is taken away by the page's own reset call, as a new
+ * wrapper is: the row sees whether the page asks for one where it caught the failure, and draws from it.
+ */
+const brokenPieces = vi.hoisted(() => ({ dialogs: false, panel: false, bar: false }));
+vi.mock("./timetable-lazy", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./timetable-lazy")>();
+  const { lazy } = await import("react");
+  const rejects = () => lazy(() => Promise.reject(new Error("Failed to load chunk")));
+  const brokenDialogs = { ...real.lessonDialogs, LessonEditDialog: rejects() };
+  const brokenPanel = rejects();
+  const brokenBar = rejects();
+  return {
+    ...real,
+    get lessonDialogs() {
+      return brokenPieces.dialogs ? brokenDialogs : real.lessonDialogs;
+    },
+    get LessonTimePanel() {
+      return brokenPieces.panel ? brokenPanel : real.LessonTimePanel;
+    },
+    get SelectionBar() {
+      return brokenPieces.bar ? brokenBar : real.SelectionBar;
+    },
+    resetLessonDialogs() {
+      brokenPieces.dialogs = false;
+      real.resetLessonDialogs();
+    },
+    resetLessonTimePanel() {
+      brokenPieces.panel = false;
+      real.resetLessonTimePanel();
+    },
+    resetSelectionBar() {
+      brokenPieces.bar = false;
+      real.resetSelectionBar();
+    },
+  };
+});
+
 /* The two exports as they really are, unless a row says their chunk did not arrive. */
 const exportsLoad = vi.hoisted(() => ({ fail: false }));
 vi.mock("./timetable-exports", async (importOriginal) => {
@@ -625,6 +666,80 @@ function subjectsOnScreen(): string[] {
     screen.queryAllByRole("button").some((el) => el.textContent?.includes(subject.name)),
   ).map((subject) => subject.name);
 }
+
+/*
+ * A lazy() keeps a rejected fetch for good and rethrows it on every later render, so a chunk that did not
+ * arrive is tried again only through a NEW wrapper: the page asks timetable-lazy.ts for one
+ * (resetLessonDialogs, resetLessonTimePanel, resetSelectionBar) and reads the binding again on its next
+ * render. timetable-split.test.ts shows each reset gives a new wrapper; these show the page asks for it where
+ * the failure is caught, and draws from the one it is given (brokenPieces, at the top).
+ */
+describe("a piece that did not arrive is fetched again through a new wrapper", () => {
+  beforeEach(() => {
+    toasts.error.mockClear();
+  });
+  afterEach(() => {
+    brokenPieces.dialogs = false;
+    brokenPieces.panel = false;
+    brokenPieces.bar = false;
+    // The panel remembers it is open for the tab.
+    try {
+      sessionStorage.clear();
+    } catch {}
+  });
+
+  it("opens Justera on the next press after its wrapper rejected", async () => {
+    brokenPieces.dialogs = true;
+    render(<TimetablePage />);
+    const openSlojd = () => {
+      const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+      fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+    };
+
+    openSlojd();
+    await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("Failed to load chunk"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(brokenPieces.dialogs).toBe(false);
+
+    openSlojd();
+    expect((await screen.findByRole("dialog")).textContent).toContain("Slöjd · 5.1 · K. Ek");
+    // The one failure was said once: the second press drew from the new wrapper and did not meet the first one's.
+    expect(toasts.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the Lektionstid panel on the next press after its wrapper rejected, and closes it meanwhile", async () => {
+    brokenPieces.panel = true;
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    const button = screen.getByRole("button", { name: "timetable.lessonTime.button" });
+
+    await user.click(button);
+    await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("Failed to load chunk"));
+    // Closed again by the failure, so the next press is an opening and not a closing.
+    await waitFor(() => expect(button).toHaveAttribute("aria-expanded", "false"));
+    expect(screen.queryByRole("region", { name: "timetable.lessonTime.region" })).toBeNull();
+    expect(brokenPieces.panel).toBe(false);
+
+    await user.click(button);
+    expect(await screen.findByRole("region", { name: "timetable.lessonTime.region" })).toBeDefined();
+    expect(toasts.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the selection's bar at the first selection after its wrapper rejected with nothing selected", async () => {
+    brokenPieces.bar = true;
+    const { container } = render(<TimetablePage />);
+    // Drawn, empty, as soon as the lessons are read: it rejects here, and nobody has lost anything.
+    await waitFor(() => expect(brokenPieces.bar).toBe(false));
+    expect(toasts.error).not.toHaveBeenCalled();
+    expect(screen.queryByText(/timetable\.bulkSelected/)).toBeNull();
+
+    // The next selection draws from the new wrapper and shows the bar at once.
+    fireEvent.keyDown(container.querySelector('[data-lesson-id="l-slojd"]')!, { key: "Enter", shiftKey: true });
+    expect(await screen.findByText("timetable.bulkSelected(1)")).toBeInTheDocument();
+    expect(toasts.error).not.toHaveBeenCalled();
+  });
+});
 
 describe("an administrator who teaches (Users.teaches) is a teacher of the grid", () => {
   const admin = (id: string, firstName: string, lastName: string, teaches?: boolean) => ({

@@ -51,6 +51,7 @@ import { sharesByRequirement, useRequirementShares } from "@/lib/requirement-sha
 import { dutyPeriodLine, keepsTimesAllYear } from "@/lib/duty-lines";
 import { usePlanningYear } from "@/lib/planning-year";
 import { useWeekCheck, warnsBeforeRun } from "@/lib/week-check";
+import { runEnding } from "./run-ending";
 import { withProjectedHomes } from "@/lib/projected-rosters";
 import {
   PlanningYearPicker,
@@ -76,6 +77,13 @@ const PlacedRow = lazy(() => import("./placed-row").then((module) => ({ default:
 const WeekCheckPanel = lazy(() =>
   import("@/components/schedule/week-check").then((module) => ({ default: module.WeekCheckPanel })),
 );
+
+/**
+ * What a run that ran out of time says for itself: where the time went, how far the search got, the likely cause and the next
+ * step (M2). Drawn only when a run ended in TIMEOUT and carries the engine's report, so a route near its bundle budget pays for it
+ * when somebody needs it.
+ */
+const TimeoutAccount = lazy(() => import("./timeout-account").then((module) => ({ default: module.TimeoutAccount })));
 
 /**
  * How long the gateway counts a PENDING or RUNNING job as running when it
@@ -582,12 +590,17 @@ export default function GeneratePage() {
    * pinned without a room (ENGINE_LACKS_PINNED_LESSONS), or it answered meals
    * that do not fit them (ENGINE_MEALS_INCONSISTENT).
    */
+  const endingText = (code: string | null, params: Record<string, string | number> | null): string | null => {
+    const ending = runEnding(code, params);
+    return ending === null ? null : tCandidates(`jobErrors.${ending.key}` as never, ending.values as never);
+  };
   const jobErrorText = (code: string | null, params: Record<string, string | number> | null): string | null =>
-    // The process that ran it went away (the service was restarted, or lost): its lease ran out and the sweep, or the
-    // page's own read of the lease, ended it. Nothing was written.
-    code === "ENGINE_RUN_ABANDONED"
-      ? tCandidates("jobErrors.ENGINE_RUN_ABANDONED")
-      : code === "GENERATE_STALE"
+    // The endings that gave no answer (run-ending.ts): the engine's own ceiling fell (ENGINE_TIMED_OUT, nothing came
+    // back, not even a TIMEOUT's explanation), the API's wait ran out, the engine was not reached, or the process that
+    // ran it went away (the service was restarted, or lost: its lease ran out and the sweep, or the page's own read of
+    // the lease, ended it). Nothing was written, and each says as many of its figures as the gateway has.
+    endingText(code, params) ??
+    (code === "GENERATE_STALE"
       ? staleParts(params).length > 0
         ? tCandidates("jobErrors.GENERATE_STALE_PARTS", {
             parts: changedPartsText(tCandidates, staleParts(params), locale),
@@ -607,11 +620,7 @@ export default function GeneratePage() {
               // partition of the year's periods, so nothing was written.
               code === "ENGINE_MEALS_INCONSISTENT"
               ? tCandidates("jobErrors.ENGINE_MEALS_INCONSISTENT")
-              : // The engine stopped waiting for its own solve: nothing came back,
-                // not even a TIMEOUT's explanation (ENGINE_TIMED_OUT in the proxy).
-                code === "ENGINE_TIMED_OUT"
-                ? tCandidates("jobErrors.ENGINE_TIMED_OUT")
-                : null;
+              : null);
 
   const solverStatus = job?.status === "SUCCEEDED" ? job.solverStatus : null;
   // Both verdicts mean "no timetable came back", but only INFEASIBLE is a
@@ -1173,7 +1182,19 @@ export default function GeneratePage() {
           ) : solverStatus === "INFEASIBLE" ? (
             <p className="max-w-prose text-sm text-muted-foreground">{t("infeasibleHint")}</p>
           ) : solverStatus === "TIMEOUT" ? (
-            <p className="max-w-prose text-sm text-muted-foreground">{t("timeoutHint")}</p>
+            job.report ? (
+              // The account replaces the one-sentence hint; while its chunk is on its way, and where it never arrives, the hint stands.
+              <DialogLoadBoundary
+                onError={() => undefined}
+                fallback={<p className="max-w-prose text-sm text-muted-foreground">{t("timeoutHint")}</p>}
+              >
+                <Suspense fallback={<p className="max-w-prose text-sm text-muted-foreground">{t("timeoutHint")}</p>}>
+                  <TimeoutAccount report={job.report} conflicts={job.conflicts} />
+                </Suspense>
+              </DialogLoadBoundary>
+            ) : (
+              <p className="max-w-prose text-sm text-muted-foreground">{t("timeoutHint")}</p>
+            )
           ) : null}
 
           {offersBestEffort ? (
@@ -1303,7 +1324,7 @@ export default function GeneratePage() {
               {t("lastRun")}
             </span>
           }
-          description={tCandidates("jobErrors.ENGINE_RUN_ABANDONED")}
+          description={endingText("ENGINE_RUN_ABANDONED", newestInHistory?.errorParams ?? null)}
           descriptionClassName="text-foreground"
         >
           <div className="flex flex-wrap items-center gap-3">{runAgainButton}</div>
