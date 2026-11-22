@@ -1553,6 +1553,21 @@ class SchedulerSolver:
         if self._stages is not None:
             self._stages.enter(stage, time.monotonic())
 
+    def _leave_stage(self) -> None:
+        """The account's last step is over and nothing it names is running: a ceiling that falls now names none.
+
+        Called where the search has ended with an answer that is not a TIMEOUT:
+        the proof's explanation, phase 2 (the search for a better timetable),
+        reading the timetable out, and what follows the answer (the released
+        week's question). A step left open there would be read by
+        stage_where() as "still searching", and the 503 would tell a school
+        that the solve was in its first search for a timetable when it had one,
+        or had proved there was none. With no step, the 503 is what it was
+        before the account existed: the route and the ceiling.
+        """
+        if self._stages is not None:
+            self._stages.finish(time.monotonic())
+
     def _note_search(self, phase: TimeoutPhaseName, solver: cp_model.CpSolver) -> None:
         """A satisfaction search has returned without a timetable: what CP-SAT says it did.
 
@@ -5055,6 +5070,7 @@ class SchedulerSolver:
         is the proof's, and a candidate after the first has the first one's
         hard rules, so the first one's explanation is already the school's.
         """
+        self._leave_stage()
         if not _runs_probes(request):
             return OptimizeScheduleResponse(
                 request_id=request.request_id,
@@ -6089,6 +6105,7 @@ class SchedulerSolver:
                     else self._solve_strict(request, entered)
                 )
             except InvalidScheduleInputError as refusal:
+                self._leave_stage()
                 # FÖRLAGDA POSTER, AND THE REFUSALS BEFORE THE MODEL: "locked
                 # lessons leave 7A no lunch break" about locks the school never
                 # made by hand is the same question (review of #293, MEDEL-3).
@@ -6096,6 +6113,7 @@ class SchedulerSolver:
                 if named is None:
                     raise
                 return named
+            self._leave_stage()
             # FÖRLAGDA POSTER: a refusal of a week the school pinned lessons in is
             # asked once more with the pins released (_placements_verdict). Only a
             # request carrying `placements` is; every other answer leaves here as
@@ -6363,6 +6381,10 @@ class SchedulerSolver:
                 for literal in named.values()
             ]
 
+        # A timetable is in hand: what follows (phase 2, reading it out) is not a
+        # step of the account of a solve that found none.
+        self._leave_stage()
+
         def _phase1_response() -> OptimizeScheduleResponse:
             lessons = self._extract_lessons(
                 winner_solver, winner_decisions, rooms, winner_plan,
@@ -6462,6 +6484,12 @@ class SchedulerSolver:
         if not prices_anything(request):
             # Nothing on the list is in the week: the strict solve is the
             # best-effort solve, and says so with an empty list.
+            # THE DELEGATE KEEPS AN ACCOUNT OF ITS OWN (its solve() makes one, and
+            # a TIMEOUT it answers carries it). This solver's would stay in
+            # PRECHECKS for as long as the delegate runs, and a ceiling that fell
+            # then (stage_where, read by the route that gives up waiting) would
+            # say the checks before the search had taken the whole wait.
+            self._stages = None
             strict = SchedulerSolver(self._settings).solve(
                 request.model_copy(update={"relaxation": None}),
             )
@@ -6599,6 +6627,7 @@ class SchedulerSolver:
                 for literal in named.values()
             ]
 
+        self._leave_stage()  # a timetable is in hand: phase 2 is not a step of the account (_leave_stage)
         locked_rooms = resolve_room_locks(request.requirements, request.room_preferences, rooms)
 
         def _answer(
