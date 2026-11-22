@@ -11363,6 +11363,7 @@
       "field": "Fält",
       "fieldOf": "Fält för kolumnen {column}",
       "noHeader": "(utan rubrik)",
+      "noHeaderAt": "(utan rubrik, kolumn {number})",
       "hiddenHeader": "(rubriken visas inte)"
     },
     "option": {

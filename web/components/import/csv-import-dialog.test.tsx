@@ -1357,8 +1357,9 @@ describe("CsvImportDialog a file from Skola24", () => {
 
     await uploadCsv(user, STAFF_FILE);
     await screen.findByText(/^format\.offered\(/);
-    // Not applied by itself: read as it stands, the first person is the header row and is lost.
+    // Not applied by itself: no column is placed (the import waits), but the first person is a row and not the header row.
     expect(screen.queryByText(/^format\.recognised/)).not.toBeInTheDocument();
+    expect(importButton()).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "format.use" }));
     await screen.findByText(/^format\.recognised\(/);
@@ -1462,5 +1463,38 @@ describe("CsvImportDialog a file from Skola24", () => {
     await screen.findByText("rowsReady(count=1)");
     expect(screen.queryByText(/^format\.(offered|recognised)/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "format.use" })).not.toBeInTheDocument();
+  });
+});
+
+describe("CsvImportDialog a file from Skola24 that is only offered", () => {
+  // The marked person is the first row; the ID column holds TF numbers, which X2's own test for a personnummer does not know.
+  const MARKED_FIRST =
+    "Testskolan;Avd A;99999001TF01;Skyddad;Person;SP;skyddad.person@example.invalid;1\r\n" + "Testskolan;;99999001TF02;Erik;Exempel;;erik.exempel@example.invalid;\r\n" + "Testskolan;Avd B;99999001TF03;Åsa;Berg;;asa.berg@example.invalid;0\r\n";
+
+  it("shows nothing of a marked first row and no TF number before the user chooses the description, and posts nothing of them after", async () => {
+    mockPost.mockResolvedValue({ created: 2, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["teachers"] });
+
+    await uploadCsv(user, MARKED_FIRST);
+    await screen.findByText(/^format\.offered\(/);
+    // Offered, not applied: the import waits. The first row is a person, so it is no column name, and the marked one is named by its row only.
+    expect(screen.getByText("held(count=1|rows=1)")).toBeInTheDocument();
+    expect(importButton()).toBeDisabled();
+    expect(document.body.textContent).not.toMatch(/Skyddad|skyddad\.person|TF0/);
+
+    await user.click(screen.getByRole("button", { name: "format.use" }));
+    await screen.findByText("rowsReady(count=2)");
+    await user.click(importButton());
+    await screen.findByText("resultSummary(created=2|skipped=0)");
+    expect(mockPost).toHaveBeenCalledWith("/api/v1/import/teachers", {
+      rows: [
+        { firstName: "Erik", lastName: "Exempel", email: "erik.exempel@example.invalid" },
+        { firstName: "Åsa", lastName: "Berg", email: "asa.berg@example.invalid" },
+      ],
+      rowNumbers: [2, 3],
+    });
+    expect(JSON.stringify(mockPost.mock.calls)).not.toMatch(/Skyddad|skyddad\.person|TF0/);
+    expect(mockPost).toHaveBeenCalledTimes(1);
   });
 });

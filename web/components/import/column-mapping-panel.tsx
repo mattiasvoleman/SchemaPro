@@ -19,7 +19,7 @@ import {
 import type { RawTable } from "@/lib/column-table";
 import { useCreateImportTemplate, useDeleteImportTemplate, useUpdateImportTemplate } from "@/lib/column-template-queries";
 import { hasPersonalNumber } from "@/lib/personal-number";
-import { detectFormats, formatAssignment, formatsOfKind, readFormat } from "@/lib/skola24-format";
+import { detectFormats, formatAssignment, formatsOfKind, offeredReading, readFormat } from "@/lib/skola24-format";
 import type { UnreadReason } from "@/lib/skola24-format-types";
 import { FormatNotices, FormatSelect, NO_FORMAT, type FormatView, type HeaderMode } from "@/components/import/column-mapping-format";
 import { Button } from "@/components/ui/button";
@@ -86,9 +86,13 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
     return reading === null ? null : { descriptor, reading };
   }, [table, formats, formatId, headerMode, headerRow]);
   const formatState = useMemo(() => (inUse === null ? null : { block: inUse.reading.block, assignment: formatAssignment(inUse.reading, kind) }), [inUse, kind]);
-  const block = formatState?.block ?? recognition?.block ?? null;
-  const assignment: Assignment = chosen?.assignment ?? formatState?.assignment ?? recognition?.assignment ?? [];
-  const applied = chosen ? chosen.applied : inUse !== null ? null : (recognition?.template ?? null);
+  // A file with no header row that has the shape of a described one is a table of people whether or not the user has chosen the description: its
+  // first row is not a header and a row with a confidentiality mark is not read (X3 design §6.1). Only the PLACING of columns waits for the choice.
+  const offered = useMemo(() => (inUse !== null || formatChoice === NO_FORMAT ? null : offeredReading(table, detected, formats)), [inUse, formatChoice, table, detected, formats]);
+  const block = formatState?.block ?? offered?.block ?? recognition?.block ?? null;
+  const assignment: Assignment = chosen?.assignment ?? formatState?.assignment ?? offered?.assignment ?? recognition?.assignment ?? [];
+  const applied = chosen ? chosen.applied : inUse !== null || offered !== null ? null : (recognition?.template ?? null);
+  const heldRows = inUse?.reading.heldRows ?? offered?.heldRows ?? NO_ROWS;
   const columns = useMemo(() => (block ? describeColumns(block, kind, assignment) : []), [block, kind, assignment]);
   const result = useMemo(
     () => (block && assignment.length === block.headers.length ? applyMapping(block, kind, assignment) : null),
@@ -126,7 +130,7 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
   const label = (id: string) => t(`fields.${kind}.${id}`);
   const columnName = (index: number) => {
     const shown = columns[index]?.label;
-    return shown === null ? t("columns.hiddenHeader") : shown === "" || shown === undefined ? t("columns.noHeader") : shown;
+    return shown === null ? t("columns.hiddenHeader") : shown === "" || shown === undefined ? t("columns.noHeaderAt", { number: index + 1 }) : shown;
   };
 
   function choose(index: number, value: string) {
@@ -165,7 +169,7 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
         }}
       />
       {/* A file read with no header row has none to choose. */}
-      {candidates.length > 1 && inUse?.reading.by !== "position" ? (
+      {candidates.length > 1 && inUse?.reading.by !== "position" && offered === null ? (
         <div className="space-y-1">
           <Label htmlFor="mapping-header-row">{t("headerRow.label")}</Label>
           <NativeSelect id="mapping-header-row" value={String(block.headerRowNumber)} onChange={(event) => {
@@ -249,7 +253,7 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
     const readable = columns.filter((column) => column.status !== "personalNumber").length;
     return (
       <div className="space-y-3">
-        {inUse === null ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
+        {inUse === null && offered === null ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
         <FormatNotices kind={kind} inUse={inUse} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
         <details
           open={userOpen ?? (latched || needsSay)}
@@ -262,7 +266,7 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
             {columnsView}
           </div>
         </details>
-        {result ? <Summary result={result} label={label} columnName={columnName} heldRows={inUse?.reading.heldRows ?? NO_ROWS} fromFormat={inUse !== null} compact /> : null}
+        {result ? <Summary result={result} label={label} columnName={columnName} heldRows={heldRows} fromFormat={inUse !== null} compact /> : null}
       </div>
     );
   }
@@ -270,10 +274,10 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">{t("intro")}</p>
-      {inUse === null ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
+      {inUse === null && offered === null ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
       <FormatNotices kind={kind} inUse={inUse} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
       {columnsView}
-      {result ? <Summary result={result} label={label} columnName={columnName} heldRows={inUse?.reading.heldRows ?? NO_ROWS} fromFormat={inUse !== null} /> : null}
+      {result ? <Summary result={result} label={label} columnName={columnName} heldRows={heldRows} fromFormat={inUse !== null} /> : null}
     </div>
   );
 }
