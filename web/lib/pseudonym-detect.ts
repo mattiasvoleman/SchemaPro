@@ -17,7 +17,7 @@
  * with +46 and 0046 as 0, an address in lower case.
  */
 
-import { findPersonalNumbers } from "@/lib/personal-number";
+import { findPersonalNumbers, foldForShape } from "@/lib/personal-number";
 
 export type FindingKind = "pnr" | "sam" | "tf" | "epost" | "tel";
 
@@ -57,8 +57,35 @@ const isCoordinationDay = (ten: string): boolean => Number(ten.slice(4, 6)) >= 6
  * value. (lib/personal-number.ts: these are the only things the shape lets differ.)
  */
 function tfSpellingOf(folded: string): string {
-  const parts = /^\d{8}([ -])?([Tt][Ff])\d{2}$/.exec(folded);
-  return `ÅÅÅÅMMDD${parts?.[1] ?? ""}${parts?.[2] ?? "TF"}NN`;
+  const parts = /^\d{4}([ -]*)\d{2}([ -]*)\d{2}([ +-]*)([Tt][ -]?[Ff])([ -]*)\d{2}$/.exec(folded);
+  if (parts === null) return "ÅÅÅÅMMDDTFNN";
+  // The date's digits are told by their place and the separators and letters stand as they were written: nothing of the value is left in it.
+  return `ÅÅÅÅ${parts[1]}MM${parts[2]}DD${parts[3]}${parts[4]}${parts[5]}NN`;
+}
+
+/**
+ * A TF number in the spellings the shared shape does NOT know (lib/personal-number.ts counts one form as documented and a few as our reading): blanks and hyphens
+ * between the parts of the date and around TF, a plus before it, a date written ÅÅÅÅ-MM-DD, a line break between the date and TF (two blanks after the fold), two
+ * letters with a blank between them, a hyphen or a blank after TF. THE DOOR STAYS STRICT AND THIS SEARCH IS WIDE, because the costs differ: a form the door does not
+ * know is a cell read as text (a refusal that is missing), a form this search does not know is a number left in a file that is sent on, and the check on the
+ * finished file looks with the same search and cannot see it either (the review of #383, L-4). What is asked of a spelling is what the door asks: eight digits
+ * of a date, TF in either case, two digits, and no digit before or after. A date of six digits is NOT taken (no file has shown one), nor a code like 7ATF12,
+ * TF2026, Block TF-12 or Sal TF12345678; "20261121 TF 15", a date that a school wrote and two digits, is taken, and costs a marker.
+ */
+const LOOSE_TF = /(?<!\d)\d{4}[ -]{0,2}\d{2}[ -]{0,2}\d{2}[ +-]{0,4}[Tt][ -]?[Ff][ -]{0,4}\d{2}(?!\d)/g;
+
+/** Every TF number in the text in the wide spellings above, with the key the shared shape gives the same number (ÅÅÅÅMMDDTFNN). */
+function findLooseTfNumbers(text: string): Finding[] {
+  if (text.length < 12) return [];
+  const folded = foldForShape(text);
+  // Nearly every cell has no TF in it: this is the cheap way out, before the expression is tried at each place of a long cell.
+  if (!/[Tt][ -]?[Ff]/.test(folded)) return [];
+  const found: Finding[] = [];
+  for (const match of folded.matchAll(LOOSE_TF)) {
+    const digits = match[0].replace(/\D/g, "");
+    found.push({ kind: "tf", start: match.index, end: match.index + match[0].length, key: `${digits.slice(0, 8)}TF${digits.slice(8)}`, spelling: tfSpellingOf(match[0]) });
+  }
+  return found;
 }
 
 /**
@@ -344,6 +371,8 @@ export function findPersonalData(original: string): Finding[] {
     }
     all.push({ kind: found.kind === "samordning" ? "sam" : "pnr", start: found.start, end: found.end, key: found.key, checkDigit, spelling: spellingOf(found.folded, found.digits) });
   }
+  // The wide search for a TF number. A number the shape found too is found twice, at one place with one key, and the merge below makes the two one.
+  all.push(...findLooseTfNumbers(text));
   if (/\d/.test(text)) all.push(...findTelephones(text, all).map((found) => ({ kind: "tel" as const, ...found })));
 
   all.sort((a, b) => a.start - b.start || b.end - a.end);

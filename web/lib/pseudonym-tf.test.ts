@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { findPersonalData } from "@/lib/pseudonym-detect";
+import { findPersonalData, holdsPersonalData } from "@/lib/pseudonym-detect";
 import { KEEP, mark } from "@/lib/pseudonym-headers";
 import { parseText } from "@/lib/pseudonym-input";
-import { isMarker, keyOf, MARKER_PATTERN, markerText } from "@/lib/pseudonym-markers";
+import { isMarker, MARKER_PATTERN, markerText } from "@/lib/pseudonym-markers";
 import { planFile, pseudonymise } from "@/lib/pseudonym-run";
 
 /*
@@ -57,8 +57,150 @@ describe("a TF number is found as one", () => {
     expect(findPersonalData("800161-1234")[0]).toMatchObject({ kind: "sam", key: "8001611234" });
   });
 
-  it("finds nothing in the forms no file has shown, and in a code a school writes", () => {
-    for (const text of ["TF01", "19000101TF", "19000101TF1", "19000101 TF 01", "1900 0101TF01", "7ATF12", "TF2026", "Block TF-12"]) expect(findPersonalData(text), text).toEqual([]);
+  it("finds nothing in what has not the digits of a TF number, and in a code a school writes", () => {
+    for (const text of ["TF01", "19000101TF", "19000101TF1", "7ATF12", "TF2026", "Block TF-12"]) expect(findPersonalData(text), text).toEqual([]);
+  });
+});
+
+/**
+ * THE WIDE SEARCH (the review of #383, L-4). The shared door counts one form of a TF number as documented and a few as our reading, and refuses nothing else: a cell in another
+ * spelling is read as text, which is a cost. In the pseudonymiser the same miss is a number left in a file that is sent on, so the pseudonymiser looks wider than the door: blanks and
+ * hyphens around TF and between the parts of the date, a plus, a date written ÅÅÅÅ-MM-DD, a line break. The door itself is not changed (personal-number-cases.json says so).
+ */
+const NUMBER = "19000101TF01";
+
+describe("a TF number in a spelling the shared shape does not know is found by the pseudonymiser", () => {
+  it.each([
+    ["blanks around TF", "19000101 TF 01"],
+    ["a blank after TF", "19000101TF 01"],
+    ["a blank inside the date", "1900 0101TF01"],
+    ["a date as ÅÅÅÅ-MM-DD", "1900-01-01TF01"],
+    ["a date as ÅÅÅÅ-MM-DD and a hyphen", "1900-01-01-TF01"],
+    ["a date as ÅÅÅÅ-MM-DD and blanks", "1900-01-01 TF 01"],
+    ["a plus before TF", "19000101+TF01"],
+    ["a full stop and a slash", "1900.01.01/TF/01"],
+    ["two blanks before TF", "19000101  TF01"],
+    ["a Windows line break before TF", "19000101\r\nTF01"],
+    ["a line feed after TF", "19000101TF\n01"],
+    ["a soft hyphen", "19000101\u00adTF01"],
+    ["a zero-width space between T and F", "19000101T\u200bF01"],
+    ["a no-break space after TF", "19000101TF\u00a001"],
+    ["lower case and blanks", "19000101 tf 01"],
+    ["full-width digits and letters", "１９０００１０１ ＴＦ ０１"],
+  ])("%s", (_name, text) => {
+    const [found, ...rest] = findPersonalData(text);
+    expect(rest, text).toEqual([]);
+    expect(found, text).toMatchObject({ kind: "tf", key: NUMBER, start: 0, end: text.length });
+    expect("checkDigit" in found!).toBe(false);
+    // A pattern that says how it was written and holds no digit of the value.
+    expect(found!.spelling).toMatch(/^ÅÅÅÅ[ -]*MM[ -]*DD[ +-]*[Tt][ -]?[Ff][ -]*NN$/);
+  });
+
+  it("is the same key and the same marker as the documented spelling, so that one person is one marker in every row", () => {
+    const text = "Id;Namn\n19000101TF01;Anna\n19000101 TF 01;Bo\n1900-01-01-TF01;Cia\n19000101\r\nTF01;Dan\n19000102 TF 01;Eva\n";
+    // (The line break in a quoted cell stays one cell.)
+    const quoted = text.replace("19000101\r\nTF01", '"19000101\r\nTF01"');
+    const result = run(quoted, { 1: mark("namn") });
+    const lines = result.files[0]!.text.split(/\r?\n/).filter((line) => line !== "").slice(1).map((line) => line.split(";")[0]);
+    expect(lines).toEqual(["TF-0001", "TF-0001", "TF-0001", "TF-0001", "TF-0002"]);
+    expect(result.report.totals.tf).toEqual({ occurrences: 5, distinct: 2 });
+    expect(result.report.totals.pnr).toEqual({ occurrences: 0, distinct: 0 });
+    expect(result.files[0]!.text).not.toMatch(/1900|TF ?0|T F/);
+    expect(result.check.passed).toBe(true);
+  });
+
+  it("is found in running text, where only the number is replaced", () => {
+    const result = run("Namn;Anteckning\nAnna;Elev 19000101 TF 01 flyttad, tidigare 1900-01-01-TF01 och 19000102TF 02\n", { 0: mark("namn"), 1: KEEP });
+    // (The cell is quoted: it holds a comma.)
+    expect(result.files[0]!.text).toMatch(/"Elev TF-0001 flyttad, tidigare TF-0001 och TF-0002"\n/);
+    expect(result.report.totals.tf).toEqual({ occurrences: 3, distinct: 2 });
+    expect(result.check.passed).toBe(true);
+  });
+
+  it("is found in a file without a header row and under a header that says nothing", () => {
+    const headerless = run("19000101 TF 01;Anna;ok\n1900-01-01-TF02;Bo;ok\n19000101TF03;Cia;ok\n", { 1: mark("namn"), 2: KEEP });
+    expect(headerless.files[0]!.text).not.toMatch(/1900|TF ?0|Anna|Cia/);
+    expect(headerless.report.totals.tf.distinct).toBe(3);
+    expect(headerless.check.passed).toBe(true);
+    for (const header of ["Id", "Kod"]) {
+      const result = run(`${header};Namn\n19000101 TF 01;Anna\n1900-01-01-TF02;Bo\n19000101TF 03;Cia\n`, { 1: mark("namn") });
+      expect(result.files[0]!.text, header).not.toMatch(/1900|TF ?0|Anna|Cia/);
+      expect(result.report.totals.tf.distinct, header).toBe(3);
+      expect(result.check.passed, header).toBe(true);
+    }
+  });
+
+  it("is a matrix of every blank, hyphen, plus and break around TF: every one is found, whole, with the key of its number", () => {
+    const dates = ["19000101", "1900-01-01", "1900 01 01", "1900 0101", "190001-01", "1900.01.01", "1900/01/01"];
+    const before = ["", " ", "-", "+", "  ", "\r\n", "\u00a0", " - ", "\t"];
+    const letters = ["TF", "tf", "Tf", "tF", "T F", "T-F"];
+    const after = ["", " ", "-", "\n", "\r\n", " - "];
+    let tried = 0;
+    for (const date of dates) {
+      for (const b of before) {
+        for (const l of letters) {
+          for (const a of after) {
+            const text = `${date}${b}${l}${a}01`;
+            const found = findPersonalData(`Elev ${text} flyttad`);
+            expect(found.map((f) => [f.kind, f.key]), JSON.stringify(text)).toEqual([["tf", NUMBER]]);
+            expect(found[0]!.end - found[0]!.start, JSON.stringify(text)).toBe(text.length);
+            tried += 1;
+          }
+        }
+      }
+    }
+    expect(tried).toBe(dates.length * before.length * letters.length * after.length);
+  });
+
+  it("is checked in the finished file with the same search: nothing in a wide spelling is left, and a marker is not taken for one", () => {
+    const result = run("Id;Namn\n19000101 TF 01;Anna\n1900-01-01-TF02;Bo\n", { 1: mark("namn") });
+    expect(result.check.passed).toBe(true);
+    expect(holdsPersonalData(result.files[0]!.text)).toBe(false);
+    expect(holdsPersonalData("Id;Namn\n19000101 TF 01;Anna")).toBe(true);
+    // Run on its own output, it changes nothing.
+    const again = run(result.files[0]!.text, { 1: mark("namn") });
+    expect(again.files[0]!.text).toBe(result.files[0]!.text);
+  });
+
+  it("is told apart from a code a school writes: none of these is a TF number", () => {
+    for (const text of [
+      "7ATF12", "Ma7 TF12", "TF2026", "Block TF-12", "Sal TF12345678", "NV20TF12", "Åk 7 TF-12", "Hus 12 TF 12", "Sal 2026 TF 12", "Kurs 1900 TF 01",
+      "TF 19000101", "T F 19000101", "TF-19000101-01", "1900 TF 01 01",
+      // Not eight digits before, or not two after, or a digit beside it.
+      "1900010 TF 01", "190001012 TF 01", "19000101 TF 1", "19000101 TF 123", "19000101 TF", "19000101 TFX01", "19000101 TF-X",
+      // Dates and times a lesson list holds.
+      "2026-11-21", "2026-11-21 Tis 08:10-09:10", "08:10 - 09:10 TF 12", "Vecka 47 TF 12 Sal 4", "19000101 Fre 12",
+      // A TF number's own parts apart, and the markers.
+      "19000101", "TF 01", "TF-0001", "TF-0002 och TF-0003", "PNR-0001 TF-0001",
+    ]) {
+      expect(findPersonalData(text), text).toEqual([]);
+    }
+  });
+
+  it("costs a school a marker for a date that is followed by TF and two digits, as the shared door does: it is stated, not hidden", () => {
+    expect(findPersonalData("Prov 20261121 TF 15").map((f) => [f.kind, f.key])).toEqual([["tf", "20261121TF15"]]);
+  });
+
+  it("does not take a date of six digits: no file has shown one", () => {
+    expect(findPersonalData("Id 800101TF01 och 800101 TF 01")).toEqual([]);
+  });
+
+  it("is not cut in two by a telephone number nor merged with a personnummer beside it", () => {
+    expect(findPersonalData("0701234567 19000101 TF 01").map((f) => f.kind)).toEqual(["tel", "tf"]);
+    expect(findPersonalData("19000101 TF 01; 0701234567").map((f) => f.kind)).toEqual(["tf", "tel"]);
+    // (Without a separator, "01 0701234567" reads as a twelve-digit personnummer in the shared shape: the span is taken whole as the TF number, and nothing of either is left.)
+    expect(findPersonalData("19000101 TF 01 0701234567").map((f) => f.kind)).toEqual(["tf"]);
+    expect(findPersonalData("800101-1234; 1900-01-01-TF01; 800161-1234").map((f) => f.kind)).toEqual(["pnr", "tf", "sam"]);
+    expect(findPersonalData("anna@skola.se 19000101 TF 01").map((f) => f.kind)).toEqual(["epost", "tf"]);
+  });
+
+  it("takes linear time on a long cell, and finds the number at its end", () => {
+    const started = Date.now();
+    // A megabyte of words and groups of digits with one TF number at its end, and a megabyte of what the expression starts on at every place and cannot finish.
+    expect(findPersonalData(`${"1234 ab ".repeat(125_000)}1900-01-01-TF01`).map((f) => [f.kind, f.key])).toEqual([["tf", NUMBER]]);
+    findPersonalData("1900 01 01 ".repeat(100_000));
+    findPersonalData("19000101TF 0".repeat(80_000));
+    expect(Date.now() - started).toBeLessThan(8000);
   });
 });
 
@@ -66,9 +208,8 @@ describe("a TF number has a marker", () => {
   it("is TF-0001, one marker per value however it was written", () => {
     expect(markerText("tf", 1)).toBe("TF-0001");
     expect(markerText("tf", 12)).toBe("TF-0012");
-    expect(keyOf("tf", "19000101-tf01")).toBe("19000101TF01");
-    expect(keyOf("tf", "19000101 TF01")).toBe(keyOf("tf", "19000101TF01"));
-    expect(keyOf("tf", "19000102TF01")).not.toBe(keyOf("tf", "19000101TF01"));
+    // The key is made where the number is found (Finding.key): a book is given that, and never the text of a cell.
+    expect(findPersonalData("19000101-tf01 19000101 TF01 19000102TF01").map((f) => f.key)).toEqual(["19000101TF01", "19000101TF01", "19000102TF01"]);
   });
 
   it("is a marker the pseudonymiser leaves as it is, and holds no personal data itself", () => {
