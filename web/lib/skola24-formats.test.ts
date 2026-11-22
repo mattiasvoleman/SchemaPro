@@ -46,7 +46,8 @@ describe("every description", () => {
     for (const { where, fact } of factsOf(format)) {
       // A support page, or a file Skola24 publishes under "Filer för kurser".
       expect(fact.source.url, where).toMatch(/^https:\/\/www\.skola24\.com\/(support|globalassets\/support)\//);
-      expect(fact.source.read, where).toBe("2026-11-21");
+      // The pages were read on 2026-11-21 and the course files on 2026-11-22 (the commit that added them says so, and so does the header of skola24-formats.ts).
+      expect(fact.source.read, where).toBe(fact.source.url.includes("/globalassets/support/kursdokument/") ? "2026-11-22" : "2026-11-21");
       expect(fact.source.updated === null || /^\d{4}-\d{2}-\d{2}$/.test(fact.source.updated), where).toBe(true);
       expect(["DOKUMENTERAT", "TOLKAT"], where).toContain(fact.source.status);
     }

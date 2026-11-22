@@ -14,10 +14,13 @@ import { formatById } from "@/lib/skola24-formats";
  * says that what the one produces is what the other takes (the subject export's empty colour, #260, was exactly that).
  */
 
-/** The panel's own steps, without the panel: the description, X2's mapping with the rows a confidential mark holds back, the importer's mapper. */
+/**
+ * The panel's own steps, without the panel: the description (which holds back the rows a confidential mark names: they are not rows of its
+ * block), X2's mapping, the importer's mapper.
+ */
 function bodyOf(file: string, id: string, kind: "teachers") {
   const reading = readFormat(readTable(file), formatById(id)!)!;
-  const applied = applyMapping(reading.block, kind, formatAssignment(reading, kind), { held: reading.heldRows });
+  const applied = applyMapping(reading.block, kind, formatAssignment(reading, kind));
   const mapped = mapTeacherRows(applied.parsed);
   return { reading, applied, mapped, body: { rows: mapped.rows, rowNumbers: mapped.rowNumbers } };
 }
@@ -34,8 +37,8 @@ describe.each([
   });
 
   it("leaves out the person the file marks with a 1, and names the file's own row numbers", () => {
-    const { applied } = bodyOf(staff.file, staff.description, "teachers");
-    expect(applied.held).toEqual(held);
+    const { reading } = bodyOf(staff.file, staff.description, "teachers");
+    expect(reading.heldRows).toEqual(held);
     expect([...staff.body.rowNumbers]).toEqual(rowNumbers);
     expect(staff.body.rows.map((row) => row.firstName)).not.toContain("Maria");
   });

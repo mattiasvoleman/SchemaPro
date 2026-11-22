@@ -25,6 +25,8 @@ const SUPPORT = "https://www.skola24.com/support/";
 interface Page {
   url: string;
   updated: string | null;
+  /** The day it was read, when that is not READ: the course files were read the day after the pages. */
+  read?: string;
 }
 
 const PAGE = {
@@ -47,9 +49,9 @@ const PAGE = {
 } as const satisfies Record<string, Page>;
 
 /** One of the course files Skola24 publishes under "Filer för kurser" (read for its shape only: no cell of it is kept anywhere). */
-const course = (file: string): Page => ({ url: `https://www.skola24.com/globalassets/support/kursdokument/${file}`, updated: null });
+const course = (file: string): Page => ({ url: `https://www.skola24.com/globalassets/support/kursdokument/${file}`, updated: null, read: "2026-11-22" });
 
-const source = (page: Page, status: FactSource["status"]): FactSource => ({ url: page.url, updated: page.updated, read: READ, status });
+const source = (page: Page, status: FactSource["status"]): FactSource => ({ url: page.url, updated: page.updated, read: page.read ?? READ, status });
 /** A page says it. */
 const doc = <T>(page: Page, value: T): Fact<T> => ({ value, source: source(page, "DOKUMENTERAT") });
 /** Our reading of a page. */
@@ -211,11 +213,14 @@ const EXTENS_ABSENCE: FormatDescriptor = {
   columns: [
     column(PAGE.extens, "unitId", "EnhetsID", ["enhetsid"], { unread: "noImport" }),
     column(PAGE.extens, "personalNumber", "Personnummer", ["personnummer"], { personalNumber: true }),
-    column(PAGE.extens, "hours", "Summerat antal timmar oanmäld frånvaro för perioden", ["summeratantaltimmaroanmaldfranvaroforperioden"], { unread: "noImport" }),
+    // The page's words are "[summerat antal timmar i hel eller decimaltal (decimal separeras med punkt) av typen oanmäld frånvaro för perioden]": this label
+    // is a condensation of them, so it is our reading (TOLKAT) and not the page's own word.
+    { id: "hours", label: read(PAGE.extens, "Summerat antal timmar oanmäld frånvaro för perioden"), synonyms: ["summeratantaltimmaroanmaldfranvaroforperioden"], unread: "noImport" },
   ],
   facts: [
     doc(PAGE.extens, "En rad per elev; elever utan frånvaro är utelämnade."),
-    doc(PAGE.extens, "Personnumret skrivs tiosiffrigt med bindestreck, som Extens kräver. Samordningsnummer och TF-nummer ingår."),
+    // The page says "samtliga korrekta svenska personnummerformat ... även elever med så kallade TF-nummer": it does not say samordningsnummer.
+    doc(PAGE.extens, "Personnumret skrivs tiosiffrigt med bindestreck, som Extens kräver. Excelmallen kan hantera samtliga korrekta svenska personnummerformat, även elever med så kallade TF-nummer."),
     doc(PAGE.extens, "Timmarna är ett heltal eller ett decimaltal, och decimalen skrivs med punkt."),
     doc(PAGE.extens, "Filen görs av en Excelmall (Omformatering av frånvarodata Extens, högst 2 500 elever) ur Skola24:s rapport Summerad frånvaro per elev, visningsformat Export (*.txt), med fälten Lektionstid totalt (tim), Personnummer och Ej anm.(tim). Fältordningen i rapporten står bara i en bild på sidan."),
   ],

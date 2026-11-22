@@ -27,10 +27,13 @@
  * NO PERSONNUMMER LEAVES THE BROWSER. A label that has the shape of a number is not shown (labelOf), a personnummer column is
  * never sampled, and nothing the reading SAYS holds a cell of one: `heldRows` are row NUMBERS. (`block` is X2's own table of cells and
  * keeps them in memory as X2's does; the personnummer columns in it are dropped before anything is shown or sent, by X2's applyMapping.)
+ *
+ * A PERSON WITH A CONFIDENTIAL MARK IS NEVER READ. The rows `heldRows` names are not in `block`: no cell of them is in a sample, a mapping,
+ * a message or a CSV, and nobody has to remember to leave them out.
  */
 
 import { FIELDS, type TemplateKind } from "@/lib/column-fields";
-import { aliasAssignment, chooseHeaderRow, labelOf, personalNumberColumns, type Assignment, type Block } from "@/lib/column-mapping";
+import { aliasAssignment, chooseHeaderRow, keysOf, labelOf, personalNumberColumns, type Assignment, type Block } from "@/lib/column-mapping";
 import type { RawTable } from "@/lib/column-table";
 import { hasPersonalNumber } from "@/lib/personal-number";
 import { SKOLA24_FORMATS } from "@/lib/skola24-formats";
@@ -58,6 +61,7 @@ export interface FormatReading {
   format: string;
   /** What each column was placed by: its header, or its position in a file with no header row. */
   by: "header" | "position";
+  /** X2's table of the file WITHOUT the held rows (`heldRows`); the personnummer columns in it are dropped by X2's applyMapping before anything is shown or sent. */
   block: Block;
   /** Every column of the file, in order. */
   columns: ReadColumn[];
@@ -65,7 +69,7 @@ export interface FormatReading {
   missing: FormatColumn[];
   /** For X2: a field id for a placed column, null for a column to read nothing from, undefined for one nobody has placed. */
   assignment: Assignment;
-  /** The file's row numbers whose confidential mark is 1: held back, never read. */
+  /** The file's row numbers whose confidential mark is 1: held back, never read. They are not rows of `block`. */
   heldRows: number[];
   /** Read on headers, every documented column found under the page's own label, and no column the description does not know. */
   exact: boolean;
@@ -156,6 +160,24 @@ function heldRowsOf(block: Block, placed: readonly (FormatColumn | null)[]): num
   return rows;
 }
 
+/** The block without the rows named (file row numbers): their cells are in none of `body`, `rowNumbers` and `overflowRows`. */
+function withoutRows(block: Block, rows: readonly number[]): Block {
+  if (rows.length === 0) return block;
+  const drop = new Set(rows);
+  const keep = block.rowNumbers.map((number) => !drop.has(number));
+  return {
+    ...block,
+    body: block.body.filter((_, at) => keep[at]),
+    rowNumbers: block.rowNumbers.filter((_, at) => keep[at]),
+    overflowRows: block.overflowRows.filter((number) => !drop.has(number)),
+  };
+}
+
+/** Whether a row spells at least one column of the description (its keys as X2 writes them): the mark of a header row. */
+function spellsAColumn(row: readonly string[], columns: readonly FormatColumn[]): boolean {
+  return keysOf(row.map((cell) => cell.trim())).some((key) => columns.some((column) => column.synonyms.includes(baseOf(key))));
+}
+
 function headerModeOf(table: RawTable, descriptor: FormatDescriptor, asked: ReadOptions["header"]): "present" | "absent" {
   const columns = descriptor.columns!;
   // Only what a page SAYS decides: a header row that is our reading (TOLKAT) is a guess a school's own file may contradict (it adds a header
@@ -163,7 +185,12 @@ function headerModeOf(table: RawTable, descriptor: FormatDescriptor, asked: Read
   const stated = descriptor.headerRow?.source.status === "DOKUMENTERAT" ? descriptor.headerRow.value : null;
   const wanted = asked ?? (stated === "yes" ? "present" : stated === "no" ? "absent" : "auto");
   if (wanted !== "auto") return wanted;
-  return descriptor.order !== null && firstRowIsData(table, columns) ? "absent" : "present";
+  if (descriptor.order === null) return "present";
+  if (firstRowIsData(table, columns)) return "absent";
+  // No identity number in the first row's ID columns: a person with no id yet, or one mistyped (Skola24 requires the id, a school's file may not
+  // have it). The row is a header only if it spells a column the page lists; for a file whose page shows no header row (all of Skola24's own
+  // examples) any other first row is DATA. Taken for a header, its cells would be named, and could be saved in a template, and a person is lost.
+  return descriptor.headerRow?.value === "yes" || spellsAColumn(table.rows[0]!, columns) ? "present" : "absent";
 }
 
 /**
@@ -175,10 +202,15 @@ export function readFormat(table: RawTable, descriptor: FormatDescriptor, option
   if (columns === null || table.rows.length === 0) return null;
   const mode = headerModeOf(table, descriptor, options.header);
   if (mode === "absent" && descriptor.order === null) return null;
-  const block = mode === "present" ? chooseHeaderRow(table, options.headerRow ?? null) : blockWithoutHeader(table, columns.map((column) => column.label.value));
-  if (block === null) return null;
+  const whole = mode === "present" ? chooseHeaderRow(table, options.headerRow ?? null) : blockWithoutHeader(table, columns.map((column) => column.label.value));
+  if (whole === null) return null;
 
-  const placed = mode === "present" ? byHeader(block, columns) : byPosition(block, columns);
+  const placed = mode === "present" ? byHeader(whole, columns) : byPosition(whole, columns);
+  // A row with the confidential mark is HELD BACK: named by its number, and not a row of the block at all, so that no cell of it can reach a
+  // sample, a mapping, a message or a CSV, whoever takes the block next (X2's panel, applyMapping, X1). The user's decision (X3 design §6.1):
+  // such a person is never read.
+  const heldRows = heldRowsOf(whole, placed);
+  const block = withoutRows(whole, heldRows);
   // The description knows which column is a telephone number, which its header may not say; X2's test for personnummer columns must be told
   // BEFORE it runs (it keeps its answer per block): a column of bare ten-digit numbers is otherwise dropped as personnummer.
   const telephone = placed.flatMap((column, at) => (column?.field === "phone" ? [at] : []));
@@ -209,12 +241,13 @@ export function readFormat(table: RawTable, descriptor: FormatDescriptor, option
   const missing = columns.filter((column) => !found.has(column.id));
   // Exact: on headers, each documented column found under the page's own label (the first synonym), and nothing else in the file.
   const exact =
+    showsHeaderRow(descriptor) &&
     mode === "present" &&
     missing.length === 0 &&
     block.keys.length === columns.length &&
     block.keys.every((key, index) => placed[index]?.synonyms[0] === baseOf(key));
 
-  return { format: descriptor.id, by: mode === "present" ? "header" : "position", block, columns: result, missing, assignment, heldRows: heldRowsOf(block, placed), exact };
+  return { format: descriptor.id, by: mode === "present" ? "header" : "position", block, columns: result, missing, assignment, heldRows, exact };
 }
 
 /** The descriptions that read into a kind of Rastra's imports: the ones with columns, and a kind of their own. Empty for most kinds. */
@@ -258,8 +291,25 @@ export interface FormatFit {
   exact: boolean;
 }
 
+/**
+ * Whether a page says the file has a header row at all. Only then can what the description calls a column be what a file's headers SAY.
+ * For a file whose page shows none (Föräldrar, Personal, Barn, Extens) a label is the page's own word for the column, not a header anyone
+ * wrote, so a file that happens to carry it is read on it but never `exact`: the user chooses to apply the format (X3 design §6.2 and §8).
+ */
+const showsHeaderRow = (descriptor: FormatDescriptor): boolean => descriptor.headerRow?.value === "yes";
+
 /** How many rows of a file with no header row are looked at for a position fit. */
 const SAMPLE_ROWS = 25;
+
+/**
+ * How many cells a row has up to its last filled one. A sheet Excel has formatted past its data is saved with empty cells to the right (Skola24's
+ * own grundskolan_barn.csv has twenty columns, the fourteen last empty on every row), and those are padding, not columns the file has.
+ */
+function filledWidth(row: readonly string[]): number {
+  let width = row.length;
+  while (width > 0 && row[width - 1]!.trim() === "") width -= 1;
+  return width;
+}
 
 /** The fewest cells a row of the description has: through its last column that Skola24 requires (or all of them). */
 function requiredWidth(columns: readonly FormatColumn[]): number {
@@ -290,7 +340,7 @@ export function detectFormats(table: RawTable, descriptors: readonly FormatDescr
       const placed = byHeader(header, columns);
       const matched = new Set(placed.filter((column): column is FormatColumn => column !== null).map((column) => column.id)).size;
       if (matched >= 3 && matched * 5 >= of * 3) {
-        const exact = matched === of && header.keys.length === of && header.keys.every((key, index) => placed[index]?.synonyms[0] === baseOf(key));
+        const exact = showsHeaderRow(descriptor) && matched === of && header.keys.length === of && header.keys.every((key, index) => placed[index]?.synonyms[0] === baseOf(key));
         fits.push({ format: descriptor.id, by: "header", matched, of, exact });
         continue;
       }
@@ -299,7 +349,7 @@ export function detectFormats(table: RawTable, descriptors: readonly FormatDescr
     if (descriptor.order !== null && firstRowIsData(table, columns)) {
       const numbers = columns.flatMap((column, at) => (column.personalNumber === true ? [at] : []));
       const wide = requiredWidth(columns);
-      const dataRows = sample.filter((row) => row.length <= of && row.length >= wide && numbers.every((at) => isIdentityNumber(row[at])));
+      const dataRows = sample.filter((row) => filledWidth(row) <= of && row.length >= wide && numbers.every((at) => isIdentityNumber(row[at])));
       if (dataRows.length * 5 >= sample.length * 4) fits.push({ format: descriptor.id, by: "position", matched: numbers.length, of, exact: false });
     }
   }

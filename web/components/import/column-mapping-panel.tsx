@@ -51,6 +51,7 @@ export interface ColumnMappingPanelProps {
 
 const SKIP = "__skip__";
 const NONE = "";
+const NO_ROWS: readonly number[] = [];
 
 /**
  * The mapping of a table's columns, in the one place it is done (Kolumnmappning, X2): which row holds the headers, which
@@ -90,8 +91,8 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
   const applied = chosen ? chosen.applied : inUse !== null ? null : (recognition?.template ?? null);
   const columns = useMemo(() => (block ? describeColumns(block, kind, assignment) : []), [block, kind, assignment]);
   const result = useMemo(
-    () => (block && assignment.length === block.headers.length ? applyMapping(block, kind, assignment, { held: inUse?.reading.heldRows }) : null),
-    [block, kind, assignment, inUse],
+    () => (block && assignment.length === block.headers.length ? applyMapping(block, kind, assignment) : null),
+    [block, kind, assignment],
   );
   // Why a column the description knows is not read, shown under it while the user has not placed it.
   const reasons = useMemo(() => {
@@ -261,7 +262,7 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
             {columnsView}
           </div>
         </details>
-        {result ? <Summary result={result} label={label} columnName={columnName} fromFormat={inUse !== null} compact /> : null}
+        {result ? <Summary result={result} label={label} columnName={columnName} heldRows={inUse?.reading.heldRows ?? NO_ROWS} fromFormat={inUse !== null} compact /> : null}
       </div>
     );
   }
@@ -272,7 +273,7 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
       {inUse === null ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
       <FormatNotices kind={kind} inUse={inUse} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
       {columnsView}
-      {result ? <Summary result={result} label={label} columnName={columnName} fromFormat={inUse !== null} /> : null}
+      {result ? <Summary result={result} label={label} columnName={columnName} heldRows={inUse?.reading.heldRows ?? NO_ROWS} fromFormat={inUse !== null} /> : null}
     </div>
   );
 }
@@ -328,12 +329,15 @@ function Summary({
   result,
   label,
   columnName,
+  heldRows,
   fromFormat = false,
   compact = false,
 }: {
   result: Applied;
   label: (id: string) => string;
   columnName: (index: number) => string;
+  /** The file rows a Skola24 description holds back (a confidential mark): named by number, and not rows of the table the mapping reads. */
+  heldRows: readonly number[];
   /** A Skola24 description is in use: the columns it skips are not "as you chose". */
   fromFormat?: boolean;
   compact?: boolean;
@@ -375,7 +379,7 @@ function Summary({
       {result.skipped.length > 0 ? <Notice tone="neutral">{t(fromFormat ? "format.skipped" : "skipped", { count: result.skipped.length, names: names(result.skipped) })}</Notice> : null}
       {result.dropped.length > 0 ? <Notice tone="neutral">{t("dropped", { count: result.dropped.length })}</Notice> : null}
       {result.emptied.length > 0 ? <Notice tone="neutral">{t("emptied", { count: result.emptied.length })}</Notice> : null}
-      {result.held.length > 0 ? <Notice tone="neutral">{t("held", { count: result.held.length, rows: result.held.slice(0, 20).join(", ") })}</Notice> : null}
+      {heldRows.length > 0 ? <Notice tone="neutral">{t("held", { count: heldRows.length, rows: heldRows.slice(0, 20).join(", ") })}</Notice> : null}
       {result.warnings.filter((warning) => !compact || warning.code === "REPLACEMENT_CHARACTER").map((warning) => (
         <Notice key={warning.code} tone="warning">
           {t(`warnings.${warning.code}`, { rows: (warning.rows ?? []).join(", ") })}
