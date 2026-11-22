@@ -14,6 +14,12 @@ queue, and the caller backs off (the gateway reads it as "try again in a moment"
 the machine's cores, which is why the gateway does not start this while the school's
 own Generera is running and why the search is given at most the workers it names.
 
+AN ANALYSIS YIELDS TO A GENERERA, WHOSEVER IT IS. The gate knows only analyses; the gateway's own check knows only the
+school's own run. A Generera for another school on the same engine asks CP-SAT for every core, so an analysis that
+starts beside it takes them from it. app.solve_load counts the Generera runs of this process (from /optimize and from
+/v1/schedule alike, by the thread's life) and this route answers 429 while the count is not zero. The converse, a
+Generera that starts beside an analysis already running, is not refused (a Generera never is) and is logged.
+
 THE GATE IS THE THREAD'S, NOT THE ANSWER'S. A solve's thread cannot be cancelled, so
 the 503 at the ceiling ends the wait and not the work. A gate that opened with the
 503 let a second analysis start beside the first one's still-running thread, and a
@@ -38,6 +44,7 @@ from app.exceptions import SolverTimeoutError
 from app.logging_config import get_logger
 from app.schemas.schedule import OptimizeScheduleRequest, SearchOptions
 from app.schemas.suggestions import SuggestChangesResponse
+from app.solve_load import ANALYSIS, GENERATION, SOLVE_LOAD
 from app.solver.scheduler_solver import settings_for_search
 from app.solver.suggestions import route_limits, suggest_changes
 from app.timing import ceiling_seconds
@@ -80,6 +87,19 @@ async def suggest_changes_route(
     settings: Settings = Depends(get_app_settings),
 ) -> SuggestChangesResponse:
     """Accept the payload Generera sends and answer what the five rules that may give way would need."""
+    # An analysis yields to every Generera on this engine, whichever school's (app.solve_load): the Generera is what a school
+    # came for, and it asks CP-SAT for every core unless it names its workers. A 429, never a queue, like the gate's.
+    generations = SOLVE_LOAD.count(GENERATION)
+    if generations:
+        logger.warning(
+            "suggest_changes_yields_to_generation",
+            request_id=str(payload.request_id),
+            generations_running=generations,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="A timetable is being generated on this engine. Try again in a moment.",
+        )
     gate = _gate(request)
     if gate.locked():
         logger.warning("suggest_changes_busy", request_id=str(payload.request_id))
@@ -100,9 +120,25 @@ async def suggest_changes_route(
         # shrink the deployment's.
         scoped = settings_for_search(settings, payload.search)
         ceiling = solve_ceiling_seconds(scoped, payload.search, payload.deadline_seconds)
-        work = asyncio.ensure_future(
-            asyncio.to_thread(suggest_changes, payload, settings, ceiling_seconds=ceiling),
-        )
+
+        def counted() -> SuggestChangesResponse:
+            # The thread's life is what is counted, as for a Generera, so that a Generera's log line can say it started
+            # beside this one (run_solver).
+            with SOLVE_LOAD.running(ANALYSIS, str(payload.request_id)):
+                beside, generation_id, generation_age = SOLVE_LOAD.oldest(GENERATION)
+                if beside:
+                    # The route found no Generera running and a Generera's thread began before this one did: the window
+                    # between the two checks. Said from this side too, since the Generera's own line cannot see it.
+                    logger.warning(
+                        "analysis_beside_generation",
+                        request_id=str(payload.request_id),
+                        generations_running=beside,
+                        generation_request_id=generation_id,
+                        generation_seconds=round(generation_age, 1),
+                    )
+                return suggest_changes(payload, settings, ceiling_seconds=ceiling)
+
+        work = asyncio.ensure_future(asyncio.to_thread(counted))
         # The gate opens when the THREAD ends (see the head of this module), and an error the nobody waits for
         # any more is read here so that it is logged by the route and not by the event loop's "never retrieved".
         work.add_done_callback(_open(gate))
