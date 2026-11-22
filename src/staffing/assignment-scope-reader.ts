@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { ScopeBand, ScopeVersion } from './assignment-scope';
+import type { LoadInput, LoadScopeAssessment } from './teacher-load';
 
 /*
  * The ordinance's lydelser and their bands (AssignmentScopeVersions, AssignmentScopeBands; migration 20270301090000),
@@ -75,4 +76,40 @@ export async function readScopeVersions(tx: PrismaClient, yearStart: string): Pr
   if (!version) return [];
   const bands = await tx.assignmentScopeBand.findMany({ where: { versionId: version.id } });
   return [toScopeVersion({ ...version, bands })];
+}
+
+/**
+ * The year's assessments by teacher (AssignmentScopeAssessments), in the caller's own RLS transaction: an administrator reads every
+ * teacher's, a teacher their own (the table's arms), so a teacher's report is judged against their own level and no colleague's.
+ * ONE statement, and only asked for a year the ordinance reaches (withScopeAssessments).
+ */
+export async function readScopeAssessments(tx: PrismaClient, academicYearId: string): Promise<Map<string, LoadScopeAssessment>> {
+  const rows = await tx.assignmentScopeAssessment.findMany({ where: { academicYearId }, orderBy: { userId: 'asc' } });
+  return new Map(
+    rows.map((row): [string, LoadScopeAssessment] => [
+      row.userId,
+      {
+        levelHours: row.teachingLevelHours,
+        exceptionKind: row.exceptionKind,
+        ownInitiativeOn: row.ownInitiativeOn === null ? null : asDay(row.ownInitiativeOn),
+        note: row.note,
+        decidedAt: row.decidedAt.toISOString(),
+      },
+    ]),
+  );
+}
+
+/**
+ * The load input with the year's assessments on it, for the code that asks the ordinance's question. Where no lydelse holds on the
+ * year's first day (every läsår that begins before 2027-07-01) there is no question and the input is returned as it is, so the year
+ * costs the statement it always did.
+ */
+export async function withScopeAssessments(
+  tx: PrismaClient,
+  input: LoadInput,
+  versions: readonly ScopeVersion[],
+  academicYearId: string,
+): Promise<LoadInput> {
+  if (versions.length === 0) return input;
+  return { ...input, scopeAssessments: await readScopeAssessments(tx, academicYearId) };
 }

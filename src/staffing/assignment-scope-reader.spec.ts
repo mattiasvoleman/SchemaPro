@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
-import { readScopeVersions, toScopeVersion } from './assignment-scope-reader';
+import { readScopeAssessments, readScopeVersions, toScopeVersion, withScopeAssessments } from './assignment-scope-reader';
+import type { LoadInput } from './teacher-load';
 
 const band = (gradeFrom: number, gradeTo: number, overrides: Record<string, unknown> = {}) => ({
   schoolForm: 'GRUNDSKOLA',
@@ -89,5 +90,61 @@ describe('readScopeVersions', () => {
     expect(await readScopeVersions(tx, '2026-08-17')).toEqual([]);
     expect(findFirst).toHaveBeenCalledTimes(1);
     expect(findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('readScopeAssessments', () => {
+  const stored = (overrides: Record<string, unknown> = {}) => ({
+    id: 'a-1',
+    schoolId: 'school',
+    userId: 'anna',
+    academicYearId: 'year',
+    teachingLevelHours: 600,
+    exceptionKind: null,
+    ownInitiativeOn: null,
+    note: null,
+    decidedById: 'rektor',
+    decidedAt: new Date('2027-03-05T08:00:00.000Z'),
+    createdAt: new Date('2027-03-05T08:00:00.000Z'),
+    updatedAt: new Date('2027-03-05T08:00:00.000Z'),
+    ...overrides,
+  });
+
+  it('reads the year\'s rows in one statement, by teacher, with the day as yyyy-mm-dd and the time as an instant', async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      stored(),
+      stored({ userId: 'bo', teachingLevelHours: null, exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: new Date('2027-05-02T00:00:00.000Z'), note: 'på begäran' }),
+    ]);
+    const tx = { assignmentScopeAssessment: { findMany } } as unknown as PrismaClient;
+    const read = await readScopeAssessments(tx, 'year');
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledWith({ where: { academicYearId: 'year' }, orderBy: { userId: 'asc' } });
+    expect(read.get('anna')).toEqual({ levelHours: 600, exceptionKind: null, ownInitiativeOn: null, note: null, decidedAt: '2027-03-05T08:00:00.000Z' });
+    expect(read.get('bo')).toEqual({ levelHours: null, exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: '2027-05-02', note: 'på begäran', decidedAt: '2027-03-05T08:00:00.000Z' });
+    expect([...read.keys()]).toEqual(['anna', 'bo']);
+  });
+});
+
+describe('withScopeAssessments', () => {
+  const input = { year: { startDate: '2027-08-16', endDate: '2028-06-09' } } as unknown as LoadInput;
+  const versions = [toScopeVersion(row())];
+
+  it('reads nothing for a year no lydelse holds on, and hands back the very input: the year costs the statement it always did', async () => {
+    const findMany = jest.fn();
+    const tx = { assignmentScopeAssessment: { findMany } } as unknown as PrismaClient;
+    expect(await withScopeAssessments(tx, input, [], 'year')).toBe(input);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it('puts the year\'s assessments on a copy of the input, and leaves the input as it was', async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { userId: 'anna', teachingLevelHours: 600, exceptionKind: 'SMALL_GROUP', ownInitiativeOn: null, note: null, decidedAt: new Date('2027-03-05T08:00:00.000Z') },
+    ]);
+    const tx = { assignmentScopeAssessment: { findMany } } as unknown as PrismaClient;
+    const extended = await withScopeAssessments(tx, input, versions, 'year');
+    expect(extended).not.toBe(input);
+    expect(extended.scopeAssessments?.get('anna')?.exceptionKind).toBe('SMALL_GROUP');
+    expect(input.scopeAssessments).toBeUndefined();
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 });

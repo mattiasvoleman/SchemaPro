@@ -207,7 +207,49 @@ describe('Administrator profiles and areas (e2e)', () => {
         .set('x-test-user', as(profile, true))
         .send({ employmentPercent: 80 })
         .expect(403);
+      // Rektorns bedömning av lärarens omfattning (20270306090000) is a decision too: the same profiles, the same refusal, nothing written.
+      await request(http())
+        .put(`/api/v1/scope-assessments/${USER_ID}?academicYearId=${YEAR_ID}`)
+        .set('x-test-user', as(profile, true))
+        .send({ teachingLevelHours: 600 })
+        .expect(403);
+      await request(http())
+        .delete(`/api/v1/scope-assessments/${USER_ID}?academicYearId=${YEAR_ID}`)
+        .set('x-test-user', as(profile, true))
+        .expect(403);
     }
+    expect(harness.tx['assignmentScopeAssessment']!['upsert']).not.toHaveBeenCalled();
+    expect(harness.tx['assignmentScopeAssessment']!['delete']).not.toHaveBeenCalled();
+  });
+
+  it("hands the rektor's assessments back masked to a planner without HR-läs (and to the huvudman's reader), whole to one with it, and a planner's own row whole", async () => {
+    // The table's arms let every administrator read every row of the school, the huvudman's reader included, and a row cannot hide a
+    // column: what is about the person (the level, the day, the note, who decided and when) is the gateway's to leave out (hr-visibility).
+    const row = {
+      id: 'a1', schoolId: '33333333-3333-4333-8333-333333333333', userId: USER_ID, academicYearId: YEAR_ID,
+      teachingLevelHours: 560, exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: new Date('2099-05-02T00:00:00Z'), note: 'skäl',
+      decidedById: '77777777-7777-4777-8777-777777777777', decidedAt: new Date('2099-05-03T08:00:00Z'),
+      createdAt: new Date('2099-05-03T08:00:00Z'), updatedAt: new Date('2099-05-03T08:00:00Z'),
+    };
+    harness.tx['assignmentScopeAssessment']!['findMany']!.mockResolvedValue([row]);
+    const list = (header: string) =>
+      request(http()).get(`/api/v1/scope-assessments?academicYearId=${YEAR_ID}`).set('x-test-user', header).expect(200);
+
+    for (const profile of ['SCHEMALAGGARE', 'EXPEDITION', 'LASARE']) {
+      const hidden = await list(as(profile));
+      expect(hidden.body[0]).toMatchObject({
+        userId: USER_ID, teachingLevelHours: null, ownInitiativeOn: null, note: null, decidedById: null, decidedAt: null, hrHidden: true,
+        exceptionKind: 'OWN_INITIATIVE',
+      });
+      const shown = await list(as(profile, true));
+      expect(shown.body[0]).toMatchObject({ teachingLevelHours: 560, ownInitiativeOn: '2099-05-02', note: 'skäl', hrHidden: false });
+    }
+    for (const profile of ['REKTOR', 'FULL']) {
+      expect((await list(as(profile))).body[0]).toMatchObject({ teachingLevelHours: 560, note: 'skäl', hrHidden: false });
+    }
+    // A planner without HR-läs who is the person: their own row is theirs.
+    const own = await list(asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, userId: USER_ID } as never));
+    expect(own.body[0]).toMatchObject({ teachingLevelHours: 560, note: 'skäl', hrHidden: false });
   });
 
   it("leaves sharing the pupils' attendance with integrations to rektor, and lets every profile read it", async () => {

@@ -371,6 +371,11 @@ function overTargetOfWrite(args: {
  * that adds nothing is never refused for a state the school is already in, which would refuse the very fix. The levels
  * under the upper edge, a teacher's own level (8 §) and the planning floor are the report's to show, never a write's to
  * refuse.
+ *
+ * A TEACHER WITH A REGISTERED EXCEPTION (11 §: their own initiative, or a single pupil or a small group; AssignmentScopeAssessments)
+ * is warned and never refused: the ordinance allows the exception from the extent of the time, so the one thing the school's
+ * own choice to refuse (REFUSE) must not do is stop the rektor's registered decision. The verdict stays what it is and the
+ * warning is still given, so nothing about the exception is silent.
  */
 export function overScopeFinding(args: {
   policy: CheckPolicy;
@@ -389,12 +394,13 @@ export function overScopeFinding(args: {
   // moves them by less than a tenth added nothing a person could read.
   const shown = stageHoursOf(after);
   if (shown <= (args.before ? stageHoursOf(args.before) : 0) + 1e-9) return null;
+  const effective = mode === 'REFUSE' && after.assessment?.exceptionKind ? 'WARN' : mode;
   if (args.policy.showsPeriods === false) {
-    return { code: STAFF_TEACHER_OVER_SCOPE_HIDDEN, mode, userId: args.userId, params: { role: args.role } };
+    return { code: STAFF_TEACHER_OVER_SCOPE_HIDDEN, mode: effective, userId: args.userId, params: { role: args.role } };
   }
   return {
     code: STAFF_TEACHER_OVER_SCOPE,
-    mode,
+    mode: effective,
     userId: args.userId,
     // The hours the line is judged against: the stage hours, never less than a tenth over the line (the three figures round apart).
     params: {

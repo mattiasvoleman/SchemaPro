@@ -7,7 +7,7 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import { readLoadInput, type LoadRead } from './load-input';
 import { buildScopeReport, hideScopeHr, type ScopeReport } from './assignment-scope';
-import { readScopeVersions } from './assignment-scope-reader';
+import { readScopeVersions, withScopeAssessments } from './assignment-scope-reader';
 import {
   buildTeacherLoadReport,
   type LoadInput,
@@ -160,8 +160,12 @@ export class StaffingLoadService {
       const supervision = read.supervision && { teachers: read.supervision.filter((row) => reported.has(row.userId)) };
       // The ordinance's omfattning over the same rows, in the same transaction, so that its hours and the report's minutes
       // are about one moment.
-      const scope =
-        options.scope === false ? null : buildScopeReport(read.input, built, await readScopeVersions(tx, read.year.startDate));
+      // With the rektor's own levels and exceptions, read only for a year the ordinance reaches (withScopeAssessments).
+      let scope: ScopeReport | null = null;
+      if (options.scope !== false) {
+        const versions = await readScopeVersions(tx, read.year.startDate);
+        scope = buildScopeReport(await withScopeAssessments(tx, read.input, versions, academicYearId), built, versions);
+      }
       return { year: read.year, report: built, travel, supervision, scope };
     });
 

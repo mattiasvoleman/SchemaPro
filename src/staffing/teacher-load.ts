@@ -338,6 +338,25 @@ export interface LoadInput {
    * as it always did.
    */
   inactiveUserIds?: string[];
+  /**
+   * The rektor's assessments of the year's teachers by user (AssignmentScopeAssessments, 20270306090000): a level within the
+   * ordinance's span and a registered exception under 11 §. Optional, and absent unless the caller asks the ordinance's question
+   * for a year it reaches (assignment-scope-reader.ts withScopeAssessments), so an input without it reads as it always did.
+   */
+  scopeAssessments?: ReadonlyMap<string, LoadScopeAssessment>;
+}
+
+/** One teacher's assessment as the load input carries it; the view the report gives is ScopeAssessmentView. */
+export interface LoadScopeAssessment {
+  /** The teacher's highest level at full time, hours per läsår; null = none set. */
+  levelHours: number | null;
+  /** 11 § p. 1 (OWN_INITIATIVE) or p. 3 (SMALL_GROUP); null = no exception. */
+  exceptionKind: 'OWN_INITIATIVE' | 'SMALL_GROUP' | null;
+  /** yyyy-mm-dd; set exactly when the exception is OWN_INITIATIVE. */
+  ownInitiativeOn: string | null;
+  note: string | null;
+  /** ISO timestamp of the last write. */
+  decidedAt: string;
 }
 
 export interface SubjectLoad {

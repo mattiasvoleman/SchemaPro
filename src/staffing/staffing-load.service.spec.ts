@@ -1116,6 +1116,84 @@ describe('StaffingLoadService', () => {
       expect(scopeOf(report)).toMatchObject({ highestHours: 480, ordinanceHighestHours: 480 });
     });
 
+    describe('the rektor\'s assessments (AssignmentScopeAssessments)', () => {
+      const assessmentRow = (overrides: Record<string, unknown> = {}) => ({
+        id: 'a-1',
+        schoolId: SCHOOL_ID,
+        userId: ME,
+        academicYearId: YEAR_ID,
+        teachingLevelHours: 400,
+        exceptionKind: null,
+        ownInitiativeOn: null,
+        note: 'skäl',
+        decidedById: COLLEAGUE,
+        decidedAt: new Date('2026-03-05T08:00:00.000Z'),
+        createdAt: new Date('2026-03-05T08:00:00.000Z'),
+        updatedAt: new Date('2026-03-05T08:00:00.000Z'),
+        ...overrides,
+      });
+
+      it('places the teacher inside the span at their own level: 430 h over an assessed 400 is OVER_OWN, with the level on the row', async () => {
+        inForce();
+        tx.assignmentScopeAssessment.findMany.mockResolvedValue([assessmentRow()]);
+        const row = scopeOf(await service.load(YEAR_ID, 'planned', testUser()));
+        // 400 h at full time, scaled by the 80 % post: 320 h, under the ordinance's 480.
+        expect(row).toMatchObject({
+          verdict: 'OVER_OWN',
+          teachingHours: 430,
+          highestHours: 320,
+          ordinanceHighestHours: 480,
+          assessment: { levelHours: 400, exceptionKind: null, ownInitiativeOn: null, note: 'skäl', decidedAt: '2026-03-05T08:00:00.000Z' },
+        });
+      });
+
+      it('carries a registered exception beside the verdict and leaves the verdict what it is', async () => {
+        inForce();
+        tx.teachingRequirement.findMany.mockResolvedValue([requirementRow({ lessonsPerWeek: 14 })]);
+        tx.assignmentScopeAssessment.findMany.mockResolvedValue([
+          assessmentRow({ teachingLevelHours: null, exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: new Date('2026-05-02T00:00:00.000Z') }),
+        ]);
+        expect(scopeOf(await service.load(YEAR_ID, 'planned', testUser()))).toMatchObject({
+          verdict: 'OVER_MAX',
+          assessment: { levelHours: null, exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: '2026-05-02' },
+        });
+      });
+
+      it('reads them once, in the report\'s own transaction, and only for a year the ordinance reaches or for a caller that asks', async () => {
+        inForce();
+        await service.load(YEAR_ID, 'planned', testUser());
+        expect(tx.assignmentScopeAssessment.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.assignmentScopeAssessment.findMany).toHaveBeenCalledWith({ where: { academicYearId: YEAR_ID }, orderBy: { userId: 'asc' } });
+        tx.assignmentScopeAssessment.findMany.mockClear();
+        tx.assignmentScopeVersion.findFirst.mockResolvedValue(null);
+        await service.load(YEAR_ID, 'planned', testUser());
+        inForce();
+        await service.load(YEAR_ID, 'planned', testUser(), { record: false, travel: false, scope: false });
+        expect(tx.assignmentScopeAssessment.findMany).not.toHaveBeenCalled();
+      });
+
+      it('shows a planner without HR-läs the exception kind of somebody else\'s row and nothing else of it: not the level, the day or the note', async () => {
+        inForce();
+        tx.assignmentScopeAssessment.findMany.mockResolvedValue([
+          assessmentRow({ exceptionKind: 'SMALL_GROUP' }),
+        ]);
+        const planner = testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, userId: COLLEAGUE });
+        const row = scopeOf(await service.load(YEAR_ID, 'planned', planner));
+        expect(row.assessment).toEqual({ levelHours: null, exceptionKind: 'SMALL_GROUP', ownInitiativeOn: null, note: null, decidedAt: null });
+        expect(row).toMatchObject({ highestHours: null, ordinanceHighestHours: null });
+      });
+
+      it('hands a teacher their own assessment whole, as the table\'s own-row arm lets them read it', async () => {
+        inForce();
+        tx.assignmentScopeAssessment.findMany.mockResolvedValue([assessmentRow()]);
+        tx.teacherEmployment.findMany.mockResolvedValue([
+          { id: 'emp-me', userId: ME, employmentPercent: new Prisma.Decimal('80.000'), reductionPercent: new Prisma.Decimal('0.000'), contractKind: 'FERIE', teachingTargetMinutesPerWeek: null, signature: null, note: null, periods: [] },
+        ]);
+        const report = await service.load(YEAR_ID, 'planned', testUser({ role: Role.TEACHER, userId: ME }));
+        expect(scopeOf(report).assessment).toMatchObject({ levelHours: 400, note: 'skäl' });
+      });
+    });
+
     it('hands a teacher their own row of it and nobody else\'s', async () => {
       inForce();
       tx.teachingRequirement.findMany.mockResolvedValue([

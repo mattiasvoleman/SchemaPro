@@ -2,7 +2,7 @@ import type { ScopeVersion } from '../staffing/assignment-scope';
 import type { LoadRead } from '../staffing/load-input';
 import { DEFAULT_CHECK_POLICY } from '../staffing/staffing-checks';
 import type { EnforcedPolicy } from '../staffing/staffing-enforcement';
-import type { LoadEmployment, LoadInput, LoadRequirement } from '../staffing/teacher-load';
+import type { LoadEmployment, LoadInput, LoadRequirement, LoadScopeAssessment } from '../staffing/teacher-load';
 import {
   basisOf,
   planOf,
@@ -252,5 +252,65 @@ describe('the basis and the ordinance', () => {
     // A new lydelse (a migration) makes an old proposal stale.
     expect(digest('REFUSE')).not.toBe(digest('REFUSE', [VERSION, { ...VERSION, code: 'NEXT', validFrom: '2030-01-01' }]));
     expect(digest('REFUSE')).toBe(digest('REFUSE'));
+  });
+});
+
+/*
+ * A registered exception under 11 § (AssignmentScopeAssessments): the rektor's decision that a teacher may teach beyond the span, their own
+ * initiative or a single pupil or a small group. The ordinance's edge is then no ceiling for them, in the plan or in the refusal, and the
+ * plan being another plan, it is a part of the basis under REFUSE. A level without an exception is none of this: OVER_OWN never refuses.
+ */
+describe('a teacher with a registered exception under 11 §', () => {
+  const assessment = (exceptionKind: LoadScopeAssessment['exceptionKind'], levelHours: number | null = null): LoadScopeAssessment => ({
+    levelHours,
+    exceptionKind,
+    ownInitiativeOn: exceptionKind === 'OWN_INITIATIVE' ? '2026-05-02' : null,
+    note: null,
+    decidedAt: '2026-03-05T08:00:00.000Z',
+  });
+  const withAssessments = (s: StaffingState, entries: [string, LoadScopeAssessment][]): StaffingState => {
+    s.read.input.scopeAssessments = new Map(entries);
+    return s;
+  };
+  const rows = [row('r1', ANNA, 10), row('r2', null, 4)];
+
+  it('has no ceiling: the edge is not theirs', () => {
+    const excepted = input([row('r1', ANNA, 10)]);
+    excepted.scopeAssessments = new Map([[ANNA, assessment('SMALL_GROUP')]]);
+    expect(scopeCeilingTenths(excepted, [VERSION], ANNA, 43)).toBeNull();
+    // A colleague without one has it still.
+    expect(scopeCeilingTenths(excepted, [VERSION], BO, 43)).toBe(8372);
+    // A level alone is no exception.
+    excepted.scopeAssessments = new Map([[ANNA, assessment(null, 500)]]);
+    expect(scopeCeilingTenths(excepted, [VERSION], ANNA, 43)).toBe(8372);
+  });
+
+  it('is left to the riktmärke by the plan under REFUSE: the engine\'s limit is not lowered for them, and is for a colleague', () => {
+    const plan = planOf(withAssessments(state('REFUSE', rows), [[ANNA, assessment('OWN_INITIATIVE')]]), DTO);
+    expect(teacherOf(plan, ANNA).limitTenths).toBe(11004);
+    expect(teacherOf(plan, ANNA).scopeCeilingTenths).toBeUndefined();
+    expect(teacherOf(plan, BO).limitTenths).toBe(8372);
+  });
+
+  it('is not refused for ending over the ordinance with more hours: 430 h and the 4 open lessons make 602 h of a 600 h edge', () => {
+    const s = withAssessments(state('REFUSE', rows), [[ANNA, assessment('SMALL_GROUP')]]);
+    expect(scopeGrowthRefusal(s, planOf(s, DTO), new Map([['r2', ANNA]]))).toBeNull();
+    const plain = withAssessments(state('REFUSE', rows), [[ANNA, assessment(null, 500)]]);
+    expect(scopeGrowthRefusal(plain, planOf(plain, DTO), new Map([['r2', ANNA]]))).toBe(ANNA);
+  });
+
+  it('is part of the basis under REFUSE, who holds one and not what it says: another plan is a proposal gone old', () => {
+    const digest = (entries: [string, LoadScopeAssessment][], mode: 'WARN' | 'REFUSE' = 'REFUSE') => basisOf(withAssessments(state(mode, rows), entries));
+    expect(digest([[ANNA, assessment('SMALL_GROUP')]])).not.toBe(digest([]));
+    expect(digest([[ANNA, assessment('SMALL_GROUP')]])).toBe(digest([[ANNA, assessment('OWN_INITIATIVE')]]));
+    expect(digest([[BO, assessment('SMALL_GROUP')]])).not.toBe(digest([[ANNA, assessment('SMALL_GROUP')]]));
+    // A level alone changes no plan, so no basis; and a school that registers none has the digest it would have had.
+    expect(digest([[ANNA, assessment(null, 500)]])).toBe(digest([]));
+    expect(digest([], 'REFUSE')).toBe(basisOf(state('REFUSE', rows)));
+  });
+
+  it('is no part of the basis under WARN, where the plan does not move for them', () => {
+    const digest = (entries: [string, LoadScopeAssessment][]) => basisOf(withAssessments(state('WARN', rows), entries));
+    expect(digest([[ANNA, assessment('SMALL_GROUP')]])).toBe(digest([]));
   });
 });

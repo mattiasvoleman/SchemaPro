@@ -4,7 +4,7 @@ import type { LessonRecurrence, PrismaClient, UnstaffedGenerationMode } from '@p
 import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import { asDay, readLoadInput } from './load-input';
 import { readHeldQualifications } from './qualification-inheritance';
-import { readScopeVersions } from './assignment-scope-reader';
+import { readScopeVersions, withScopeAssessments } from './assignment-scope-reader';
 import type { ScopeVersion } from './assignment-scope';
 import { rostersOfYear, type BasisOrYear, type RosterViewer } from '../year-rollover/projected-rosters';
 import {
@@ -331,13 +331,17 @@ export async function enforceRequirementWrite(
     },
     patch,
   );
+  // The ordinance's lydelser, and with them the rektor's levels and exceptions of the year (a teacher with a registered exception
+  // is warned, not refused: overScopeFinding). Neither is read for a school that does not ask the question, nor for a year the
+  // ordinance does not reach.
+  const scopeVersions = asksScope ? await readScopeVersions(tx, read.input.year.startDate) : undefined;
   const findings = judgeRequirementWrite({
-    input: read.input,
+    input: scopeVersions ? await withScopeAssessments(tx, read.input, scopeVersions, args.academicYearId) : read.input,
     policy: asksPolicy(policy, asksLoad, asksScope),
     before: stored,
     after,
     subjectName,
-    ...(asksScope ? { scopeVersions: await readScopeVersions(tx, read.input.year.startDate) } : {}),
+    ...(scopeVersions ? { scopeVersions } : {}),
   });
   return settleFindings(findings);
 }
@@ -395,12 +399,14 @@ export class RequirementImportChecks {
       alsoGroupIds: [...args.groupIds],
     });
     if (!read) return null;
+    const scopeVersions = asksScope ? await readScopeVersions(tx, read.input.year.startDate) : undefined;
+    const input = scopeVersions ? await withScopeAssessments(tx, read.input, scopeVersions, args.academicYearId) : read.input;
     return new RequirementImportChecks(
       asksPolicy(policy, asksLoad, asksScope),
-      { ...read.input, requirements: [...read.input.requirements] },
+      { ...input, requirements: [...input.requirements] },
       (groupIds) => read.spanOf(groupIds),
       (subjectId) => weightField(read.loadModel, read.weightOf(subjectId)),
-      asksScope ? await readScopeVersions(tx, read.input.year.startDate) : undefined,
+      scopeVersions,
     );
   }
 

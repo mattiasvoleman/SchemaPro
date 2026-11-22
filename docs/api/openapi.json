@@ -226,6 +226,9 @@
       "name": "SchoolUnits"
     },
     {
+      "name": "ScopeAssessments"
+    },
+    {
       "name": "Sharing"
     },
     {
@@ -21355,6 +21358,181 @@
         }
       }
     },
+    "/api/v1/scope-assessments": {
+      "get": {
+        "tags": [
+          "ScopeAssessments"
+        ],
+        "operationId": "ScopeAssessmentsController_list",
+        "parameters": [
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/scope-assessments/{userId}": {
+      "put": {
+        "tags": [
+          "ScopeAssessments"
+        ],
+        "operationId": "ScopeAssessmentsController_upsert",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertScopeAssessmentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "decides": true
+        }
+      },
+      "delete": {
+        "tags": [
+          "ScopeAssessments"
+        ],
+        "operationId": "ScopeAssessmentsController_remove",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "decides": true
+        }
+      }
+    },
     "/api/v1/sharing": {
       "get": {
         "tags": [
@@ -36697,6 +36875,34 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "UpsertScopeAssessmentDto": {
+        "type": "object",
+        "properties": {
+          "teachingLevelHours": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 1500
+          },
+          "exceptionKind": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "OWN_INITIATIVE",
+              "SMALL_GROUP"
+            ]
+          },
+          "ownInitiativeOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 500
           }
         }
       },

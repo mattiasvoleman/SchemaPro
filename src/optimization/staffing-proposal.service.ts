@@ -30,7 +30,7 @@ import {
 import { subjectFamiliarTeachers, type LastYearTeachers } from '../staffing/suggest-teachers';
 import { readsHr } from '../staffing/hr-visibility';
 import { placeSpan, scopeOfTeacher, SCOPE_SCHOOL_FORM, versionInForce, type ScopeVersion } from '../staffing/assignment-scope';
-import { readScopeVersions } from '../staffing/assignment-scope-reader';
+import { readScopeVersions, withScopeAssessments } from '../staffing/assignment-scope-reader';
 import { scopeModeOf } from '../staffing/staffing-checks';
 import { teachingWeeks } from '../staffing/teaching-weeks';
 import {
@@ -944,12 +944,15 @@ export class StaffingProposalService {
   /** One read, in the caller's transaction, of everything the proposal and its basis depend on. */
   private async readState(tx: PrismaClient, user: AuthenticatedUser, academicYearId: string): Promise<StaffingState> {
     const schoolId = requireSchoolId(user);
-    const read = await readLoadInput(tx, user, academicYearId, schoolId);
-    if (!read) throw new NotFoundException('Academic year not found.');
+    const plainRead = await readLoadInput(tx, user, academicYearId, schoolId);
+    if (!plainRead) throw new NotFoundException('Academic year not found.');
     const policy = await readCheckPolicy(tx, schoolId, readsHr(user));
     // The ordinance's lydelser: only when the school asks the question (OFF reads nothing), so a school that has turned it off sends
-    // the statements it always did.
-    const scopeVersions = scopeModeOf(policy) === 'OFF' ? undefined : await readScopeVersions(tx, read.input.year.startDate);
+    // the statements it always did. With them the rektor's levels and exceptions of the year, for a year the ordinance reaches.
+    const scopeVersions = scopeModeOf(policy) === 'OFF' ? undefined : await readScopeVersions(tx, plainRead.input.year.startDate);
+    const read = scopeVersions
+      ? { ...plainRead, input: await withScopeAssessments(tx, plainRead.input, scopeVersions, academicYearId) }
+      : plainRead;
     const { staffIds, candidateIds } = await readActiveStaff(tx, academicYearId);
     const groups = await tx.studentGroup.findMany({
       where: { academicYearId, predecessorId: { not: null } },
@@ -2047,6 +2050,9 @@ export function scopeCeilingTenths(
   if (schoolWeeks <= 0) return null;
   const scope = scopeOfTeacher(input, versions, userId);
   if (scope === null) return null;
+  // A registered exception under 11 § (their own initiative, a single pupil or a small group) lets the teacher past the edge: the
+  // engine is not held to it for them, and the answer is not refused for them (scopeGrowthRefusal).
+  if (scope.assessment?.exceptionKind) return null;
   const strictest = strictestEdgeHours(input, versions, userId, reachable);
   const hours =
     scope.ordinanceHighestHours === null
@@ -2087,6 +2093,15 @@ function strictestEdgeHours(
   return active === null ? null : Math.min(...edges) * (active / 100);
 }
 
+/** The teachers with a registered exception under 11 §, sorted, as a basis part; nothing where there is none. */
+function exceptedOf(state: { read: Pick<StaffingState['read'], 'input'> }): { excepted?: string[] } {
+  const excepted = [...(state.read.input.scopeAssessments?.entries() ?? [])]
+    .filter(([, assessment]) => assessment.exceptionKind !== null)
+    .map(([userId]) => userId)
+    .sort();
+  return excepted.length === 0 ? {} : { excepted };
+}
+
 /**
  * The ordinance's question over a whole answer (REFUSE only): who ends OVER the highest level of teaching time with more hours than
  * they began with, the same question the apply asks. Null when nobody; else the first teacher, in id order.
@@ -2102,6 +2117,7 @@ export function scopeGrowthRefusal(
   for (const teacher of [...plan.teachers].sort((a, b) => compareIds(a.userId, b.userId))) {
     const before = scopeOfTeacher(input, state.scopeVersions, teacher.userId);
     const after = scopeOfTeacher(afterInput, state.scopeVersions, teacher.userId);
+    if (after?.assessment?.exceptionKind) continue;
     if (after?.verdict === 'OVER_MAX' && after.teachingHours > (before?.teachingHours ?? 0) + 1e-9) return teacher.userId;
   }
   return null;
@@ -2248,7 +2264,12 @@ export function basisOf(
     // proposal read: the basis of a school that warns or asks nothing is the digest it always was, and an undo logged before the
     // check existed is judged against it still. The lydelser by code and dates: a new lydelse (a migration) makes an old proposal stale.
     ...(scopeModeOf(state.policy) === 'REFUSE' && state.scopeVersions
-      ? { scope: [...state.scopeVersions].map((version) => [version.code, version.validFrom, version.validTo]).sort(byFirst) }
+      ? {
+          scope: [...state.scopeVersions].map((version) => [version.code, version.validFrom, version.validTo]).sort(byFirst),
+          // Who holds a registered exception: they are given no edge, so the plan is not the one it was without it. Only where
+          // there is one, so a school that registers none has the digest it would have had.
+          ...exceptedOf(state),
+        }
       : {}),
   };
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');

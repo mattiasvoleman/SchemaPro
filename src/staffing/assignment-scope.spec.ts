@@ -5,6 +5,7 @@ import {
   hideScopeHr,
   UNREGULATED_HOURS_INTERPRETATION,
   placeSpan,
+  scopeOfTeacher,
   versionInForce,
   type ScopeBand,
   type ScopeVersion,
@@ -17,6 +18,7 @@ import {
   type LoadEmployment,
   type LoadInput,
   type LoadRequirement,
+  type LoadScopeAssessment,
 } from './teacher-load';
 import { teachingWeeks, teachingWeeksByDays } from './teaching-weeks';
 
@@ -581,6 +583,77 @@ describe('hours outside the stages are no reason to say OVER_MAX (T7, the user\'
     const hidden = hideScopeHr(of(scope({ requirements: [inStage(15), preschool(1)] })));
     expect(hidden.overOnlyWithUnregulated).toBe(true);
     expect(hidden.highestHours).toBeNull();
+  });
+});
+
+describe('the rektor\'s assessment the input carries (AssignmentScopeAssessments, 20270306090000)', () => {
+  const assessed = (levelHours: number | null, exceptionKind: 'OWN_INITIATIVE' | 'SMALL_GROUP' | null = null, extra: Partial<LoadScopeAssessment> = {}) =>
+    new Map<string, LoadScopeAssessment>([
+      [ANNA, { levelHours, exceptionKind, ownInitiativeOn: exceptionKind === 'OWN_INITIATIVE' ? '2026-05-02' : null, note: 'skäl', decidedAt: '2026-03-05T08:00:00.000Z', ...extra }],
+    ]);
+
+  it('is the teacher\'s own level, as an explicit map would be: 645 h against an assessed 600 is OVER_OWN', () => {
+    const anna = of(scope({ scopeAssessments: assessed(600) }));
+    expect(anna.verdict).toBe('OVER_OWN');
+    expect(anna.highestHours).toBe(600);
+    expect(anna.ordinanceHighestHours).toBe(650);
+  });
+
+  it('gives the explicit map the last word: a caller\'s what-if beats the stored level', () => {
+    const anna = of(scope({ scopeAssessments: assessed(600) }, [VERSION], { ownLevelHours: new Map([[ANNA, 640]]) }));
+    expect(anna.highestHours).toBe(640);
+  });
+
+  it('is no level at all when only an exception is registered: the ordinance\'s edge holds', () => {
+    const anna = of(scope({ scopeAssessments: assessed(null, 'SMALL_GROUP') }));
+    expect(anna.verdict).toBe('INSIDE');
+    expect(anna.highestHours).toBe(650);
+  });
+
+  it('carries the assessment on the teacher\'s row, and not a key at all for a teacher without one', () => {
+    const anna = of(scope({ scopeAssessments: assessed(600, 'OWN_INITIATIVE') }));
+    expect(anna.assessment).toEqual({ levelHours: 600, exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: '2026-05-02', note: 'skäl', decidedAt: '2026-03-05T08:00:00.000Z' });
+    expect('assessment' in of(scope({}))).toBe(false);
+    expect('assessment' in of(scope({ scopeAssessments: new Map() }))).toBe(false);
+  });
+
+  it('does NOT silence the verdict: a registered exception leaves a teacher over the ordinance OVER_MAX', () => {
+    const anna = of(scope({ requirements: [row({ lessonsPerWeek: 17 })], scopeAssessments: assessed(null, 'OWN_INITIATIVE') }));
+    expect(anna.verdict).toBe('OVER_MAX');
+    expect(anna.assessment?.exceptionKind).toBe('OWN_INITIATIVE');
+  });
+
+  it('shows a teacher the rektor has assessed who has no teaching and no post yet, only if the report has a row for them', () => {
+    const report = scope({ employments: [], requirements: [], scopeAssessments: assessed(600) });
+    expect(report.teachers.find((teacher) => teacher.userId === ANNA)).toBeUndefined();
+  });
+
+  it('hides the level, the day, the note and the time from a reader without HR-läs, and keeps the exception kind', () => {
+    const hidden = hideScopeHr(of(scope({ scopeAssessments: assessed(600, 'OWN_INITIATIVE') })));
+    expect(hidden.assessment).toEqual({ levelHours: null, exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: null, note: null, decidedAt: null });
+    expect(hidden.highestHours).toBeNull();
+    expect(hidden.verdict).toBe('OVER_OWN');
+  });
+
+  it('hides nothing of a teacher without an assessment, and adds no key', () => {
+    const hidden = hideScopeHr(of(scope({})));
+    expect('assessment' in hidden).toBe(false);
+  });
+
+  it('is carried to scopeOfTeacher, which judges a write against it', () => {
+    const input: LoadInput = {
+      year: YEAR,
+      policy: { ...DEFAULT_LOAD_POLICY, fullTimeTeachingMinutesPerWeek: 1080 },
+      employments: [employment()],
+      requirements: [row()],
+      qualifications: [],
+      closures: [],
+      duties: [],
+      scopeAssessments: assessed(600, 'SMALL_GROUP'),
+    };
+    const mine = scopeOfTeacher(input, [VERSION], ANNA);
+    expect(mine?.verdict).toBe('OVER_OWN');
+    expect(mine?.assessment?.exceptionKind).toBe('SMALL_GROUP');
   });
 });
 

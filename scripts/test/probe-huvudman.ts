@@ -32,6 +32,14 @@
  *          themself inactive while another is active, and refused when none
  *          would be left. The owner deletes what it made, and makes K
  *          active again.
+ *   (hm-h) the rektor's assessments of a teacher (20270306090000) as a
+ *          reader without HR-läs gets them: the database hands the reader and
+ *          a planner every row of the school (the administrators' arm), so
+ *          the gateway (hr-visibility) is the only thing that keeps the
+ *          level, the day, the note and who decided from them, in the list
+ *          and in the load report alike; a planner reads their own row
+ *          whole, an administrator with HR-läs every one whole. The owner
+ *          makes a nine-year läsår of its own for it and removes it.
  *
  * On the RLS fixtures (run-rls-tests.sh first): huvudmannen H owns the seeded
  * school, rls-roller-school and rls-huvudman-c. What it writes is rolled back,
@@ -48,6 +56,8 @@ import type { PrismaService } from '../../src/database/prisma.service';
 import { recordRead } from '../../src/access-log/access-log';
 import { huvudmanRefusal } from '../../src/huvudman/huvudman-errors';
 import { HuvudmanService } from '../../src/huvudman/huvudman.service';
+import { ScopeAssessmentsService, type ScopeAssessmentResponse } from '../../src/staffing/scope-assessments.service';
+import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
 import { resolveHuvudmanKey } from '../../src/integration/integration-key';
 import { Ss12000HuvudmanReads } from '../../src/integration/ss12000-v2/huvudman-reads';
 import { Ss12000V2Service } from '../../src/integration/ss12000-v2/ss12000-v2.service';
@@ -277,6 +287,91 @@ export async function huvudmanChecks(owner: Client, api: PrismaService, check: C
       await owner.query(`UPDATE "HuvudmanMembers" SET "isActive" = true, role = 'KOMMUNADMINISTRATOR' WHERE "authId" = $1`, [K]);
       if (keyId) await owner.query(`DELETE FROM "HuvudmanApiKeys" WHERE id = $1`, [keyId]);
       if (invited) await owner.query(`DELETE FROM "HuvudmanMembers" WHERE id = $1`, [invited]);
+    }
+  });
+
+  await check('(hm-h) the rektor\'s assessments are the gateway\'s to hide: the reader and a planner without HR-läs read them masked, the database alone would not', async () => {
+    const personOf = async (authId: string) => (await owner.query<{ id: string }>(`SELECT id FROM "Users" WHERE "authId" = $1`, [authId])).rows[0]!.id;
+    const teacher = await personOf('00000000-0000-4000-8000-000000000111');
+    const plannerId = await personOf('00000000-0000-4000-8000-000000000107'); // SCHEMALAGGARE, no HR-läs
+    const withHrId = await personOf('00000000-0000-4000-8000-000000000109'); // SCHEMALAGGARE with HR-läs
+    const asPlanner: AuthenticatedUser = {
+      authId: '00000000-0000-4000-8000-000000000107', userId: plannerId, schoolId: roller, role: Role.SCHOOL_ADMIN, adminProfile: 'SCHEMALAGGARE', hrRead: false,
+    };
+    const asHr: AuthenticatedUser = {
+      authId: '00000000-0000-4000-8000-000000000109', userId: withHrId, schoolId: roller, role: Role.SCHOOL_ADMIN, adminProfile: 'SCHEMALAGGARE', hrRead: true,
+    };
+    // A nine-year läsår the ordinance reaches, so the load report judges (a year of the huvudman fixtures begins in 2030, which is ten-year).
+    const year = (
+      await owner.query<{ id: string }>(
+        `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+         VALUES ($1, 'probe hm-h bedömning', '2099-08-17', '2100-06-12', false, 'NIOARIG', now()) RETURNING id`,
+        [roller],
+      )
+    ).rows[0]!.id;
+    try {
+      await owner.query(
+        `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "reductionPercent", signature, "updatedAt")
+         VALUES ($1, $2, $3, 100, 0, 'HMH', now())`,
+        [roller, teacher, year],
+      );
+      // The teacher's row carries a level, an exception with its day and a note; the planner's own row a level and a note.
+      await owner.query(
+        `INSERT INTO "AssignmentScopeAssessments" ("schoolId", "userId", "academicYearId", "teachingLevelHours", "exceptionKind", "ownInitiativeOn", note, "updatedAt")
+         VALUES ($1, $2, $3, 560, 'OWN_INITIATIVE', '2099-05-02', 'hm-h teacher note', now()),
+                ($1, $4, $3, 540, NULL, NULL, 'hm-h planner note', now())`,
+        [roller, teacher, year, plannerId],
+      );
+      const assessments = new ScopeAssessmentsService(api);
+      const byUser = (rows: ScopeAssessmentResponse[]) => new Map(rows.map((row) => [row.userId, row]));
+      const masked = (row: ScopeAssessmentResponse | undefined) =>
+        row && [row.hrHidden, row.teachingLevelHours, row.ownInitiativeOn, row.note, row.decidedById, row.decidedAt];
+
+      // The database alone: the huvudman's reader (no Users row) and the planner read both rows, as the administrators' arm says.
+      for (const who of [reader(roller!), asPlanner]) {
+        const raw = await api.withRls(who, (tx) =>
+          tx.assignmentScopeAssessment.findMany({ where: { academicYearId: year }, select: { userId: true, teachingLevelHours: true, note: true }, orderBy: { userId: 'asc' } }),
+        );
+        assert.deepEqual(
+          raw.map((row) => [row.userId, row.teachingLevelHours, row.note]).sort(),
+          [[teacher, 560, 'hm-h teacher note'], [plannerId, 540, 'hm-h planner note']].sort(),
+          'the database hands every row of the school to the reader and to a planner',
+        );
+      }
+
+      // The list: the reader has no row of their own to match, so both are masked; the exception kind is what is left.
+      const readerList = byUser(await assessments.list(year, reader(roller!)));
+      assert.deepEqual(masked(readerList.get(teacher)), [true, null, null, null, null, null]);
+      assert.deepEqual(masked(readerList.get(plannerId)), [true, null, null, null, null, null]);
+      assert.equal(readerList.get(teacher)?.exceptionKind, 'OWN_INITIATIVE');
+      // A planner without HR-läs: the teacher's row masked, their own whole.
+      const plannerList = byUser(await assessments.list(year, asPlanner));
+      assert.deepEqual(masked(plannerList.get(teacher)), [true, null, null, null, null, null]);
+      assert.deepEqual([plannerList.get(plannerId)?.hrHidden, plannerList.get(plannerId)?.teachingLevelHours, plannerList.get(plannerId)?.note], [false, 540, 'hm-h planner note']);
+      // An administrator with HR-läs reads every row whole.
+      const hrList = byUser(await assessments.list(year, asHr));
+      assert.deepEqual(
+        [hrList.get(teacher)?.hrHidden, hrList.get(teacher)?.teachingLevelHours, hrList.get(teacher)?.ownInitiativeOn, hrList.get(teacher)?.note],
+        [false, 560, '2099-05-02', 'hm-h teacher note'],
+      );
+
+      // The load report carries the assessment on the teacher's row and hides it the same way.
+      const assessmentOf = async (who: AuthenticatedUser) =>
+        (await new StaffingLoadService(api).load(year, 'planned', who)).scope?.teachers.find((row) => row.userId === teacher)?.assessment;
+      const toReader = await assessmentOf(reader(roller!));
+      assert.deepEqual(
+        toReader && [toReader.levelHours, toReader.exceptionKind, toReader.ownInitiativeOn, toReader.note, toReader.decidedAt],
+        [null, 'OWN_INITIATIVE', null, null, null],
+        'the reader\'s report holds the exception kind and nothing about the person',
+      );
+      const toPlanner = await assessmentOf(asPlanner);
+      assert.deepEqual(toPlanner && [toPlanner.levelHours, toPlanner.note], [null, null]);
+      const toHr = await assessmentOf(asHr);
+      assert.deepEqual(toHr && [toHr.levelHours, toHr.ownInitiativeOn, toHr.note], [560, '2099-05-02', 'hm-h teacher note']);
+    } finally {
+      await owner.query(`DELETE FROM "AssignmentScopeAssessments" WHERE "academicYearId" = $1`, [year]);
+      await owner.query(`DELETE FROM "TeacherEmployments" WHERE "academicYearId" = $1`, [year]);
+      await owner.query(`DELETE FROM "AcademicYears" WHERE id = $1`, [year]);
     }
   });
 }
