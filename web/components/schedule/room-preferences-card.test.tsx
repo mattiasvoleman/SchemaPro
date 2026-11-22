@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RoomPreferencesCard } from "./room-preferences-card";
@@ -402,6 +402,27 @@ describe("the ?roomRule= deep link", () => {
   });
   afterEach(() => window.history.replaceState(null, "", "/"));
 
+  it("scrolls to the marked rule once, and not again at every tick of a room in the form above it", async () => {
+    const scrolled = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      window.history.replaceState(null, "", "/?roomRule=p-lock");
+      const user = userEvent.setup();
+      render(<RoomPreferencesCard kind="LOCK" />);
+      await screen.findByRole("button", { name: "save" });
+      expect(scrolled).toHaveBeenCalledTimes(1);
+      expect(scrolled.mock.contexts[0]).toBe(screen.getByRole("listitem"));
+
+      await user.click(screen.getByLabelText("A14"));
+      await user.click(screen.getByLabelText("A12"));
+      expect(scrolled).toHaveBeenCalledTimes(1);
+    } finally {
+      if (original) Element.prototype.scrollIntoView = original;
+      else delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
   it("marks the rule and opens the form for a rule beside it, saved as a lock of the same subject and years with the rooms picked", async () => {
     window.history.replaceState(null, "", "/?roomRule=p-lock");
     const user = userEvent.setup();
@@ -426,6 +447,45 @@ describe("the ?roomRule= deep link", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("is read once in the address too: it is gone from it when the form opens, the rest of the address stays, and a reload does not open it again", async () => {
+    window.history.replaceState(null, "", "/?roomRule=p-lock&other=kept#frag");
+    const first = render(<RoomPreferencesCard kind="LOCK" />);
+    await screen.findByRole("button", { name: "save" });
+
+    expect(window.location.search).toBe("?other=kept");
+    expect(window.location.hash).toBe("#frag");
+
+    // A reload is a new mount that reads the address as it is now.
+    first.unmount();
+    render(<RoomPreferencesCard kind="LOCK" />);
+    expect(screen.queryByRole("button", { name: "save" })).toBeNull();
+    expect(screen.getByRole("listitem")).not.toHaveAttribute("aria-current");
+  });
+
+  it("takes an id that opens nothing out of the address too, so that it does not stay in it", async () => {
+    window.history.replaceState(null, "", "/?roomRule=an-id-from-another-school");
+    render(<RoomPreferencesCard kind="LOCK" />);
+
+    await waitFor(() => expect(window.location.search).toBe(""));
+  });
+
+  it("still gives the card of wishes the id of a wish when both cards are on the page, as the constraints page has them", async () => {
+    preferences.data = [lockRule("p-lock"), lockRule("p-wish", { kind: "WISH" as const })];
+    window.history.replaceState(null, "", "/?roomRule=p-wish");
+    render(
+      <>
+        <RoomPreferencesCard kind="LOCK" />
+        <RoomPreferencesCard kind="WISH" />
+      </>,
+    );
+
+    await screen.findByRole("button", { name: "save" });
+    const marked = screen.getAllByRole("listitem").filter((item) => item.getAttribute("aria-current") === "true");
+    expect(marked).toHaveLength(1);
+    expect(marked[0]).toHaveTextContent("preferenceSummary");
+    expect(window.location.search).toBe("");
+  });
+
   it("leaves the wishes alone: a lock's id is read by the card of locks", () => {
     window.history.replaceState(null, "", "/?roomRule=p-lock");
     preferences.data = [lockRule("p-lock"), lockRule("p-wish", { kind: "WISH" as const })];
@@ -444,6 +504,22 @@ describe("the ?roomRule= deep link", () => {
     preferences.data = [lockRule("p-lock")];
     view.rerender(<RoomPreferencesCard kind="LOCK" />);
     expect(await screen.findByRole("button", { name: "save" })).toBeInTheDocument();
+  });
+
+  it("writes nothing by itself: the form opens on the rule's subject and years, and nothing is created or removed until a room is picked and Spara pressed", async () => {
+    window.history.replaceState(null, "", "/?roomRule=p-lock");
+    const user = userEvent.setup();
+    render(<RoomPreferencesCard kind="LOCK" />);
+    await screen.findByRole("button", { name: "save" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(create).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "cancel" }));
+    expect(create).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("marks nothing without the parameter", () => {
@@ -471,5 +547,35 @@ describe("RoomPreferencesCard under Läsbehörighet", () => {
     const remove = within(screen.getByRole("list")).getByRole("button", { name: /^actionNamed\(delete\|/ });
     expect(remove.closest("[data-writes]")).toHaveAttribute("data-writes", "PLANERING");
     expect(screen.getByRole("listitem").closest("[data-writes]")).toBeNull();
+  });
+});
+
+describe("RoomPreferencesCard's form under Läsbehörighet", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] from a profile that does not write planering. The form is opened by
+  // the button, which carries the mark, and by ?roomRule=, which opens it with no button: its Spara has to be under the mark too, or a
+  // läsare is shown a form that can only answer 403.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    preferences.data = [
+      { id: "p-lock", subjectId: "s-no", kind: "LOCK" as const, minGradeLevel: 7, maxGradeLevel: 9, roomTypeId: null, weight: 5, rooms: [{ roomId: "r-a12" }] },
+    ];
+    preferences.isError = false;
+  });
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("is marked as planering's when ?roomRule= opens it", async () => {
+    window.history.replaceState(null, "", "/?roomRule=p-lock");
+    render(<RoomPreferencesCard kind="LOCK" />);
+
+    const save = await screen.findByRole("button", { name: "save" });
+    expect(save.closest("[data-writes]")).toHaveAttribute("data-writes", "PLANERING");
+  });
+
+  it("is marked as planering's when the button opens it", async () => {
+    const user = userEvent.setup();
+    render(<RoomPreferencesCard kind="LOCK" />);
+    await user.click(screen.getByRole("button", { name: "addLock" }));
+
+    expect(screen.getByRole("button", { name: "save" }).closest("[data-writes]")).toHaveAttribute("data-writes", "PLANERING");
   });
 });

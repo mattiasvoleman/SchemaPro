@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Loader2, Plus, Trash2 } from "lucide-react";
@@ -88,6 +88,12 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
   // rules of THIS card's kind that this school has: an id that is none of them opens nothing and says nothing.
   const [linkedRuleId, setLinkedRuleId] = useState<string | null>(null);
   const [marked, setMarked] = useState<string | null>(null);
+  // The marked rule is brought into view when the link marks it, once. A callback ref made in the render has a new identity at every render
+  // and is called again at each of them, which scrolled the page back to the rule at every tick of a room in the form above it.
+  const markedRow = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (marked) markedRow.current?.scrollIntoView?.({ block: "center" });
+  }, [marked]);
   useEffect(() => setLinkedRuleId(new URLSearchParams(window.location.search).get("roomRule")), []);
   useEffect(() => {
     if (!linkedRuleId || !preferences) return;
@@ -102,6 +108,11 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
       setSpan({ min: rule.minGradeLevel, max: rule.maxGradeLevel });
     }
     setLinkedRuleId(null);
+    // Read once, in the address as well: left in it, the link would mark the rule and open the form again at every reload and at every step back
+    // to this entry. Taken out here, after both cards have read it on mount, so that the card of wishes still sees an id of its own kind.
+    const rest = new URLSearchParams(window.location.search);
+    rest.delete("roomRule");
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${String(rest) ? `?${rest}` : ""}${window.location.hash}`);
   }, [linkedRuleId, preferences, kind]);
 
   const subjectName = useMemo(
@@ -220,7 +231,9 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
       }
     >
       {adding ? (
-        <div className="space-y-3 rounded-md border p-3">
+        // Planering's, wherever it opens from: the button above (marked) and ?roomRule=, which opens it with no button. A profile that
+        // does not write planering is shown neither, as the layout's readOnlyStyle hides what carries the mark.
+        <div data-writes="PLANERING" className="space-y-3 rounded-md border p-3">
           <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
             <FormField id={idOf("subject")} label={t("preferenceSubject")}>
               {(control) => (
@@ -396,7 +409,7 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
             <li
               key={preference.id}
               aria-current={marked === preference.id ? "true" : undefined}
-              ref={marked === preference.id ? (node) => node?.scrollIntoView?.({ block: "center" }) : undefined}
+              ref={marked === preference.id ? markedRow : undefined}
               className={`flex items-center justify-between gap-3 px-3 py-2 text-sm${marked === preference.id ? " bg-accent" : ""}`}
             >
               <span className="flex min-w-0 flex-wrap items-center gap-2">

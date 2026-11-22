@@ -548,16 +548,25 @@ export default function PeoplePage() {
   // none of them, or whose teacher is not on this list, opens nothing and says nothing.
   const [linkedRuleId, setLinkedRuleId] = useState<string | null>(null);
   const [focusCap, setFocusCap] = useState(false);
-  useEffect(() => setLinkedRuleId(new URLSearchParams(window.location.search).get("workRule")), []);
+  // Read only by a profile that is offered Arbetstid on the row (writesPlanning): the link is not another way in for a läsare or an expedition.
+  useEffect(
+    () => setLinkedRuleId(writesPlanning ? new URLSearchParams(window.location.search).get("workRule") : null),
+    [writesPlanning],
+  );
   useEffect(() => {
     if (!linkedRuleId || !people || !workRules) return;
     const owner = workRules.find((rule) => rule.id === linkedRuleId)?.userId;
     const teacher = people.find((person) => person.id === owner);
-    if (teacher) {
+    // The row's own condition (MAY_HAVE_WORK_TIME): a rule that outlived its teacher's role is not opened.
+    if (teacher && MAY_HAVE_WORK_TIME.includes(teacher.role)) {
       setFocusCap(true);
       setWorkTimeFor(teacher);
     }
     setLinkedRuleId(null);
+    // Read once, in the address as well: left in it, the link would open the dialog again at every reload and at every step back to this entry.
+    const rest = new URLSearchParams(window.location.search);
+    rest.delete("workRule");
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${String(rest) ? `?${rest}` : ""}${window.location.hash}`);
   }, [linkedRuleId, people, workRules]);
   const guardiansQuery = useStudentGuardians(guardiansFor?.id ?? null);
   const studentGuardians = guardiansQuery.data;

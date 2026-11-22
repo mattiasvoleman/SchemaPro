@@ -136,12 +136,15 @@ vi.mock("@/lib/csv-export", async (importOriginal) => ({
 }));
 vi.mock("@/lib/guardians-csv-export", () => ({ guardiansCsvFor }));
 
+// Held by the tests, so that they can say that nothing was written.
+const workRuleWrites = vi.hoisted(() => ({ save: vi.fn(), remove: vi.fn() }));
+
 // The working-time rules have a module of their own, for the bundle.
 vi.mock("@/lib/work-rule-queries", () => ({
   useTeacherWorkRules: () => ({ data: state.workRulesLoading ? undefined : state.workRules }),
   useTeacherWorkRuleActions: () => ({
-    save: { mutateAsync: vi.fn(), isPending: false },
-    remove: { mutateAsync: vi.fn(), isPending: false },
+    save: { mutateAsync: workRuleWrites.save, isPending: false },
+    remove: { mutateAsync: workRuleWrites.remove, isPending: false },
   }),
 }));
 
@@ -857,6 +860,41 @@ describe("People page", () => {
       describe("the ?workRule= deep link", () => {
         afterEach(() => window.history.replaceState(null, "", "/"));
 
+        // The dialog is a lazy chunk and shows a moment after the page does: "nothing opens" is only a statement once that moment has passed,
+        // whichever test loaded the chunk first.
+        const staysShut = () => expect(screen.findByRole("dialog", {}, { timeout: 250 })).rejects.toThrow();
+
+        // The row offers Arbetstid to a profile that writes planering and to nobody else (MAY_HAVE_WORK_TIME && writesPlanning); the link
+        // opens the same dialog for the same profiles. An expedition and a läsare get no Arbetstid button, and no way in through the address.
+        it.each(["EXPEDITION", "LASARE"])("opens nothing for a %s, whom the row offers no Arbetstid either", async (profile) => {
+          state.myProfile = profile;
+          state.workRules = [workRule];
+          window.history.replaceState(null, "", "/sv/admin/people?workRule=w-1");
+          render(<PeoplePage />);
+
+          expect(rowNames()).toHaveLength(4);
+          expect(screen.queryByRole("button", { name: "editFor(Karin Ek)" })).toBeNull();
+          await staysShut();
+        });
+
+        it("opens it for a schemaläggare, whom the row offers Arbetstid", async () => {
+          state.myProfile = "SCHEMALAGGARE";
+          state.workRules = [workRule];
+          window.history.replaceState(null, "", "/sv/admin/people?workRule=w-1");
+          render(<PeoplePage />);
+
+          expect(await screen.findByRole("dialog")).toHaveTextContent("Karin Ek");
+        });
+
+        it("opens nothing for a rule whose person is no member of staff (a role changed after the rule was written)", async () => {
+          state.workRules = [{ ...workRule, id: "w-8", userId: "st-1" }];
+          window.history.replaceState(null, "", "/sv/admin/people?workRule=w-8");
+          render(<PeoplePage />);
+
+          expect(rowNames()).toHaveLength(4);
+          await staysShut();
+        });
+
         it("opens that teacher's Arbetstid with the day's cap in focus", async () => {
           state.workRules = [workRule];
           window.history.replaceState(null, "", "/sv/admin/people?workRule=w-1");
@@ -865,6 +903,25 @@ describe("People page", () => {
           const dialog = await screen.findByRole("dialog");
           expect(dialog).toHaveTextContent("Karin Ek");
           expect(within(dialog).getByLabelText("dayCapMinutes")).toHaveFocus();
+        });
+
+        it("writes nothing by itself: the dialog shows the stored rule, and nothing is saved or removed until Spara is pressed", async () => {
+          state.workRules = [workRule];
+          window.history.replaceState(null, "", "/sv/admin/people?workRule=w-1");
+          const user = userEvent.setup();
+          render(<PeoplePage />);
+          const dialog = await screen.findByRole("dialog");
+          await new Promise((resolve) => setTimeout(resolve, 50));
+
+          expect(within(dialog).getByLabelText("lunchMinutes")).toHaveValue(30);
+          expect(within(dialog).getByLabelText("dayCapMinutes")).toHaveValue(null);
+          expect(workRuleWrites.save).not.toHaveBeenCalled();
+          expect(workRuleWrites.remove).not.toHaveBeenCalled();
+
+          await user.keyboard("{Escape}");
+          await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+          expect(workRuleWrites.save).not.toHaveBeenCalled();
+          expect(workRuleWrites.remove).not.toHaveBeenCalled();
         });
 
         it("opens it once: a dialog that has been closed is not opened again by the page reading its lists again", async () => {
@@ -880,6 +937,31 @@ describe("People page", () => {
           state.workRules = [{ ...workRule }];
           view.rerender(<PeoplePage />);
           expect(screen.queryByRole("dialog")).toBeNull();
+        });
+
+        it("is read once in the address too: it is gone from it when the dialog opens, the rest of the address stays, and a reload does not open it again", async () => {
+          state.workRules = [workRule];
+          window.history.replaceState(null, "", "/sv/admin/people?workRule=w-1&other=kept#frag");
+          const first = render(<PeoplePage />);
+          await screen.findByRole("dialog");
+
+          expect(window.location.pathname).toBe("/sv/admin/people");
+          expect(window.location.search).toBe("?other=kept");
+          expect(window.location.hash).toBe("#frag");
+
+          // A reload is a new mount that reads the address as it is now.
+          first.unmount();
+          render(<PeoplePage />);
+          await expect(screen.findByRole("dialog", {}, { timeout: 250 })).rejects.toThrow();
+        });
+
+        it("takes an id that opens nothing out of the address too, so that it does not stay in it", async () => {
+          state.workRules = [workRule];
+          window.history.replaceState(null, "", "/sv/admin/people?workRule=an-id-from-another-school");
+          render(<PeoplePage />);
+
+          expect(rowNames()).toHaveLength(4);
+          await waitFor(() => expect(window.location.search).toBe(""));
         });
 
         it("waits for the work rules: with the people read but the rules still loading nothing opens, and it opens when they arrive", async () => {
@@ -916,7 +998,8 @@ describe("People page", () => {
           render(<PeoplePage />);
 
           expect(rowNames()).toHaveLength(4);
-          expect(screen.queryByRole("dialog")).toBeNull();
+          // The dialog is a lazy chunk and shows a moment after the page does: waited for, so that the test says the same alone as after another.
+          await expect(screen.findByRole("dialog", {}, { timeout: 250 })).rejects.toThrow();
           expect(screen.queryByRole("alert")).toBeNull();
           expect(toast.error).not.toHaveBeenCalled();
         });
@@ -927,7 +1010,7 @@ describe("People page", () => {
           render(<PeoplePage />);
 
           expect(rowNames()).toHaveLength(4);
-          expect(screen.queryByRole("dialog")).toBeNull();
+          await expect(screen.findByRole("dialog", {}, { timeout: 250 })).rejects.toThrow();
         });
 
         it("opens no dialog without the parameter, and the register reads as it did", async () => {
