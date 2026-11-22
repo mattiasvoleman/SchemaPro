@@ -279,8 +279,9 @@ const wholeKind = (kind: MarkerKind, value: string): MarkerKind => (kind === "pn
 
 /** How a personnummer was written and whether its check digit holds: counted for every number found by shape, in a marked column or a free cell. */
 function recordNumber(found: Finding, ctx: Context): void {
-  if (found.kind !== "pnr" && found.kind !== "sam") return;
-  ctx.checks[found.kind][found.checkDigit ? "holds" : "fails"] += 1;
+  if (found.kind !== "pnr" && found.kind !== "sam" && found.kind !== "tf") return;
+  // A TF number has no check digit: it is counted by how it was written and never as a number whose digit does not hold.
+  if (found.kind !== "tf") ctx.checks[found.kind][found.checkDigit ? "holds" : "fails"] += 1;
   if (found.spelling !== undefined) ctx.spellings.set(found.spelling, (ctx.spellings.get(found.spelling) ?? 0) + 1);
 }
 
@@ -290,7 +291,8 @@ function replaceMarked(value: string, kind: MarkerKind, ctx: Context): string {
   if (value.trim() === "" || isMarker(value)) return value;
   if (kind === "pnr" || kind === "epost" || kind === "tel") {
     // A cell that is what the column says it is (one or several, with separators) keeps each as its own marker; anything else in it is replaced whole.
-    const sameKind = findPersonalData(value).filter((f) => (kind === "pnr" ? f.kind === "pnr" || f.kind === "sam" : f.kind === kind));
+    // A column of personnummer holds TF numbers too (Skola24's ID columns do): each is its own marker, counted as TF and not as a number with a bad check digit.
+    const sameKind = findPersonalData(value).filter((f) => (kind === "pnr" ? f.kind === "pnr" || f.kind === "sam" || f.kind === "tf" : f.kind === kind));
     const rest = applySpans(
       value,
       sameKind.map((f) => ({ start: f.start, end: f.end, marker: "" })),
@@ -304,6 +306,12 @@ function replaceMarked(value: string, kind: MarkerKind, ctx: Context): string {
         value,
         sameKind.map((f) => ({ start: f.start, end: f.end, marker: ctx.book.marker(f.kind, f.key) })),
       );
+    }
+    // A cell of a personnummer column that holds TF numbers and other text (and nothing else that is personal) is replaced whole, but as what it holds: the
+    // marker the number has on its own, and counted as TF. wholeKind reads the cell's digits for a day and would call it PNR, a second marker for the same TF.
+    if (kind === "pnr" && sameKind.length > 0 && sameKind.every((f) => f.kind === "tf")) {
+      ctx.tally.tf.column += 1;
+      return ctx.book.marker("tf", [...new Set(sameKind.map((f) => f.key))].sort().join("|"));
     }
     const whole = wholeKind(kind, value);
     ctx.tally[whole].column += 1;

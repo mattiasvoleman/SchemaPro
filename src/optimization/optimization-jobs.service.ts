@@ -26,6 +26,7 @@ import {
   type StoredSentence,
 } from './work-days';
 import { candidatesRunning, yearHasActiveCandidateRun } from './schedule-candidates.service';
+import { suggestionsRunning, yearHasRunningSuggestions } from './suggestions-running';
 import {
   asParams,
   conflictView,
@@ -54,6 +55,14 @@ import {
   leaseSecondsFor,
 } from './generate-runs';
 import { timeoutReportOf, type TimeoutReportView } from './timeout-report';
+import {
+  readAs,
+  suggestionsMayBeAskedFor,
+  suggestionsOf,
+  teachersOfSuggestions,
+  viewOf,
+  type SuggestionsView,
+} from './suggestions';
 
 /**
  * What a failed run has to say for itself.
@@ -166,6 +175,14 @@ export interface OptimizationJobView {
    */
   report: TimeoutReportView | null;
   /**
+   * The changes that would let this run's week be laid (suggestions.ts, Åtgärdsförslag vid vägran), or null: nobody asked, or the
+   * column holds nothing wholly well formed. RUNNING while the analysis runs; a RUNNING that outlived any analysis reads as FAILED.
+   * A cap's teacher is named here for every reader, as a free-day note's is; a part-timer's days are in their hidden form for all.
+   */
+  suggestions: SuggestionsView | null;
+  /** Whether the page may offer the button: the run ended with no timetable, and the end is one the five rules can have given. */
+  suggestionsOffered: boolean;
+  /**
    * The schemaförslag applied over the year since this run — the newest —
    * whose timetable its notes no longer describe, as the apply's own
    * REGENERATE entry names it; null when none was. Read by GET jobs/:id for a
@@ -218,6 +235,8 @@ const JOB_SELECT = {
   finishedAt: true,
   // Where a run that ran out of time spent it (timeout-report.ts); null for every other run.
   report: true,
+  // The changes that would let a refused or timed-out week be laid (suggestions.ts); null when nobody asked.
+  suggestions: true,
   // For a run whose lease has run out before the sweep has come round (abandonedAt).
   leaseUntil: true,
   // The last sign of life, for how long an abandoned run had gone on (lastSeenParams).
@@ -243,6 +262,8 @@ interface JobRow {
   finishedAt: Date | null;
   /** Where a TIMEOUT's time went, as stored: read through timeoutReportOf, never as it stands. Absent before the column. */
   report?: unknown;
+  /** The analysis of the run, as stored: read through suggestionsOf, never as it stands. Absent before the column. */
+  suggestions?: unknown;
   /** Absent from a row read before the column: such a run is never read as abandoned. */
   leaseUntil?: Date | null;
   /** The database's clock at the run's last sign of life; absent from a row read before the column. */
@@ -306,6 +327,15 @@ function notesShown(
   return out;
 }
 
+/**
+ * A run's analysis as one reader is shown it: through the whitelist (a value that is not wholly well formed is not shown in part), an
+ * abandoned one read as the failure it is, each cap's teacher named by whom this reader may see (a protected identity is in nobody's map).
+ */
+function suggestionsShown(stored: unknown, names: ReadonlyMap<string, string>, now: Date): SuggestionsView | null {
+  const held = suggestionsOf(stored);
+  return held === null ? null : viewOf(readAs(held, now), names);
+}
+
 /** The run's summary as a sentence, its teachers from inside its params. */
 function summaryOf(job: JobRow): StoredSentence {
   return sentenceOf(
@@ -355,7 +385,14 @@ function sentenceOf(
 /** The teachers the notes and the travel sentences of these runs are about: whom their view names. */
 function notedOf(jobs: readonly JobRow[]): string[] {
   return [
-    ...new Set(jobs.flatMap((job) => [...notedTeachersOf(job.notes), ...travelTeachersOf(job.conflicts)])),
+    ...new Set(
+      jobs.flatMap((job) => [
+        ...notedTeachersOf(job.notes),
+        ...travelTeachersOf(job.conflicts),
+        // The teacher a cap in a suggestion is about: named when the run is read, never stored as a name.
+        ...teachersOfSuggestions(suggestionsOf(job.suggestions)),
+      ]),
+    ),
   ];
 }
 
@@ -455,6 +492,12 @@ export function jobView(
       notes: notesShown(job.notes, names, say),
       error: failure.message,
       report: timeoutReportOf(job.report),
+      suggestions: suggestionsShown(job.suggestions, names, now),
+      suggestionsOffered: suggestionsMayBeAskedFor({
+        status: abandoned ? 'FAILED' : job.status,
+        solverStatus: job.solverStatus,
+        errorCode: failure.code,
+      }),
       supersededBy: null,
       createdAt: job.createdAt.toISOString(),
       finishedAt: abandoned ? abandoned.toISOString() : job.finishedAt ? job.finishedAt.toISOString() : null,
@@ -636,6 +679,8 @@ export class OptimizationJobsService implements OnModuleInit, OnModuleDestroy {
       // never locks the button until the sweep comes round.
       await lockYearForSolveStart(tx, academicYearId, SCHEDULE_BUSY);
       if (await yearHasActiveCandidateRun(tx, academicYearId)) throw candidatesRunning();
+      // Nor beside the analysis of a refused run (G6, D2: the engine's cores are shared, and the analysis takes the same year start lock).
+      if (await yearHasRunningSuggestions(tx, academicYearId)) throw suggestionsRunning();
       try {
         return await tx.optimizationJob.create({
           data: {

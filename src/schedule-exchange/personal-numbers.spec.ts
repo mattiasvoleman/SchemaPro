@@ -267,3 +267,90 @@ describe('no personnummer out of any reader', () => {
     });
   });
 });
+
+/**
+ * The TF number (X3, 2026-11-22): where a personnummer goes in Skola24's own files stands ÅÅÅÅMMDDTFnn. The same matrix: every spelling the door counts, in
+ * every field every reader reads, and the whole of what comes back searched for any of its digits. A row with one in a field that is read is NOT read.
+ */
+const TF_FORMS: Record<string, string> = {
+  'ÅÅÅÅMMDDTFNN (the form Skola24 publishes)': '19800101TF01',
+  'TF i små bokstäver': '19800101tf01',
+  'bindestreck före TF': '19800101-TF01',
+  'mellanslag före TF': '19800101 TF01',
+  'snedstreck före TF': '19800101/TF01',
+  'hårt blanksteg före TF': '19800101\u00a0TF01',
+  fullbreddssiffror: '\uff11\uff19\uff18\uff10\uff10\uff11\uff10\uff11TF\uff10\uff11',
+  'inbäddad "Namn ÅÅÅÅMMDDTFNN"': 'Anna Berg 19800101TF01',
+  'parentes "(ÅÅÅÅMMDDTFNN)"': '(19800101TF01)',
+  'ord direkt före och efter': 'abc19800101TF01xyz',
+  'i en anteckning': 'Se anteckning: 19800101TF01 (vikarie)',
+};
+
+describe('no TF number out of any reader', () => {
+  const tfFields = ['Klass/grupp', 'Ämne', 'Lärare', 'Lärarnamn', 'Lärare e-post', 'Sal', 'Dag', 'Start', 'Slut', 'Från', 'Till', 'Veckomönster', 'Block', 'Längd', 'Ämneskod', 'Medlärare', 'Ytterligare klasser'];
+
+  it.each(tfFields)('the flat table, %s: the row is not read and the number is in no answer', (field) => {
+    for (const [formName, tf] of Object.entries(TF_FORMS)) {
+      const row = [...base];
+      if (['Lärare', 'Lärarnamn', 'Lärare e-post'].includes(field)) for (const f of ['Lärare', 'Lärarnamn', 'Lärare e-post', 'Lärar-id']) row[col(f)] = '';
+      row[col(field)] = tf;
+      for (const format of ['TABLE_CSV', 'TABLE_XLSX'] as const) {
+        const parsed = upload(format, [header, row]);
+        expect({ format, form: formName, leaked: leaks(tf, parsed).map((s) => s.slice(0, 120)) }).toEqual({ format, form: formName, leaked: [] });
+        expect({ format, form: formName, lessons: parsed.lessons.length }).toEqual({ format, form: formName, lessons: 0 });
+        expect(parsed.problems.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('does not cite a column header that is itself a TF number, nor one that names it, and reads the rest', () => {
+    for (const [formName, tf] of Object.entries(TF_FORMS)) {
+      for (const hdr of ['TF-nummer', 'Tfnr', 'TF nr', 'Elevens TF-nummer', tf]) {
+        const parsed = upload('TABLE_CSV', [[...header, hdr], [...base, tf]]);
+        expect({ form: formName, hdr, leaked: leaks(tf, parsed).map((s) => s.slice(0, 120)) }).toEqual({ form: formName, hdr, leaked: [] });
+        expect(parsed.lessons).toHaveLength(1);
+      }
+    }
+  });
+
+  it('reads a row whose unread column holds a TF number, and drops the number', () => {
+    const parsed = upload('TABLE_CSV', [[...header, 'TF-nummer'], [...base, '19800101TF01']]);
+    expect(parsed.lessons).toHaveLength(1);
+    expect(JSON.stringify(parsed)).not.toMatch(/1980|TF01/);
+  });
+
+  it('Untis, in the fields a DIF line can hold', () => {
+    const files = writeUntisGpu(doc);
+    const lines001 = files.gpu001.split('\r\n');
+    for (const [formName, tf] of Object.entries(TF_FORMS)) {
+      for (const at of [1, 2, 3, 4]) {
+        const l1 = [...lines001];
+        const f = l1[0]!.split(',');
+        f[at] = `"${tf}"`;
+        l1[0] = f.join(',');
+        const parsed = readUpload('UNTIS_GPU', [{ name: 'GPU001.TXT', bytes: Buffer.from(l1.join('\r\n')) }, { name: 'GPU002.TXT', bytes: Buffer.from(files.gpu002) }]);
+        expect({ form: formName, at, leaked: leaks(tf, parsed).map((x) => x.slice(0, 120)) }).toEqual({ form: formName, at, leaked: [] });
+      }
+    }
+  });
+
+  it('aSc, in a name that is copied into a lesson', () => {
+    const xml = writeAscXml(doc);
+    for (const [formName, tf] of Object.entries(TF_FORMS)) {
+      for (const element of ['class', 'subject', 'classroom']) {
+        const evil = xml.replace(new RegExp(`(<${element} [^>]*?name=")[^"]*(")`), `$1${tf}$2`);
+        const parsed = readUpload('ASC_XML', [{ name: 'a.xml', bytes: Buffer.from(evil, 'utf8') }]);
+        expect({ form: formName, element, leaked: leaks(tf, parsed).map((x) => x.slice(0, 120)) }).toEqual({ form: formName, element, leaked: [] });
+      }
+    }
+  });
+
+  it('reads a lesson whose codes look a little like a TF number, which none is: nothing is refused for the look', () => {
+    for (const code of ['7ATF12', 'Ma7 TF12', 'TF2026', 'Block TF-12', '1980010TF01']) {
+      const row = [...base];
+      row[col('Block')] = code;
+      const parsed = upload('TABLE_CSV', [header, row]);
+      expect({ code, problems: parsed.problems, lessons: parsed.lessons.length }).toEqual({ code, problems: [], lessons: 1 });
+    }
+  });
+});

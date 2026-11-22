@@ -457,6 +457,68 @@ describe("StaffingPage", () => {
     expect(historyAsked.at(-1)).toEqual(["t-bo", "y1", false]);
   });
 
+  describe("Omfattning enligt förordningen (SFS 2026:1487, R1 del C)", () => {
+    // The card and the mark are tested on their own; what only the page decides is whether they are wired: the warning on top,
+    // the matrix's mark, and the card in the drawer, each drawn from the report's `scope` block and from nothing else.
+    const version = { code: "SFS2026:1487", sfs: "SFS 2026:1487", title: "x", validFrom: "2027-07-01", validTo: null, source: "https://example.invalid/sfs" };
+    const bo = (verdict: "OVER_MAX" | "INSIDE") => ({
+      userId: "t-bo",
+      verdict,
+      notJudged: null,
+      teachingHours: 731,
+      stages: [{ gradeFrom: 7, gradeTo: 9, hours: 731, teachingHoursLow: 500, teachingHoursHigh: 600, planningFloorPercent: 110 }],
+      unregulatedHours: 0,
+      unknownGradeHours: 0,
+      fullTimeHighestHours: 600,
+      fullTimeLowestHours: 500,
+      highestHours: 650,
+      ordinanceHighestHours: 650,
+      planningFloorHours: 804.1,
+      remainingHours: null,
+      planningFits: null,
+    });
+    const withScope = (verdict: "OVER_MAX" | "INSIDE", overrides: Record<string, unknown> = {}) => {
+      state.report = { ...report, scope: { version, yearReason: null, interpretations: [], teachers: [bo(verdict)], ...overrides } };
+    };
+
+    it("warns on top, with the count, and marks the teacher in the matrix, when teachers are over the ordinance's highest level", () => {
+      withScope("OVER_MAX", { teachers: [bo("OVER_MAX"), { ...bo("OVER_MAX"), userId: "t-ny" }, { ...bo("INSIDE"), userId: "t-inne" }] });
+      render(<StaffingPage />);
+      expect(screen.getByText("scopeNoticeTitle(2)")).toBeInTheDocument();
+      expect(within(screen.getByText("Bo Alm").closest("tr")!).getByText("scopeOverBadge")).toBeInTheDocument();
+    });
+
+    it("says nothing when nobody is over, when the year is one the ordinance does not reach, and from a gateway with no such block", () => {
+      withScope("INSIDE");
+      const { unmount } = render(<StaffingPage />);
+      expect(screen.queryByText(/scopeNoticeTitle/)).not.toBeInTheDocument();
+      expect(screen.queryByText("scopeOverBadge")).not.toBeInTheDocument();
+      unmount();
+      withScope("OVER_MAX", { version: null, yearReason: "NOT_IN_FORCE", teachers: [{ ...bo("INSIDE"), verdict: "NOT_JUDGED" }] });
+      const second = render(<StaffingPage />);
+      expect(screen.queryByText(/scopeNoticeTitle/)).not.toBeInTheDocument();
+      second.unmount();
+      state.report = report;
+      render(<StaffingPage />);
+      expect(screen.queryByText(/scopeNoticeTitle/)).not.toBeInTheDocument();
+    });
+
+    it("draws the card in the teacher's drawer from the same block, and none for a year the ordinance does not reach", async () => {
+      const user = userEvent.setup();
+      withScope("OVER_MAX");
+      const first = render(<StaffingPage />);
+      await user.click(screen.getByRole("button", { name: "openDrawer(Bo Alm)" }));
+      const dialog = within(await screen.findByRole("dialog", {}, { timeout: 5000 }));
+      expect(await dialog.findByText("verdictOverMax(81)")).toBeInTheDocument();
+      first.unmount();
+      withScope("OVER_MAX", { version: null, yearReason: "NOT_IN_FORCE" });
+      render(<StaffingPage />);
+      await user.click(screen.getByRole("button", { name: "openDrawer(Bo Alm)" }));
+      await screen.findByRole("dialog", {}, { timeout: 5000 });
+      expect(screen.queryByText("verdictOverMax(81)")).not.toBeInTheDocument();
+    });
+  });
+
   describe("Föreslå bemanning (staffing Fas 4)", () => {
     beforeEach(() => {
       proposalProps.length = 0;

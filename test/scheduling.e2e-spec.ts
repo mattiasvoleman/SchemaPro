@@ -754,6 +754,107 @@ describe('Scheduling surface (e2e)', () => {
     });
   });
 
+  /*
+   * Åtgärdsförslag vid vägran (G6), as an administrator meets it over HTTP: the button on a run that ended without a timetable. The
+   * engine is reached by none of these rows (the 202 row's background run ends in a failure, for nothing answers it); what is under test
+   * is the boundary in front of it, through the real filter: that a refusal leaves with its code FLAT, where the page reads it, and that nothing but an
+   * administrator can ask. The database half (the claim, the write over the analysis a call started, RLS) is the adapter probe's
+   * (ag-a to ag-e) and RLS section 565.
+   */
+  describe('the analysis of a run that ended without a timetable', () => {
+    const REFUSED = {
+      id: VERSION_ID,
+      academicYearId: YEAR_ID,
+      status: 'SUCCEEDED',
+      solverStatus: 'INFEASIBLE',
+      errorCode: null,
+      suggestions: null,
+    };
+
+    beforeEach(() => {
+      harness.tx['optimizationJob']!['findUnique']!.mockReset().mockResolvedValue(REFUSED);
+      harness.tx['optimizationJob']!['findFirst']!.mockReset().mockResolvedValue({ id: VERSION_ID });
+      harness.tx['optimizationJob']!['count']!.mockReset().mockResolvedValue(0);
+      harness.tx.$queryRaw.mockReset().mockResolvedValue([{ active: 0 }]);
+      harness.tx.$executeRaw.mockReset().mockResolvedValue(1);
+    });
+
+    afterEach(() => {
+      harness.tx['optimizationJob']!['findUnique']!.mockReset();
+      harness.tx['optimizationJob']!['findFirst']!.mockReset();
+      harness.tx['optimizationJob']!['count']!.mockReset();
+    });
+
+    it.each([
+      ['a run that has a timetable', { solverStatus: 'OPTIMAL' }, 'SUGGESTIONS_NOT_FOR_THIS_RUN'],
+      ['a run the engine never answered', { solverStatus: null, status: 'FAILED', errorCode: 'ENGINE_NOT_REACHED' }, 'SUGGESTIONS_NOT_FOR_THIS_RUN'],
+    ])('refuses %s with 409 and its code FLAT, where the page reads it', async (_what, over, code) => {
+      harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue({ ...REFUSED, ...over });
+
+      const response = await request(http())
+        .post(`/api/v1/optimization/jobs/${VERSION_ID}/suggestions`)
+        .set('x-test-user', admin())
+        .expect(409);
+
+      expect(response.body.code).toBe(code);
+      expect(harness.tx.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it('refuses a run that is not the year\'s newest with 409 SUGGESTIONS_RUN_IS_OLD', async () => {
+      harness.tx['optimizationJob']!['findFirst']!.mockResolvedValue({ id: 'another-run' });
+
+      const response = await request(http())
+        .post(`/api/v1/optimization/jobs/${VERSION_ID}/suggestions`)
+        .set('x-test-user', admin())
+        .expect(409);
+
+      expect(response.body.code).toBe('SUGGESTIONS_RUN_IS_OLD');
+    });
+
+    it('refuses a year with a run going with 409 SUGGESTIONS_YEAR_BUSY', async () => {
+      harness.tx['optimizationJob']!['count']!.mockResolvedValue(1);
+
+      const response = await request(http())
+        .post(`/api/v1/optimization/jobs/${VERSION_ID}/suggestions`)
+        .set('x-test-user', admin())
+        .expect(409);
+
+      expect(response.body.code).toBe('SUGGESTIONS_YEAR_BUSY');
+    });
+
+    it('404s a run that is not visible to the caller, and 400s an id that is not one', async () => {
+      harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(null);
+      await request(http()).post(`/api/v1/optimization/jobs/${VERSION_ID}/suggestions`).set('x-test-user', admin()).expect(404);
+      await request(http()).post('/api/v1/optimization/jobs/not-an-id/suggestions').set('x-test-user', admin()).expect(400);
+    });
+
+    it('lets only an administrator ask', async () => {
+      await request(http())
+        .post(`/api/v1/optimization/jobs/${VERSION_ID}/suggestions`)
+        .set('x-test-user', asUser({ role: Role.TEACHER }))
+        .expect(403);
+      expect(harness.tx['optimizationJob']!['findUnique']).not.toHaveBeenCalled();
+      expect(harness.tx.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it('answers 202 at once with the analysis RUNNING, the whole of what the page reads and nothing it must not', async () => {
+      const response = await request(http())
+        .post(`/api/v1/optimization/jobs/${VERSION_ID}/suggestions`)
+        .set('x-test-user', admin())
+        .expect(202);
+
+      expect(response.body).toMatchObject({ version: 1, state: 'RUNNING', verdict: null, verified: false, total: 0, changes: [], failure: null, finishedAt: null });
+      expect(Object.keys(response.body).sort()).toEqual([
+        'changes', 'failure', 'finishedAt', 'searchSeconds', 'startedAt', 'state', 'total', 'verdict', 'verified', 'verifySeconds', 'version',
+      ]);
+      // The claim was one statement.
+      expect(harness.tx.$executeRaw).toHaveBeenCalled();
+      // Let the background run end, so that it writes its failure (nothing here answers it) before the next row resets the mocks.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+  });
+
+
   describe('master lessons', () => {
     it('creates a manually placed lesson', async () => {
       harness.tx['academicYear']!['findUnique']!.mockResolvedValue({

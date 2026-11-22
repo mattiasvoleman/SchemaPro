@@ -215,6 +215,82 @@ describe('file-safety', () => {
     });
   });
 
+  /**
+   * The TF number (X3, 2026-11-22): Skola24's own files put eight digits, TF and two digits where a personnummer goes (ÅÅÅÅMMDDTFnn,
+   * in all seven course files it publishes). The known form is DOKUMENTERAT; the other spellings counted are our reading (TOLKAT);
+   * everything else is listed as unknown, and a code a school writes must not be taken for one.
+   */
+  describe('the TF number', () => {
+    const counted: Array<[string, string]> = [
+      ['ÅÅÅÅMMDDTFnn, the form Skola24 publishes', '19800101TF01'],
+      ['TF in lower case', '19800101tf01'],
+      ['TF in mixed case', '19800101Tf01'],
+      ['a hyphen before TF', '19800101-TF01'],
+      ['a blank before TF', '19800101 TF01'],
+      ['a slash before TF (folded to a hyphen)', '19800101/TF01'],
+      ['a no-break space before TF', '19800101\u00a0TF01'],
+      ['fullwidth digits', '\uff11\uff19\uff18\uff10\uff10\uff11\uff10\uff11TF\uff10\uff11'],
+      ['after a name', 'Anna Berg 19800101TF01'],
+      ['in parentheses', '(19800101TF01)'],
+      ['with letters before and after', 'abc19800101TF01xyz'],
+    ];
+    const notCounted: Array<[string, string]> = [
+      ['TF and two digits alone', 'TF01'],
+      ['no digits after TF', '19800101TF'],
+      ['one digit after TF', '19800101TF1'],
+      ['three digits after TF', '19800101TF123'],
+      ['letters after TF', '19800101TFAB'],
+      ['seven digits of date', '1980010TF01'],
+      ['nine digits before TF', '198001011TF01'],
+      ['six digits of date', '800101TF01'],
+      ['a blank after TF', '19800101TF 01'],
+      ['blanks on both sides of TF', '19800101 TF 01'],
+      ['a hyphen after TF', '19800101-TF-01'],
+      ['a blank inside the date', '1980 0101TF01'],
+      ['TF first', 'TF19800101'],
+      ['a lesson code', '7ATF12'],
+      ['a lesson code with a blank', 'Ma7 TF12'],
+      ['a block name', 'Block TF-12'],
+      ['a year after TF', 'TF2026'],
+    ];
+
+    it.each(counted)('is one: %s', (_what, text) => {
+      expect(hasPersonalNumber(text)).toBe(true);
+      expect(redactPersonalNumbers(text)).toContain(REDACTED);
+      expect(redactPersonalNumbers(text)).not.toMatch(/1980|TF01/i);
+    });
+
+    it.each(notCounted)('is not one: %s', (_what, text) => {
+      expect(hasPersonalNumber(text)).toBe(false);
+      expect(redactPersonalNumbers(text)).toBe(text);
+    });
+
+    it('is cut out of a text and not quoted: a message, a label and the last door', () => {
+      expect(redactPersonalNumbers('Elev 19800101TF01 flyttad')).toBe(`Elev ${REDACTED} flyttad`);
+      expect(excerpt('19800101TF01')).toBe(`”${REDACTED}”`);
+      expect(scrubPersonalNumbers({ '19800101TF01': ['Anna 19800101tf01'], ok: '7A' })).toEqual({ [REDACTED]: [`Anna ${REDACTED}`], ok: '7A' });
+    });
+
+    it('is found in every place a personnummer is: two in one text, beside a personnummer, side by side', () => {
+      expect(redactPersonalNumbers('19800101TF01 och 19800102TF02')).toBe(`${REDACTED} och ${REDACTED}`);
+      expect(redactPersonalNumbers('800101-1234 och 19800101TF01')).toBe(`${REDACTED} och ${REDACTED}`);
+      expect(redactPersonalNumbers('19800101TF01;19800102TF02')).toBe(`${REDACTED};${REDACTED}`);
+    });
+
+    it('costs linear time on a long run of digits, blanks and TF, as the rest of the shape does', () => {
+      const long = `${'1980010 '.repeat(40_000)}TF01 ${'x'.repeat(10)}`;
+      expect(() => redactPersonalNumbers(long)).not.toThrow();
+      expect(hasPersonalNumber('1'.repeat(200_000) + 'TF')).toBe(false);
+    });
+
+    it('does not touch an id or a fingerprint Rastra makes: none has a T', () => {
+      for (let i = 0; i < 200; i += 1) {
+        const id = randomUUID();
+        expect(scrubPersonalNumbers({ id }).id).toBe(id);
+      }
+    });
+  });
+
   describe('ProblemLog', () => {
     it('keeps the first MAX_PROBLEMS and one closing line with the count of the rest', () => {
       const log = new ProblemLog('TOO_MANY');

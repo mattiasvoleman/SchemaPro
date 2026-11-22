@@ -1494,6 +1494,8 @@ ROUTES_BEFORE = {
     "/api/v1/optimize": {"post"},
     "/api/v1/optimize-rooms": {"post"},
     "/api/v1/staff": {"post"},
+    # G6 (Åtgärdsförslag vid vägran): the changes that would let a refused week be laid, checked against the strict model.
+    "/api/v1/suggest-changes": {"post"},
     # M1 (Tidskedjan): the engine says its times. A route of its own, read-only.
     "/api/v1/timing": {"get"},
     # Lärarval F3: each year's exact least week, the oracle of the gateway's search for the teacher choice that eases the week.

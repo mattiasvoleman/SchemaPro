@@ -139,6 +139,7 @@ import { readUnstaffedRequirements } from '../staffing/unstaffed-requirements';
 import { enterGrundschemaWrite, isLockTimeout, type PublishMode } from '../publication/publish-mode';
 import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
 import { recordRead, type AccessChannel } from '../access-log/access-log';
+import type { Realiser } from './suggestions';
 import { DEVIATION_WORK_DAYS_HIDDEN_MESSAGE, WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal, isDaysBearing, withoutDays } from './work-days';
 import { DEVIATION_TEACHER_DAILY_CAP } from './deviations';
 import {
@@ -2345,6 +2346,20 @@ export class OptimizationProxyService {
         subjectIds: teachers,
       };
     });
+  }
+
+  /**
+   * How a suggestion's anonymous ids are turned back (suggestions.ts, Åtgärdsförslag vid vägran): the same maps a deviation is
+   * realised through, as three questions. An id the maps do not know is returned as it was, for the reason realiseDeviations gives.
+   * The teacher of a work rule is a Users id and never a name: the page names the teacher when it reads.
+   */
+  realiserOf(maps: AnonMaps): Realiser {
+    const realByAnon = this.realIdsByAnon(maps);
+    return {
+      real: (anonId) => realByAnon.get(anonId) ?? anonId,
+      nameOf: (realId) => maps.nameById.get(realId),
+      teacherOfRule: (realRuleId) => maps.workRuleTeacherIds?.get(realRuleId),
+    };
   }
 
   /**

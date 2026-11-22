@@ -1669,7 +1669,12 @@
       ser ut som personnummer, eller vars rubrik säger det, släpps innan något
       skickas, och sammanfattningen säger att den släpptes. Har en kolumn som
       läses en enstaka cell med ett personnummer läses inte den raden in, och
-      importen väntar: meddelandet nämner raden och kolumnen men aldrig numret.</li>
+      importen väntar: meddelandet nämner raden och kolumnen men aldrig numret.
+      Skola24:s <em>TF-nummer</em>, som står där ett personnummer står i
+      Skola24:s egna filer (åtta siffror, <em>TF</em> och två siffror, till
+      exempel <em>19800101TF01</em>), behandlas på samma sätt: en kolumn av dem,
+      eller vars rubrik är <em>TF-nummer</em>, släpps, och en enstaka cell i en
+      kolumn som läses håller raden.</li>
     <li><strong>Filer från Skola24.</strong> För elever, vårdnadshavare och
       lärare finns en väljare <span class="ui">Filen kommer från Skola24</span>.
       Den känner till tre filer som Skola24:s egna supportsidor beskriver:
@@ -4902,6 +4907,100 @@
       A-dagar visas som skolans inställning, också för en deltid. Om en
       deltidstjänst har färre A-dagar är skolans beslut; Rastra Schema räknar inte
       fram det.
+    </p>
+  </div>
+
+  <h4>Omfattning enligt förordningen</h4>
+  <p>
+    Från 1 juli 2027 sätter förordningen om omfattning av tiden för lärares
+    undervisningsuppdrag (SFS 2026:1487) en högsta undervisningstid per läsår och
+    en lägsta tid för planering och uppföljning. Kortet
+    <span class="ui">Omfattning enligt förordningen</span> i lärarlådan ställer
+    lärarens undervisningstid bredvid förordningens spann för hens stadium.
+    Kortet finns bara för läsår som börjar 1 juli 2027 eller senare: ett tidigare
+    läsår har ingen förordning att pröva mot, och då visas inget.
+  </p>
+  <table>
+    <thead><tr><th>Stadium</th><th>Högsta undervisningstid vid heltid</th><th>Planering och uppföljning</th></tr></thead>
+    <tbody>
+      <tr><td>Grundskolan, årskurs 1–6</td><td>550–650 timmar per läsår (3 § p. 1)</td><td>minst lika mycket som undervisningstiden (4 §)</td></tr>
+      <tr><td>Grundskolan, årskurs 7–9</td><td>500–600 timmar per läsår (3 § p. 2)</td><td>minst 110 % av undervisningstiden (4 § och 5 §)</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <strong>Spannet är inget fast tak.</strong> Förordningen säger att lärarens
+    undervisningstid <em>som mest</em> ska vara inom spannet: lärarens egen
+    högsta nivå ligger någonstans i det, och rektorn bedömer var, med hänsyn till
+    gruppernas storlek, antalet elever läraren möter och elever i behov av stöd
+    (8 §). Ju mindre goda förutsättningar läraren har, desto mindre undervisning
+    och mer planering. Det är bara spannets <strong>övre kant</strong> som är en
+    gräns, och därför säger kortet <em>över förordningens högsta nivå</em> bara
+    där. Under den övre kanten står <em>inte över förordningens högsta nivå</em>,
+    också för en lärare under spannets nedre kant: förordningen har ingen lägsta
+    undervisningstid, så att ligga under spannet är ingen överträdelse, och var
+    i spannet läraren ska ligga är rektorns bedömning,
+    inte Rastra Schemas. Fritidshem, förskola och gymnasium finns inte i Rastra
+    Schema och ingår inte här.
+  </p>
+  <p>
+    <strong>Så räknas timmarna.</strong> Det är lärarens egen tid i klassrummet:
+    lektionernas längd över de veckor raden löper, med lov avdragna.
+    Varannan-veckorsrader räknas i de veckor de löper, en termins rad i terminens
+    veckor, och en delad lektion hos den lärare som tar den. Medläraren är med
+    på hela raden. Timmarna är <strong>inte</strong> de räknade minuterna mot
+    skolans riktmärke: ingen procent per post och ingen faktor räknas in, och
+    ett uppdrag som skolan räknar som undervisning mot riktmärket (rastvakt) är
+    ingen undervisning enligt förordningen. Vikariat ingår inte: det ligger i det
+    genomförda, inte det planerade. Timmarna kan också skilja sig från
+    <span class="ui">Undervisning per läsår</span> på kortet Årsarbetstid, som
+    räknar hela veckor och med procent och faktor: här räknas skoldagarna, så ett
+    läsår som börjar en lördag får inte med en vecka lektioner som aldrig hålls.
+  </p>
+  <p>
+    <strong>Deltid.</strong> Förhållandet mellan undervisningstid och arbetstid
+    ska vara detsamma som vid heltid (3 § andra stycket), så spannet skalas med
+    tjänsten minus nedsättning, viktat efter undervisningsveckorna för en tjänst
+    som ändras under läsåret. En lärare på 80 % har 520 timmar som övre kant i
+    årskurs 1–6. Den lärare som saknar tjänst prövas inte: spannet går inte att
+    skala.
+  </p>
+  <p>
+    <strong>Undervisar läraren i två stadier</strong> viktas spannet efter hur
+    många timmar som ligger i vart och ett (förordningen säger inget om en lärare
+    i två stadier, så det är Rastra Schemas tolkning, och kortet visar fördelningen).
+    En grupp som spänner över årskurs 6 och 7 räknas i det strängare stadiet.
+    Förskoleklassen omfattas inte av förordningen, men dess timmar räknas i
+    lärarens totala undervisningstid. Timmar i en grupp utan årskurs räknas men
+    kan inte placeras i ett stadium, och kortet säger det.
+  </p>
+  <p>
+    <strong>Planering och uppföljning.</strong> Kortet visar det minsta antal
+    timmar som ska avsättas. För en ferietjänst visar det också vad som är kvar
+    av årsarbetstiden (se Årsarbetstid) efter undervisning och uppdrag, och om
+    det rymmer golvet. Det är ett <em>nödvändigt</em> villkor: möten och annat som
+    inte är undervisning eller uppdrag i Rastra Schema ingår inte, så ett nej är
+    säkert och ett ja är inget löfte. 110 % för årskurs 7–9 är en tolkning
+    (5 § säger <em>utöver den tid som anges i 4 §</em> men 4 § räknar inte upp
+    årskurs 7–9), och kortet säger det.
+  </p>
+  <p>
+    I matrisen får en lärare över förordningens högsta nivå en röd markering
+    <span class="ui">Över förordningen</span> bredvid sin status, och sidan visar
+    en varning överst. Statusen mot riktmärket ändras inte: riktmärket är skolans
+    eget mått, förordningen lagens, och de är två olika siffror. För en
+    administratör utan HR-läs visas utlåtandet men inte spannets övre kant för
+    läraren, inte heller vad som är kvar av årsarbetstiden eller om det rymmer
+    golvet, eftersom de ger tjänsten tillbaka, och kortet säger att det inte
+    visas. Den tioåriga
+    grundskolan (läsår från 1 juli 2028) har inga nivåer i förordningen än, och då
+    visar kortet timmarna och säger det, men prövar inget.
+  </p>
+  <div class="note">
+    <span class="label">En visning, ingen spärr</span>
+    <p>
+      Kortet, markeringen och varningen visar hur det ser ut. Ingenting hindrar
+      att en lärare får mer undervisning än förordningen tillåter, och ingen
+      tilldelning varnas för det när den sparas.
     </p>
   </div>
 
@@ -10803,13 +10902,15 @@
       läraren, och förhandsvisningen säger det.</li>
     <li><strong>Inga personnummer.</strong> Rastra Schema tar inte emot
       personnummer, inte ens som kontrollsumma. En kolumn som heter
-      personnummer, samordningsnummer eller liknande läses inte, sparas inte
-      och visas inte; förhandsvisningen säger att kolumnen hoppades över. Står
-      något som <em>ser ut</em> som ett personnummer eller samordningsnummer
-      (hela eller inne i en längre text, med streck, plus, punkt, snedstreck,
-      mellanslag eller radbrytning mellan siffrorna, eller skrivet som ett
-      datum) i en kolumn
-      som <em>läses</em>, till exempel i <em>Lärare</em> eller <em>Block</em>,
+      personnummer, samordningsnummer, TF-nummer eller liknande läses inte,
+      sparas inte och visas inte; förhandsvisningen säger att kolumnen
+      hoppades över. Står något som <em>ser ut</em> som ett personnummer eller
+      samordningsnummer (hela eller inne i en längre text, med streck, plus,
+      punkt, snedstreck, mellanslag eller radbrytning mellan siffrorna, eller
+      skrivet som ett datum) eller som ett TF-nummer (Skola24:s nummer: åtta
+      siffror, <em>TF</em> och två siffror, hela eller inne i en längre text,
+      med eller utan ett mellanslag eller ett streck före <em>TF</em>) i en
+      kolumn som <em>läses</em>, till exempel i <em>Lärare</em> eller <em>Block</em>,
       läses den raden inte alls: förhandsvisningen säger vilken rad och vilken
       kolumn, men återger aldrig numret. Rastra Schema behöver bara signatur,
       klass och gruppnamn.</li>
@@ -10844,7 +10945,8 @@
       ser ut som personnummer, eller vars rubrik säger det, släpps innan något
       skickas, och sammanfattningen säger att den släpptes. Har en kolumn som
       läses en enstaka cell med ett personnummer läses inte den raden in, och
-      meddelandet nämner raden och kolumnen men aldrig numret.</li>
+      meddelandet nämner raden och kolumnen men aldrig numret. Det gäller
+      också Skola24:s TF-nummer (åtta siffror, <em>TF</em> och två siffror).</li>
     <li><strong>Mallar.</strong> Under <span class="ui">Spara som mall</span> ger
       du mappningen ett namn. Nästa gång en tabell har samma kolumner (i vilken
       ordning som helst, med annan versalisering) används mallen av sig själv, och

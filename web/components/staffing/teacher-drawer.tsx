@@ -22,6 +22,8 @@ import { LoadBar } from "@/components/staffing/load-bar";
 import { StatusBadge } from "@/components/staffing/staffing-matrix";
 import { DutiesCard } from "@/components/staffing/duties-card";
 import { AnnualCard } from "@/components/staffing/annual-card";
+import { ScopeCard } from "@/components/staffing/scope-card";
+import type { ScopeCardData } from "@/lib/assignment-scope";
 import { EmploymentHistoryCard } from "@/components/staffing/employment-history-card";
 import { PeriodLoadList } from "@/components/staffing/period-load-list";
 import { SectionCard } from "@/components/ui/section-card";
@@ -55,6 +57,11 @@ export interface TeacherDrawerProps {
   travel?: TeacherTravel | null;
   /** The teacher's passes in the rastvaktsschema (supervisionOf); null without one. */
   supervision?: TeacherSupervision | null;
+  /**
+   * The teacher's omfattning under SFS 2026:1487 (scopeCardOf): their teaching hours against the ordinance's span for their
+   * stage. Null where there is nothing to say (a läsår the ordinance does not reach).
+   */
+  scope?: ScopeCardData | null;
 }
 
 /**
@@ -86,6 +93,7 @@ export function TeacherDrawer({
   loadModel = "MINUTES",
   travel = null,
   supervision = null,
+  scope = null,
   personName = () => null,
 }: TeacherDrawerProps) {
   const t = useTranslations("staffing");
@@ -205,6 +213,8 @@ export function TeacherDrawer({
         ) : null}
 
         {load ? <AnnualCard annual={load.annual} loadModel={loadModel} showSettingsPath travel={travel} supervision={supervision} /> : null}
+
+        {scope ? <ScopeCard data={scope} /> : null}
 
         <EmploymentHistoryCard
           userId={teacher.id}

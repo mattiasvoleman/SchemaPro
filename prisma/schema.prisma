@@ -3269,6 +3269,12 @@ model OptimizationJob {
   /// in TIMEOUT, for a TIMEOUT from an engine older than the field, and for every run before the column. Measured, never a rule:
   /// no number in it was read back by anything but the page. DB CHECK: a JSON object, at most 8 KiB.
   report                Json?
+  /// The changes that would let this refused or timed-out run's week be laid, and how well the engine showed each (omgång 13, G6
+  /// Åtgärdsförslag vid vägran; 20270305090000): the engine's answer to /suggest-changes as the gateway whitelisted it
+  /// (src/optimization/suggestions.ts), or the state of the analysis that makes it (RUNNING, FAILED). Null when nobody asked and for every
+  /// run before the column. No person's name and no figure of a post is in it (a part-timer's days are stored in their hidden form). DB CHECK:
+  /// a JSON object, at most 8 KiB.
+  suggestions           Json?
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 

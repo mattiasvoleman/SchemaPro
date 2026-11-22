@@ -106,6 +106,7 @@ import { YearRolloverService } from '../../src/year-rollover/year-rollover.servi
 import { StaffingRolloverService } from '../../src/year-rollover/staffing-rollover.service';
 import { TeacherEmploymentsService, rethrowPeriodError } from '../../src/staffing/teacher-employments.service';
 import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
+import { readScopeVersions } from '../../src/staffing/assignment-scope-reader';
 import { lockStaffRow } from '../../src/staffing/staff-lock';
 import { countHomePupils, rostersOfYear, type RosterBasis } from '../../src/year-rollover/projected-rosters';
 import { loadRosters } from '../../src/optimization/room-eligibility';
@@ -134,6 +135,7 @@ import { reportingRateChecks, sweepReportingRateSchool } from './probe-rapporter
 import { absenceStatsChecks, sweepAbsenceStatsSchool } from './probe-franvarostatistik';
 import { calendarFeedChecks, sweepCalendarFeedSchool } from './probe-calendar-feed';
 import { generateQueueChecks, sweepGenerateQueueSchool } from './probe-generera-ko';
+import { suggestionsChecks, sweepSuggestionsSchools } from './probe-forslag-vagran';
 import { leaveChecks, sweepLeaveSchool } from './probe-leave';
 import { skolenheterChecks, sweepSkolenheterSchool } from './probe-skolenheter';
 import { importTemplatesChecks, sweepImportTemplatesSchools } from './probe-import-templates';
@@ -4928,6 +4930,26 @@ async function runChecks(
       assert.deepEqual(seen.duties.map((row) => row.userId), Array(duties).fill(who.id));
       const load = await new StaffingLoadService(api).load(yearId, 'planned', principal);
       assert.deepEqual(load.teachers.map((row) => row.userId), [who.id]);
+      // Undervisningsuppdragets omfattning (20270301090000) is read through the API's own role and the school principal's
+      // arm (app.current_school_id()), as a teacher, in the report's transaction: the lydelse and its bands come back as
+      // rows of two tables, the year's first day picks one or none, and the block is cut to the teacher's own row.
+      assert.ok(load.scope, 'the load report carries the ordinance\'s omfattning');
+      assert.ok(load.scope.teachers.every((row) => row.userId === who.id), 'a teacher reads their own omfattning and nobody else\'s');
+      // The year starts in 2094, long after the ordinance is in force, so the lydelse must COME BACK: a null here is the arm
+      // letting no row through (zero rows are no error), and the block would say "not in force" in a school the ordinance reaches.
+      assert.equal(load.scope.version?.code, 'SFS2026:1487', 'the lydelse did not come back to a teacher through app.current_school_id()');
+      // A year from 2028-07-01 that states no numbering is TIOARIG (the AcademicYears trigger), which the version has no band for;
+      // so the verdict path is not asked here, and the bands are read below, as the teacher and as the administrator.
+      assert.equal(load.scope.yearReason, 'NUMBERING_NOT_COVERED');
+      for (const reader of [principal, tjAdmin]) {
+        const lydelser = await api.withRls(reader, (tx) => readScopeVersions(tx));
+        assert.deepEqual(lydelser.map((one) => one.code), ['SFS2026:1487'], `${reader.role} read the lydelser`);
+        assert.deepEqual(
+          lydelser[0]!.bands.map((band) => [band.schoolForm, band.gradeNumbering, band.gradeFrom, band.gradeTo, band.teachingHoursLow, band.teachingHoursHigh, band.planningFloorPercent]),
+          [['GRUNDSKOLA', 'NIOARIG', 1, 6, 550, 650, 100], ['GRUNDSKOLA', 'NIOARIG', 7, 9, 500, 600, 110]],
+          `${reader.role} read the bands of the lydelse (the second table's own arm)`,
+        );
+      }
     }
     await clearTarget();
 
@@ -6139,6 +6161,7 @@ async function runChecks(
   await absenceStatsChecks(owner, api, MARKER, check);
   await calendarFeedChecks(owner, api, MARKER, check);
   await generateQueueChecks(owner, api, MARKER, check);
+  await suggestionsChecks(owner, api, MARKER, check);
   await leaveChecks(owner, api, MARKER, check);
   await skolenheterChecks(owner, api, MARKER, check);
   await adminAreaChecks(owner, api, MARKER, check, open, appUrl);
@@ -6659,6 +6682,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // Kalenderprenumeration's school, likewise.
   await sweepCalendarFeedSchool(owner, MARKER);
   await sweepGenerateQueueSchool(owner, MARKER);
+  // Åtgärdsförslag vid vägran's two schools, likewise.
+  await sweepSuggestionsSchools(owner, MARKER);
   // Mentorns ledighetsbeslut's two schools, likewise.
   await sweepLeaveSchool(owner, MARKER);
   // Skolenheter's school, likewise.
