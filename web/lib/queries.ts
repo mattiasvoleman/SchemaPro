@@ -11,6 +11,7 @@ import { ApiError, api } from "@/lib/api";
 import { sortByName, sortByPersonName } from "@/lib/sorting";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { GUARDIAN_KEYS } from "@/lib/guardian-keys";
+import type { Suggestions } from "@/lib/suggestion-types";
 import type {
   SingleCancelCause,
   LessonRecurrence,
@@ -987,6 +988,13 @@ export interface OptimizationJob {
    * run before it. Absent from a gateway before it. The page then says what a TIMEOUT has always said.
    */
   report?: TimeoutReport | null;
+  /**
+   * The changes that would let this run's week be laid (Åtgärdsförslag vid vägran, G6; lib/suggestion-types.ts), or null: nobody asked.
+   * RUNNING while the engine counts them. Absent from a gateway before it.
+   */
+  suggestions?: Suggestions | null;
+  /** Whether the page may offer the button: the run ended without a timetable, and the end is one the five rules can have given. */
+  suggestionsOffered?: boolean;
   createdAt: string;
   finishedAt: string | null;
 }

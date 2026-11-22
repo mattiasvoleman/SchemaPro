@@ -1769,6 +1769,79 @@
       "callerWait": "The service waited {seconds, number} s for the answer.",
       "configured": "The engine is set to search for {configured, number} s, and it was given {budget, number} s."
     },
+    "suggestions": {
+      "title": "What can I change?",
+      "offer": "The engine can work out up to three changes that would let the week be laid, and check them against the rules. It takes about a minute and a half. It places no timetable and changes nothing.",
+      "offerTimeout": "Time ran out, so nothing is proved about the week yet. The engine can make a shorter run in which five of the school's own rules may give way, and say whether the week can then be laid and with which changes. It takes about a minute and a half, places no timetable and changes nothing.",
+      "offerAction": "Work out suggestions",
+      "again": "Work out again",
+      "running": "The engine is working out suggestions. It takes about a minute and a half. Stay on the page: if you leave it, the answer is not shown when you come back.",
+      "failed": {
+        "ENGINE_LACKS_SUGGESTIONS": "Suggestions cannot be worked out right now: the scheduling engine does not have that function yet. Try again in a few minutes.",
+        "ENGINE_BUSY": "The engine is working out suggestions for someone else right now. Try again in a moment.",
+        "ENGINE_FAILED": "The suggestions could not be worked out. Try again.",
+        "NOTHING_TO_PLACE": "Every post is placed by hand, so there is nothing for the engine to work on.",
+        "ABANDONED": "The calculation stopped before it was done, probably because of a restart. Work out again to try once more."
+      },
+      "refused": {
+        "SUGGESTIONS_NOT_FOR_THIS_RUN": "Suggestions cannot be worked out for this run.",
+        "SUGGESTIONS_RUN_IS_OLD": "There is a newer run for the year. Suggestions are only worked out for the latest.",
+        "SUGGESTIONS_YEAR_BUSY": "The year has a run going, and the engine's power is needed there. Try again when it is done.",
+        "THROTTLED": "You have asked for suggestions too many times in a short while. Wait a minute and try again.",
+        "OTHER": "The suggestions could not be asked for. Try again."
+      },
+      "intro": {
+        "SOLVED": "The engine has solved the week with exactly this change: it laid a timetable that keeps every rule, with the change made.",
+        "SOLVED_TOGETHER": "The engine has solved the week with exactly {total, plural, one {this change, which covers several posts,} other {these # changes}} together: it laid a timetable that keeps every rule, with the changes made. None of them is shown to be enough on its own.",
+        "MAY_HELP": "The engine laid a week in which these rules gave way, but did not get to check that the changes are enough. They may help, but no more than that is shown."
+      },
+      "proof": {
+        "SOLVED": "Solves the week (checked)",
+        "SOLVED_TOGETHER": "Solves the week together (checked)",
+        "MAY_HELP": "May help (not checked)",
+        "AT_LEAST": "At least",
+        "MEASURED": "Measured in a probe"
+      },
+      "change": {
+        "TEACHER_DAILY_CAP": "Raise the daily cap for {teacher} from {current, number} to {needed, number} minutes.",
+        "TEACHER_DAILY_CAP_ANON": "Raise a teacher's daily cap from {current, number} to {needed, number} minutes.",
+        "TEACHER_WORK_DAYS": "One or more part-time posts need one more day for the week to fit.",
+        "SUBJECT_PER_DAY": "Allow {needed, plural, one {# lesson} other {# lessons}} a day for {post} (today at most {current, number}).",
+        "SUBJECT_DAYS_APART": "Lower the days apart for {post} from {current, number} to {needed, number}.",
+        "SUBJECT_DAYS_APART_REMOVE": "Remove the requirement of days apart for {post} (today {current, number}).",
+        "ROOM_LOCK": "Let {post} also use {rooms}.",
+        "ROOM_LOCK_UNNAMED": "Let {post} also use one more room."
+      },
+      "hidden": "Which post it concerns is not shown on this card, to anyone. Under Staffing the principal, a full administrator and anyone with HR read access see the posts' days.",
+      "weekdays": "The engine needed it on {days}.",
+      "more": "{count, plural, one {# more change belongs} other {# more changes belong}} to the same solution and {count, plural, one {is not} other {are not}} shown here. The proof covers the whole list: the changes shown are not shown to be enough without the rest.",
+      "moreMayHelp": "The engine's list had {count, plural, one {# more change, which is} other {# more changes, which are}} not shown here. Nothing in the list has been checked.",
+      "caveat": "Worked out {when}, on the week as it was then. It shows that the week can be laid, not how long the next Generera takes on it. The engine found these changes, and they are not necessarily the cheapest. Nothing changes until you save on the page that owns the data.",
+      "verdict": {
+        "SOLVABLE_AS_IS": "The engine found a timetable that keeps every rule, with nothing changed. The week can be laid: the run that ended just did not get to find it. Run Generera again.",
+        "SOLVABLE_AS_IS_CHANGED": "The engine found a timetable that keeps every rule, with nothing changed. The week as it looks now can be laid, and the run that was refused was made on a week that has been changed since. Run Generera again.",
+        "UNCHECKED": "The engine found a timetable without any rule giving way, but did not get to check it against the rules. Run Generera again.",
+        "NOT_FOUND": "The engine found no timetable within {seconds, number} s, not even with the five rules that may give way. That is no proof that the week is impossible.",
+        "HARD_REFUSAL": "A rule that never gives way is in the way of the week, so no change to the five rules can help. The cause is under Detected conflicts."
+      },
+      "known": {
+        "title": "What is already known",
+        "capLesson": "A teacher's daily cap has to be at least {minutes, number} minutes, because one of the teacher's lessons is that long. It is the least that works, and it is not necessarily enough.",
+        "capWeek": "A teacher's daily cap has to be at least {minutes, number} minutes for the teacher's lessons to fit the days of the week. Locked lessons mean more is needed: it is a minimum and not a solution.",
+        "measured": {
+          "TEACHER_DAILY_CAP": "Without the teachers' daily caps the engine laid the week in a short probe. That is a measurement: it does not show that a raise is enough.",
+          "TEACHER_WORK_DAYS": "Without the part-time posts' days the engine laid the week in a short probe. That is a measurement: it does not show that more days are enough.",
+          "SUBJECT_SPREAD": "Without the subjects' rules on how lessons spread over the week the engine laid the week in a short probe. That is a measurement: it does not show that a looser rule is enough."
+        }
+      },
+      "link": {
+        "people": "Open the teacher's working time",
+        "requirements": "Open the timetable post",
+        "constraints": "Open the room rules",
+        "staffing": "Open the staffing"
+      },
+      "linkLabel": "{page}: {sentence}"
+    },
     "bestEffortOffer": "The school has Best possible timetable on. Under Timetable proposals you can lay a timetable that breaks as few of the school's own rules as possible and see which gave way.",
     "bestEffortOfferLink": "Compute the best possible",
     "bestEffortOfferTimeout": "Generate ran out of time without proving anything: a timetable with deviations may come back where a longer run of Generate would have avoided them.",

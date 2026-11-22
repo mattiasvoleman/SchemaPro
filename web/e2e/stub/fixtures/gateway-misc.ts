@@ -26,6 +26,7 @@ import {
   SCHEDULE_VERSIONS,
 } from "./misc-publication";
 import { backCaseOf } from "./placement-back";
+import { pressForSuggestions, suggestionsJobFor, suggestionsStartedJob } from "./suggestions-world";
 import {
   ago,
   LUNCH_SETTINGS,
@@ -69,9 +70,17 @@ export const miscRoutes: GatewayRoute[] = [
   // --- Lunch, generation, room rules ---------------------------------------------
   route("GET", "/api/v1/lunch-settings", () => LUNCH_SETTINGS),
   route("GET", "/api/v1/optimization/jobs", ({ query, scenario }) => optimizationJobsFor(query.get("academicYearId"), scenario)),
-  route("GET", "/api/v1/optimization/jobs/:id", ({ params }) => byId(OPTIMIZATION_JOBS, params.id) ?? notFound("Optimization job not found.")),
+  route("GET", "/api/v1/optimization/jobs/:id", ({ params, scenario }) =>
+    suggestionsJobFor(params.id ?? "", scenario) ?? byId(OPTIMIZATION_JOBS, params.id) ?? notFound("Optimization job not found."),
+  ),
+  // Åtgärdsförslag vid vägran (G6): the press on the card of a run that ended without a timetable. The stub counts nothing; the next reads of the run answer.
+  route("POST", "/api/v1/optimization/jobs/:id/suggestions", ({ params, scenario }) =>
+    pressForSuggestions(params.id ?? "", scenario) ?? notFound("Optimization job not found."),
+  ),
   // A run started from the page (A3's way-back scenarios): the refused run the scenario holds first, else the year's own. The stub runs nothing.
-  route("POST", "/api/v1/optimization/jobs", ({ scenario }) => ({ jobId: (backCaseOf(scenario) === "refusal" ? OPTIMIZATION_JOBS.at(-1)! : OPTIMIZATION_JOBS[0]!).id })),
+  route("POST", "/api/v1/optimization/jobs", ({ scenario }) => ({
+    jobId: suggestionsStartedJob(scenario) ?? (backCaseOf(scenario) === "refusal" ? OPTIMIZATION_JOBS.at(-1)! : OPTIMIZATION_JOBS[0]!).id,
+  })),
   // Kontrollera veckan, asked by its own button and before every run on Generera: the stub finds nothing, so a run starts as it did before the check.
   route("POST", "/api/v1/optimization/week-check", () => ({
     verdict: "OK",

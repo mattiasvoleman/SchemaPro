@@ -86,6 +86,13 @@ const WeekCheckPanel = lazy(() =>
 const TimeoutAccount = lazy(() => import("./timeout-account").then((module) => ({ default: module.TimeoutAccount })));
 
 /**
+ * What to change for a week that was refused or ran out of time (G6): up to three changes with how well the engine showed each, and a
+ * link to the page that owns the data. Drawn only for a run that ended without a timetable, and behind a lazy import for the same
+ * reason as the account above. It changes nothing itself.
+ */
+const SuggestionsCard = lazy(() => import("./suggestions-card").then((module) => ({ default: module.SuggestionsCard })));
+
+/**
  * How long the gateway counts a PENDING or RUNNING job as running when it
  * refuses a candidate run beside it (GENERATE_RUNNING): a job older than
  * this is one whose task was lost, and refusing for it would refuse for ever.
@@ -1207,6 +1214,14 @@ export default function GeneratePage() {
                 {t("bestEffortOfferLink")}
               </a>
             </p>
+          ) : null}
+
+          {job.suggestionsOffered || job.suggestions ? (
+            <DialogLoadBoundary onError={() => undefined}>
+              <Suspense fallback={null}>
+                <SuggestionsCard job={job} linkYearId={linkYearId} />
+              </Suspense>
+            </DialogLoadBoundary>
           ) : null}
 
           {job.conflicts.length > 0 ? (

@@ -311,3 +311,110 @@ describe("the card of a run that ran out of time, when its chunk does not arrive
     expect(screen.queryByRole("heading", { name: "generate.timeoutAccount.title" })).toBeNull();
   });
 });
+
+
+/*
+ * G6: THE CARD OF WHAT TO CHANGE IS A LAZY CHUNK TOO, and a chunk that does not come must leave the page as it was, with nothing
+ * where the card would have been: the status line, the refusal's sentence and its rows are the page's own, and the card is an addition.
+ * A run the gateway does not offer the analysis for, and has none of, does not draw it at all.
+ */
+
+const refused = {
+  id: "job-r",
+  status: "SUCCEEDED",
+  solverStatus: "INFEASIBLE",
+  lessonsGenerated: 0,
+  conflictSummary: null,
+  conflictSummaryCode: null,
+  conflicts: [{ category: "TEACHER_OVERLAP", message: "Anna is in two rooms at once.", resourceNames: [] }],
+  suggestionsOffered: true,
+  suggestions: null,
+  createdAt: "2026-11-21T08:00:00.000Z",
+  finishedAt: "2026-11-21T08:03:10.000Z",
+};
+
+async function pageWithTheSuggestionsCard(card: "never arrives" | "is on its way" | "arrives"): Promise<React.ComponentType> {
+  vi.resetModules();
+  if (card !== "arrives") {
+    vi.doMock("./suggestions-card", () => {
+      if (card === "never arrives") throw new Error("Failed to fetch dynamically imported module");
+      return new Promise(() => undefined);
+    });
+  }
+  return (await import("./page")).default;
+}
+
+describe("the card of what to change", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.doUnmock("./suggestions-card");
+    vi.restoreAllMocks();
+  });
+
+  it("is drawn for a refused run once its chunk has arrived, with the offer and the button, beside the refusal's rows", async () => {
+    state.job = refused;
+    const Page = await pageWithTheSuggestionsCard("arrives");
+    render(<Page />);
+
+    expect(await screen.findByRole("button", { name: "generate.suggestions.offerAction" })).toBeInTheDocument();
+    expect(screen.getByText("generate.suggestions.offer")).toBeInTheDocument();
+    expect(screen.getByText("Anna is in two rooms at once.")).toBeInTheDocument();
+  });
+
+  it("is drawn for a TIMEOUT too, beside the account of where the time went", async () => {
+    state.job = { ...timedOut, suggestionsOffered: true, suggestions: null };
+    const Page = await pageWithTheSuggestionsCard("arrives");
+    render(<Page />);
+
+    expect(await screen.findByText("generate.suggestions.offerTimeout")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "generate.timeoutAccount.title" })).toBeInTheDocument();
+  });
+
+  it("is not drawn for a run the gateway does not offer it for and that has no analysis", async () => {
+    state.job = { ...refused, suggestionsOffered: false };
+    const Page = await pageWithTheSuggestionsCard("arrives");
+    render(<Page />);
+
+    expect(await screen.findByText("Anna is in two rooms at once.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "generate.suggestions.title" })).toBeNull();
+  });
+
+  it("is not drawn for a run an older gateway sent: the fields are absent, which reads as no offer", async () => {
+    const { suggestionsOffered: _offered, suggestions: _suggestions, ...older } = refused;
+    state.job = older;
+    const Page = await pageWithTheSuggestionsCard("arrives");
+    render(<Page />);
+
+    expect(await screen.findByText("Anna is in two rooms at once.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "generate.suggestions.title" })).toBeNull();
+  });
+
+  it("leaves the page as it was, with nothing where the card would be, when its chunk does not arrive", async () => {
+    state.job = refused;
+    const Page = await pageWithTheSuggestionsCard("never arrives");
+    render(<Page />);
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.queryByRole("heading", { name: "generate.suggestions.title" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "generate.suggestions.offerAction" })).toBeNull();
+    expect(screen.getByText("generate.statusINFEASIBLE")).toBeInTheDocument();
+    expect(screen.getByText("Anna is in two rooms at once.")).toBeInTheDocument();
+  });
+
+  it("leaves the page as it was while the card is on its way", async () => {
+    state.job = refused;
+    const Page = await pageWithTheSuggestionsCard("is on its way");
+    render(<Page />);
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.queryByRole("heading", { name: "generate.suggestions.title" })).toBeNull();
+    expect(screen.getByText("generate.statusINFEASIBLE")).toBeInTheDocument();
+  });
+});
+
