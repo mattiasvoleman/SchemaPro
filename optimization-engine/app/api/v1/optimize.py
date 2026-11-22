@@ -86,15 +86,18 @@ async def run_solver(
 
     def counted() -> OptimizeScheduleResponse:
         # The thread's life is what is counted (app.solve_load): a 503 ends the wait, not this.
-        with SOLVE_LOAD.running(GENERATION):
-            beside = SOLVE_LOAD.count(ANALYSIS)
+        with SOLVE_LOAD.running(GENERATION, str(payload.request_id)):
+            beside, analysis_id, analysis_age = SOLVE_LOAD.oldest(ANALYSIS)
             if beside:
                 # The one case the count does not close: an analysis is already running on the cores this solve
-                # asks for. Said in the log so that how often it happens is measured and not guessed.
+                # asks for. Said in the log so that how often it happens is measured and not guessed, with the
+                # analysis's own id and how long it had run, so that how long the two shared the cores can be read.
                 logger.warning(
                     "generation_beside_analysis",
                     request_id=str(payload.request_id),
                     analyses_running=beside,
+                    analysis_request_id=analysis_id,
+                    analysis_seconds=round(analysis_age, 1),
                 )
             return solver.solve(payload)
 

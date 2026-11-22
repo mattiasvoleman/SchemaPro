@@ -13,6 +13,7 @@ is let through and logged, and the count is back at zero when each of them ends.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 
@@ -23,10 +24,24 @@ from app.main import create_app
 from app.schemas.schedule import OptimizeScheduleRequest, OptimizeScheduleResponse
 from app.solve_load import ANALYSIS, GENERATION, SOLVE_LOAD, SolveLoad
 from app.solver.scheduler_solver import SchedulerSolver
+from app.timing import TRANSFER_MARGIN_SECONDS
 from tests import test_optimize as to
 from tests.test_suggest_changes import HEADERS, _app_settings, _body
 
 REFUSAL = "A timetable is being generated on this engine. Try again in a moment."
+
+
+def _events(caplog: pytest.LogCaptureFixture, name: str) -> list[dict[str, object]]:
+    """The structured log lines called `name`, parsed: what production's log search would read."""
+    found: list[dict[str, object]] = []
+    for record in caplog.records:
+        try:
+            line = json.loads(record.getMessage())
+        except ValueError:
+            continue
+        if isinstance(line, dict) and line.get("event") == name:
+            found.append(line)
+    return found
 
 
 def _wait_until_zero(kind: str) -> None:
@@ -214,3 +229,54 @@ def test_a_generation_alone_logs_nothing_of_the_kind(caplog: pytest.LogCaptureFi
 
     assert response.status_code == 200, response.text
     assert "generation_beside_analysis" not in caplog.text
+
+
+def test_the_refusal_is_logged_as_the_line_production_is_to_count(caplog: pytest.LogCaptureFixture) -> None:
+    """DEPLOYMENT 33.4 tells whoever reads production to count `suggest_changes_yields_to_generation` before anything is built
+    to stop an analysis: the line, its level and what it carries are part of that, and were pinned by nothing."""
+    body = _body()
+    with TestClient(create_app(_app_settings())) as client:  # type: ignore[arg-type]
+        with caplog.at_level(logging.WARNING):
+            with SOLVE_LOAD.running(GENERATION):
+                with SOLVE_LOAD.running(GENERATION):  # two, so that the logged number is the count and not a constant
+                    refused = client.post("/api/v1/suggest-changes", json=body, headers=HEADERS)
+
+    assert refused.status_code == 429
+    (line,) = _events(caplog, "suggest_changes_yields_to_generation")
+    assert line["level"] == "warning"
+    assert line["request_id"] == body["requestId"]
+    assert line["generations_running"] == 2
+
+
+def test_the_generation_beside_an_analysis_logs_whose_it_is_and_how_many(caplog: pytest.LogCaptureFixture) -> None:
+    """The other line the same measurement reads: `generation_beside_analysis`, with the Generera's own request id."""
+    payload = to._sample_payload()
+    with TestClient(create_app(to._settings())) as client:
+        with caplog.at_level(logging.WARNING):
+            with SOLVE_LOAD.running(ANALYSIS):
+                with SOLVE_LOAD.running(ANALYSIS):  # two, so that the logged number is the count and not a constant
+                    response = client.post("/api/v1/optimize", json=payload, headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    (line,) = _events(caplog, "generation_beside_analysis")
+    assert line["level"] == "warning"
+    assert line["request_id"] == payload["requestId"]
+    assert line["analyses_running"] == 2
+
+
+def test_a_generation_answered_503_before_its_thread_started_leaves_nothing_counted() -> None:
+    """`deadlineSeconds` no longer than the transfer margin gives the route a ceiling of 0: it gives up before the solve's thread is
+    started. The count is taken INSIDE the thread (app.solve_load: "a coroutine that was closed before its thread was started counts
+    nothing and cannot leave a count behind"), so this solve counted nothing. A count taken at admission and given back by the
+    thread would stay at one for ever, and every analysis would answer 429 until the engine restarted."""
+    payload = to._sample_payload()
+    payload["deadlineSeconds"] = TRANSFER_MARGIN_SECONDS
+    with TestClient(create_app(to._settings())) as client:
+        generated = client.post("/api/v1/optimize", json=payload, headers=HEADERS)
+        assert generated.status_code == 503, generated.text
+        assert generated.json()["details"]["ceilingSeconds"] == 0.0
+
+        _wait_until_zero(GENERATION)
+        taken = client.post("/api/v1/suggest-changes", json=_body(), headers=HEADERS)
+
+    assert taken.status_code == 200, taken.text

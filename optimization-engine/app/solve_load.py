@@ -12,8 +12,9 @@ WHAT IT DECIDES. A Generera is never refused or queued by this count: it has no 
 An analysis is refused (429, the gateway's ENGINE_BUSY) while any Generera runs, and answers "try again in a moment".
 The converse is not closed and is said here and not left to be found: a Generera that starts while an analysis is
 already running shares the cores with it until it ends, at most its workers' four and a minute and a half (up to the
-ceiling of 270 s at the largest `maxSeconds`). The count only makes that visible (a warning, `generation_beside_analysis`)
-so that it can be measured before anything is built to stop an analysis.
+ceiling of 270 s at the largest `maxSeconds`). The count only makes that visible (a warning, `generation_beside_analysis`,
+that names the analysis it started beside and how long that had run, so that the overlap can be read from the log) so that it can
+be measured before anything is built to stop an analysis.
 
 IT COUNTS THE THREAD'S LIFE, NOT THE ANSWER'S. A solve's thread cannot be cancelled, so the 503 at a route's ceiling ends
 the wait and not the work (the same lesson as the analysis gate's). `running` is entered INSIDE the thread, around the
@@ -29,7 +30,9 @@ instance. Nothing in it is written outside `running`, and every `running` ends, 
 
 from __future__ import annotations
 
+import itertools
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -47,24 +50,45 @@ class SolveLoad:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._running = {kind: 0 for kind in _KINDS}
+        #: The solves running now, by a token of their own: (kind, when it began, the label it was counted with).
+        self._live: dict[int, tuple[str, float, str | None]] = {}
+        self._tokens = itertools.count()
 
     @contextmanager
-    def running(self, kind: str) -> Iterator[None]:
-        """Count one solve of `kind` for as long as the block runs, whatever ends it."""
+    def running(self, kind: str, label: str | None = None) -> Iterator[None]:
+        """Count one solve of `kind` for as long as the block runs, whatever ends it.
+
+        `label` is what a log line says of it (the request's id), so that two solves that shared the cores can be paired.
+        """
         if kind not in self._running:
             raise ValueError(f"unknown kind of solve: {kind!r}")
         with self._lock:
+            token = next(self._tokens)
             self._running[kind] += 1
+            self._live[token] = (kind, time.monotonic(), label)
         try:
             yield
         finally:
             with self._lock:
                 self._running[kind] -= 1
+                del self._live[token]
 
     def count(self, kind: str) -> int:
         """How many solves of `kind` run now."""
         with self._lock:
             return self._running[kind]
+
+    def oldest(self, kind: str) -> tuple[int, str | None, float]:
+        """How many solves of `kind` run, the label of the one that has run longest and its seconds, read together.
+
+        `(0, None, 0.0)` when none runs. One read, so that the number and the solve it names are of the same moment.
+        """
+        with self._lock:
+            started = [(at, label) for live_kind, at, label in self._live.values() if live_kind == kind]
+        if not started:
+            return 0, None, 0.0
+        at, label = min(started, key=lambda entry: entry[0])
+        return len(started), label, time.monotonic() - at
 
 
 #: The process's own count (see the head of this module).

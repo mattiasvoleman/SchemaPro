@@ -120,10 +120,22 @@ async def suggest_changes_route(
         # shrink the deployment's.
         scoped = settings_for_search(settings, payload.search)
         ceiling = solve_ceiling_seconds(scoped, payload.search, payload.deadline_seconds)
+
         def counted() -> SuggestChangesResponse:
             # The thread's life is what is counted, as for a Generera, so that a Generera's log line can say it started
             # beside this one (run_solver).
-            with SOLVE_LOAD.running(ANALYSIS):
+            with SOLVE_LOAD.running(ANALYSIS, str(payload.request_id)):
+                beside, generation_id, generation_age = SOLVE_LOAD.oldest(GENERATION)
+                if beside:
+                    # The route found no Generera running and a Generera's thread began before this one did: the window
+                    # between the two checks. Said from this side too, since the Generera's own line cannot see it.
+                    logger.warning(
+                        "analysis_beside_generation",
+                        request_id=str(payload.request_id),
+                        generations_running=beside,
+                        generation_request_id=generation_id,
+                        generation_seconds=round(generation_age, 1),
+                    )
                 return suggest_changes(payload, settings, ceiling_seconds=ceiling)
 
         work = asyncio.ensure_future(asyncio.to_thread(counted))

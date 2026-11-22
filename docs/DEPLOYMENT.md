@@ -7162,15 +7162,16 @@ The route is a solve and is held like one: **one at a time in a process**, answe
 an analysis that started beside it would take them. `optimization-engine/app/solve_load.py` counts the solves of the process by kind, from the start of the solve's thread to its end (a 503 ends the wait, not the work), and both entrances to a Generera
 (`/api/v1/optimize` and the legacy `/v1/schedule`, through `run_solver`) are counted. `/suggest-changes` answers **429 while a Generera runs** (`A timetable is being generated on this engine. Try again in a moment.`, which the gateway already reads as ENGINE_BUSY),
 and the gate above still holds analyses to one. The count never refuses or queues a Generera. A Generera that starts while an analysis is already running shares the cores with it until it ends (four workers, a minute and a half at the default search, up to the ceiling below at the largest `maxSeconds`);
-that case is not closed and is **logged** as `generation_beside_analysis` (a warning, with `analyses_running`), as the refusal is as `suggest_changes_yields_to_generation`: count those lines before building anything to stop an analysis.
+that case is not closed and is **logged** as `generation_beside_analysis` (a warning, with `analyses_running`, the analysis's own `analysis_request_id` and how long it had run, `analysis_seconds`: the overlap is read from those and from the analysis's `suggest_changes_completed`, whose `elapsed_ms` ends it),
+and from the analysis's side as `analysis_beside_generation` for an analysis let in a moment before a Generera's thread began; the refusal is logged as `suggest_changes_yields_to_generation`: count those lines before building anything to stop an analysis. An analysis answered 503 has no line for the end of its thread.
 The count is per process. At more than one replica each has its own, as the gates do. No contract changes: `app.openapi()` is identical to main's.
 Its ceiling is the search plus up to 30 s for the check plus two builds' headroom (`route_limits`), shortened by the caller's `deadlineSeconds`; the check is given what is left
 and is not started when that is under five seconds after the build. With the default 60 s search the ceiling is 60 + 30 + 60 = 150 s, well inside the API's 240 s wait for a Generera; a gateway that asks for a longer search (`maxSeconds` up to the engine's own budget) must keep its own wait above this sum.
 
 ### 33.5 Tests
 
+`optimization-engine/tests/test_solve_load.py` (the shared count): the count by kind and through a failure, the analysis refused while a Generera runs and never started, a Generera that outlived its 503 still holding it back,
+both entrances counted and back at zero, the analysis counted for its thread, and a Generera beside an analysis let through and logged (and silent when alone). Ten hand mutants; none survives.
 `optimization-engine/tests/test_suggest_changes.py`: the changes by rule (pure), the changed week, the oracle (the strict solver asked cold lays the changed week for each of the
 five rules, and not one step short of `needed`), the proof's shape, the four verdicts, the route (key, validation, the payload's own 400 as `/optimize` gives it, the gate, the
 ceiling) and the OpenAPI comparison. Twenty-one hand mutants of `suggestions.py` were run against it; none survives.
-`optimization-engine/tests/test_solve_load.py` (the shared count): the count by kind and through a failure, the analysis refused while a Generera runs and never started, a Generera that outlived its 503 still holding it back,
-both entrances counted and back at zero, the analysis counted for its thread, and a Generera beside an analysis let through and logged (and silent when alone). Ten hand mutants; none survives.
