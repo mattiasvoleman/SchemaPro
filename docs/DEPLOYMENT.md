@@ -7219,11 +7219,11 @@ analysis of a run that ended without a timetable, the gateway asks the engine, a
 ## 35. The solver corpus: weeks shaped like real schools as a measuring stick ("Riktiga veckor som mätstock", omgång 13, M5)
 
 Every bench school the engine had before this (`solve_2000_students.py`, `validate_schedule.py`, `hogstadium.py`, `staff_60x400.py`) gives each class lessons of its own; what they share is
-a block or a specialist room. The one filled school in production is shaped otherwise, and its week is the kind that answered TIMEOUT in November: in its upper grades nearly every subject but
-Teknik is taught in groups that cut across the classes, a pupil is in about a dozen groups, many teachers stand on parallel groups that take pupils from the same class, its level groups
-(Matematik, Engelska, Svenska) draw from nearly every class of a grade while the others draw from about half of them, and a quarter of its weekly minutes run one term only. Its Generera runs say the
-same from the other side: they end in a TIMEOUT or a refusal for the whole school, and the runs that found a timetable were for a small part of it. The school is also close to the engine's
-limit of 5,000 group pairs in a request. This section is the measuring stick that tells a school, and the nightly gate, where the line between a week the engine can lay and one it cannot runs.
+a block or a specialist room. A school with every year filled in is shaped otherwise. It is described here by its form and by no count, date or run that would point to a school (the repository is
+public): in its upper years nearly every subject but Teknik is taught in groups that cut across the classes, a pupil sits in about a dozen groups, many teachers stand on parallel groups that take pupils
+from the same class, its level groups (Matematik, Engelska, Svenska) draw from nearly every class of a year while the others draw from about half of them, and about a quarter of its weekly minutes run one
+term only. That is the kind of week that has made Generera answer TIMEOUT, and no bench had it; a school of that form is within a few classes of the engine's limit of 5,000 group pairs in a request.
+This section is the measuring stick that tells a school, and the nightly gate, where the line between a week the engine can lay and one it cannot runs.
 
 ### 35.1 What exists
 
@@ -7245,13 +7245,13 @@ count mode's (the first sweep's 40-times limit decided 13 of its 33 TIMEOUTs at 
 Measured 2026-11-22 (the record, tables and conditions are in docs/solve-corpus-measurement.md, the data in docs/solve-corpus-measurement.json and docs/solve-corpus-measurement-clock.json): the `sweep` profile, 77 of its
 82 weeks, in count mode with a budget of 4 deterministic seconds a search, and a clock-mode check with all eight cores of this Mac. **The table is one core's, and its seconds are estimates** ("within" is the slowest
 week of the row that got a timetable): the work times 18 s per deterministic second, which is what one worker took on this Mac when it was quiet (11 weeks, 8–25). By that figure the budget is about 72 s a
-search and 144 s for a solve's two searches, close to production's 180 s. **Production's processor is not measured** (§35.5).
+search and 144 s for a solve's two searches of one core of this Mac. Production gives a run 180 s on every core it has, so the two are not the same measure, and **production's processor is not measured** (§35.5).
 
 | A school with … | gets a timetable within | in |
 |---|---|---|
 | every subject by class (språkval in groups), 6 to 24 classes, 0 to 3 shared teachers (the språkval teachers) | 24 s | 10 of 10 weeks |
 | three subjects (SO, NO, Idrott) in groups across the classes, no shared teacher, **6 to 12 classes** | 9 s | 6 of 6 weeks |
-| the same at **15 and 18 classes** | none (timeout) | 0 of 4 weeks |
+| the same at **15 and 18 classes**, which also have **3 shared teachers** (the språkval teachers, each on four parallel groups) | none (timeout) | 0 of 4 weeks |
 | 9 classes, **up to 4** subjects in groups | 5 s | 8 of 8 weeks |
 | 9 classes, 5 subjects in groups | 9 s | 1 of 2 weeks |
 | 9 classes, **6 to 10** subjects in groups | none (timeout) | 0 of 6 weeks |
@@ -7261,8 +7261,8 @@ search and 144 s for a solve's two searches, close to production's 180 s. **Prod
 | 9 or 12 classes, three subjects in groups, **no shared teacher** | 9 s | 4 of 4 weeks |
 | the same with **1 shared teacher** (three parallel groups) | 9 s | 4 of 4 weeks |
 | the same with **2 shared teachers** (three parallel groups each) | none (timeout) | 0 of 4 weeks |
-| the same with **4 shared teachers** (two parallel groups each) | 10 s | 4 of 4 weeks |
-| the same with **8 shared teachers** (two parallel groups each) | 9 s | 4 of 4 weeks |
+| the same with **3 to 4 shared teachers** (two parallel groups each; 3 at 9 classes, 4 at 12) | 10 s | 4 of 4 weeks |
+| the same with **5 to 8 shared teachers** (two parallel groups each; 5 at 9 classes, 8 at 12) | 9 s | 4 of 4 weeks |
 | 12 classes, three subjects in groups, **no term subject** | 9 s | 2 of 2 weeks |
 | the same with **3 subjects that run one term only** | 35 s | 1 of 2 weeks |
 | the same with **5 term subjects** | none (timeout) | 0 of 2 weeks |
@@ -7300,19 +7300,19 @@ search and 144 s for a solve's two searches, close to production's 180 s. **Prod
 What the numbers say, in order of weight:
 
 1. **The number of classes is not what stops the engine; the form of the groups is.** By class, 24 classes (546 lessons) are a matter of seconds even on one core. With three subjects in groups the line is between
-   12 and 15 classes on one core and between 15 and 18 on eight. With more subjects in groups it is, on one core, four subjects at nine classes and three at twelve; on eight cores five at nine classes (7 and 33 s) and at least
+   12 and 15 classes on one core and between 15 and 18 on eight (the 15- and 18-class weeks are also the first with shared teachers, three språkval teachers on four parallel groups each, the chain of point 2: that row is the class count and the chain together). With more subjects in groups it is, on one core, four subjects at nine classes and three at twelve; on eight cores five at nine classes (7 and 33 s) and at least
    five at twelve (41 s), and six at nine classes is out of reach on eight cores too (two of two weeks).
 2. **What the engine cannot lay is a long chain of one person's parallel groups, not shared teachers as such.** A teacher on two parallel groups of a subject that take pupils from the same classes is cheap:
-   up to eight of them at twelve classes get a timetable in 2 to 10 s on one core. One teacher on three such groups (nine lessons in a row that each of those classes waits out) is also fine; **two of them time out, on eight
-   cores too, and four are proved impossible by the engine's own year count** (`DEMAND_YEAR_WEEK_SHORT`), which is why the corpus no longer has those weeks (it would measure a refusal). The week's length, and not
+   up to eight of them at twelve classes get a timetable in 2 to 10 s on one core. One teacher on three such groups (nine lessons in a row that each of those classes waits out) is also fine; **two of them time out (year 7 at 95 % of the
+   frame, `TIGHT_WEEK_LOAD`), on eight cores too, and three already are proved impossible by the engine's own year count** (105 %, `DEMAND_YEAR_WEEK_SHORT`; pinned by `test_school_corpus_manual_claims.py`), which is why the corpus no longer has those weeks (it would measure a refusal). The week's length, and not
    the number of shared teachers, is the wall; it is what the warning "Krock för lärare" and the year count say.
 3. **Terms cost a lot** and the cost is not smooth: three term subjects at twelve classes get a timetable on one core in one of two weeks (35 s) and on eight cores in both (153 and 164 s at loads of 70 and 40, near the 180 s budget); five term subjects do not on one core.
 4. **The same shape differs by seed, a lot near the edge** (0.26 or 3.5 work; 1.9 work or a timeout). A figure for one week is a lottery ticket; a count of weeks is a result, which is why the table counts.
 5. **The production form does not get a timetable here**: ten subjects in groups with half groups and terms time out on one core at six and nine classes, with six periods instead of two, with teachers who have several groups each, and
-   at the size and shape of the real school (30 classes in grades 4–9, about 870 lessons, 4,154 group pairs). Three of these weeks were also run with all eight cores and timed out at 180 s, at a load of 13 to 63: a timeout
+   in a week of a whole school of that form (30 classes in grades 4–9, 868 lessons, 4,154 group pairs). Three of these weeks were also run with all eight cores and timed out at 180 s, at a load of 13 to 63: a timeout
    under that load is no proof, and what production's cores do with them is what §35.5 would say.
 6. **The group-pair wall.** The engine takes 5,000 `groupConflicts` in a request, and the gateway refuses at that number with a named answer. The production form reaches it at about fifteen classes
-   (12 classes: 3,858 pairs; 15: 5,849); the filled school is within a few classes of it.
+   (12 classes: 3,858 pairs; 15: 5,849); a school of that form is within a few classes of it.
 
 ### 35.3 The nightly gate: this tree against a floor, in work and not in seconds
 
@@ -7342,8 +7342,8 @@ is not billed; the figure is runtime. The job has not run on a runner yet (it ca
 
 ### 35.4 What it says about M7 (the engine in parts)
 
-M7 assumes the size of `scheduler_solver.py` costs time. What can be measured is how much of the time to a first timetable is Python: the prechecks and the builds, against the search. On the 27 weeks of
-the sweep that got a timetable it is **4 % in the median (1 % to 18 %)**: 0.1 to 1.3 s of 1.5 to 40 s (one worker). M7 is not needed for the time a solve takes. (Maintainability, and the mutation gate's hour for
+M7 assumes the size of `scheduler_solver.py` costs time. What can be measured is how much of the time to a first timetable is Python: the prechecks and the builds, against the search. On the 39 weeks of
+the sweep that got a timetable it is **4 % in the median (1 % to 18 %)**: 0.1 to 1.6 s of 1.1 to 144 s (one worker, at loads of 4 to 83). The stage times exist only for weeks that got a timetable, so no week of the size that times out is in the figure. M7 is not needed for the time a solve takes of weeks like these. (Maintainability, and the mutation gate's hour for
 `optimization-proxy.service.ts`, are other arguments and not measured here.)
 
 ### 35.5 The production processor (roadmap decision 8, the user's)
@@ -7374,7 +7374,7 @@ node scripts/bench/solve-corpus-calibrate.mjs convert prod.json trajectory.json
 ### 35.6 Not done
 
 - The clock table is one run per week at a load that varied from 4 to 87 (a second seed and a quiet machine are open), and clock mode covers 41 of the 77 measured weeks.
-- The corpus has the production school's shape and not its details: lessons of 40 to 130 minutes (here every lesson is a högstadium lesson), one kitchen and one laboratory, and the exact group
+- The corpus has the shape of a school with every year filled in and not its details: lessons of other lengths (here every lesson is a högstadium lesson), its rooms, and the exact group
   lists of its pupils. A second school is the only real second opinion.
 - The weeks the search gives up on are measured to the budget twice over (two searches) and are left out of the gate for what they cost; when one of them starts to solve, the sweep shows it and
   the gate's weeks can be moved to follow.

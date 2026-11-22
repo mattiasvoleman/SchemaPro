@@ -8,7 +8,7 @@ reads are in the manual (5.2). This file is the record of the measurement behind
 
 | | |
 |---|---|
-| Corpus | `optimization-engine/benchmarks/school_corpus.py` (corpus version 1), the `sweep` profile at main `01fcb4707` (the corpus after the review of #386): 77 of its 82 weeks. One axis moves at a time from the base (three subjects in groups across the classes, three classes a year): N classes, G subjects in groups, M shared teachers and how many groups each stands on, term subjects, a språkval block, half groups, and the production school's form (two and six periods, teachers with several groups, 30 classes in grades 4–9). The six weeks of the second seed of the new production-form variants were not measured. |
+| Corpus | `optimization-engine/benchmarks/school_corpus.py` (corpus version 1), the `sweep` profile at main `01fcb4707` (the corpus after the review of #386): 77 of its 82 weeks. One axis moves at a time from the base (three subjects in groups across the classes, three classes a year): N classes, G subjects in groups, M shared teachers and how many groups each stands on, term subjects, a språkval block, half groups, and the production school's form (two and six periods, teachers with several groups, 30 classes in grades 4–9). The five weeks of the second seed of the new production-form variants were not measured. |
 | Engine | CP-SAT from OR-Tools 9.15.6755, Python 3.11, the engine of main at `9a61fbbe` (the corpus build is byte-identical for the 60 weeks measured on it: checked) |
 | Count mode | one worker, fixed seed, a budget of **4 deterministic seconds a search**, with the solve's two satisfaction searches (phase 1a, then 1b), so at most 8 deterministic seconds of work before a week is a TIMEOUT. The unit of "work" is CP-SAT's deterministic second: operations counted, the same on every machine. |
 | Clock mode | every core (eight), wall-clock seconds, a budget of 180 s as in production, one run each. |
@@ -25,8 +25,8 @@ arithmetic, so they measured a refusal); the corpus takes four and eight with tw
 
 The seconds columns of the count tables are **estimates**: the work times 18. Eleven solved weeks were measured when the machine was quiet (load 4.5 to 11.5); one worker took **18 s per deterministic second** in the
 median there (8 to 25). At load 50 to 80 the same weeks took 27 to 69 s. So "≈ 18 s per work" is one core of this machine, quiet, and nothing says what a production core does (§35.5). By the same figure the budget of
-4 deterministic seconds a search is about 72 s, and the two searches of a solve about 144 s, close to the production budget of 180 s: a **timeout** below means "no timetable in about what production gives a run, on one core
-of this machine".
+4 deterministic seconds a search is about 72 s, and the two searches of a solve about 144 s of one core of this machine. Production gives a run 180 s on every core it has, so the two are not the same measure: a **timeout**
+below means "no timetable in about 144 s of one core of this machine", and says less than that about production.
 
 ## The tables (count mode, one core)
 
@@ -156,9 +156,9 @@ that were run timed out at 180 s at loads of 13 to 63.
 2. **What the engine cannot lay is a long chain of one person's parallel groups, not shared teachers as such.** Teachers with two parallel groups each, up to eight at twelve classes, are laid in 2 to 10 s. One teacher with
    three groups is fine. Two of them time out, on eight cores too, and four are refused by the engine's own count (they were in the first run and are not in the corpus).
 3. **Terms cost, and not smoothly.** Three term subjects at twelve classes: one week of two on one core (1.9 work, ≈ 35 s) and both on eight cores (153 and 164 s at loads 70 and 40); five term subjects: neither.
-4. **The production school's own form does not get a timetable in the corpus** on one core at six or nine classes, with six periods, with teachers who have several groups each, and at the size of the real school (30 classes,
+4. **The production school's own form does not get a timetable in the corpus** on one core at six or nine classes, with six periods, with teachers who have several groups each, and in a week of a whole school of that form (30 classes,
    868 lessons, 4,154 group pairs); the three weeks run on eight cores timed out too, under load.
-5. **The Python part of a solve is small.** Prechecks plus builds are 4 % of the time to the first timetable in the median (1 to 18 %) on one core: 0.1 to 1.3 s of 1.5 to 40 s. File size does not cost solve time (docs/DEPLOYMENT.md §35.4).
+5. **The Python part of a solve is small.** Prechecks plus builds are 4 % of the time to the first timetable in the median (1 to 18 %) on one core, over the 39 weeks that got a timetable: 0.1 to 1.6 s of 1.1 to 144 s (loads 4 to 83). The weeks that time out have no stage times, so this is the share of the weeks small enough to be laid. File size does not cost solve time of weeks like these (docs/DEPLOYMENT.md §35.4).
 6. **A week near the edge is a lottery.** The same shape with another seed: 0.26 or 3.5 work (a språkval block), 1.9 work or a timeout (three term subjects), 0.49 or a timeout (five subjects in groups at nine classes).
 
 ## What was not measured
