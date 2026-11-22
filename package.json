@@ -36,6 +36,7 @@
     "migrate:status": "prisma migrate status",
     "db:seed": "ts-node --transpile-only prisma/seed.ts",
     "db:seed:hogstadium": "ts-node --transpile-only prisma/seed-hogstadium.ts",
+    "db:reset-demo": "ts-node --transpile-only prisma/demo-reset.ts",
     "studio": "prisma studio",
     "dev:api": "npm run start:dev",
     "dev:web": "npm run dev --prefix web",
