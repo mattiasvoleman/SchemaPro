@@ -28,6 +28,20 @@ describe("the link of a change", () => {
     }
   });
 
+  it("names the läsår on a post's link when the run is for a läsår that is not the active one, and only there (granskning av #390, M-6)", () => {
+    const YEAR = "33333333-3333-4333-8333-333333333333";
+    for (const rule of ["SUBJECT_PER_DAY", "SUBJECT_DAYS_APART"] as const) {
+      expect(linkOfChange({ rule, resourceIds: [ROW], requirementIds: [POST] }, YEAR).href).toBe(`/admin/requirements?post=${POST}&year=${YEAR}`);
+      expect(linkOfChange({ rule, resourceIds: [ROW], requirementIds: [] }, YEAR).href).toBe(`/admin/requirements?year=${YEAR}`);
+      expect(linkOfChange({ rule, resourceIds: [ROW], requirementIds: [POST] }, null).href).toBe(`/admin/requirements?post=${POST}`);
+      expect(linkOfChange({ rule, resourceIds: [ROW], requirementIds: [POST] }, "next year</a>").href).toBe(`/admin/requirements?post=${POST}`);
+    }
+    // A work rule, a room rule and a part-timer's days are the school's, not the läsår's: no year on them.
+    expect(linkOfChange({ rule: "TEACHER_DAILY_CAP", resourceIds: [ROW], requirementIds: [POST] }, YEAR).href).toBe(`/admin/people?workRule=${ROW}`);
+    expect(linkOfChange({ rule: "ROOM_LOCK", resourceIds: [ROW], requirementIds: [POST] }, YEAR).href).toBe(`/admin/constraints?roomRule=${ROW}`);
+    expect(linkOfChange({ rule: "TEACHER_WORK_DAYS", resourceIds: [ROW], requirementIds: [POST] }, YEAR).href).toBe("/admin/staffing");
+  });
+
   it("opens the room rules naming the room rule of the lock", () => {
     expect(linkOfChange({ rule: "ROOM_LOCK", resourceIds: [ROW], requirementIds: [POST] })).toEqual({
       page: "constraints",

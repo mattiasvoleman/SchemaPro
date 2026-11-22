@@ -1219,7 +1219,7 @@ export default function GeneratePage() {
           {job.suggestionsOffered || job.suggestions ? (
             <DialogLoadBoundary onError={() => undefined}>
               <Suspense fallback={null}>
-                <SuggestionsCard job={job} />
+                <SuggestionsCard job={job} linkYearId={linkYearId} />
               </Suspense>
             </DialogLoadBoundary>
           ) : null}
