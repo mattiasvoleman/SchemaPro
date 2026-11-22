@@ -1,5 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, within } from "@testing-library/react";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import MyStaffingPage from "./page";
 
 /**
@@ -169,6 +169,19 @@ describe("Min tjänst for an administrator who teaches", () => {
   });
 });
 
+/*
+ * The card is lazy, so "no card" is only an assertion once the chunk has had every chance to arrive: asked straight after render it
+ * passes before the card could have been drawn, and it only failed because an earlier test in this file had already resolved the
+ * chunk (run it alone, or first, and it asserted nothing). The chunk is loaded up front and the page is given a moment.
+ */
+beforeAll(async () => {
+  await import("@/components/staffing/scope-card");
+});
+const settled = () =>
+  act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
 describe("Min tjänst: omfattning enligt förordningen (SFS 2026:1487)", () => {
   const scope = (overrides: Record<string, unknown> = {}) => ({
     version: { code: "SFS2026:1487", sfs: "SFS 2026:1487", title: "Förordning", validFrom: "2027-07-01", validTo: null, source: "https://example.invalid/sfs" },
@@ -198,7 +211,7 @@ describe("Min tjänst: omfattning enligt förordningen (SFS 2026:1487)", () => {
   it("states the teacher's own omfattning, spoken to them, once it has loaded (the card is lazy: this page is core tier)", async () => {
     state.load.data = { teachers: [row()], scope: scope() };
     render(<MyStaffingPage />);
-    expect(await screen.findByText("staffing.scope.verdictInside")).toBeInTheDocument();
+    expect(await screen.findByText("staffing.scope.own.verdictInside")).toBeInTheDocument();
     expect(screen.getByText("staffing.scope.teachingOwn")).toBeInTheDocument();
     expect(screen.getByText("staffing.scope.highestOwn")).toBeInTheDocument();
   });
@@ -211,13 +224,17 @@ describe("Min tjänst: omfattning enligt förordningen (SFS 2026:1487)", () => {
     expect(await screen.findByText("staffing.scope.verdictOverMax(81)")).toBeInTheDocument();
   });
 
-  it("draws no card for a läsår the ordinance does not reach (no lydelse), nor from a gateway with no such block", () => {
+  it("draws no card for a läsår the ordinance does not reach (no lydelse), nor from a gateway with no such block", async () => {
     state.load.data = { teachers: [row()], scope: scope({ version: null, yearReason: "NOT_IN_FORCE" }) };
     const { unmount } = render(<MyStaffingPage />);
+    await settled();
+    expect(screen.getByText("myStaffing.title")).toBeInTheDocument();
     expect(screen.queryByText(/staffing\.scope\./)).not.toBeInTheDocument();
     unmount();
     state.load.data = { teachers: [row()] };
     render(<MyStaffingPage />);
+    await settled();
+    expect(screen.getByText("myStaffing.title")).toBeInTheDocument();
     expect(screen.queryByText(/staffing\.scope\./)).not.toBeInTheDocument();
   });
 
@@ -227,7 +244,7 @@ describe("Min tjänst: omfattning enligt förordningen (SFS 2026:1487)", () => {
     both.teachers.push({ ...both.teachers[0]!, userId: "t-other", teachingHours: 731, verdict: "OVER_MAX" });
     state.load.data = { teachers: [row(), row({ userId: "t-other" })], scope: both };
     render(<MyStaffingPage />);
-    expect(await screen.findByText("staffing.scope.verdictInside")).toBeInTheDocument();
+    expect(await screen.findByText("staffing.scope.own.verdictInside")).toBeInTheDocument();
     expect(screen.queryByText(/verdictOverMax/)).not.toBeInTheDocument();
   });
 });

@@ -68,8 +68,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { TableScroll } from "@/components/ui/table-scroll";
 
 // The teacher's own omfattning under SFS 2026:1487: lazy, because this page is in the core tier and the card is only drawn for a
-// läsår the ordinance reaches (scopeCardOf is null for every year before 2027/28, which is all of them until then).
-const ScopeCard = lazy(() => import("@/components/staffing/scope-card").then((module) => ({ default: module.ScopeCard })));
+// läsår the ordinance reaches (scopeCardOf is null for every year before 2027/28, which is all of them until then). And a chunk
+// that does not arrive renders nothing, as on the student's, the guardian's and the timplan page: an optional card must never take
+// the tjänst away (a rejected lazy() import is thrown at render, and there is no error boundary under this page to catch it).
+type ScopeCardProps = React.ComponentProps<typeof import("@/components/staffing/scope-card").ScopeCard>;
+const ScopeCard = lazy<React.ComponentType<ScopeCardProps>>(() =>
+  import("@/components/staffing/scope-card").then(
+    (module) => ({ default: module.ScopeCard }),
+    () => ({ default: () => null }),
+  ),
+);
 
 export default function MyStaffingPage() {
   const t = useTranslations("myStaffing");
