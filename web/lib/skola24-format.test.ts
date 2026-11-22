@@ -295,9 +295,11 @@ describe("nothing is said twice or not at all", () => {
 });
 
 describe("an identity number, and Skola24's own files", () => {
-  it("is a personnummer or a TF number, in any spacing, and nothing else", () => {
-    for (const yes of ["19000101-0001", "190001010001", "000101-0001", "19000101TF01", "19000101 TF 01", " 19000101tf01 ", "x 19000101TF01 y"]) expect(isIdentityNumber(yes), yes).toBe(true);
-    for (const no of ["", "   ", "TF01", "19000101TF", "19000101TFAB", "190001011TF01", "19000101TF012", "Åsa", "12345", "2026-11-22", "0", null, undefined]) expect(isIdentityNumber(no), String(no)).toBe(false);
+  it("is the door's own test: a personnummer or a TF number in the spellings the door counts, and nothing else", () => {
+    for (const yes of ["19000101-0001", "190001010001", "000101-0001", "19000101TF01", "19000101-TF01", "19000101 TF01", " 19000101tf01 ", "x 19000101TF01 y"]) expect(isIdentityNumber(yes), yes).toBe(true);
+    // A blank after TF, blanks inside the date and a date of six digits are forms no file has shown: the door does not count them (lib/personal-number.ts).
+    for (const no of ["", "   ", "TF01", "19000101TF", "19000101TFAB", "190001011TF01", "19000101TF012", "19000101 TF 01", "1900 0101TF01", "000101TF01", "Åsa", "12345", "2026-11-22", "0", null, undefined]) expect(isIdentityNumber(no), String(no)).toBe(false);
+    for (const cell of ["19000101TF01", "x 1900 0101 TF01 y", "19000101 TF 01", "7ATF12"]) expect(isIdentityNumber(cell), cell).toBe(hasPersonalNumber(cell));
   });
 
   // The files Skola24 publishes for its courses hold TF numbers in the ID columns (ÅÅÅÅMMDDTFnn), have no header row, and are Windows-1252.

@@ -87,20 +87,16 @@ export interface ReadOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * A TF number as Skola24's own files hold one in the columns where a personnummer goes: eight digits, TF, two digits (ÅÅÅÅMMDDTFnn),
- * seen in all seven of the course files Skola24 publishes and named on the Extens page ("även elever med så kallade TF-nummer"). It does
- * NOT have the shape of a personnummer (web/lib/personal-number.ts), so a file whose ID columns hold only these is not recognised as
- * a file whose first row is data, and its first row becomes the header: one person lost, and the numbers named as columns.
- */
-const TF_NUMBER = /(?<!\d)\d{8}TF\d{2}(?!\d)/i;
-
-/**
- * Whether a cell is the kind of number Skola24 puts in an ID column: a personnummer or a TF number. Used to tell a data row from a header
- * and to recognise a file; never to place or to keep a value (a column the description marks as an ID column is dropped, whatever its cells).
+ * Whether a cell is the kind of number Skola24 puts in an ID column: a personnummer, a samordningsnummer or a TF number (ÅÅÅÅMMDDTFnn, seen in
+ * all seven of the course files Skola24 publishes). Used to tell a data row from a header and to recognise a file; never to place or to keep a
+ * value (a column the description marks as an ID column is dropped, whatever its cells).
+ *
+ * It IS the door's own test (lib/personal-number.ts), since the door knows the TF number: a TF number had not the shape of a personnummer, so a file
+ * whose ID columns held only these was not recognised as a file whose first row is data, and its first row became the header, one person lost and the
+ * numbers named as columns. The reader first had a form of its own for it; two forms of one number are two doors, and one of them is wrong.
  */
 export function isIdentityNumber(cell: string | null | undefined): boolean {
-  if (!cell) return false;
-  return hasPersonalNumber(cell) || TF_NUMBER.test(cell.replace(/\s/g, ""));
+  return hasPersonalNumber(cell);
 }
 
 // ---------------------------------------------------------------------------

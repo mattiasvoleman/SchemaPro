@@ -440,6 +440,24 @@ describe('tableToLessons: personnummer are dropped unread', () => {
     expect(LONG_PNR).toHaveLength(12);
   });
 
+  // Skola24's own files call the column of TF numbers by these names (X3, 2026-11-22): the column is dropped by its name too.
+  it.each(['TF-nummer', 'TFnummer', 'Tfnr', 'TF nr', 'TF-NR', 'Elevens TF-nummer'])('%s: a column of TF numbers is not read, and only its header is named', (name) => {
+    const header = ['Klass/grupp', 'Ämne', name, 'Dag', 'Start', 'Slut'];
+    const parsed = tableToLessons([header, ['7A', 'Ma', '19900101TF01', 'Mån', '08:10', '09:10']]);
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.notes).toEqual([`Kolumnen ${name} lästes inte: Rastra tar inte emot personnummer.`]);
+    expect(parsed.lessons).toHaveLength(1);
+    expect(JSON.stringify(parsed)).not.toMatch(/1990|TF01/);
+  });
+
+  it('does not take a header that only contains the letters for a column of numbers', () => {
+    for (const name of ['TF', 'Tfn', 'Stfnr', 'Tfnrs']) {
+      const header = ['Klass/grupp', 'Ämne', name, 'Dag', 'Start', 'Slut'];
+      const parsed = tableToLessons([header, ['7A', 'Ma', 'x', 'Mån', '08:10', '09:10']]);
+      expect(parsed.notes.join(' ')).not.toContain('lästes inte: Rastra tar inte emot personnummer');
+    }
+  });
+
   it('never echoes the value, not even in the problem of a row that is refused', () => {
     const header = ['Klass/grupp', 'Ämne', 'Personnummer', 'Dag', 'Start', 'Slut', 'Veckomönster'];
     const parsed = tableToLessons([header, ['', 'Ma', PNR, 'Mån', '08:10', '09:10', 'X'], ['7A', '', LONG_PNR, 'Sön', '10:00', '09:00', '']]);
