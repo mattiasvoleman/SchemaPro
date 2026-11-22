@@ -11219,15 +11219,23 @@
   <table>
     <thead><tr><th style="width:24%">Slag</th><th style="width:22%">Märke</th><th>Hur det hittas</th></tr></thead>
     <tbody>
-      <tr><td class="k">Personnummer, samordningsnummer</td><td>PNR-0001, SAM-0001</td><td>På hur de ser ut, i varje cell, rubrik och rad ovanför rubriken: tio eller tolv siffror, med eller utan sekel, med bindestreck, plus eller blanksteg. Kontrollsiffran avgör inte vad som tas bort, bara hur det räknas i rapporten (&rdquo;stämmer&rdquo; eller &rdquo;stämmer inte, ersatt ändå&rdquo;): ett felskrivet nummer är ändå någons nummer. Allt som har formen tas bort, också ett id-nummer som råkar se ut som ett datum.</td></tr>
+      <tr><td class="k">Personnummer, samordningsnummer</td><td>PNR-0001, SAM-0001</td><td>På hur de ser ut, i varje cell, rubrik och rad ovanför rubriken: tio eller tolv siffror, med eller utan sekel, med bindestreck, plus eller blanksteg. Verktyget letar vidare än importen gör: det tar också kolon, komma eller apostrof (också de typografiska) mellan datum och de fyra sista siffrorna (<em>800101:1234</em>), och tecken som inte syns (nollbreddsmellanrum, mjukt bindestreck, riktningstecken) mellan siffrorna, hur många de än är. Ett datum och fyra siffror med kolon eller komma emellan (<em>2026-11-21:0810</em>) tas därför för ett personnummer, som med blanksteg. Kontrollsiffran avgör inte vad som tas bort, bara hur det räknas i rapporten (&rdquo;stämmer&rdquo; eller &rdquo;stämmer inte, ersatt ändå&rdquo;): ett felskrivet nummer är ändå någons nummer. Allt som har formen tas bort, också ett id-nummer som råkar se ut som ett datum.</td></tr>
       <tr><td class="k">TF-nummer</td><td>TF-0001</td><td>Skola24:s eget nummer i kursfilernas id-kolumner: åtta siffror, <em>TF</em> och två siffror (<em>ÅÅÅÅMMDDTFnn</em>), med stora eller små bokstäver. Verktyget letar vidare än importen gör, eftersom ett nummer som blir kvar i en fil som skickas vidare kostar mer än ett märke för mycket: det tar också blanksteg, bindestreck, punkt, snedstreck, plus eller radbrytning före <em>TF</em> (upp till fyra tecken), blanksteg eller bindestreck mellan <em>TF</em> och siffrorna, och ett datum skrivet <em>ÅÅÅÅ-MM-DD</em> eller med blanksteg mellan år, månad och dag. Ett datum följt av <em>TF</em> och två siffror (<em>Prov 20261121 TF 15</em>) räknas därför också, och byts mot ett märke. Numret har ingen kontrollsiffra och är inget personnummer, så det räknas på en egen rad i rapporten och bland sättet de skrevs på. Andra former känns inte igen, till exempel sex siffror i datumet eller fler blanksteg än verktyget tar: titta i förhandsvisningen.</td></tr>
-      <tr><td class="k">E-post</td><td>epost-0001@exempel.invalid</td><td>På hur de ser ut: allt som är <em>text@text</em>.</td></tr>
-      <tr><td class="k">Telefon</td><td>TEL-0001</td><td>På hur de ser ut: <em>070-123 45 67</em>, <em>08-123 456 78</em>, <em>+46 70 123 45 67</em>. Datum och tider tas inte för telefonnummer.</td></tr>
+      <tr><td class="k">E-post</td><td>epost-0001@exempel.invalid</td><td>På hur de ser ut: allt som är <em>text@text</em>, också när den lokala delen står inom citattecken (<em>&rdquo;anna.svensson&rdquo;@skola.se</em>) eller domänen är en adress i hakparentes (<em>anna@[10.0.0.1]</em>).</td></tr>
+      <tr><td class="k">Telefon</td><td>TEL-0001</td><td>På hur de ser ut: <em>070-123 45 67</em>, <em>08-123 456 78</em>, <em>+46 70 123 45 67</em>, också utan plus (<em>46 70 123 45 67</em>, <em>46701234567</em>) och med punkter mellan alla grupper (<em>070.123.45.67</em>). Datum och tider tas inte för telefonnummer.</td></tr>
       <tr><td class="k">Namn</td><td>NAMN-0001, FORNAMN-0001, EFTERNAMN-0001</td><td>Genom rubriken (<em>Namn</em>, <em>Förnamn</em>, <em>Efternamn</em>, <em>Lärare</em>, <em>Elev</em>, <em>Vårdnadshavare</em> …) eller ditt val, aldrig genom gissning. En lista i en cell, delad på semikolon eller snedstreck, byts namn för namn.</td></tr>
       <tr><td class="k">Signatur</td><td>SIGN-0001</td><td>Genom rubriken <em>Signatur</em>. En signatur är ett namn i förkortning i en liten skola, så den ersätts som förval; du kan välja att behålla den.</td></tr>
       <tr><td class="k">Annan personlig text</td><td>TEXT-0001</td><td>Genom rubriken: <em>Födelsedatum</em>, <em>Adress</em>, <em>Postnummer</em>, <em>Ort</em>, <em>Anteckning</em>, <em>Kommentar</em> och liknande.</td></tr>
     </tbody>
   </table>
+  <p>
+    <strong>Ett nummer som en radbrytning delar mitt i</strong> (<em>Elev 19000101</em> på en rad och
+    <em>TF01 ingår</em> på nästa) hittas, för personnummer, TF-nummer och telefonnummer, i löpande text och i en
+    lista med en kolumn, om det står annan text på de två raderna. I en tabell med flera kolumner hittas det
+    inte: där är sista cellen på en rad och första på nästa olika poster. Sökningen har ett pris: en rad
+    som slutar med ett datum och en nästa som börjar med fyra siffror (ett klockslag, <em>Datum 20261121</em>
+    och <em>0810 Matematik</em>) tas i en lista för ett personnummer, som när de står på samma rad.
+  </p>
   <p>
     <strong>Samma värde får samma märke</strong> i hela körningen, hur det än är
     skrivet: <em>800101-1234</em>, <em>19800101-1234</em> och <em>8001011234</em> är en person,
@@ -11256,7 +11264,7 @@
       rubriken pekar ut. Det kan inte avgöra allt, och det säger det i sidan, i
       rapporten och här: <strong>namn i löpande text</strong> som inte finns i en
       namnkolumn eller i din lista; e-postadresser och telefonnummer skrivna med ord eller
-      delade över flera celler, och personnummer och TF-nummer delade över två celler; siffror i andra
+      delade över flera celler, och personnummer, TF-nummer och telefonnummer delade över två celler eller över två rader i en tabell med flera kolumner (i löpande text och i en lista med en kolumn hittas ett nummer som en radbrytning delar, om det står annan text på raderna); siffror i andra
       tecken än vanliga och helbredd-siffror; TF-nummer med sex siffror i datumet eller med fler blanksteg och bindestreck än verktyget tar; kolumner du själv har valt att behålla;
       och filer med fast bredd, där märkena inte är lika långa som det de ersätter.
       Namn på färre än tre bokstäver söks inte i löpande text, om de inte står i din

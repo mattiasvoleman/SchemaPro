@@ -89,6 +89,21 @@ describe.each([
     expect(text).not.toMatch(/[{}]/);
   });
 
+  it("says what it holds and no more: the text of the headers and the sheets' names as they stand, never a value from a cell (the review of #398, L-7)", () => {
+    // A header that is a person's name, in a matrix nobody ticked as names, and a sheet named for a class: both are in the safe file as they were written, so both are in the report.
+    const parsed: ParsedInput = { ...input("Zxqv Plmr;Klass\nkalle;7A\nolle;7B\n"), facts: { ...input("a;b\n").facts, sheet: "Blad Qjzk" } };
+    const text = renderReport(run([parsed], [], [0, 1]).report, say);
+    expect(text).toContain("Zxqv Plmr");
+    expect(text).toContain("Blad Qjzk");
+    for (const cell of ["kalle", "olle"]) expect(text).not.toContain(cell);
+    // And the sentence at the top says so: it does not claim that no original text is in the report.
+    const purpose = say("report.purpose");
+    expect(purpose).not.toMatch(/ursprungligt|original value/i);
+    expect(purpose).toMatch(locale === "sv" ? /rubrik/ : /header/);
+    expect(purpose).toMatch(locale === "sv" ? /bladnamn/ : /sheets/);
+    expect(purpose).toMatch(locale === "sv" ? /aldrig ett värde ur cellerna/ : /never holds a value from a cell/);
+  });
+
   it("says the form of the file: its encoding, delimiter and line ending", () => {
     const text = renderReport(run([input(TABLE)], [], [5]).report, say);
     expect(text).toMatch(/UTF-8/);
