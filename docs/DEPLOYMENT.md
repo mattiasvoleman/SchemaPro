@@ -7109,3 +7109,60 @@ API first: after the drop its start and its sweep fail on the missing table. The
   every role by name and the cascades.
 - Logs: `Staffing search started`, `Staffing search finished [stop, rounds, evaluations, moves, ms]`, and on the engine `week_bounds_*` with the elapsed milliseconds of each count.
   A search that ends `BUDGET` with moves was cut off while it still found improvements; raising `STAFFING_SEARCH_BUDGET_SECONDS` lets it go on.
+
+## 33. Changes that would let a refused week be laid ("Åtgärdsförslag vid vägran", omgång 13, G6, part 1 of 3: the engine)
+
+A school whose Generera was refused, or ran out of time, is told today what did not fit and not what to change. Bästa möjliga schema already lets five of the school's own rules
+give way (Bästa möjliga schema, G2, `optimization-engine/app/solver/relaxation.py`) and says how far each did and what it would have needed. This part reads that answer as a list of changes and asks the one question the
+answer cannot ask itself: **does the strict model, with exactly those changes made, accept the timetable the search found?**
+
+### 33.1 The route
+
+`POST /api/v1/suggest-changes` (`optimization-engine/app/api/v1/suggest_changes.py`, `app/solver/suggestions.py`, `app/schemas/suggestions.py`). The request is Generera's own
+(`OptimizeScheduleRequest`), so the gateway builds one payload and asks any route with it; `search.maxSeconds` is the search's budget (60 s when absent, never more than
+`SOLVER_MAX_TIME_SECONDS`), `search.workers` (four when the request names none, never every core of a shared engine) and `search.seed` pass through, `relaxation` is ignored and `probes` is always off. The answer is `verdict`, `changes` (the cheapest first),
+`verified`, the seconds the search and the check were given, and, for a refusal by a hard rule, the strict explanation. **It places nothing and stores nothing.**
+
+| `verdict` | Means |
+|---|---|
+| `CHANGES` | The search laid the week by letting the rules of `changes` give way |
+| `SOLVABLE_AS_IS` | The search laid it, nothing gave way, **and the strict model accepted the timetable** (`verified` is always true here): the week has a timetable, whatever its own run said |
+| `NOT_FOUND` | No timetable in the search's time, even with the five rules free, or one on which nothing gave way that the strict check was not shown to accept (no time for it): **not** a proof that none exists |
+| `HARD_REFUSAL` | A rule that never gives way refuses the week; `conflicts` is the strict explanation; no change of the five can help |
+
+A change names one of `SUBJECT_DAYS_APART`, `SUBJECT_PER_DAY`, `ROOM_LOCK`, `TEACHER_DAILY_CAP`, `TEACHER_WORK_DAYS` (the engine's own list, mildest first), the value the rule has
+(`current`) and the value this very timetable needs (`needed`), the weekdays where the engine can say them (a post's extra day, only for a school with one week), and the
+anonymous ids the request carried (`requirementIds`, `roomIds`, `resourceIds`: the work rule of a cap, the post of its days, the room rules of a lock). No name is in it. Its
+`cost` is the engine's own price (the weight of a unit times the units the change removes), and the list is in that order, ties to the milder rule.
+
+### 33.2 What `proof` says, and what it does not
+
+- `SOLVED`: the engine solved the week with exactly this one change. `SOLVED_TOGETHER`: with exactly the changes of the list, **together**: one of them alone is not shown to
+  be enough (the test builds a week where neither alone lays it). `MAY_HELP`: a timetable exists that breaks the rule this much, but the strict model's check of it did not
+  finish or was not started.
+- The check builds the STRICT model of the changed week (no priced rule), warm-starts it from the search's timetable and stops at its first solution. A hint that holds is
+  accepted at once; one that does not holds the solve for what it needs to repair it, and a solution found that way proves the changed week as well.
+- **It is a timetable that exists, not one the next Generera finds.** Generera has no hint, and the changed week may still run out of time.
+- **It is not the cheapest.** The search's first timetable is not its best one; on the högstadium week the priced search ended at 40 s with five deviations where the strict
+  solver lays the week cleanly (`verification-baseline.md`). The list is what the engine found.
+- **"Found nothing in N seconds" says the N the search had.** For a `NOT_FOUND`, `searchSeconds` is the budget the search really ran on (the TIMEOUT report's own), not the one it was asked for: a caller that waits less than the engine's budget leaves it less, down to none.
+
+### 33.3 Contract, deploy order, rolling back
+
+- **Additive.** One new path and two new schemas (`SuggestChangesResponse`, `SuggestedChange`); `app.openapi()` was compared with `git archive` of main and nothing else changed
+  (the tests keep the same comparison, and `GET /api/v1/timing` is unchanged). An engine older than the route answers 404, and the gateway (part 2) says so: a refusal or a
+  TIMEOUT then reads as it does today.
+- The engine deploys with the API on every merge (`engine-deploy-drift`): nothing calls the route until part 2, so the order does not matter. Rolling back is reverting the PR.
+
+### 33.4 Time and the machine
+
+The route is a solve and is held like one: **one at a time in a process**, answered 429 beyond it and never queued (the gateway backs off, as it does for `/week-bounds`).
+`/optimize` is not behind the gate; they share the cores, which is why the gateway (part 2) does not start an analysis while the school has a run active and passes `workers` (a request that names none gets four, in the search and in the check).
+Its ceiling is the search plus up to 30 s for the check plus two builds' headroom (`route_limits`), shortened by the caller's `deadlineSeconds`; the check is given what is left
+and is not started when that is under five seconds after the build. With the default 60 s search the ceiling is 60 + 30 + 60 = 150 s, well inside the API's 240 s wait for a Generera; a gateway that asks for a longer search (`maxSeconds` up to the engine's own budget) must keep its own wait above this sum.
+
+### 33.5 Tests
+
+`optimization-engine/tests/test_suggest_changes.py`: the changes by rule (pure), the changed week, the oracle (the strict solver asked cold lays the changed week for each of the
+five rules, and not one step short of `needed`), the proof's shape, the four verdicts, the route (key, validation, the payload's own 400 as `/optimize` gives it, the gate, the
+ceiling) and the OpenAPI comparison. Twenty-one hand mutants of `suggestions.py` were run against it; none survives.

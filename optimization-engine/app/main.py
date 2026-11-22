@@ -18,6 +18,7 @@ from app.api.v1.optimize import router as optimize_router
 from app.api.v1.optimize import run_solver, solve_ceiling_seconds
 from app.api.v1.rooms import router as rooms_router
 from app.api.v1.staffing import router as staffing_router
+from app.api.v1.suggest_changes import router as suggest_changes_router
 from app.api.v1.timing import router as timing_router
 from app.api.v1.week_bounds import router as week_bounds_router
 from app.api.v1.week_check import router as week_check_router
@@ -323,6 +324,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(timing_router)
     application.include_router(week_check_router)
     application.include_router(week_bounds_router)
+    application.include_router(suggest_changes_router)
     application.include_router(exams_router)
     application.include_router(create_legacy_schedule_router())
 
