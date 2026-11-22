@@ -26,7 +26,7 @@ import {
   SCHEDULE_VERSIONS,
 } from "./misc-publication";
 import { backCaseOf } from "./placement-back";
-import { pressForSuggestions, suggestionsJobFor, suggestionsStartedJob } from "./suggestions-world";
+import { pressForSuggestions, suggestionsHistoryFor, suggestionsJobFor, suggestionsStartedJob } from "./suggestions-world";
 import {
   ago,
   LUNCH_SETTINGS,
@@ -69,7 +69,12 @@ const yearOf = (id: string | null) => byId(YEARS, id);
 export const miscRoutes: GatewayRoute[] = [
   // --- Lunch, generation, room rules ---------------------------------------------
   route("GET", "/api/v1/lunch-settings", () => LUNCH_SETTINGS),
-  route("GET", "/api/v1/optimization/jobs", ({ query, scenario }) => optimizationJobsFor(query.get("academicYearId"), scenario)),
+  // The year's runs, newest first. A suggestions scenario lists the run it holds before the year's own (the run a reload leaves behind,
+  // which the page takes up again, D9 of Åtgärdsförslag vid vägran).
+  route("GET", "/api/v1/optimization/jobs", ({ query, scenario }) => [
+    ...(query.get("academicYearId") === YEAR.id ? suggestionsHistoryFor(scenario) : []),
+    ...optimizationJobsFor(query.get("academicYearId"), scenario),
+  ]),
   route("GET", "/api/v1/optimization/jobs/:id", ({ params, scenario }) =>
     suggestionsJobFor(params.id ?? "", scenario) ?? byId(OPTIMIZATION_JOBS, params.id) ?? notFound("Optimization job not found."),
   ),
