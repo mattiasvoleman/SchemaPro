@@ -275,3 +275,21 @@ def test_the_production_form_is_where_the_production_school_stands_against_the_e
 def test_profile_names_are_checked() -> None:
     with pytest.raises(ValueError, match="gate' or 'sweep"):
         corpus.profile("night")
+
+
+def test_the_gate_s_weeks_are_in_the_sweep_with_sizes_and_kinds_to_see_a_change_in() -> None:
+    shapes = corpus.profile("gate")
+    names = [shape.name() for shape in shapes]
+    assert names == list(corpus.GATE_WEEKS) and len(set(names)) == len(names)
+    assert 12 <= len(shapes) <= 20
+    assert {shape.classes for shape in shapes} >= {9, 12, 18, 24}
+    assert any(shape.term_subjects for shape in shapes) and any(shape.language_block for shape in shapes)
+    assert any(shape.group_subjects == 0 for shape in shapes) and any(shape.group_subjects >= 4 for shape in shapes)
+    # Weeks that stand guard are the ones the engine proves impossible.
+    assert sum(1 for shape in shapes if shape.shared_teachers >= 4) == 2
+
+
+def test_a_gate_week_the_sweep_no_longer_has_is_an_error_and_not_a_shorter_gate(monkeypatch) -> None:
+    monkeypatch.setattr(corpus, "GATE_WEEKS", (*corpus.GATE_WEEKS, "n99-g9-m9-s9"))
+    with pytest.raises(ValueError, match="n99-g9-m9-s9"):
+        corpus.gate_shapes()
