@@ -80,6 +80,9 @@ teacher/student schedule views and offline-first attendance tracking.
 
 Want demo data? `npm run db:seed` (with owner credentials in `DIRECT_URL`)
 creates a complete demo school ready for schedule generation.
+`npm run db:reset-demo` says whether the demo school may be reset, and
+`npm run db:reset-demo -- --yes` deletes it and makes it again, only if it is
+the demo school ([`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §37).
 
 > Deploying to production? Follow the step-by-step runbook in
 > [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), or — if you'd rather have every

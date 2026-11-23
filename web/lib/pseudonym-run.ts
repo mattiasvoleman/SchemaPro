@@ -13,7 +13,8 @@
  * `pseudonymise` returns the columns that are undecided and writes nothing.
  *
  * WHAT A REPORT HOLDS. Counts, kinds, headers (after the same replacement as the file's own), the form of the file and the notes of
- * what could not be judged. Never an original value: it is made to be sent with the file.
+ * what could not be judged. Never a value from a cell, and never a file name: it is made to be sent with the file. It does hold the TEXT OF THE HEADERS and the names of the sheets, as they stand in the safe
+ * file (replaced there as any cell is, and not otherwise): a header that is a person's name, in a matrix nobody ticked as names, is in the report as it is in the file (the review of #398, L-7).
  *
  * THE CHECK. The finished cells are searched again, as the originals were: nothing personnummer-, address- or telephone-shaped
  * may be left in them (but the markers), and no known name in a cell that is running text. A run that does not pass is returned as
@@ -22,9 +23,10 @@
 
 import { findPersonalData, type Finding } from "@/lib/pseudonym-detect";
 import { columnStats, headerGroup, proposalFor, type ColumnStats, type Proposal, type ProposalReason, type Treatment } from "@/lib/pseudonym-headers";
-import type { ParsedInput, InputFacts } from "@/lib/pseudonym-input";
+import type { Body, ParsedInput, InputFacts } from "@/lib/pseudonym-input";
 import { KnownNames, runningWords } from "@/lib/pseudonym-names";
-import { isMarker, keyOf, MarkerBook, MARKER_KINDS, MARKER_PATTERN, personalNumberKind, type MarkerKind } from "@/lib/pseudonym-markers";
+import { isMarker, keyOf, MarkerBook, MARKER_GLUED, MARKER_KINDS, personalNumberKind, type MarkerKind } from "@/lib/pseudonym-markers";
+import { bridgeFlow, countBridges, flowOf } from "@/lib/pseudonym-seams";
 import { encodeText, writeTable, type OutputEncoding } from "@/lib/pseudonym-write";
 
 // ---------------------------------------------------------------------------
@@ -260,6 +262,16 @@ function replaceFound(value: string, running: boolean, ctx: Context): string {
   return applySpans(value, spans);
 }
 
+/**
+ * A number that stands across a seam (lib/pseudonym-seams.ts: a line break in a text that is no table, or a comma read as a delimiter in a list) is replaced like any other number found in a cell
+ * by how it looks, counted as one, and the marker it gets is what the seam's first segment ends with.
+ */
+function replaceBridged(found: Finding, ctx: Context): string {
+  ctx.tally[found.kind].content += 1;
+  recordNumber(found, ctx);
+  return ctx.book.marker(found.kind, found.key);
+}
+
 /** A list in a cell is replaced item by item: names split on ; / | and line breaks, signatures on commas too. */
 const LIST: Partial<Record<MarkerKind, RegExp>> = {
   namn: /([;/|\r\n]+)/,
@@ -360,7 +372,7 @@ function collectNames(inputs: readonly ParsedInput[], plans: readonly FilePlan[]
 
 /** How many things that should be gone are left in a cell (the check, and its test). */
 export function leftIn(cell: string, names: KnownNames): number {
-  const bare = cell.replace(MARKER_PATTERN, " ");
+  const bare = cell.replace(MARKER_GLUED, " ");
   return findPersonalData(bare).length + names.find(bare, runningWords(bare) >= 2).length;
 }
 
@@ -399,21 +411,29 @@ export function pseudonymise(inputs: readonly ParsedInput[], choices: RunChoices
     let preview: PreviewRow[] = [];
     let text: string;
     let outputCells: readonly string[] = [];
+    /** What was written, as a body: the check looks across its seams too. */
+    let written: Body;
     let rowCount: number;
     let sheet = input.facts.sheet;
 
     if (input.facts.sheet !== null) sheet = replaceFound(input.facts.sheet, true, ctx);
     if (input.facts.unterminated) notes.push({ code: "unterminated", file: f });
 
-    if (input.body.shape === "lines") {
+    // A number cut by a line break, or by a comma read as a delimiter, is put together before each piece is searched on its own.
+    const flow = flowOf(input.body, input.facts.delimiter);
+    const body = flow === null ? input.body : flow.rebuild(bridgeFlow(flow, (found) => replaceBridged(found, ctx)));
+
+    if (body.shape === "lines") {
       notes.push({ code: "lines", file: f });
-      const lines = input.body.lines.map((line) => replaceFound(line, true, ctx));
+      const lines = body.lines.map((line) => replaceFound(line, true, ctx));
       text = lines.join(input.facts.eol);
       outputCells = lines;
+      written = { shape: "lines", lines };
       rowCount = lines.filter((line) => line.trim() !== "").length;
       preview = lines.slice(0, PREVIEW_ROWS + 10).map((line, i) => ({ number: i + 1, cells: [line] }));
     } else {
-      const { rows, rowNumbers } = input.body;
+      const { rows, rowNumbers } = body;
+      const original = input.body.shape === "table" ? input.body.rows : rows;
       const treatments = resolved[f]!;
       const at = plan.headerRow === null ? -1 : rowNumbers.indexOf(plan.headerRow);
       const changed = new Array<number>(treatments.length).fill(0);
@@ -447,17 +467,18 @@ export function pseudonymise(inputs: readonly ParsedInput[], choices: RunChoices
                 if (running >= FREE_TEXT_WORDS) longText[c]! += 1;
                 next = replaceFound(cell, running >= 2, ctx);
               }
-              if (next !== cell) changed[c]! += 1;
+              if (next !== original[r]![c]) changed[c]! += 1;
               return next;
             }),
           );
         }
       });
 
-      const written = writeTable(out, rowNumbers, input.facts.delimiter ?? ";", input.facts.eol, input.facts.finalEol);
-      text = written.text;
-      guarded = written.guarded;
+      const wrote = writeTable(out, rowNumbers, input.facts.delimiter ?? ";", input.facts.eol, input.facts.finalEol);
+      text = wrote.text;
+      guarded = wrote.guarded;
       outputCells = out.flat();
+      written = { shape: "table", rows: out, rowNumbers };
       rowCount = rows.length;
       preview = out.slice(0, Math.max(0, at) + 1 + PREVIEW_ROWS).map((cells, i) => ({ number: rowNumbers[i]!, cells }));
       if (at > 0) notes.push({ code: "titleRows", file: f, rows: at });
@@ -485,6 +506,9 @@ export function pseudonymise(inputs: readonly ParsedInput[], choices: RunChoices
     // The check, on the finished cells and not on the joined text: a number split over two cells is two cells here as it was in the original.
     let left = 0;
     for (const cell of outputCells) left += leftIn(cell, names);
+    // And a number that stands across a seam of the finished text: the cells are each clean and the text read as it was written is not.
+    const finished = flowOf(written, input.facts.delimiter);
+    if (finished !== null) left += countBridges(finished);
     if (left > 0) failures.push({ file: f, count: left });
 
     files.push({ text, bytes: encoded.bytes, encoding: encoded.encoding, preview });

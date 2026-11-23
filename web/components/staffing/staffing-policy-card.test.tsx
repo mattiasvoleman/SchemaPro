@@ -67,6 +67,28 @@ describe("StaffingPolicyCard", () => {
     expect(screen.getByText("refuseHint")).toBeInTheDocument();
   });
 
+  it("shows the ordinance's highest teaching time as its own choice, defaulting to Varna, and says that a refusal is refusing (SFS 2026:1487)", async () => {
+    state.data = {
+      id: "p1",
+      fullTimeTeachingMinutesPerWeek: null,
+      fullTimeRegulatedHoursPerYear: 1360,
+      fullTimeAnnualHours: 1767,
+      workDaysPerYear: 194,
+      semesterHours: 40,
+      semesterHoursPerWeek: 40,
+      qualificationMode: "WARN",
+      overAllocationMode: "WARN",
+      assignmentScopeMode: "REFUSE",
+      overAllocationTolerancePercent: 10,
+      loadModel: "MINUTES",
+    };
+    render(<StaffingPolicyCard />);
+    await waitFor(() => expect(screen.getByText("assignmentScopeMode")).toBeInTheDocument());
+    expect(screen.getByText("assignmentScopeModeHint")).toBeInTheDocument();
+    // REFUSE on any of the three shows the refusing hint.
+    expect(screen.getByText("refuseHint")).toBeInTheDocument();
+  });
+
   it("fills 1 080 on the suggestion button, never by default", async () => {
     const user = userEvent.setup();
     render(<StaffingPolicyCard />);
@@ -97,6 +119,7 @@ describe("StaffingPolicyCard", () => {
       semesterHoursPerWeek: 40,
       qualificationMode: "WARN",
       overAllocationMode: "WARN",
+      assignmentScopeMode: "WARN",
       overAllocationTolerancePercent: 15,
       loadModel: "MINUTES",
       unstaffedGeneration: "ALLOW",

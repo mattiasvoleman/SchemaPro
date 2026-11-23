@@ -51,6 +51,13 @@ export const MARKER_DIGITS = "4,6";
  */
 export const MARKER_PATTERN = new RegExp(`\\b(?:PNR|SAM|TF|TEL|NAMN|FORNAMN|EFTERNAMN|SIGN|TEXT)-\\d{${MARKER_DIGITS}}\\b|\\bepost-\\d{${MARKER_DIGITS}}@${MARKER_DOMAIN.replace(/\./g, "\\.")}`, "gi");
 
+/**
+ * MARKER_PATTERN without the boundary in front, for the check on the finished file only. A number that stood right after a letter ("v46 20261116", "MATMAT01 20261116") is replaced where it
+ * stood, so its marker is glued to the letter ("vTEL-0001"), and MARKER_PATTERN does not take that for a marker: the check then read the four digits of the marker and the digits that follow
+ * ("0001 20261120") as a number and refused the file (the review of #403). A marker has four to six digits and a boundary behind it, so nothing that is a number is taken out by this.
+ */
+export const MARKER_GLUED = new RegExp(`(?:PNR|SAM|TF|TEL|NAMN|FORNAMN|EFTERNAMN|SIGN|TEXT)-\\d{${MARKER_DIGITS}}\\b|epost-\\d{${MARKER_DIGITS}}@${MARKER_DOMAIN.replace(/\./g, "\\.")}`, "gi");
+
 /** True for a text that is exactly one marker: a cell that has been through the pseudonymiser already, which is left as it is. */
 export function isMarker(text: string): boolean {
   const trimmed = text.trim();

@@ -29,6 +29,8 @@ import {
 } from '../staffing/staffing-enforcement';
 import { subjectFamiliarTeachers, type LastYearTeachers } from '../staffing/suggest-teachers';
 import { readsHr } from '../staffing/hr-visibility';
+import { readScopeVersions } from '../staffing/assignment-scope-reader';
+import { scopeModeOf } from '../staffing/staffing-checks';
 import {
   DEFAULT_LOAD_POLICY,
   chargedMinutes,
@@ -668,6 +670,13 @@ export class StaffingProposalService {
       }
 
       const reversal = dto.undo === true ? await this.appliedBefore(tx, dto) : undefined;
+      // The ordinance's highest level of teaching time (STAFF_TEACHER_OVER_SCOPE) is asked of an apply and of an undo as of every other
+      // write that gives a teacher a row: the lydelser are read, in the apply's own transaction and under its locks, only when the
+      // school asks the question and a post was locked (a school that has turned it OFF sends the statements it always did).
+      const scopeVersions =
+        scopeModeOf(state.policy) !== 'OFF' && postsLocked > 0
+          ? await readScopeVersions(tx, state.read.input.year.startDate)
+          : undefined;
       const warnings = enforceRequirementBatch({
         input: state.read.input,
         policy: state.policy,
@@ -678,6 +687,7 @@ export class StaffingProposalService {
           return requirementName(row.subjectName, row.groupName);
         },
         restoring: reversal,
+        ...(scopeVersions ? { scopeVersions } : {}),
       });
 
       // `undo: true` is what a caller says, and the log is what proves it: only a request that reverses the apply the log holds puts

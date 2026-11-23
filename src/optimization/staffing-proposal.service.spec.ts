@@ -2004,6 +2004,83 @@ describe('StaffingProposalService.apply', () => {
     expect(world.rows['scheduleChangeLog']).toHaveLength(0);
   });
 
+  /*
+   * The ordinance's highest level of teaching time (SFS 2026:1487 3 §, STAFF_TEACHER_OVER_SCOPE) is asked of a hand-edit, a file and an
+   * apply alike: a school that refuses a row over it must not have the same row written by a proposal (review of #404, M-1). Bo is
+   * a 50 % post in åk 8 (upper edge 300 h); 12 lessons a week of 60 minutes over the year's 43 weeks are 516 h.
+   */
+  describe('the ordinance\'s highest level of teaching time', () => {
+    const bands = () => [
+      { versionId: 'version-1', schoolForm: 'GRUNDSKOLA', gradeNumbering: 'NIOARIG', gradeFrom: 7, gradeTo: 9, teachingHoursLow: 500, teachingHoursHigh: 600, planningFloorPercent: 110, teachingSection: '3 § p. 2', planningSection: '4 §', note: null },
+    ];
+    // The lydelse and its bands as the reader may ask for them: with the bands on the row (a relation read) or from the bands' own table.
+    const ordinance = () => ({
+      id: 'version-1',
+      code: 'SFS2026:1487',
+      sfs: 'SFS 2026:1487',
+      title: 'Förordning',
+      validFrom: day('2020-01-01'),
+      validTo: null,
+      source: 'https://example.invalid/sfs',
+      bands: bands(),
+    });
+    const scopeRows = (mode: 'OFF' | 'WARN' | 'REFUSE') => {
+      const rows = schoolRows();
+      Object.assign(rows['staffingPolicy']![0]!, { overAllocationMode: 'OFF', qualificationMode: 'OFF', assignmentScopeMode: mode });
+      rows['assignmentScopeVersion'] = [ordinance()];
+      rows['assignmentScopeBand'] = bands();
+      rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['lessonsPerWeek'] = 12;
+      return rows;
+    };
+    const giveBo = (proposal: StaffingProposal, undo = false) => ({
+      academicYearId: YEAR,
+      basisSha256: proposal.basisSha256,
+      confirmedNewTeaching: [{ requirementId: R_MA8, toTeacherId: BO }],
+      changes: [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId: BO }],
+      ...(undo ? { undo: true } : {}),
+    });
+
+    it('refuses under REFUSE a change that gives a teacher more than the highest level, naming the row and the teacher, and writes nothing', async () => {
+      const { service, world, proposal } = await proposeThenApply(scopeRows('REFUSE'));
+      let thrown: unknown;
+      try {
+        await service.apply(giveBo(proposal), admin());
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ConflictException);
+      expect((thrown as ConflictException).getResponse()).toEqual({
+        code: 'STAFF_TEACHER_OVER_SCOPE',
+        message: 'Matematik för 8A: Läraren skulle få 602 timmars undervisning under läsåret mot förordningens högsta nivå 300 timmar (SFS 2026:1487 3 §).',
+        params: { role: 'TEACHER', hours: '602', limit: '300', userId: BO, requirementId: R_MA8 },
+      });
+      expect(leadOf(world, R_MA8)).toBeNull();
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
+    it('hands back a WARN naming the teacher and the row under WARN, and writes', async () => {
+      const { service, world, proposal } = await proposeThenApply(scopeRows('WARN'));
+      const result = await service.apply(giveBo(proposal), admin());
+      expect(result.warnings).toEqual([
+        { code: 'STAFF_TEACHER_OVER_SCOPE', params: { role: 'TEACHER', hours: '602', limit: '300' }, userId: BO, requirementIds: [R_MA8] },
+      ]);
+      expect(leadOf(world, R_MA8)).toBe(BO);
+    });
+
+    it('reads no lydelse and asks nothing when the school has turned the question OFF', async () => {
+      const { service, world, proposal } = await proposeThenApply(scopeRows('OFF'));
+      await expect(service.apply(giveBo(proposal), admin())).resolves.toMatchObject({ warnings: [] });
+      expect(world.calls.filter((call) => call.model === 'assignmentScopeVersion')).toEqual([]);
+      expect(leadOf(world, R_MA8)).toBe(BO);
+    });
+
+    it('judges an undo that reverses no apply as any write: undo:true is no way round REFUSE of this question either', async () => {
+      const { service, world, proposal } = await proposeThenApply(scopeRows('REFUSE'));
+      await expect(service.apply(giveBo(proposal, true), admin())).rejects.toMatchObject({ response: { code: 'STAFF_TEACHER_OVER_SCOPE' } });
+      expect(leadOf(world, R_MA8)).toBeNull();
+    });
+  });
+
   it('hands back WARNs naming the teacher and the rows, and writes', async () => {
     const rows = schoolRows();
     rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['lessonsPerWeek'] = 5;
