@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { AssignmentScopeAssessment, AssignmentScopeException } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
@@ -80,9 +81,14 @@ export class ScopeAssessmentsService {
 
   async list(academicYearId: string, user: AuthenticatedUser): Promise<ScopeAssessmentResponse[]> {
     requireSchoolId(user);
-    const rows = await this.prisma.withRls(user, (tx) =>
-      tx.assignmentScopeAssessment.findMany({ where: { academicYearId }, orderBy: { userId: 'asc' } }),
-    );
+    const rows = await this.prisma.withRls(user, async (tx) => {
+      const found = await tx.assignmentScopeAssessment.findMany({ where: { academicYearId }, orderBy: { userId: 'asc' } });
+      // The level, the day, the note and who decided are about each person in the list: EMPLOYMENT in the läslogg, as the posts' list
+      // and the load report write it, in the read's own transaction (the reader's own row is left out by the function). Recorded
+      // whether or not the reader may read this person's HR, as the posts' list records it: what was asked is what is logged.
+      await recordRead(tx, 'EMPLOYMENT', found.map((row) => row.userId), user.channel);
+      return found;
+    });
     return rows.map((row) => {
       const response = toScopeAssessmentResponse(row);
       return mayReadHrOf(user, row.userId) ? response : hideScopeAssessment(response);

@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
 import { lockingRead, type LockedTable } from '../../test/utils/locking-read';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import {
   SCOPE_DAY_NEEDS_INITIATIVE,
@@ -129,6 +130,23 @@ describe('ScopeAssessmentsService', () => {
         decidedAt: null,
         hrHidden: true,
       });
+    });
+
+    it('writes the read in the läslogg: EMPLOYMENT, about each teacher in the list, for every reader and in the read\'s own transaction', async () => {
+      tx.assignmentScopeAssessment.findMany.mockResolvedValue([stored(), stored({ userId: ME })]);
+      await service.list(YEAR_ID, testUser({ channel: 'WEB' }));
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [COLLEAGUE, ME] }]);
+
+      // A reader without HR-läs is handed the rows masked and still read them: it is logged all the same.
+      tx.$executeRaw.mockClear();
+      await service.list(YEAR_ID, testUser({ adminProfile: 'EXPEDITION', hrRead: false, channel: 'APP' }));
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'APP', ids: [COLLEAGUE, ME] }]);
+
+      // A list with nobody in it names nobody and sends nothing.
+      tx.$executeRaw.mockClear();
+      tx.assignmentScopeAssessment.findMany.mockResolvedValue([]);
+      await service.list(YEAR_ID, testUser());
+      expect(recordedReads(tx)).toEqual([]);
     });
 
     it('gives an administrator without HR-läs their OWN row whole: a person\'s own is theirs (mayReadHrOf)', async () => {

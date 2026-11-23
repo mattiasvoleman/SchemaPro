@@ -36902,6 +36902,7 @@
           "note": {
             "type": "string",
             "nullable": true,
+            "pattern": "^[^\\u0000]*$",
             "maxLength": 500
           }
         }

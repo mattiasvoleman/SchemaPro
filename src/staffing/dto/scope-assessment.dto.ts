@@ -1,6 +1,6 @@
 import { AssignmentScopeException } from '@prisma/client';
 import { Transform } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
 
 /** The note's bound, the table's CHECK AssignmentScopeAssessments_note_is_sane (20270306090000). */
@@ -47,5 +47,7 @@ export class UpsertScopeAssessmentDto {
   @Transform(trimmedOrNull)
   @IsString({ message: 'Anteckningen anges som text.' })
   @MaxLength(SCOPE_NOTE_MAX, { message: `Anteckningen kan vara högst ${SCOPE_NOTE_MAX} tecken.` })
+  // PostgreSQL's text cannot hold a NUL (SQLSTATE 22021), which reached the caller as a 500 "unexpected database error": no NUL here.
+  @Matches(/^[^\u0000]*$/, { message: 'Anteckningen kan inte innehålla nolltecken (U+0000).' })
   note?: string | null;
 }
