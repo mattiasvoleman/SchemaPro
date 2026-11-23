@@ -4942,7 +4942,7 @@ async function runChecks(
       // so the verdict path is not asked here, and the bands are read below, as the teacher and as the administrator.
       assert.equal(load.scope.yearReason, 'NUMBERING_NOT_COVERED');
       for (const reader of [principal, tjAdmin]) {
-        const lydelser = await api.withRls(reader, (tx) => readScopeVersions(tx));
+        const lydelser = await api.withRls(reader, (tx) => readScopeVersions(tx, load.year.startDate));
         assert.deepEqual(lydelser.map((one) => one.code), ['SFS2026:1487'], `${reader.role} read the lydelser`);
         assert.deepEqual(
           lydelser[0]!.bands.map((band) => [band.schoolForm, band.gradeNumbering, band.gradeFrom, band.gradeTo, band.teachingHoursLow, band.teachingHoursHigh, band.planningFloorPercent]),
@@ -5756,7 +5756,17 @@ async function runChecks(
           // requirementId, the primary key's first column); nothing more is sent
           // when the post is not released, as here, and a PATCH that leaves the
           // lead as it is sends nothing of it.
-          'give a timplanspost a teacher': 27,
+          // +2 since Undervisningsuppdragets omfattning (20270301090000): the
+          // ordinance's highest level of teaching time is asked of a teacher with
+          // a post, in the school's mode WARN (the default), so the lydelse that
+          // holds on the year's first day is asked for, and its bands: two
+          // statements in a läsår the ordinance reaches, as this school's is (a
+          // relation read is a statement of its own under Prisma 7), and ONE in a
+          // läsår that begins before 2027-07-01, which finds none and reads no
+          // band. The post lock that precedes it was already sent for the
+          // over-target question; a school that has turned both questions OFF
+          // sends neither.
+          'give a timplanspost a teacher': 29,
           // +1 since Lärarens dag (20261123090000) on a create that names a
           // teacher, in a school without a cap, as here, and the one thing a
           // create pays for it: the teachers' caps, one indexed SELECT,
@@ -5797,6 +5807,99 @@ async function runChecks(
         const rules = sent[name].filter((statement) => /^SELECT "public"\."(TeacherWorkRules|TeacherEmployments)"/.test(statement));
         assert.deepEqual(rules, [], `${name} read a work rule or a post`);
       }
+    } finally {
+      await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-budget'`, [MARKER]);
+    }
+  });
+
+  await check('(z2) the ordinance\'s lydelse is asked for by the year\'s first day: ONE statement for a läsår it does not reach, TWO for one it does, and the days at its edges are the right ones', async () => {
+    // Counted at pg's Client.query, through the API's own role. A relation read is a statement of its own under Prisma 7 and is sent for
+    // a parent that was not found too, so the bands are read as a query of their own, and only when a lydelse was found (review of #404, M-3).
+    const budget = await givenBudgetSchool(owner);
+    const earlier = `${MARKER}-earlier-lydelse`;
+    try {
+      const reach = async (day: string) => {
+        let versions: Awaited<ReturnType<typeof readScopeVersions>> = [];
+        const sent = await statementsDuring(async () => {
+          versions = await api.withRls(budget.admin, (tx) => readScopeVersions(tx, day));
+        });
+        return {
+          codes: versions.map((one) => one.code),
+          bands: versions.map((one) => one.bands.length),
+          statements: sent
+            .filter((statement) => /^SELECT "public"\."AssignmentScope(Versions|Bands)"/.test(statement))
+            .map((statement) => (/^SELECT "public"\."AssignmentScopeVersions"/.test(statement) ? 'versions' : 'bands')),
+        };
+      };
+      const none = { codes: [], bands: [], statements: ['versions'] };
+      const reached = { codes: ['SFS2026:1487'], bands: [2], statements: ['versions', 'bands'] };
+      assert.deepEqual(await reach('2026-08-17'), none, 'a läsår before the ordinance sent more than the one statement');
+      assert.deepEqual(await reach('2027-06-30'), none, 'the day before the ordinance takes effect');
+      assert.deepEqual(await reach('2027-07-01'), reached, 'the day the ordinance takes effect');
+      assert.deepEqual(await reach('2096-08-13'), reached, 'a läsår long after');
+      // A lydelse that ends on 2027-06-30 holds that day (validTo is its last day, inclusive), and the next one takes over the day after.
+      await owner.query(
+        `INSERT INTO "AssignmentScopeVersions" (code, sfs, title, "validFrom", "validTo", source) VALUES ($1, 'x', 'x', '2020-01-01', '2027-06-30', 'x')`,
+        [earlier],
+      );
+      assert.deepEqual((await reach('2027-06-30')).codes, [earlier], 'the last day of a lydelse is its own');
+      assert.deepEqual((await reach('2027-07-01')).codes, ['SFS2026:1487'], 'the first day of the next is its own');
+      assert.deepEqual((await reach('2020-01-01')).codes, [earlier], 'the first day of the earlier one');
+      assert.deepEqual((await reach('2019-12-31')).codes, [], 'the day before the earlier one');
+    } finally {
+      await owner.query('DELETE FROM "AssignmentScopeVersions" WHERE code = $1', [earlier]);
+      await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-budget'`, [MARKER]);
+    }
+  });
+
+  await check('(z3) two admins giving one teacher a row each, the school asking only the ordinance\'s highest level: the second waits for the first and is refused (409 STAFF_TEACHER_OVER_SCOPE)', async () => {
+    // The post lock has to be taken for THIS question alone: a school that has turned the over-target question OFF would otherwise let both
+    // pass, each reading the teacher under the edge (review of #404). A 100 % post in åk 7 has the upper edge 600 h; a row of 8 lessons a
+    // week of 60 minutes is about 350 h of the year, so one fits and two do not.
+    const budget = await givenBudgetSchool(owner);
+    try {
+      await owner.query(
+        `UPDATE "StaffingPolicies" SET "qualificationMode" = 'OFF', "overAllocationMode" = 'OFF', "assignmentScopeMode" = 'REFUSE' WHERE "schoolId" = $1`,
+        [budget.schoolId],
+      );
+      const second = (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES ($1, $2, now()) RETURNING id`,
+          [budget.schoolId, `${MARKER} budget fysik`],
+        )
+      ).rows[0]!.id;
+      const teacher = budget.teachers[2]!;
+      const row = (subjectId: string) =>
+        ({ academicYearId: budget.yearId, subjectId, studentGroupId: budget.class7a, teacherId: teacher, lessonsPerWeek: 8, minutesPerLesson: 60 }) as never;
+      const parked = deferred<number>();
+      const release = deferred<void>();
+      const holder = new TeachingRequirementsService({
+        withRls: <T>(user: AuthenticatedUser, fn: (tx: PrismaClient) => Promise<T>) =>
+          api.withRls(user, async (tx) => {
+            const result = await fn(tx);
+            const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+            parked.resolve(pid);
+            await release.promise;
+            return result;
+          }),
+      } as unknown as PrismaService).create(row(budget.subject), budget.admin);
+      const holderPid = await parked.promise;
+      const rival = new TeachingRequirementsService(api).create(row(second), budget.admin).then(() => null, (error: unknown) => error);
+      for (let tries = 0; ; tries++) {
+        const { rows } = await owner.query<{ pid: number }>('SELECT pid FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid)) LIMIT 1', [holderPid]);
+        if (rows[0]) break;
+        assert.ok(tries < 500, 'the second admin never waited for the first');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      release.resolve();
+      await holder;
+      const refused = await rival;
+      assert.ok(refused instanceof ConflictException, summarise(refused));
+      const body = refused.getResponse() as { code?: string; params?: { role?: string; limit?: string } };
+      assert.equal(body.code, 'STAFF_TEACHER_OVER_SCOPE');
+      assert.deepEqual([body.params?.role, body.params?.limit], ['TEACHER', '600']);
+      const written = await owner.query('SELECT 1 FROM "TeachingRequirements" WHERE "academicYearId" = $1 AND "teacherId" = $2', [budget.yearId, teacher]);
+      assert.equal(written.rowCount, 1, 'the second row was written beside the first');
     } finally {
       await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-budget'`, [MARKER]);
     }

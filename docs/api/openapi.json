@@ -36702,6 +36702,14 @@
               "WARN"
             ]
           },
+          "assignmentScopeMode": {
+            "type": "string",
+            "enum": [
+              "OFF",
+              "REFUSE",
+              "WARN"
+            ]
+          },
           "overAllocationTolerancePercent": {
             "type": "number",
             "minimum": 0,

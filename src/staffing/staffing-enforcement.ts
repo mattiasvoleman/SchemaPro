@@ -4,6 +4,8 @@ import type { LessonRecurrence, PrismaClient, UnstaffedGenerationMode } from '@p
 import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import { asDay, readLoadInput } from './load-input';
 import { readHeldQualifications } from './qualification-inheritance';
+import { readScopeVersions } from './assignment-scope-reader';
+import type { ScopeVersion } from './assignment-scope';
 import { rostersOfYear, type BasisOrYear, type RosterViewer } from '../year-rollover/projected-rosters';
 import {
   DEFAULT_CHECK_POLICY,
@@ -11,6 +13,7 @@ import {
   judgeRequirementBatch,
   judgeRequirementWrite,
   qualificationFinding,
+  scopeModeOf,
   settleFindings,
   staffingSentence,
   type BatchChange,
@@ -116,6 +119,7 @@ export async function readCheckPolicy(
       overAllocationTolerancePercent: true,
       fullTimeTeachingMinutesPerWeek: true,
       unstaffedGeneration: true,
+      assignmentScopeMode: true,
     },
   });
   return { ...(row ?? { ...DEFAULT_CHECK_POLICY, unstaffedGeneration: 'ALLOW' as const }), showsPeriods };
@@ -286,10 +290,16 @@ export async function enforceRequirementWrite(
     (coTeacherAfter !== null && coTeacherAfter !== (before?.coTeacherId ?? null)) ||
     sharedAfter.some((id) => !sharedBefore.has(id));
   const asksQualification = policy.qualificationMode !== 'OFF' && newlyAssigned;
-  const asksLoad =
-    policy.overAllocationMode !== 'OFF' &&
-    (await lockEmploymentsOf(tx, args.academicYearId, assignees)) > 0;
-  if (!asksQualification && !asksLoad) return [];
+  // The load and the ordinance's highest level are both read off the teacher's own rows and post, so either asks for the lock:
+  // two admins each giving Anna a row would each see her under the edge and together leave her over it. No post, nothing to
+  // judge (no target, and no span to scale), so neither question is asked.
+  const postsLocked =
+    policy.overAllocationMode !== 'OFF' || scopeModeOf(policy) !== 'OFF'
+      ? await lockEmploymentsOf(tx, args.academicYearId, assignees)
+      : 0;
+  const asksLoad = policy.overAllocationMode !== 'OFF' && postsLocked > 0;
+  const asksScope = scopeModeOf(policy) !== 'OFF' && postsLocked > 0;
+  if (!asksQualification && !asksLoad && !asksScope) return [];
 
   const read = await readLoadInput(tx, args.viewer, args.academicYearId, args.schoolId, {
     alsoGroupIds: [args.studentGroupId],
@@ -323,12 +333,22 @@ export async function enforceRequirementWrite(
   );
   const findings = judgeRequirementWrite({
     input: read.input,
-    policy: asksLoad ? policy : { ...policy, overAllocationMode: 'OFF' },
+    policy: asksPolicy(policy, asksLoad, asksScope),
     before: stored,
     after,
     subjectName,
+    ...(asksScope ? { scopeVersions: await readScopeVersions(tx, read.input.year.startDate) } : {}),
   });
   return settleFindings(findings);
+}
+
+/** The policy with the questions that are not asked switched OFF, so the pure judge asks exactly the gated ones. */
+function asksPolicy(policy: CheckPolicy, asksLoad: boolean, asksScope: boolean): CheckPolicy {
+  return {
+    ...policy,
+    ...(asksLoad ? {} : { overAllocationMode: 'OFF' as const }),
+    ...(asksScope ? {} : { assignmentScopeMode: 'OFF' as const }),
+  };
 }
 
 /**
@@ -343,6 +363,8 @@ export class RequirementImportChecks {
     private readonly input: LoadInput,
     private readonly spanOf: (groupIds: string[]) => ReturnType<typeof gradeSpanOf>,
     private readonly weight: (subjectId: string) => Pick<LoadRequirement, 'loadWeight'>,
+    /** The ordinance's lydelser, read once per upload when the school asks the question (assignmentScopeMode). */
+    private readonly scopeVersions?: readonly ScopeVersion[],
   ) {}
 
   static async open(
@@ -362,19 +384,23 @@ export class RequirementImportChecks {
     if (args.teacherIds.length === 0) return null;
     const policy = await readCheckPolicy(tx, args.schoolId, args.showsPeriods);
     if (!checksAnything(policy)) return null;
-    const asksLoad =
-      policy.overAllocationMode !== 'OFF' &&
-      (await lockEmploymentsOf(tx, args.academicYearId, args.teacherIds)) > 0;
-    if (policy.qualificationMode === 'OFF' && !asksLoad) return null;
+    const postsLocked =
+      policy.overAllocationMode !== 'OFF' || scopeModeOf(policy) !== 'OFF'
+        ? await lockEmploymentsOf(tx, args.academicYearId, args.teacherIds)
+        : 0;
+    const asksLoad = policy.overAllocationMode !== 'OFF' && postsLocked > 0;
+    const asksScope = scopeModeOf(policy) !== 'OFF' && postsLocked > 0;
+    if (policy.qualificationMode === 'OFF' && !asksLoad && !asksScope) return null;
     const read = await readLoadInput(tx, args.viewer, args.academicYearId, args.schoolId, {
       alsoGroupIds: [...args.groupIds],
     });
     if (!read) return null;
     return new RequirementImportChecks(
-      asksLoad ? policy : { ...policy, overAllocationMode: 'OFF' },
+      asksPolicy(policy, asksLoad, asksScope),
       { ...read.input, requirements: [...read.input.requirements] },
       (groupIds) => read.spanOf(groupIds),
       (subjectId) => weightField(read.loadModel, read.weightOf(subjectId)),
+      asksScope ? await readScopeVersions(tx, read.input.year.startDate) : undefined,
     );
   }
 
@@ -417,6 +443,7 @@ export class RequirementImportChecks {
       before,
       after,
       subjectName: args.subjectName,
+      ...(this.scopeVersions ? { scopeVersions: this.scopeVersions } : {}),
     });
     return { findings, after };
   }
@@ -460,16 +487,23 @@ export function enforceRequirementBatch(args: {
   rowName: (requirementId: string) => string;
   /** For an undo: the leads the batch it reverses found (judgeRequirementBatch). */
   restoring?: ReadonlyMap<string, string | null>;
+  /**
+   * The ordinance's lydelser, for the highest level of teaching time (STAFF_TEACHER_OVER_SCOPE). Absent: the question is not
+   * asked, whatever the mode says. Like the load question it is asked only of a policy that asks it and when a post was locked.
+   */
+  scopeVersions?: readonly ScopeVersion[];
 }): BatchWarning[] {
   const { policy } = args;
   if (!checksAnything(policy)) return [];
   const asksLoad = policy.overAllocationMode !== 'OFF' && args.postsLocked > 0;
-  if (policy.qualificationMode === 'OFF' && !asksLoad) return [];
+  const asksScope = scopeModeOf(policy) !== 'OFF' && args.postsLocked > 0 && args.scopeVersions !== undefined;
+  if (policy.qualificationMode === 'OFF' && !asksLoad && !asksScope) return [];
   const findings = judgeRequirementBatch({
     input: args.input,
-    policy: asksLoad ? policy : { ...policy, overAllocationMode: 'OFF' },
+    policy: asksPolicy(policy, asksLoad, asksScope),
     changes: args.changes,
     restoring: args.restoring,
+    ...(asksScope ? { scopeVersions: args.scopeVersions } : {}),
   });
   const refusal = findings.find((finding) => finding.mode === 'REFUSE');
   if (refusal) {

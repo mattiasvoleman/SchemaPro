@@ -37,6 +37,7 @@ export const STAFFING_POLICY: StaffingPolicy = {
   semesterHoursPerWeek: 40,
   qualificationMode: "WARN",
   overAllocationMode: "WARN",
+  assignmentScopeMode: "WARN",
   overAllocationTolerancePercent: 10,
   loadModel: "MINUTES",
   // ALLOW, so /admin/generate is not blocked by the unstaffed Bild row.

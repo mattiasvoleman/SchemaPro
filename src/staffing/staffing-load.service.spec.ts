@@ -1020,13 +1020,20 @@ describe('StaffingLoadService', () => {
       ],
     });
     /** The ordinance in force from before the default year, so that the year is judged. */
-    const inForce = () => tx.assignmentScopeVersion.findMany.mockResolvedValue([ordinance('2020-01-01')]);
+    const inForce = () => {
+      const { bands, ...version } = ordinance('2020-01-01');
+      tx.assignmentScopeVersion.findFirst.mockResolvedValue({ id: 'version-1', ...version });
+      tx.assignmentScopeBand.findMany.mockResolvedValue(bands);
+    };
     const scopeOf = (report: Awaited<ReturnType<typeof service.load>>, userId = ME) =>
       report.scope!.teachers.find((row) => row.userId === userId)!;
 
     it('says that no lydelse holds in a year that begins before the ordinance does (2026/27), and judges nobody', async () => {
-      tx.assignmentScopeVersion.findMany.mockResolvedValue([ordinance('2027-07-01')]);
+      // The database picks the lydelse that holds on the year's first day: none for 2026/27.
+      tx.assignmentScopeVersion.findFirst.mockResolvedValue(null);
       const report = await service.load(YEAR_ID, 'planned', testUser());
+      expect(tx.assignmentScopeVersion.findFirst).toHaveBeenCalledTimes(1);
+      expect(tx.assignmentScopeBand.findMany).not.toHaveBeenCalled();
       expect(report.scope).toMatchObject({ version: null, yearReason: 'NOT_IN_FORCE' });
       expect(scopeOf(report)).toMatchObject({ verdict: 'NOT_JUDGED', teachingHours: 430 });
     });
@@ -1035,8 +1042,15 @@ describe('StaffingLoadService', () => {
       inForce();
       const report = await service.load(YEAR_ID, 'planned', testUser());
       expect(prisma.withRls).toHaveBeenCalledTimes(1);
-      expect(tx.assignmentScopeVersion.findMany).toHaveBeenCalledTimes(1);
-      expect(tx.assignmentScopeVersion.findMany).toHaveBeenCalledWith({ include: { bands: true }, orderBy: { validFrom: 'asc' } });
+      expect(tx.assignmentScopeVersion.findFirst).toHaveBeenCalledTimes(1);
+      expect(tx.assignmentScopeVersion.findFirst).toHaveBeenCalledWith({
+        where: {
+          validFrom: { lte: new Date('2026-08-17T00:00:00.000Z') },
+          OR: [{ validTo: null }, { validTo: { gte: new Date('2026-08-17T00:00:00.000Z') } }],
+        },
+        orderBy: { validFrom: 'desc' },
+      });
+      expect(tx.assignmentScopeBand.findMany).toHaveBeenCalledWith({ where: { versionId: 'version-1' } });
       expect(report.scope!.version).toMatchObject({ code: 'SFS2026:1487', validFrom: '2020-01-01' });
       expect(report.scope!.yearReason).toBeNull();
       expect(scopeOf(report)).toMatchObject({
@@ -1075,7 +1089,7 @@ describe('StaffingLoadService', () => {
       inForce();
       const report = await service.load(YEAR_ID, 'planned', testUser(), { record: false, travel: false, scope: false });
       expect(report.scope).toBeNull();
-      expect(tx.assignmentScopeVersion.findMany).not.toHaveBeenCalled();
+      expect(tx.assignmentScopeVersion.findFirst).not.toHaveBeenCalled();
     });
 
     it('keeps the verdict and loses every figure that gives the post back, for a planner without HR-läs reading somebody else\'s row', async () => {

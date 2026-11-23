@@ -843,6 +843,11 @@ export interface StaffingPolicy {
   semesterHoursPerWeek: number;
   qualificationMode: StaffingCheckMode;
   overAllocationMode: StaffingCheckMode;
+  /**
+   * What a write over the ordinance's highest level of teaching time may do (SFS 2026:1487 3 §, migration 20270301090000).
+   * Optional for a gateway older than the column, which reads as WARN.
+   */
+  assignmentScopeMode?: StaffingCheckMode;
   overAllocationTolerancePercent: number;
   loadModel: StaffingLoadModel;
   unstaffedGeneration: UnstaffedGenerationMode;

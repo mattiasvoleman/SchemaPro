@@ -83,6 +83,8 @@ describe('StaffingPolicyService', () => {
         semesterHoursPerWeek: 40,
         qualificationMode: 'WARN',
         overAllocationMode: 'WARN',
+        // The ordinance's highest level of teaching time (20270301090000): a warning until the school chooses to refuse.
+        assignmentScopeMode: 'WARN',
         overAllocationTolerancePercent: 10,
         loadModel: 'MINUTES',
         unstaffedGeneration: 'ALLOW',
@@ -95,6 +97,18 @@ describe('StaffingPolicyService', () => {
         create: { schoolId: SCHOOL_ID, ...data },
         update: data,
       });
+    });
+
+    it('writes the school\'s choice of what a write over the ordinance\'s highest level may do, and only that', async () => {
+      tx.staffingPolicy.upsert.mockResolvedValue(storedRow({ assignmentScopeMode: 'REFUSE' }));
+
+      await service.upsert({ assignmentScopeMode: 'REFUSE' }, testUser());
+
+      expect(tx.staffingPolicy.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ assignmentScopeMode: 'REFUSE', overAllocationMode: 'WARN', qualificationMode: 'WARN' }),
+        }),
+      );
     });
 
     it('writes the integrations switch when the form turns it on', async () => {

@@ -538,6 +538,8 @@ describe("validatePolicyDraft", () => {
       semesterHoursPerWeek: 37.5,
       qualificationMode: "WARN",
       overAllocationMode: "WARN",
+      // Always present, too: absent means WARN, and a card that forgot it would reset a school's REFUSE.
+      assignmentScopeMode: "WARN",
       overAllocationTolerancePercent: 10,
       loadModel: "MINUTES",
       // Always present: PUT replaces the row and absent means ALLOW.
@@ -553,6 +555,7 @@ describe("validatePolicyDraft", () => {
       semesterHoursPerWeek: 40,
       qualificationMode: "REFUSE" as const,
       overAllocationMode: "OFF" as const,
+      assignmentScopeMode: "REFUSE" as const,
       overAllocationTolerancePercent: 5,
       loadModel: "FACTOR" as const,
       unstaffedGeneration: "REFUSE" as const,
@@ -563,6 +566,9 @@ describe("validatePolicyDraft", () => {
     const { shareEmploymentWithIntegrations: _dropped, ...older } = row;
     expect(policyToDraft(older).shareEmploymentWithIntegrations).toBe(false);
     expect(policyToDraft(null)).toBe(DEFAULT_POLICY_DRAFT);
+    // A row from a gateway older than the ordinance's check reads as the table's default, WARN.
+    const { assignmentScopeMode: _scope, ...beforeScope } = row;
+    expect(policyToDraft(beforeScope).assignmentScopeMode).toBe("WARN");
   });
 });
 

@@ -6,11 +6,15 @@ import {
   STAFF_TEACHER_NOT_QUALIFIED,
   STAFF_TEACHER_OVER_TARGET,
   STAFF_TEACHER_OVER_TARGET_HIDDEN,
+  STAFF_TEACHER_OVER_SCOPE,
+  STAFF_TEACHER_OVER_SCOPE_HIDDEN,
   STAFF_TEACHER_OVER_TARGET_IN_PERIOD,
   STAFF_UNSTAFFED_REQUIREMENTS,
   gradesParam,
   judgeRequirementBatch,
   judgeRequirementWrite,
+  hoursText,
+  overScopeFinding,
   overTargetFinding,
   qualificationFinding,
   settleFindings,
@@ -20,6 +24,7 @@ import {
   type StaffingWarning,
 } from './staffing-checks';
 import type { JudgedYear, LoadEmployment, LoadInput, LoadQualification, LoadRequirement } from './teacher-load';
+import { scopeOfTeacher, type ScopeVersion } from './assignment-scope';
 
 const YEAR = { startDate: '2026-08-17', endDate: '2027-06-11' };
 const ANNA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -804,6 +809,194 @@ describe('settleFindings', () => {
   });
 });
 
+/*
+ * Question three: the ordinance's highest level of teaching time (SFS 2026:1487 3 §). The year is the one the other staffing
+ * suites use, 43 weeks, so 1 lesson a week of 60 minutes is 43 hours. Anna is a full-time ferietjänst teaching årskurs 7-9, whose upper
+ * edge is 600 hours: 13 lessons a week are 559 hours and 14 are 602.
+ */
+describe('the ordinance\'s highest level of teaching time (STAFF_TEACHER_OVER_SCOPE)', () => {
+  const band = (overrides: Record<string, unknown>) => ({
+    schoolForm: 'GRUNDSKOLA',
+    gradeNumbering: 'NIOARIG' as const,
+    gradeFrom: 1,
+    gradeTo: 6,
+    teachingHoursLow: 550,
+    teachingHoursHigh: 650,
+    planningFloorPercent: 100,
+    teachingSection: '3 § p. 1',
+    planningSection: '4 § p. 1',
+    note: null,
+    ...overrides,
+  });
+  /** Holding from before the test year, so that the year is judged. */
+  const VERSION: ScopeVersion = {
+    code: 'SFS2026:1487',
+    sfs: 'SFS 2026:1487',
+    title: 'Förordning',
+    validFrom: '2020-01-01',
+    validTo: null,
+    source: 'https://example.invalid/sfs',
+    bands: [band({}), band({ gradeFrom: 7, gradeTo: 9, teachingHoursLow: 500, teachingHoursHigh: 600, planningFloorPercent: 110, teachingSection: '3 § p. 2' })],
+  };
+  const asking = (overrides: Partial<CheckPolicy> = {}) =>
+    policy({ qualificationMode: 'OFF', overAllocationMode: 'OFF', assignmentScopeMode: 'WARN', ...overrides });
+
+  const write = (args: {
+    existing?: LoadRequirement[];
+    before?: LoadRequirement | null;
+    after: LoadRequirement;
+    policy?: CheckPolicy;
+    versions?: readonly ScopeVersion[];
+  }) =>
+    judgeRequirementWrite({
+      input: input({ requirements: args.existing ?? [], qualifications: [] }),
+      policy: args.policy ?? asking(),
+      before: args.before ?? null,
+      after: args.after,
+      subjectName: 'Matematik',
+      ...(args.versions === undefined ? { scopeVersions: [VERSION] } : { scopeVersions: args.versions }),
+    });
+
+  it('says nothing for a row that leaves the teacher at the edge or under it: 13 × 60 min × 43 weeks is 559 h against 600', () => {
+    expect(write({ after: requirement({ teacherId: ANNA, lessonsPerWeek: 13 }) })).toEqual([]);
+  });
+
+  it('names the hours and the limit when a row takes the teacher past it, and whose role it is, never the person: 14 lessons are 602 h', () => {
+    expect(write({ after: requirement({ teacherId: ANNA, lessonsPerWeek: 14 }) })).toEqual([
+      {
+        code: STAFF_TEACHER_OVER_SCOPE,
+        mode: 'WARN',
+        userId: ANNA,
+        params: { role: 'TEACHER', hours: '602', limit: '600' },
+      },
+    ]);
+  });
+
+  it('counts the teacher\'s other rows: 10 lessons already, 4 more is 602 h', () => {
+    const findings = write({
+      existing: [requirement({ id: 'req-9', teacherId: ANNA, lessonsPerWeek: 10, subjectId: 'subject-no' })],
+      after: requirement({ id: 'req-1', teacherId: ANNA, lessonsPerWeek: 4 }),
+    });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.params).toMatchObject({ hours: '602' });
+  });
+
+  it('asks the co-teacher too, who is in the room for every lesson', () => {
+    const findings = write({
+      existing: [],
+      after: requirement({ teacherId: BO, coTeacherId: ANNA, lessonsPerWeek: 14 }),
+      policy: asking(),
+      versions: [VERSION],
+    });
+    expect(findings.map((one) => [one.userId, one.params.role])).toEqual([[ANNA, 'CO_TEACHER']]);
+  });
+
+  it('is never asked of a write that adds nothing: a teacher already over who loses a lesson is not refused for the state they are in', () => {
+    const existing = requirement({ id: 'req-1', teacherId: ANNA, lessonsPerWeek: 15 });
+    expect(write({ existing: [existing], before: existing, after: { ...existing, lessonsPerWeek: 14 } })).toEqual([]);
+    // ... nor a write that changes only the room's other facts.
+    expect(write({ existing: [existing], before: existing, after: { ...existing, groupName: '7B' } })).toEqual([]);
+    // One that adds a lesson to a teacher who is already over is asked.
+    expect(write({ existing: [existing], before: existing, after: { ...existing, lessonsPerWeek: 16 } })).toHaveLength(1);
+  });
+
+  it('carries the mode the school chose, and a REFUSE answers 409 with the code and the params', () => {
+    const findings = write({
+      after: requirement({ teacherId: ANNA, lessonsPerWeek: 14 }),
+      policy: asking({ assignmentScopeMode: 'REFUSE' }),
+    });
+    expect(findings[0]!.mode).toBe('REFUSE');
+    try {
+      settleFindings(findings);
+      throw new Error('should have refused');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConflictException);
+      const body = (error as ConflictException).getResponse() as Record<string, unknown>;
+      expect(body).toEqual({
+        message: 'Läraren skulle få 602 timmars undervisning under läsåret mot förordningens högsta nivå 600 timmar (SFS 2026:1487 3 §).',
+        code: STAFF_TEACHER_OVER_SCOPE,
+        params: { role: 'TEACHER', hours: '602', limit: '600' },
+      });
+    }
+  });
+
+  it('asks nothing under OFF, nor without the lydelser, nor in a policy that has no mode of its own (from before the column)', () => {
+    const row = requirement({ teacherId: ANNA, lessonsPerWeek: 14 });
+    expect(write({ after: row, policy: asking({ assignmentScopeMode: 'OFF' }) })).toEqual([]);
+    expect(
+      judgeRequirementWrite({ input: input({ requirements: [], qualifications: [] }), policy: asking(), before: null, after: row, subjectName: 'Matematik' }),
+    ).toEqual([]);
+    const { assignmentScopeMode: _absent, ...older } = asking();
+    expect(write({ after: row, policy: older as CheckPolicy })).toEqual([]);
+  });
+
+  it('asks nothing of a läsår the ordinance does not reach, or a teacher without a post (the span cannot be scaled)', () => {
+    const row = requirement({ teacherId: ANNA, lessonsPerWeek: 14 });
+    expect(write({ after: row, versions: [{ ...VERSION, validFrom: '2027-07-01' }] })).toEqual([]);
+    expect(
+      judgeRequirementWrite({ input: input({ employments: [], requirements: [], qualifications: [] }), policy: asking(), before: null, after: row, subjectName: 'Matematik', scopeVersions: [VERSION] }),
+    ).toEqual([]);
+  });
+
+  it('scales the edge with the post: an 80 % teacher is over at 480 h, which 12 lessons (516 h) are', () => {
+    const findings = judgeRequirementWrite({
+      input: input({ employments: [employment(ANNA, { employmentPercent: 80 })], requirements: [], qualifications: [] }),
+      policy: asking(),
+      before: null,
+      after: requirement({ teacherId: ANNA, lessonsPerWeek: 12 }),
+      subjectName: 'Matematik',
+      scopeVersions: [VERSION],
+    });
+    expect(findings[0]!.params).toEqual({ role: 'TEACHER', hours: '516', limit: '480' });
+  });
+
+  it('says only the verdict, no hours and no limit, to a reader who may not read the post (the limit is the span times the post)', () => {
+    const findings = write({
+      after: requirement({ teacherId: ANNA, lessonsPerWeek: 14 }),
+      policy: asking({ showsPeriods: false }),
+    });
+    expect(findings).toEqual([
+      { code: STAFF_TEACHER_OVER_SCOPE_HIDDEN, mode: 'WARN', userId: ANNA, params: { role: 'TEACHER' } },
+    ]);
+  });
+
+  it('is its own question: it answers for the riktmärke and the ordinance separately', () => {
+    // 14 lessons is 840 min a week: over the ordinance's 600 h, inside a riktmärke of 1 000 min with 10 % tolerance.
+    const both = write({
+      after: requirement({ teacherId: ANNA, lessonsPerWeek: 14 }),
+      policy: policy({ qualificationMode: 'OFF', overAllocationMode: 'WARN', assignmentScopeMode: 'WARN' }),
+    });
+    expect(both.map((one) => one.code)).toEqual([STAFF_TEACHER_OVER_SCOPE]);
+  });
+
+  it('prints hours whole when whole and with a Swedish comma otherwise', () => {
+    expect(hoursText(602)).toBe('602');
+    expect(hoursText(478.1)).toBe('478,1');
+    expect(hoursText(0.5)).toBe('0,5');
+  });
+});
+
+describe('overScopeFinding', () => {
+  const scope = (verdict: 'OVER_MAX' | 'INSIDE', hours: number) => ({
+    ...(scopeOfTeacher(input({ requirements: [] }), [], ANNA) ?? ({} as never)),
+    userId: ANNA,
+    verdict,
+    teachingHours: hours,
+    ordinanceHighestHours: 600,
+  });
+
+  it('answers only when the teacher ends OVER and with more hours than before', () => {
+    const ask = (before: ReturnType<typeof scope> | null, after: ReturnType<typeof scope> | null) =>
+      overScopeFinding({ policy: policy({ assignmentScopeMode: 'WARN' }), userId: ANNA, role: 'TEACHER', before, after });
+    expect(ask(scope('INSIDE', 559), scope('OVER_MAX', 602))).not.toBeNull();
+    expect(ask(null, scope('OVER_MAX', 602))).not.toBeNull();
+    expect(ask(scope('OVER_MAX', 602), scope('OVER_MAX', 602))).toBeNull();
+    expect(ask(scope('OVER_MAX', 640), scope('OVER_MAX', 602))).toBeNull();
+    expect(ask(scope('INSIDE', 559), scope('INSIDE', 580))).toBeNull();
+    expect(ask(scope('INSIDE', 559), null)).toBeNull();
+  });
+});
+
 /**
  * The Swedish a 409 carries in `detail` and the Swedish the web renders from
  * the code are ONE sentence, written twice: here in staffingSentence, there in
@@ -895,6 +1088,10 @@ describe('the catalogue says what staffingSentence says', () => {
     },
     { code: STAFF_TEACHER_OVER_TARGET_HIDDEN, params: { role: 'TEACHER', tolerance: 10 } },
     { code: STAFF_TEACHER_OVER_TARGET_HIDDEN, params: { role: 'SUBSTITUTE', tolerance: 0 } },
+    { code: STAFF_TEACHER_OVER_SCOPE, params: { role: 'TEACHER', hours: '602', limit: '600' } },
+    { code: STAFF_TEACHER_OVER_SCOPE, params: { role: 'CO_TEACHER', hours: '478,1', limit: '470' } },
+    { code: STAFF_TEACHER_OVER_SCOPE_HIDDEN, params: { role: 'TEACHER' } },
+    { code: STAFF_TEACHER_OVER_SCOPE_HIDDEN, params: { role: 'SUBSTITUTE' } },
   ];
 
   it.each(cases.map((warning) => [warning.code, warning.params.role, warning] as const))(
