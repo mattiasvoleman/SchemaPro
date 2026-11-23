@@ -18,7 +18,7 @@ const addDays = (date: Date, days: number): Date => new Date(date.getTime() + da
 const mondayOf = (date: Date): Date => addDays(date, 1 - (date.getUTCDay() === 0 ? 7 : date.getUTCDay()));
 
 /** The function as it was before the change: a Date, a string and a closure scan per day. */
-function reference(period: TeachingPeriod, year: YearBounds, closures: ClosedRange[], gradeLevel: number | null): number {
+function reference(period: TeachingPeriod, year: YearBounds, closures: ClosedRange[], gradeLevel: number | null | undefined): number {
   const from = period.startDate && period.startDate > year.startDate ? period.startDate : year.startDate;
   const to = period.endDate && period.endDate < year.endDate ? period.endDate : year.endDate;
   if (from > to) return 0;
@@ -27,7 +27,7 @@ function reference(period: TeachingPeriod, year: YearBounds, closures: ClosedRan
     const min = closure.minGradeLevel ?? null;
     const max = closure.maxGradeLevel ?? null;
     if (min === null && max === null) return true;
-    if (gradeLevel === null) return false;
+    if (gradeLevel === null || gradeLevel === undefined) return false; // as closesForGrade: no grade asked about is a school-wide question
     if (min !== null && gradeLevel < min) return false;
     if (max !== null && gradeLevel > max) return false;
     return true;
@@ -107,6 +107,18 @@ describe('teachingWeeksByDays is the day-by-day walk, faster', () => {
     expect(seen.graded).toBeGreaterThan(500);
     expect(seen.inverted).toBeGreaterThan(200);
     expect(seen.partial).toBeGreaterThan(1000);
+  });
+
+  it('treats no grade asked about, undefined as well as null, as a school-wide question (the walk\'s closesForGrade; every caller passes null or a number today)', () => {
+    const year: YearBounds = { startDate: '2027-08-16', endDate: '2028-06-09' };
+    const schoolWide: ClosedRange = { startDate: '2027-10-25', endDate: '2027-10-29' };
+    const graded: ClosedRange = { startDate: '2027-12-20', endDate: '2028-01-07', minGradeLevel: 4, maxGradeLevel: 6 };
+    for (const grade of [undefined, null]) {
+      expect(teachingWeeksByDays({}, year, [schoolWide, graded], grade)).toBe(teachingWeeksByDays({}, year, [schoolWide], null));
+      expect(teachingWeeksByDays({}, year, [schoolWide, graded], grade)).toBe(reference({}, year, [schoolWide, graded], grade));
+    }
+    // ... and a grade the span holds is closed by it, so the two answers are not the same function of the closures by accident
+    expect(teachingWeeksByDays({}, year, [schoolWide, graded], 5)).toBeLessThan(teachingWeeksByDays({}, year, [schoolWide, graded], undefined));
   });
 
   /*
@@ -196,6 +208,55 @@ describe('teachingWeeksByDays is the day-by-day walk, faster', () => {
     // epoch, a Date only through a string that ends in Z, and the UTC accessors.
     const source = String(teachingWeeksByDays);
     expect(source).not.toMatch(/\.(getDate|getDay|getHours|getMonth|getFullYear|setDate|setHours|setMonth|getTimezoneOffset|toLocale\w*|toString|toDateString)\(/);
+  });
+
+  /*
+   * The source test above reads the text of ONE function. The weeks are counted through helpers (dayNumber, parseDay, runsInWeek,
+   * isoWeekNumber), and CI runs every suite under TZ=UTC, where a helper that parsed a date in local time or asked a Date for its
+   * local day gives the same answer as the UTC one: the six-zone run in the PR text is a run by hand, and a helper changed to local
+   * time passes CI (a mutant of dayNumber that parses `${value}T00:00:00` with no zone survives all 68 prov under TZ=UTC and fails 11
+   * to 14 of them under Europe/Stockholm and America/New_York). So the call itself is held to UTC: while it runs, Date refuses the
+   * local accessors and the two ways of building a local date, and the answers must still be the old walk's.
+   */
+  it('reads no local time while it runs, in any helper it calls (CI runs under TZ=UTC, where local and UTC readings agree)', () => {
+    const year: YearBounds = { startDate: '2026-08-15', endDate: '2027-06-11' }; // begins on a Saturday
+    const closures: ClosedRange[] = [
+      { startDate: '2026-10-26', endDate: '2026-10-30' },
+      { startDate: '2026-12-21', endDate: '2027-01-08', minGradeLevel: 4, maxGradeLevel: 6 },
+      { startDate: '2027-03-28', endDate: '2027-03-29' }, // the clock change
+    ];
+    const cases: [TeachingPeriod, number | null][] = [
+      [{}, null],
+      [{ recurrence: 'ODD_WEEKS' }, 5],
+      [{ recurrence: 'EVEN_WEEKS', startDate: '2026-09-02', endDate: '2027-03-30' }, 5],
+      [{ startDate: '2027-03-26', endDate: '2027-04-04' }, null],
+    ];
+    const expected = cases.map(([period, grade]) => reference(period, year, closures, grade));
+
+    const RealDate = Date;
+    const localAccessors = ['getDate', 'getDay', 'getHours', 'getMinutes', 'getMonth', 'getFullYear', 'setDate', 'setHours', 'setMonth', 'setFullYear', 'getTimezoneOffset', 'toLocaleDateString', 'toLocaleString', 'toDateString'] as const;
+    const saved = localAccessors.map((name) => [name, Object.getOwnPropertyDescriptor(RealDate.prototype, name)!] as const);
+    const refuse = (what: string) => () => {
+      throw new Error(`local time: ${what}`);
+    };
+    const Guarded = new Proxy(RealDate, {
+      construct(target, args, newTarget) {
+        // new Date(ms), new Date('2027-08-16') and new Date('...Z') are UTC; new Date(y, m, d) and new Date('2027-08-16T00:00:00') are local.
+        if (args.length >= 2) throw new Error('local time: new Date(parts)');
+        if (typeof args[0] === 'string' && /T\d\d:\d\d/.test(args[0]) && !/(Z|[+-]\d\d:?\d\d)$/.test(args[0])) throw new Error(`local time: new Date(${args[0]})`);
+        return Reflect.construct(target, args, newTarget);
+      },
+    });
+    let got: number[] = [];
+    try {
+      for (const [name] of saved) Object.defineProperty(RealDate.prototype, name, { value: refuse(name), configurable: true, writable: true });
+      (globalThis as { Date: DateConstructor }).Date = Guarded;
+      got = cases.map(([period, grade]) => teachingWeeksByDays(period, year, closures, grade));
+    } finally {
+      (globalThis as { Date: DateConstructor }).Date = RealDate;
+      for (const [name, descriptor] of saved) Object.defineProperty(RealDate.prototype, name, descriptor);
+    }
+    expect(got).toEqual(expected);
   });
 
   it('handles the corners by hand: a window of a weekend, one day, a year that is one Saturday, no closures at all', () => {

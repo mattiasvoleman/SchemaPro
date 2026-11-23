@@ -286,6 +286,18 @@ describe('ScopeAssessmentsService', () => {
       expect(tx.assignmentScopeVersion.findFirst.mock.invocationCallOrder[0]!).toBeGreaterThan(year - 1);
     });
 
+    // The order is Users, then AcademicYears, as the write was written and reviewed. Either order was deadlock-free in a run against a real
+    // database (the year PATCH, the activation and the carrying rollover, 40 rounds, no 40P01), so this does not say the other is wrong:
+    // it says a change of the order is a decision and not a drift.
+    it('takes the person\'s row before the läsår\'s', async () => {
+      await put({ teachingLevelHours: 600 });
+      const raw = (tx['$queryRaw'] as unknown as jest.Mock).mock.calls.map((call) => rawSql(call));
+      const person = raw.findIndex((sql) => sql.includes('"Users"'));
+      const year = raw.findIndex((sql) => sql.includes('"AcademicYears"'));
+      expect(person).toBeGreaterThanOrEqual(0);
+      expect(year).toBeGreaterThan(person);
+    });
+
     describe('the day of an own initiative (11 § p. 1) lies in the läsår or at most a year before it (L-4)', () => {
       const initiative = (ownInitiativeOn: string) => put({ exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn });
 
@@ -300,6 +312,12 @@ describe('ScopeAssessmentsService', () => {
           await expect(initiative(on)).rejects.toThrow(new BadRequestException(scopeDayOutsideYear('2026-08-16', '2028-06-09')));
         }
         expect(tx.assignmentScopeAssessment.upsert).not.toHaveBeenCalled();
+      });
+
+      it('says the bounds in the order a reader reads them, in the sentence the caller gets (written out: the expected text above is built by the function itself)', async () => {
+        await expect(initiative('2072-09-01')).rejects.toThrow(
+          'Dagen då läraren tog initiativet ska ligga i läsåret eller högst ett år före det: från 2026-08-16 till och med 2028-06-09.',
+        );
       });
 
       it('asks nothing of the day when there is none (a level alone, or an exception that is not the teacher\'s own initiative)', async () => {
