@@ -25,7 +25,7 @@ import { findPersonalData, type Finding } from "@/lib/pseudonym-detect";
 import { columnStats, headerGroup, proposalFor, type ColumnStats, type Proposal, type ProposalReason, type Treatment } from "@/lib/pseudonym-headers";
 import type { Body, ParsedInput, InputFacts } from "@/lib/pseudonym-input";
 import { KnownNames, runningWords } from "@/lib/pseudonym-names";
-import { isMarker, keyOf, MarkerBook, MARKER_KINDS, MARKER_PATTERN, personalNumberKind, type MarkerKind } from "@/lib/pseudonym-markers";
+import { isMarker, keyOf, MarkerBook, MARKER_GLUED, MARKER_KINDS, personalNumberKind, type MarkerKind } from "@/lib/pseudonym-markers";
 import { bridgeFlow, countBridges, flowOf } from "@/lib/pseudonym-seams";
 import { encodeText, writeTable, type OutputEncoding } from "@/lib/pseudonym-write";
 
@@ -372,7 +372,7 @@ function collectNames(inputs: readonly ParsedInput[], plans: readonly FilePlan[]
 
 /** How many things that should be gone are left in a cell (the check, and its test). */
 export function leftIn(cell: string, names: KnownNames): number {
-  const bare = cell.replace(MARKER_PATTERN, " ");
+  const bare = cell.replace(MARKER_GLUED, " ");
   return findPersonalData(bare).length + names.find(bare, runningWords(bare) >= 2).length;
 }
 

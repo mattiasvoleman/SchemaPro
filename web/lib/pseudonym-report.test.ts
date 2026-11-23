@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import enMessages from "@/messages/en.json";
 import svMessages from "@/messages/sv.json";
+import { findPersonalData } from "@/lib/pseudonym-detect";
 import { KEEP } from "@/lib/pseudonym-headers";
 import { flattenLabels, sayWith, type Labels } from "@/lib/pseudonym-labels";
 import { parseText, type ParsedInput } from "@/lib/pseudonym-input";
@@ -104,6 +107,15 @@ describe.each([
     expect(purpose).toMatch(locale === "sv" ? /aldrig ett värde ur cellerna/ : /never holds a value from a cell/);
   });
 
+  it("says a plus is found before TF and nowhere else in a TF number, as the search has it: not inside the date, not after TF (the review of #403)", () => {
+    const limit = say("report.limit3");
+    expect(limit).toMatch(locale === "sv" ? /plus före TF/ : /a plus before TF/);
+    expect(limit).not.toMatch(locale === "sv" ? /plus och radbrytning/ : /a plus and line breaks/);
+    expect(findPersonalData("19000101+TF01").map((found) => found.kind)).toEqual(["tf"]);
+    expect(findPersonalData("1900+0101TF01")).toEqual([]);
+    expect(findPersonalData("19000101TF+01")).toEqual([]);
+  });
+
   it("says the form of the file: its encoding, delimiter and line ending", () => {
     const text = renderReport(run([input(TABLE)], [], [5]).report, say);
     expect(text).toMatch(/UTF-8/);
@@ -114,6 +126,14 @@ describe.each([
     const text = renderReport(run([input("Klass;Dag\n7A;Mån\n7B;Tis\n")]).report, say);
     expect(text).toContain(say("report.nothingReplaced"));
     expect(text).not.toContain(say("report.spellings"));
+  });
+});
+
+describe("the manual says what the page says it cannot judge (the review of #403)", () => {
+  it("has the sentence about a colon, a comma or an apostrophe anywhere but between the date and the last four, as report.limit3 has it", () => {
+    const manual = readFileSync(resolve(process.cwd(), "../docs/manual/anvandarmanual.html"), "utf8").replace(/\s+/g, " ");
+    expect(manual).toContain("personnummer med kolon, komma eller apostrof på annat ställe än mellan datum och de fyra sista siffrorna");
+    expect(SV["report.limit3"]).toContain("Personnummer med kolon, komma eller apostrof på annat ställe än mellan datum och de fyra sista siffrorna");
   });
 });
 

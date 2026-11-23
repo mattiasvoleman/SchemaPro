@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { KEEP, type Treatment } from "@/lib/pseudonym-headers";
 import { parseText } from "@/lib/pseudonym-input";
@@ -58,6 +60,21 @@ describe("a number cut by a line break in running text is one number", () => {
     const tel = run(LIST("070-123", "45 67"));
     expect(tel.report.totals.tel).toEqual({ occurrences: 1, distinct: 1 });
     expect(tel.files[0]!.text).not.toMatch(/070|45 67/);
+  });
+
+  it("is counted as the number it is, in the check digit line and among the spellings, like one found whole (the review of #403)", () => {
+    const pnr = run(LIST("800101-", "1234"));
+    expect(pnr.report.checkDigit.pnr.holds + pnr.report.checkDigit.pnr.fails).toBe(1);
+    expect(pnr.report.spellings).toEqual([{ spelling: "ÅÅMMDD-NNNN", count: 1 }]);
+    const tf = run(LIST("19000101", "TF01"));
+    expect(tf.report.spellings).toEqual([{ spelling: "ÅÅÅÅMMDDTFNN", count: 1 }]);
+    // ... and no check digit is asked of a TF number.
+    expect(tf.report.checkDigit.pnr.holds + tf.report.checkDigit.pnr.fails + tf.report.checkDigit.sam.holds + tf.report.checkDigit.sam.fails).toBe(0);
+  });
+
+  it("counts both halves among the cells of the column it changed (the report says how many cells of a column were replaced)", () => {
+    const result = run(["Elevlista", "Elev 19000101", "TF01 ingår i grupp 7A", "Tack", ""].join("\r\n"));
+    expect(result.report.files[0]!.columns[0]!.changed).toBe(2);
   });
 
   it("is the same marker as the same number written whole, and counts once", () => {
@@ -131,6 +148,25 @@ describe("where a seam is NOT bridged", () => {
     expect(result.files[0]!.text).toBe("Schema\r\nDatum PNR-0001\r\n Matematik i sal 4\r\nDatum PNR-0002\r\n Svenska i sal 5\r\n");
   });
 
+  it("is the other price, which the manual now says too (the review of #403): a time written without a colon at the end of a line and digits at the start of the next are a telephone number, and the marker takes the start of the second line with it", () => {
+    const text = ["Schema", "Tid 0815", "0810 Matematik i sal 4", "Tid 0900", "1000 Svenska i sal 5", ""].join("\r\n");
+    const result = run(text);
+    expect(result.report.totals.tel.occurrences).toBe(2);
+    expect(result.files[0]!.text).toBe("Schema\r\nTid TEL-0001\r\n Matematik i sal 4\r\nTid TEL-0002\r\n Svenska i sal 5\r\n");
+  });
+
+  it("is said in the manual, next to the price of a date and four digits: a time without a colon, the marker that takes the start of the next line, and what 46 costs in the telephone row (the review of #403)", () => {
+    const manual = readFileSync(resolve(process.cwd(), "../docs/manual/anvandarmanual.html"), "utf8").replace(/\s+/g, " ");
+    expect(manual).toContain("<em>Tid 0815</em> och <em>0810 Matematik</em>");
+    expect(manual).toContain("<em>Vecka 46 20261116</em>");
+    expect(manual).toContain("märket tar början av den andra raden med sig");
+  });
+
+  it("wants two letters in a row beside the number, and one letter is not text: 'Å 20261121' and '0810' are left", () => {
+    const text = ["Schema", "Å 20261121", "0810", "B 20261122", "0900", ""].join("\r\n");
+    expect(run(text).files[0]!.text).toBe(text);
+  });
+
   it("is numbered in the order of the file: a number at the end of a line before one at its start is the first, whichever the search finds first", () => {
     const text = ["Brev om eleven", "Först 800101-1234 sedan 820303-3456", "Namn 5 poäng och mer", "Hälsningar skolan", "Tack för hjälpen", ""].join("\r\n");
     const result = run(text);
@@ -140,6 +176,24 @@ describe("where a seam is NOT bridged", () => {
   it("an address cut by a line break is not put together: report.limit2 does not say it is", () => {
     const text = ["Brev om eleven", "Skriv till anna.svensson2@", "skola3.se om det behövs", "Hälsningar skolan", ""].join("\r\n");
     expect(run(text).files[0]!.text).toBe(text);
+  });
+
+  it("a number that is a number already on its first line, grown by what the next line begins with: 070-123 45 and 67 are one telephone number (the review of #403)", () => {
+    const text = ["Brev om eleven", "Ring 070-123 45", "67 om något har hänt", "Hälsningar skolan", ""].join("\r\n");
+    const result = run(text);
+    expect(result.report.totals.tel).toEqual({ occurrences: 1, distinct: 1 });
+    expect(result.files[0]!.text).toBe("Brev om eleven\r\nRing TEL-0001\r\n om något har hänt\r\nHälsningar skolan\r\n");
+  });
+
+  it("a hard-wrapped text: lines of seventy and eighty characters, which is what a wrapped letter has and the seam search looks at the end of, not the start (the review of #403)", () => {
+    const long = "Vi skriver för att berätta att det blivit en ändring för eleven som heter";
+    expect(long.length).toBeGreaterThan(64);
+    const text = ["Brev", `${long} 19000101`, `TF01 och som går i grupp sju. ${"Det gäller från och med nästa vecka.".padEnd(60, " ")}`, "Hälsningar", ""].join("\r\n");
+    const result = run(text);
+    expect(result.report.totals.tf).toEqual({ occurrences: 1, distinct: 1 });
+    expect(result.files[0]!.text.split("\r\n")[1]).toBe(`${long} TF-0001`);
+    expect(result.files[0]!.text).not.toMatch(/1900|TF01/);
+    expect(result.check.passed).toBe(true);
   });
 
   it("a number whole at the end of a line stays one, and the digits that begin the next line are not taken into it", () => {

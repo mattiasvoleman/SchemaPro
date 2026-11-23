@@ -61,6 +61,37 @@ describe("a personnummer with a colon, a comma or an apostrophe between the date
   });
 });
 
+describe("a colon, a comma or an apostrophe with a blank beside it (the review of #403)", () => {
+  it.each([
+    ["a blank after a colon", "800101: 1234"],
+    ["a blank after a comma", "800101, 1234"],
+    ["a blank after an apostrophe", "800101' 1234"],
+    ["a blank before a colon", "800101 :1234"],
+    ["a blank on each side of a comma", "800101 , 1234"],
+    ["two blanks after a colon", "800101:  1234"],
+    ["a century, a blank after the colon", "19800101: 1234"],
+    ["a blank inside the date", "8001 01: 1234"],
+  ])("%s: %s", (_name, text) => {
+    const [one] = findPersonalData(`Elev ${text} flyttad`);
+    expect(`Elev ${text} flyttad`.slice(one!.start, one!.end), text).toBe(text);
+    expect(one).toMatchObject({ kind: "pnr", key: "8001011234" });
+  });
+
+  it("does not take what is not a personnummer: more than two blanks, a time, a decimal, an amount with a blank in it, a blank inside the last four", () => {
+    // The last one is what report.limit3 says: a mark and a blank inside the last four is not taken ('20261116, 1 250 kr' is a date and an amount).
+    for (const text of ["800101:   1234", "10:12:15, 1234", "Betyg 5, 0", "1234567, 8901", "800101: 123", "800101: 12345", "80:01:01- 1234", "mailto: anna@skola.se", "20261116, 1 250 kr", "800101:12 34"]) {
+      expect(kindsOf(text).filter((kind) => kind === "pnr" || kind === "sam"), text).toEqual([]);
+    }
+  });
+
+  it("is the price said in the manual, with a blank as without one: a compact date, a comma and four digits is a personnummer (a date written with hyphens is one only with no blank, as the shape has it)", () => {
+    expect(kindsOf("20261121, 0810")).toEqual(["pnr"]);
+    expect(kindsOf("20261121,0810")).toEqual(["pnr"]);
+    expect(kindsOf("2026-11-21,0810")).toEqual(["pnr"]);
+    expect(kindsOf("2026-11-21, 0810")).toEqual([]);
+  });
+});
+
 describe("characters that show nothing are no gap in a number", () => {
   const ZWSP = "\u200b";
   const SHY = "\u00ad";
@@ -93,6 +124,48 @@ describe("characters that show nothing are no gap in a number", () => {
 
   it("finds an address with one inside it whole", () => {
     expect(found(`anna.svens${ZWSP}son@skola.se`)).toEqual([expect.objectContaining({ kind: "epost", text: `anna.svens${ZWSP}son@skola.se` })]);
+  });
+
+  it("is so for the next-line character too, which is listed with them: any number of them (a single one was a blank, which the shape takes; two were not)", () => {
+    const NEL = "\u0085";
+    for (const text of [`8001${NEL}${NEL}011234`, `800101${NEL}${NEL}${NEL}1234`, `800${NEL}${NEL}${NEL}1011234`]) {
+      expect(found(`Elev ${text} flyttad`), JSON.stringify(text)).toEqual([expect.objectContaining({ kind: "pnr", text, key: "8001011234" })]);
+    }
+    expect(found(`19000101${NEL}${NEL}${NEL}TF01`)).toEqual([expect.objectContaining({ kind: "tf", key: "19000101TF01" })]);
+    expect(found(`070${NEL}${NEL}123 45 67`)).toEqual([expect.objectContaining({ kind: "tel", key: "0701234567" })]);
+    expect(found(`anna.sv${NEL}${NEL}ensson@skola.se`)).toEqual([expect.objectContaining({ kind: "epost", text: `anna.sv${NEL}${NEL}ensson@skola.se` })]);
+    // And a next-line character between two numbers is still a gap between two numbers.
+    expect(kindsOf(`0701234567${NEL}0812345678`)).toEqual(["tel", "tel"]);
+  });
+});
+
+describe("what writing 46 with no plus costs (the review of #403, said in the manual)", () => {
+  it.each([
+    ["a week and a date written without hyphens", "Vecka 46 20261116", "46 20261116"],
+    ["the same with the week stuck to a letter", "v46 20261123", "46 20261123"],
+    ["a week and a date with blanks", "w46 2026 11 16", "46 2026 11 16"],
+    ["an id of ten digits that begins with 46", "Id 4612345678", "4612345678"],
+  ])("%s: %s is a telephone number", (_name, text, taken) => {
+    expect(found(text)).toEqual([expect.objectContaining({ kind: "tel", text: taken })]);
+  });
+
+  it("but not a week and a date with hyphens, nor fewer than ten digits", () => {
+    for (const text of ["Vecka 46 2026-11-16", "46 elever", "461234567", "Id 46123456", "Vecka 47 20261116"]) {
+      expect(kindsOf(text).filter((kind) => kind === "tel"), text).toEqual([]);
+    }
+  });
+});
+
+describe("a date is masked before a telephone number is looked for only when it is a date: a month AND a day (the review of #403)", () => {
+  it("a number written with hyphens that has a month and no day, or a day and no month, is a telephone number", () => {
+    // 12 is a month and 69 is no day; 79 is no month and 12 is a day. Either alone must keep the span from being masked as a date.
+    expect(found("0046-12-691-72-10")).toEqual([expect.objectContaining({ kind: "tel", text: "0046-12-691-72-10" })]);
+    expect(found("0046-79-12-345-67")).toEqual([expect.objectContaining({ kind: "tel", text: "0046-79-12-345-67" })]);
+    expect(found("0046-79-691-72-10")).toEqual([expect.objectContaining({ kind: "tel", text: "0046-79-691-72-10" })]);
+  });
+
+  it("and a date with a month and a day is still masked, so that two dates are not a number", () => {
+    expect(kindsOf("2026-08-17-2026-12-18")).toEqual([]);
   });
 });
 

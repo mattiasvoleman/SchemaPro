@@ -96,6 +96,35 @@ function findLooseTfNumbers(text: string): Finding[] {
 }
 
 /**
+ * A personnummer with a digit stuck to it: "80010112347A" (the number and the first digit of a class), "7A  800101123478", a record of a fixed width with no blank between its fields. The shared shape (the door's)
+ * does not take a number that has a digit beside it, because a date and four digits that begin another date is a period, and a code is not a person; for the pseudonymiser a number left in a file that is sent on costs
+ * more than a marker, and the same was said and done for a TF number (the review of #396, L-1), whose letters tell it from a code. A bare run of digits has nothing to tell it by, so this takes a run of eleven to thirteen
+ * digits only where ten of them (or twelve, with a century of 18, 19 or 20) at its start or its end read as a date and a number whose CHECK DIGIT HOLDS: about one run in seventy of random digits, none that a
+ * timestamp of fourteen has (the review of #403). The finding is the WHOLE run, the stuck digits too: a marker that stood next to the digits it left would be one number longer than it is, and the digits of a neighbouring field are what
+ * a safe file can do without. Anything else found in the run (a telephone number written 46701234567) has the run, as it had.
+ */
+const GLUED_RUN = /(?<!\d)\d{11,13}(?!\d)/g;
+
+function findGluedPersonalNumbers(text: string): Finding[] {
+  if (text.length < 11 || !/\d{11}/.test(text)) return [];
+  const found: Finding[] = [];
+  for (const match of text.matchAll(GLUED_RUN)) {
+    const run = match[0];
+    // The longer reading first, the start before the end.
+    for (const [from, to] of [[0, 12], [run.length - 12, run.length], [0, 10], [run.length - 10, run.length]] as const) {
+      if (from < 0 || (to - from === 12 && !["18", "19", "20"].includes(run.slice(from, from + 2)))) continue;
+      const ten = run.slice(to - 10, to);
+      const month = Number(ten.slice(2, 4));
+      const day = Number(ten.slice(4, 6));
+      if (month < 1 || month > 12 || !((day >= 1 && day <= 31) || (day >= 61 && day <= 91)) || !luhnHolds(ten)) continue;
+      found.push({ kind: day >= 61 ? "sam" : "pnr", start: match.index, end: match.index + run.length, key: ten, checkDigit: true, spelling: `${to - from === 12 ? "ÅÅÅÅ" : "ÅÅ"}MMDDNNNN (med siffror intill)` });
+      break;
+    }
+  }
+  return found;
+}
+
+/**
  * What may stand between the date of a personnummer and its last four, besides the blanks and hyphens the shared shape takes: a colon, a comma or an apostrophe (the
  * straight one and the typographic ones a word processor makes of it). THE DOOR DOES NOT TAKE THESE and stays as it is (lib/personal-number.ts: the review of #377 left
  * the shape one list for both sides); this search does, and the report says how the number was written.
@@ -153,10 +182,10 @@ function foldSpellings(text: string): string {
  * review of #398). The text is therefore searched TWICE when it holds one: as foldSpellings leaves it (each is a blank, which is what keeps "0701234567<ZWSP>0812345678" two
  * numbers) and with every one taken out (which is what makes "8<ZWSP><SHY><WJ>0" two digits side by side); the findings of the second are carried back to the text as it was.
  */
-const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
-const HAS_INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}]/u;
-/** Nothing from U+0000 to U+02FF shows nothing but the soft hyphen: a text of Swedish, English and digits is told so by one cheap test, and the property test is for the rest. */
-const MAYBE_INVISIBLE = /[^\u0000-\u00ac\u00ae-\u02ff]/;
+const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\u0085]/gu;
+const HAS_INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\u0085]/u;
+/** Nothing from U+0000 to U+02FF shows nothing but the soft hyphen and the next-line character (U+0085, which is no format character but is listed as one that shows nothing: any number of them, as of the others): a text of Swedish, English and digits is told so by one cheap test, and the property test is for the rest. */
+const MAYBE_INVISIBLE = /[^\u0000-\u0084\u0086-\u00ac\u00ae-\u02ff]/;
 const hasInvisible = (text: string): boolean => MAYBE_INVISIBLE.test(text) && HAS_INVISIBLE.test(text);
 
 /** The text with the invisible characters taken out, folded, and where each of its characters stood in the text as it was. */
@@ -215,7 +244,10 @@ function findAddresses(text: string): { start: number; end: number; key: string 
     }
     if (start === at) while (start > 0 && !ADDRESS_STOP.test(text[start - 1]!)) start -= 1;
     let end = at + 1;
-    const close = text[at + 1] === "[" ? text.indexOf("]", at + 2) : -1;
+    // The bracket is looked for within MOST_LITERAL characters and no further: a scan to the next "]" wherever it stands is a scan to the end of the text for every "@[" with none after it,
+    // and a text of a million of them took minutes (the review of #403).
+    const closeAt = text[at + 1] === "[" ? text.slice(at + 2, at + MOST_LITERAL + 1).indexOf("]") : -1;
+    const close = closeAt === -1 ? -1 : at + 2 + closeAt;
     if (close !== -1 && close - at <= MOST_LITERAL && !/\s/.test(text.slice(at, close))) end = close + 1;
     else while (end < text.length && !ADDRESS_STOP.test(text[end]!)) end += 1;
     // A full stop or a colon that ends a sentence is not the address's.
@@ -449,8 +481,10 @@ const PRIORITY: Readonly<Record<FindingKind, number>> = { epost: 0, pnr: 1, sam:
  * ("mailto:") is not either. The door does not take these (lib/personal-number.ts) and this search does: for a door a missed number is a cell read as text, for the pseudonymiser it is a number
  * left in a file that is sent on (the review of #398). What it costs: a date and four digits with a colon or a comma between them ("2026-11-21:0810") is a personnummer here as it is with a blank.
  */
-const NUMBER_AFTER_DATE = new RegExp(`(?<!\\d)((?:\\d ?){7}\\d|(?:\\d ?){5}\\d|\\d{4}-\\d{2}-\\d{2}|\\d{2}-\\d{2}-\\d{2})[${MARKS}](?=\\d{4}(?!\\d))`, "g");
-const foldMarksAfterDate = (text: string): string => (MARK.test(text) ? text.replace(NUMBER_AFTER_DATE, "$1-") : text);
+const NUMBER_AFTER_DATE = new RegExp(`(?<!\\d)((?:\\d ?){7}\\d|(?:\\d ?){5}\\d|\\d{4}-\\d{2}-\\d{2}|\\d{2}-\\d{2}-\\d{2})( {0,2})[${MARKS}]( {0,2})(?=\\d{4}(?!\\d))`, "g");
+// A blank or two on either side of the mark are as the shape takes them beside a hyphen (hyphen and blanks together make up to eight characters): "800101: 1234" and "800101 ,1234" were left standing (the review of #403). One character to one. A blank INSIDE the last four is not taken: "20261116, 1 250 kr" is an amount.
+const foldMarksAfterDate = (text: string): string =>
+  MARK.test(text) ? text.replace(NUMBER_AFTER_DATE, (_all, date: string, before: string, after: string) => `${date}${before}-${after}`) : text;
 
 /** Everything personal in ONE view of the text (foldSpellings' or squeeze's), in that view's places, not merged and not in order. */
 function searchIn(text: string): Finding[] {
@@ -481,6 +515,8 @@ function searchIn(text: string): Finding[] {
   // The wide search for a TF number. A number the shape found too is found twice, at one place with one key, and the merge below makes the two one.
   all.push(...findLooseTfNumbers(text));
   if (/\d/.test(text)) all.push(...findTelephones(text, all).map((found) => ({ kind: "tel" as const, ...found })));
+  // A run of digits with a number and a few more stuck to it: what another search has found of it stands (a telephone number written 46701234567 is a telephone number).
+  for (const glued of findGluedPersonalNumbers(text)) if (!all.some((other) => other.start < glued.end && other.end > glued.start)) all.push(glued);
   return all;
 }
 

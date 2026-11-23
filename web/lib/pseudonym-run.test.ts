@@ -377,3 +377,20 @@ describe("pseudonymise: a school's size", () => {
     expect(took).toBeLessThan(30_000);
   });
 });
+
+describe("the check on a marker that stands right after a letter (the review of #403)", () => {
+  it("is not read as a number with the digits that follow it: 'vTEL-0001 20261120' holds nothing", () => {
+    const names = new KnownNames();
+    expect(leftIn("vTEL-0001 20261120", names)).toBe(0);
+    expect(leftIn("MATMATTEL-0001 20261120", names)).toBe(0);
+    expect(leftIn("vPNR-0002 20261120", names)).toBe(0);
+    // and what is a number still is: a marker with seven digits is a telephone number with a prefix on it.
+    expect(leftIn("vTEL-0701234567", names)).toBe(1);
+  });
+
+  it("does not refuse a file for a harmless line: a week and two dates written without hyphens, a course code and two dates", () => {
+    const result = run([input(["Schema", "v46 20261116 20261120", "MATMAT01 20261116 20261120", "Slut", ""].join("\r\n"))], { files: [{ treatments: { 0: KEEP } }] });
+    expect(result.check).toEqual({ passed: true, failures: [] });
+    expect(result.files[0]!.text).toBe("Schema\r\nvTEL-0001 20261120\r\nMATMATTEL-0002 20261120\r\nSlut\r\n");
+  });
+});

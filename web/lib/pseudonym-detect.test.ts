@@ -244,6 +244,28 @@ describe("a cell that is hostile in size", () => {
   }, 60_000);
 });
 
+describe("an address in brackets (anna@[10.0.0.1]) is looked for within reach of its @ and no further (the review of #403)", () => {
+  it("takes the bracket when it closes within reach, and not when it is far off", () => {
+    const at = (text: string) => findPersonalData(text).map((finding) => text.slice(finding.start, finding.end));
+    expect(at("Skriv till anna@[10.0.0.1] i dag")).toEqual(["anna@[10.0.0.1]"]);
+    // 44 characters to the bracket is within reach (48 from the @); 60 is not, and a "[" ends an address in running text, so nothing is taken (as before: the reach is the same, only the scan is bounded).
+    expect(at(`x@[${"1".repeat(43)}] y`)).toEqual([`x@[${"1".repeat(43)}]`]);
+    expect(at(`x@[${"1".repeat(60)}] y`)).toEqual([]);
+  });
+
+  it("reads a text of 1.6 million characters with an @[ in every three in about the time it takes to read it, and not in the time of a scan to the end for each (the cost was quadratic: 14 s, found by timing it)", () => {
+    const text = "a@[".repeat(530_000);
+    const started = Date.now();
+    findPersonalData(text);
+    expect(Date.now() - started).toBeLessThan(3_000);
+    // And with the one closing bracket at the very end, which a scan to the next "]" had to run to from every @.
+    const closed = "a@[".repeat(529_999) + "]";
+    const startedAgain = Date.now();
+    findPersonalData(closed);
+    expect(Date.now() - startedAgain).toBeLessThan(3_000);
+  }, 120_000);
+});
+
 describe("findPersonalData", () => {
   it("returns findings in order of position and not overlapping, for any text", () => {
     const parts = ["a@b.se", VALID, "070-123 45 67", "text", " ", "2026-08-17", "+46 8 123 456 78", "Anna", "19800101-1234"];
