@@ -20262,6 +20262,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('AckReceipts', '{DRIFT}', '{}', '{}', '{}'),
   ('AckRequests', '{DRIFT}', '{}', '{}', '{}'),
   ('AckSettings', '{DRIFT}', '{DRIFT}', '{}', '{}'),
+  ('AssignmentScopeAssessments', '{DECIDES}', '{DECIDES}', '{DECIDES}', '{}'),
   ('AttendanceRecords', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('AttendanceSharingDecisions', '{DECIDES}', '{}', '{}', '{}'),
   ('AvailabilityConstraints', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
@@ -60790,6 +60791,7 @@ INSERT INTO tl_want SELECT 'P', v.name, v.owner FROM (VALUES
     ('SupervisionCovers.supervision_covers_absent_select', 'STAYS'),
     ('SupervisionCovers.supervision_covers_substitute_select', 'STAYS'),
     ('SupervisionShifts.supervision_shifts_teacher_own_select', 'STAYS'),
+    ('AssignmentScopeAssessments.assignment_scope_assessments_teacher_own_select', 'STAYS'),
     ('TeacherAbsenceReasons.teacher_absence_reasons_staff_select', 'STAYS'),
     ('TeacherDutySlots.teacher_duty_slots_teacher_own_select', 'STAYS'),
     ('TeacherReportingDays.reporting_days_teacher_select', 'STAYS'),
@@ -60876,7 +60878,8 @@ INSERT INTO tl_why SELECT 'P', v.name, 'the administrator''s DRIFT arm writes th
   FROM (VALUES ('LessonLogs.lesson_logs_teacher_delete'), ('LessonLogs.lesson_logs_teacher_insert'), ('LessonLogs.lesson_logs_teacher_update')) AS v(name);
 INSERT INTO tl_why SELECT 'P', v.name, 'the administrator''s select arm TO app_authenticated admits every row of the school'
   FROM (VALUES ('StudentEnrollments.student_enrollments_staff_select'), ('SupervisionCovers.supervision_covers_absent_select'),
-               ('SupervisionCovers.supervision_covers_substitute_select'), ('SupervisionShifts.supervision_shifts_teacher_own_select')) AS v(name);
+               ('SupervisionCovers.supervision_covers_substitute_select'), ('SupervisionShifts.supervision_shifts_teacher_own_select'),
+               ('AssignmentScopeAssessments.assignment_scope_assessments_teacher_own_select')) AS v(name);
 INSERT INTO tl_why VALUES
   ('F', 'app.teacher_absences_own_writes_are_narrow()', 'narrows a TEACHER''s own absence; every markable profile writes DRIFT, so a marked administrator may already do what it refuses, and narrowing them takes a right away (beslut 7; 508b)'),
   ('F', 'app.teacher_duties_slots_stay_the_teachers()', 'TEACHER there is ConstraintResource, the kind of resource, not a role'),
@@ -69399,6 +69402,16 @@ BEGIN
     '"StaffingCheckMode" NN ''WARN''::"StaffingCheckMode"');
   PERFORM pg_temp.ut_true('560 the policy column is commented',
     coalesce(col_description('"StaffingPolicies"'::regclass, (SELECT attnum FROM pg_attribute WHERE attrelid = '"StaffingPolicies"'::regclass AND attname = 'assignmentScopeMode')), '') <> '');
+  -- The column carries no grant of its own: the table's privileges are all the reach it has. A column grant (to anon, to PUBLIC, to
+  -- an API role) would be the one thing nothing else here sees: section 36 asks anon about TABLE privileges only, and this section's
+  -- own column-grant checks are about the two new tables. anon holds no table privilege on StaffingPolicies, so a column grant is
+  -- anon's whole reach there.
+  PERFORM pg_temp.ut_true('560 StaffingPolicies."assignmentScopeMode" has no grant of its own',
+    (SELECT a.attacl IS NULL FROM pg_attribute a WHERE a.attrelid = '"StaffingPolicies"'::regclass AND a.attname = 'assignmentScopeMode' AND NOT a.attisdropped));
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    PERFORM pg_temp.ut_true('560 anon holds nothing on StaffingPolicies."assignmentScopeMode"',
+      NOT has_column_privilege('anon', '"StaffingPolicies"', 'assignmentScopeMode', 'SELECT, INSERT, UPDATE, REFERENCES'));
+  END IF;
   RAISE NOTICE 'ut 560: % checks', current_setting('ut.checks');
 END $$;
 ROLLBACK;
@@ -69523,7 +69536,10 @@ BEGIN
     (SELECT string_agg(concat_ws(' ', "schoolForm", "gradeNumbering", "gradeFrom" || '-' || "gradeTo", "teachingHoursLow" || '-' || "teachingHoursHigh",
                                  "planningFloorPercent" || '%', '[' || "teachingSection" || ']', '[' || "planningSection" || ']'), E'\n' ORDER BY "gradeFrom")
        FROM "AssignmentScopeBands"),
-    E'GRUNDSKOLA NIOARIG 1-6 550-650 100% [3 § p. 1] [4 § p. 1]\nGRUNDSKOLA NIOARIG 7-9 500-600 110% [3 § p. 2] [4 § p. 1 och 5 § p. 1]');
+    E'GRUNDSKOLA NIOARIG 1-6 550-650 100% [3 § p. 1] [4 § p. 1]\nGRUNDSKOLA NIOARIG 7-9 500-600 110% [3 § p. 2] [4 § (tolkat) och 5 § p. 1]');
+  -- The citation for årskurs 7-9 reads "4 § (tolkat) och 5 § p. 1": 20270301090000 seeded it as "4 § p. 1 och 5 § p. 1", and 4 § p. 1 is the
+  -- paragraph for årskurs 1-6, so 20270306090000 corrects the text (granskningen av #372, L-4). A DB that stopped at the first migration
+  -- would fail this line, which is the point: both are applied before the suite runs.
   -- The 110 is an interpretation (5 § says "utöver den tid som anges i 4 §" but 4 § does not list årskurs 7-9) and says so; the
   -- first band is the ordinance's own and carries no note.
   PERFORM pg_temp.ut_true('562 årskurs 1-6 rests on no interpretation', (SELECT "note" IS NULL FROM "AssignmentScopeBands" WHERE "gradeFrom" = 1));
@@ -69818,4 +69834,309 @@ BEGIN
   RAISE NOTICE 'ag 565: the suggestions column and its check hold at their edges, the claim and the write are the one press''s, the API''s role alone reads and writes it through the arms, and a role with no grant is refused (42501)';
 END $$;
 SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Rektorns bedömning av lärarens omfattning och undantag enligt 11 § (20270306090000), sections 566-569.
+--
+--   566  the catalogue as the migration wrote it: columns, keys, checks, indexes, arms, privileges, the trigger
+--   567  what a decider writes, what the trigger records and what the checks refuse; a non-decider writes nothing
+--   568  who reads: the administrators the whole year, a teacher their own row, nobody else a row
+--   569  what a removal does: the teacher's rows go with them, the decider's name goes and the row stays, a year takes its rows
+--
+-- The helpers (pg_temp.ut_*) are those of sections 560-563.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- Section 566: the catalogue.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tbl regclass := '"AssignmentScopeAssessments"'::regclass;
+  r text;
+  priv text;
+BEGIN
+  PERFORM pg_temp.ut_expect('566 columns', pg_temp.ut_columns(tbl),
+    E'id uuid NN gen_random_uuid()\nschoolId uuid NN -\nuserId uuid NN -\nacademicYearId uuid NN -\nteachingLevelHours integer N -\n'
+    || E'exceptionKind "AssignmentScopeException" N -\nownInitiativeOn date N -\nnote text N -\ndecidedById uuid N -\n'
+    || E'decidedAt timestamp(6) with time zone NN CURRENT_TIMESTAMP\ncreatedAt timestamp(6) with time zone NN CURRENT_TIMESTAMP\n'
+    || 'updatedAt timestamp(6) with time zone NN -');
+  PERFORM pg_temp.ut_expect('566 keys and checks', pg_temp.ut_constraints(tbl),
+    $c$AssignmentScopeAssessments_academicYearId_schoolId_fkey FOREIGN KEY ("academicYearId", "schoolId") REFERENCES "AcademicYears"(id, "schoolId") ON DELETE CASCADE$c$
+    || E'\n' || $c$AssignmentScopeAssessments_decidedById_schoolId_fkey FOREIGN KEY ("decidedById", "schoolId") REFERENCES "Users"(id, "schoolId") ON DELETE SET NULL ("decidedById")$c$
+    || E'\n' || $c$AssignmentScopeAssessments_level_is_sane CHECK ((("teachingLevelHours" IS NULL) OR (("teachingLevelHours" >= 1) AND ("teachingLevelHours" <= 1500))))$c$
+    || E'\n' || $c$AssignmentScopeAssessments_note_is_sane CHECK (((note IS NULL) OR (char_length(note) <= 500)))$c$
+    || E'\n' || $c$AssignmentScopeAssessments_own_initiative_has_a_day CHECK (((NOT ("exceptionKind" IS DISTINCT FROM 'OWN_INITIATIVE'::"AssignmentScopeException")) = ("ownInitiativeOn" IS NOT NULL)))$c$
+    || E'\n' || $c$AssignmentScopeAssessments_pkey PRIMARY KEY (id)$c$
+    || E'\n' || $c$AssignmentScopeAssessments_says_something CHECK ((("teachingLevelHours" IS NOT NULL) OR ("exceptionKind" IS NOT NULL)))$c$
+    || E'\n' || $c$AssignmentScopeAssessments_schoolId_fkey FOREIGN KEY ("schoolId") REFERENCES "Schools"(id) ON UPDATE CASCADE ON DELETE CASCADE$c$
+    || E'\n' || $c$AssignmentScopeAssessments_userId_schoolId_fkey FOREIGN KEY ("userId", "schoolId") REFERENCES "Users"(id, "schoolId") ON DELETE CASCADE$c$);
+  PERFORM pg_temp.ut_expect('566 indexes', pg_temp.ut_indexes(tbl),
+    E'AssignmentScopeAssessments_decidedById_schoolId_idx USING btree ("decidedById", "schoolId") valid whole\n'
+    || E'AssignmentScopeAssessments_pkey USING btree (id) valid whole\n'
+    || E'AssignmentScopeAssessments_schoolId_academicYearId_idx USING btree ("schoolId", "academicYearId") valid whole\n'
+    || 'AssignmentScopeAssessments_schoolId_userId_academicYearId_key USING btree ("schoolId", "userId", "academicYearId") valid whole');
+  PERFORM pg_temp.ut_expect('566 the exception type has these two labels and no third',
+    (SELECT string_agg(enumlabel, ',' ORDER BY enumsortorder) FROM pg_enum WHERE enumtypid = '"AssignmentScopeException"'::regtype), 'OWN_INITIATIVE,SMALL_GROUP');
+  PERFORM pg_temp.ut_true('566 row security is on', (SELECT relrowsecurity FROM pg_class WHERE oid = tbl));
+  PERFORM pg_temp.ut_true('566 row security is not forced', NOT (SELECT relforcerowsecurity FROM pg_class WHERE oid = tbl));
+  PERFORM pg_temp.ut_true('566 the table is commented', coalesce(obj_description(tbl, 'pg_class'), '') <> '');
+  -- The arms: the administrator's four, the teacher's own read, and nothing for the service, the sync or anon.
+  PERFORM pg_temp.ut_expect('566 arms', pg_temp.ut_arms('AssignmentScopeAssessments'),
+    $a$assignment_scope_assessments_admin_delete DELETE {app_authenticated} [(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (( SELECT app.current_user_role() AS current_user_role) = 'SCHOOL_ADMIN'::"UserRole") AND ( SELECT app.current_user_decides() AS current_user_decides))] []$a$
+    || E'\n' || $a$assignment_scope_assessments_admin_insert INSERT {app_authenticated} [] [(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (( SELECT app.current_user_role() AS current_user_role) = 'SCHOOL_ADMIN'::"UserRole") AND ( SELECT app.current_user_decides() AS current_user_decides))]$a$
+    || E'\n' || $a$assignment_scope_assessments_admin_select SELECT {app_authenticated} [(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (( SELECT app.current_user_role() AS current_user_role) = 'SCHOOL_ADMIN'::"UserRole"))] []$a$
+    || E'\n' || $a$assignment_scope_assessments_admin_update UPDATE {app_authenticated} [(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (( SELECT app.current_user_role() AS current_user_role) = 'SCHOOL_ADMIN'::"UserRole"))] [(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (( SELECT app.current_user_role() AS current_user_role) = 'SCHOOL_ADMIN'::"UserRole") AND ( SELECT app.current_user_decides() AS current_user_decides))]$a$
+    || E'\n' || $a$assignment_scope_assessments_teacher_own_select SELECT {app_authenticated} [(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (( SELECT app.current_user_role() AS current_user_role) = 'TEACHER'::"UserRole") AND ("userId" = ( SELECT app.current_user_id() AS current_user_id)))] []$a$);
+  PERFORM pg_temp.ut_expect('566 who holds what (the owner aside)', pg_temp.ut_acl(tbl),
+    'app_authenticated=DELETE,INSERT,SELECT,UPDATE'
+    || CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN ';service_role=SELECT' ELSE '' END);
+  PERFORM pg_temp.ut_expect('566 no column has a grant of its own', (SELECT count(*) FROM pg_attribute WHERE attrelid = tbl AND attacl IS NOT NULL)::text, '0');
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'app_authenticated', 'service_role'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH priv IN ARRAY ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      PERFORM pg_temp.ut_true(format('566 %s holds %s (it must not)', r, priv), NOT has_table_privilege(r, tbl, priv));
+    END LOOP;
+    IF current_setting('server_version_num')::int >= 170000 THEN
+      PERFORM pg_temp.ut_true(format('566 %s holds MAINTAIN (it must not)', r), NOT has_table_privilege(r, tbl, 'MAINTAIN'));
+    END IF;
+  END LOOP;
+  -- No direct road for the PostgREST roles: neither holds any privilege at all.
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+      PERFORM pg_temp.ut_true(format('566 %s holds %s (it must not)', r, priv), NOT has_table_privilege(r, tbl, priv));
+    END LOOP;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    FOREACH priv IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE'] LOOP
+      PERFORM pg_temp.ut_true('566 service_role holds ' || priv || ' (it must not)', NOT has_table_privilege('service_role', tbl, priv));
+    END LOOP;
+  END IF;
+  -- The one trigger: before every insert and update, per row, invoker's rights.
+  PERFORM pg_temp.ut_expect('566 the trigger that records who and when',
+    (SELECT string_agg(tgname || ' ' || (tgtype & 1)::text || ' ' || (tgtype & 2)::text || ' ' || (tgtype & 4)::text || ' ' || (tgtype & 8)::text || ' ' || (tgtype & 16)::text, ';')
+       FROM pg_trigger WHERE tgrelid = tbl AND NOT tgisinternal),
+    -- row (1), before (2), insert (4), delete (8), update (16): row, before, insert and update
+    'AssignmentScopeAssessments_decided 1 2 4 0 16');
+  PERFORM pg_temp.ut_true('566 the trigger function does not run as its owner', NOT (SELECT prosecdef FROM pg_proc WHERE oid = 'app.assignment_scope_assessments_decided'::regproc));
+  -- ... and it pins its search_path. The migration writes (public, pg_temp) so that the function resolves every name the same way for every
+  -- caller; without the pin a mutant that drops the SET clause passes every other line of this section (the production check holds it too,
+  -- as cfg= in the function's fingerprint, but a suite that does not would let the change through on the day the migration is edited).
+  PERFORM pg_temp.ut_expect('566 the trigger function pins its search_path',
+    (SELECT coalesce(array_to_string(proconfig, ','), '-') FROM pg_proc WHERE oid = 'app.assignment_scope_assessments_decided'::regproc),
+    'search_path=public, pg_temp');
+  RAISE NOTICE 'ut 566: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 567: what a decider writes, what the trigger records, what the checks refuse, and what a non-decider cannot write.
+-- ---------------------------------------------------------------------------
+
+SELECT set_config('ut.student_b', :'student_b', false);
+SELECT set_config('ut.year_b', :'year_b', false);
+SELECT set_config('ut.school_b', :'school_b', false);
+
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+DECLARE
+  me uuid := app.current_user_id();
+  yr uuid;
+  t1 uuid;
+  t2 uuid;
+  ins constant text := $q$INSERT INTO "AssignmentScopeAssessments" ("schoolId", "userId", "academicYearId", "teachingLevelHours", "exceptionKind", "ownInitiativeOn", "note", "updatedAt")
+    VALUES (app.current_school_id(), %L, %L, %s, %s, %s, %s, now())$q$;
+BEGIN
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = app.current_school_id() ORDER BY "startDate" LIMIT 1;
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER' AND "isActive" ORDER BY id LIMIT 1;
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER' AND "isActive" AND id <> t1 ORDER BY id LIMIT 1;
+  IF yr IS NULL OR t1 IS NULL OR t2 IS NULL OR me IS NULL THEN RAISE EXCEPTION 'ut 567: the fixtures lack a year, two teachers or a deciding administrator'; END IF;
+  PERFORM pg_temp.ut_true('567 the administrator decides', app.current_user_decides());
+
+  -- A level alone: one row, written by the administrator at this moment.
+  PERFORM pg_temp.ut_expect('567 a level alone is written', pg_temp.ut_try(format(ins, t1, yr, '600', 'NULL', 'NULL', 'NULL')), 'ok');
+  PERFORM pg_temp.ut_expect('567 ... by the one who wrote it, now',
+    (SELECT ("decidedById" = me)::text || ' ' || ("decidedAt" = now())::text FROM "AssignmentScopeAssessments" WHERE "userId" = t1), 'true true');
+
+  -- The caller cannot say who decided or when: the trigger writes both, on insert and on update, and on an upsert's two halves.
+  PERFORM pg_temp.ut_expect('567 a forged decider and day on insert are written',
+    pg_temp.ut_try(format($q$INSERT INTO "AssignmentScopeAssessments" ("schoolId", "userId", "academicYearId", "exceptionKind", "decidedById", "decidedAt", "updatedAt")
+      VALUES (app.current_school_id(), %L, %L, 'SMALL_GROUP', %L, TIMESTAMPTZ '2001-01-01 00:00+00', now())$q$, t2, yr, t1)), 'ok');
+  PERFORM pg_temp.ut_expect('567 ... and overwritten',
+    (SELECT ("decidedById" = me)::text || ' ' || ("decidedAt" = now())::text FROM "AssignmentScopeAssessments" WHERE "userId" = t2), 'true true');
+  PERFORM pg_temp.ut_expect('567 a forged decider on update is overwritten',
+    pg_temp.ut_rows(format($q$UPDATE "AssignmentScopeAssessments" SET "decidedById" = %L, "decidedAt" = TIMESTAMPTZ '2001-01-01 00:00+00', "teachingLevelHours" = 580 WHERE "userId" = %L$q$, t2, t1))::text, '1');
+  PERFORM pg_temp.ut_expect('567 ... so it is',
+    (SELECT ("decidedById" = me)::text || ' ' || ("decidedAt" = now())::text || ' ' || "teachingLevelHours" FROM "AssignmentScopeAssessments" WHERE "userId" = t1), 'true true 580');
+  PERFORM pg_temp.ut_expect('567 an upsert (Prisma: ON CONFLICT DO UPDATE) writes the row again, the decider recorded',
+    pg_temp.ut_rows(format($q$INSERT INTO "AssignmentScopeAssessments" ("schoolId", "userId", "academicYearId", "teachingLevelHours", "decidedById", "updatedAt")
+      VALUES (app.current_school_id(), %L, %L, 590, %L, now())
+      ON CONFLICT ("schoolId", "userId", "academicYearId") DO UPDATE SET "teachingLevelHours" = EXCLUDED."teachingLevelHours", "decidedById" = EXCLUDED."decidedById", "updatedAt" = now()$q$, t1, yr, t2))::text, '1');
+  PERFORM pg_temp.ut_expect('567 ... and it is the administrator, not the one the call named',
+    (SELECT ("decidedById" = me)::text || ' ' || "teachingLevelHours" FROM "AssignmentScopeAssessments" WHERE "userId" = t1), 'true 590');
+
+  -- The checks.
+  PERFORM pg_temp.ut_expect('567 one row per teacher and year (unique_violation)', pg_temp.ut_try(format(ins, t1, yr, '600', 'NULL', 'NULL', 'NULL')), '23505');
+  PERFORM pg_temp.ut_expect('567 level 0 is refused', pg_temp.ut_try(format(ins, t2, yr, '0', 'NULL', 'NULL', 'NULL')), '23514');
+  PERFORM pg_temp.ut_expect('567 level 1501 is refused', pg_temp.ut_try(format(ins, t2, yr, '1501', 'NULL', 'NULL', 'NULL')), '23514');
+  PERFORM pg_temp.ut_expect('567 a row that says nothing is refused', pg_temp.ut_try(format(ins, t2, yr, 'NULL', 'NULL', 'NULL', $s$'bara en anteckning'$s$)), '23514');
+  PERFORM pg_temp.ut_expect('567 an own-initiative exception without its day is refused', pg_temp.ut_try(format(ins, t2, yr, 'NULL', $s$'OWN_INITIATIVE'$s$, 'NULL', 'NULL')), '23514');
+  PERFORM pg_temp.ut_expect('567 a day on the other exception is refused', pg_temp.ut_try(format(ins, t2, yr, 'NULL', $s$'SMALL_GROUP'$s$, $s$DATE '2027-08-20'$s$, 'NULL')), '23514');
+  PERFORM pg_temp.ut_expect('567 a day with no exception is refused', pg_temp.ut_try(format(ins, t2, yr, '600', 'NULL', $s$DATE '2027-08-20'$s$, 'NULL')), '23514');
+  PERFORM pg_temp.ut_expect('567 a note of 501 characters is refused', pg_temp.ut_try(format(ins, t2, yr, '600', 'NULL', 'NULL', quote_literal(repeat('x', 501)))), '23514');
+  PERFORM pg_temp.ut_expect('567 a note of 500 is not', pg_temp.ut_try(format($q$UPDATE "AssignmentScopeAssessments" SET note = %L WHERE "userId" = %L$q$, repeat('x', 500), t1)), 'ok');
+  PERFORM pg_temp.ut_expect('567 a value that is not an exception is refused (invalid_text_representation)',
+    pg_temp.ut_try(format(ins, t2, yr, 'NULL', $s$'OTHER'$s$, 'NULL', 'NULL')), '22P02');
+  PERFORM pg_temp.ut_expect('567 own initiative with its day is written, with no level',
+    pg_temp.ut_try(format('DELETE FROM "AssignmentScopeAssessments" WHERE "userId" = %L', t2)) || ' ' ||
+    pg_temp.ut_try(format(ins, t2, yr, 'NULL', $s$'OWN_INITIATIVE'$s$, $s$DATE '2027-08-20'$s$, $s$'på lärarens begäran'$s$)), 'ok ok');
+
+  -- The keys hold a row to its school: another school's person or year cannot be named, and a row cannot be written for another school.
+  PERFORM pg_temp.ut_expect('567 another school''s person cannot be named (foreign_key_violation)',
+    pg_temp.ut_try(format(ins, current_setting('ut.student_b')::uuid, yr, '600', 'NULL', 'NULL', 'NULL')), '23503');
+  PERFORM pg_temp.ut_expect('567 another school''s year cannot be named (foreign_key_violation)',
+    pg_temp.ut_try(format(ins, t2, current_setting('ut.year_b')::uuid, '600', 'NULL', 'NULL', 'NULL')) , '23503');
+  PERFORM pg_temp.ut_expect('567 a row for another school is refused by row security',
+    pg_temp.ut_try(format($q$INSERT INTO "AssignmentScopeAssessments" ("schoolId", "userId", "academicYearId", "teachingLevelHours", "updatedAt")
+      VALUES (%L, %L, %L, 600, now())$q$, current_setting('ut.school_b')::uuid, t2, yr)), '42501');
+  RAISE NOTICE 'ut 567 (decider): % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- A non-decider (an expedition) reads but writes nothing: the insert is refused by the arm's check, an update by the same check on the
+-- new row, a delete finds no row.
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+DECLARE
+  yr uuid;
+  t1 uuid;
+  exp_auth uuid := gen_random_uuid();
+BEGIN
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = app.current_school_id() ORDER BY "startDate" LIMIT 1;
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER' AND "isActive" ORDER BY id LIMIT 1;
+  INSERT INTO "AssignmentScopeAssessments" ("schoolId", "userId", "academicYearId", "teachingLevelHours", "updatedAt")
+    VALUES (app.current_school_id(), t1, yr, 600, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "updatedAt")
+    VALUES (app.current_school_id(), 'ut-567-expedition@example.invalid', 'Ut', 'Expedition', 'SCHOOL_ADMIN', 'EXPEDITION', exp_auth, now());
+  PERFORM pg_temp.ut_as(exp_auth::text);
+  PERFORM pg_temp.ut_true('567 the expedition is an administrator who does not decide', app.current_user_role()::text = 'SCHOOL_ADMIN' AND NOT app.current_user_decides());
+  PERFORM pg_temp.ut_expect('567 ... reads the row', (SELECT count(*) FROM "AssignmentScopeAssessments")::text, '1');
+  PERFORM pg_temp.ut_expect('567 ... writes none',
+    pg_temp.ut_try(format($q$INSERT INTO "AssignmentScopeAssessments" ("schoolId", "userId", "academicYearId", "teachingLevelHours", "updatedAt")
+      VALUES (app.current_school_id(), %L, %L, 500, now())$q$, (SELECT id FROM "Users" WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER' AND "isActive" AND id <> t1 ORDER BY id LIMIT 1), yr)), '42501');
+  PERFORM pg_temp.ut_expect('567 ... changes none', pg_temp.ut_try($q$UPDATE "AssignmentScopeAssessments" SET "teachingLevelHours" = 500$q$), '42501');
+  PERFORM pg_temp.ut_expect('567 ... deletes none', pg_temp.ut_try($q$DELETE FROM "AssignmentScopeAssessments"$q$) || ' ' || (SELECT count(*) FROM "AssignmentScopeAssessments"), 'ok 1');
+  RAISE NOTICE 'ut 567 (non-decider): % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 568: who reads. An administrator reads the whole year, a teacher their own row and no colleague's, a pupil and a guardian
+-- nothing, and a request with no principal nothing.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.ut_become('TEACHER');
+SELECT set_config('ut.t1', app.current_user_id()::text, true);
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+DECLARE
+  yr uuid;
+  t1 uuid := current_setting('ut.t1')::uuid;
+  t2 uuid;
+  who text;
+  stmt text;
+BEGIN
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = app.current_school_id() ORDER BY "startDate" LIMIT 1;
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER' AND "isActive" AND id <> t1 ORDER BY id LIMIT 1;
+  IF t2 IS NULL THEN RAISE EXCEPTION 'ut 568: the fixtures hold no second teacher'; END IF;
+  INSERT INTO "AssignmentScopeAssessments" ("schoolId", "userId", "academicYearId", "teachingLevelHours", "note", "updatedAt")
+    VALUES (app.current_school_id(), t1, yr, 600, 'egen', now()), (app.current_school_id(), t2, yr, 550, 'kollega', now());
+  PERFORM pg_temp.ut_expect('568 the administrator reads both rows', (SELECT count(*) FROM "AssignmentScopeAssessments")::text, '2');
+
+  -- The teacher: their own row, whole, and no colleague's. They write nothing.
+  PERFORM pg_temp.ut_become('TEACHER');
+  PERFORM pg_temp.ut_expect('568 the teacher is the one the rows were written for', app.current_user_id()::text, t1::text);
+  PERFORM pg_temp.ut_expect('568 the teacher reads their own row and no colleague''s',
+    (SELECT string_agg("note", ',') FROM "AssignmentScopeAssessments"), 'egen');
+  PERFORM pg_temp.ut_expect('568 ... and not by naming the colleague',
+    (SELECT count(*) FROM "AssignmentScopeAssessments" WHERE "userId" = t2)::text, '0');
+  FOREACH stmt IN ARRAY ARRAY[
+    format($q$INSERT INTO "AssignmentScopeAssessments" ("schoolId", "userId", "academicYearId", "teachingLevelHours", "updatedAt") VALUES (app.current_school_id(), %L, %L, 650, now())$q$, t2, yr),
+    $q$UPDATE "AssignmentScopeAssessments" SET "teachingLevelHours" = 650 WHERE "note" = 'egen'$q$,
+    $q$DELETE FROM "AssignmentScopeAssessments" WHERE "note" = 'egen'$q$
+  ] LOOP
+    PERFORM pg_temp.ut_expect('568 the teacher writes nothing: ' || left(stmt, 40), (pg_temp.ut_try(stmt) IN ('42501', 'ok'))::text, 'true');
+  END LOOP;
+  PERFORM pg_temp.ut_expect('568 ... and the row is as it was', (SELECT "teachingLevelHours"::text FROM "AssignmentScopeAssessments" WHERE "note" = 'egen'), '600');
+
+  -- A pupil and a guardian read nothing, whoever they are.
+  FOREACH who IN ARRAY ARRAY['STUDENT', 'GUARDIAN'] LOOP
+    PERFORM pg_temp.ut_become(who);
+    PERFORM pg_temp.ut_expect('568 a ' || who || ' reads no row', (SELECT count(*) FROM "AssignmentScopeAssessments")::text, '0');
+  END LOOP;
+
+  -- A request with no principal, and a deactivated administrator, read nothing.
+  PERFORM pg_temp.ut_as(current_setting('ut.admin'));
+  PERFORM set_config('request.jwt.claims', '{}', true);
+  PERFORM pg_temp.ut_expect('568 no principal reads no row', (SELECT count(*) FROM "AssignmentScopeAssessments")::text, '0');
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000003');
+  PERFORM pg_temp.ut_expect('568 a deactivated administrator reads no row', (SELECT count(*) FROM "AssignmentScopeAssessments")::text, '0');
+  RAISE NOTICE 'ut 568: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 569: what a removal does.
+--
+-- The teacher's rows go with them (the assessment is about them). The one who decided goes, and the row stays without a name: it is the
+-- teacher's, and the rektor who made it is not. A year takes the rows of the year.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+DECLARE
+  me text := current_setting('ut.admin');
+  yr uuid;
+  yr2 uuid;
+  decider uuid;
+  decider_auth uuid := gen_random_uuid();
+  gone uuid;
+BEGIN
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = app.current_school_id() ORDER BY "startDate" LIMIT 1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+    VALUES (app.current_school_id(), 'Omfattning 2033/34', '2033-08-15', '2034-06-15', false, now()) RETURNING id INTO yr2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "updatedAt")
+    VALUES (app.current_school_id(), 'ut-569-decider@example.invalid', 'Ut', 'Beslutare', 'SCHOOL_ADMIN', 'FULL', decider_auth, now()) RETURNING id INTO decider;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "updatedAt")
+    VALUES (app.current_school_id(), 'ut-569-gone@example.invalid', 'Ut', 'Borta', 'TEACHER', gen_random_uuid(), now()) RETURNING id INTO gone;
+
+  -- Written by the second administrator, about the teacher who will go, in two years.
+  PERFORM pg_temp.ut_as(decider_auth::text);
+  PERFORM pg_temp.ut_expect('569 the second administrator writes', pg_temp.ut_rows(format($q$INSERT INTO "AssignmentScopeAssessments"
+      ("schoolId", "userId", "academicYearId", "teachingLevelHours", "updatedAt") VALUES (app.current_school_id(), %L, %L, 600, now()), (app.current_school_id(), %L, %L, 580, now())$q$, gone, yr, gone, yr2))::text, '2');
+  PERFORM pg_temp.ut_expect('569 ... and is the one named', (SELECT count(*) FROM "AssignmentScopeAssessments" WHERE "decidedById" = decider)::text, '2');
+
+  -- The decider goes: the rows stay, unnamed.
+  PERFORM pg_temp.ut_as(me);
+  PERFORM pg_temp.ut_expect('569 the decider is removed', pg_temp.ut_try(format($q$DELETE FROM "Users" WHERE id = %L$q$, decider)), 'ok');
+  PERFORM pg_temp.ut_expect('569 ... the two rows stay', (SELECT count(*) FROM "AssignmentScopeAssessments" WHERE "userId" = gone)::text, '2');
+  PERFORM pg_temp.ut_expect('569 ... with nobody named', (SELECT count(*) FROM "AssignmentScopeAssessments" WHERE "userId" = gone AND "decidedById" IS NULL)::text, '2');
+  PERFORM pg_temp.ut_expect('569 ... and the school is the row''s own still', (SELECT count(*) FROM "AssignmentScopeAssessments" WHERE "userId" = gone AND "schoolId" = app.current_school_id())::text, '2');
+
+  -- A year goes: its row goes, the other's stays.
+  PERFORM pg_temp.ut_expect('569 the year is removed', pg_temp.ut_try(format($q$DELETE FROM "AcademicYears" WHERE id = %L$q$, yr2)), 'ok');
+  PERFORM pg_temp.ut_expect('569 ... its row went with it', (SELECT count(*) FROM "AssignmentScopeAssessments" WHERE "userId" = gone)::text, '1');
+
+  -- The teacher goes: the last row goes.
+  PERFORM pg_temp.ut_expect('569 the teacher is removed', pg_temp.ut_try(format($q$DELETE FROM "Users" WHERE id = %L$q$, gone)), 'ok');
+  PERFORM pg_temp.ut_expect('569 ... and the assessment of them with them', (SELECT count(*) FROM "AssignmentScopeAssessments" WHERE "userId" = gone)::text, '0');
+  RAISE NOTICE 'ut 569: % checks', current_setting('ut.checks');
+END $$;
 ROLLBACK;

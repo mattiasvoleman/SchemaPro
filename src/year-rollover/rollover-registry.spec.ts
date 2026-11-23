@@ -295,6 +295,8 @@ describe('the rollover registry', () => {
       // Förlagda block (20270218090000): a block's lesson and each member's room for it belong to the year they were given against.
       'TeachingBlockPlacement',
       'TeachingBlockPlacementRoom',
+      // Rektorns bedömning (20270306090000): a level in the ordinance's span and an 11 § exception are a decision about one läsår, decided again.
+      'AssignmentScopeAssessment',
     ];
     expect(
       createHash('sha256')

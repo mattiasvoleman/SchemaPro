@@ -5125,6 +5125,28 @@ BEGIN
   VALUES (m, y, 'SUCCEEDED', 'LOCAL_OPTIMUM', repeat('a', 64), repeat('b', 64), now());
 END $$;
 
+-- The matrix school's assessment of a teacher for Omfattning enligt förordningen (20270306090000), so the role matrix (section 116)
+-- has a row of AssignmentScopeAssessments to probe: the school's first teacher, in its first year, at 600 hours. Written by the owner,
+-- once (the trigger leaves "decidedById" empty where no principal writes), and guarded by the row itself.
+DO $$
+DECLARE
+  m uuid;
+  y uuid;
+  teacher uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "AssignmentScopeAssessments" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = m ORDER BY "isActive" DESC, "startDate" LIMIT 1;
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = m AND role = 'TEACHER' ORDER BY "createdAt", id LIMIT 1;
+  IF y IS NULL OR teacher IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the matrix school lacks a year or a teacher for an assessment';
+  END IF;
+  INSERT INTO "AssignmentScopeAssessments" ("schoolId", "userId", "academicYearId", "teachingLevelHours", "updatedAt")
+  VALUES (m, teacher, y, 600, now());
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

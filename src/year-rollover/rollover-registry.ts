@@ -355,6 +355,16 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       'Att en post är släppt för motorn är skolans besked för det här läsåret: det nya läsåret är nya poster, och skolan avgör på nytt vad Föreslå bemanning får flytta.',
   },
 
+  // Rektorns bedömning av lärarens omfattning (20270306090000): the level a rektor placed a teacher at inside the ordinance's span (8 §) and an
+  // exception registered under 11 §. Both are a decision about one läsår's teaching (its groups, its pupils, its stage mix), and an exception
+  // under 11 § p. 1 is registered with the day the teacher took the initiative: the new year starts without one and the rektor decides again,
+  // rather than a level or an exception being inherited from a year whose circumstances were other.
+  AssignmentScopeAssessment: {
+    kind: 'SKIPPED',
+    reason:
+      'Rektorns bedömning av var i förordningens spann en lärare ligger, och ett undantag enligt 11 §, gäller ett läsår och dess grupper och elever: det nya läsåret börjar utan bedömning, och rektorn avgör på nytt.',
+  },
+
   // Förlagda block (20270218090000): as a post's förläggning, and for the same reason: a lesson of a block is a day and a time against this
   // year's ramtider and classes, and the room rows are the members' own choices for it. The block is carried without them.
   TeachingBlockPlacement: {

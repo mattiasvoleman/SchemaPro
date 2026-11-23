@@ -345,6 +345,7 @@ model School {
   kitchenSetting          KitchenSetting?
   staffingPolicy          StaffingPolicy?
   teacherEmployments      TeacherEmployment[]
+  assignmentScopeAssessments AssignmentScopeAssessment[]
   teacherQualifications   TeacherSubjectQualification[]
   teacherDuties           TeacherDuty[]
   teacherDutySlots        TeacherDutySlot[]
@@ -474,6 +475,10 @@ model User {
   /// may teach (TeacherSubjectQualification). Both reach the user through the
   /// composite (userId, schoolId) key, like workRules.
   employments             TeacherEmployment[]           @relation("EmploymentTeacher")
+  /// The rektor's assessment of the teacher's level within the ordinance's span, and a registered exception under 11 § (AssignmentScopeAssessment).
+  /// Reaches the user through the composite (userId, schoolId) key, and the decider through (decidedById, schoolId).
+  scopeAssessments        AssignmentScopeAssessment[]   @relation("ScopeAssessmentTeacher")
+  decidedScopeAssessments AssignmentScopeAssessment[]   @relation("ScopeAssessmentDecider")
   subjectQualifications   TeacherSubjectQualification[] @relation("QualificationTeacher")
   /// Uppdrag beside teaching, per läsår (TeacherDuty), by the same key.
   duties                  TeacherDuty[]                 @relation("DutyTeacher")
@@ -2143,6 +2148,7 @@ model AcademicYear {
   schoolBreaks         SchoolBreak[]
   lunchSittings        LunchSitting[]
   teacherEmployments   TeacherEmployment[]
+  assignmentScopeAssessments AssignmentScopeAssessment[]
   teacherDuties        TeacherDuty[]
   /// The year's rastvaktsschema (SupervisionShift).
   supervisionShifts    SupervisionShift[]
@@ -4255,6 +4261,54 @@ model AssignmentScopeBand {
 
   @@unique([versionId, schoolForm, gradeNumbering, gradeFrom], map: "AssignmentScopeBands_version_form_numbering_from_key")
   @@map("AssignmentScopeBands")
+}
+
+/// Undantag enligt 11 § SFS 2026:1487 som en skola registrerar för en lärare (AssignmentScopeAssessment).
+/// OWN_INITIATIVE = p. 1, på lärarens eget initiativ (ownInitiativeOn obligatorisk); SMALL_GROUP = p. 3, en enskild
+/// elev eller en mindre grupp. Enstaka vikarietimmar (p. 2) ligger aldrig i den planerade tiden och har inget slag.
+enum AssignmentScopeException {
+  OWN_INITIATIVE
+  SMALL_GROUP
+}
+
+/// Rektorns bedömning av lärarens högsta undervisningstid inom förordningens spann (SFS 2026:1487 3 och 8 §§), och ett
+/// registrerat undantag enligt 11 §. En rad per lärare och läsår; ingen rad = förordningens övre kant gäller. HR data like
+/// TeacherEmployment (a teacher reads their own row; the gateway hides it from an administrator without HR-läs). A
+/// registered exception does NOT silence the verdict: it only means a write is not REFUSED for the teacher. NOT the pupil's
+/// guaranteed teaching time and NOT TeacherDuty. See the migration for every argued decision.
+model AssignmentScopeAssessment {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String @db.Uuid
+  /// Composite (userId, schoolId) key to Users.
+  userId         String @db.Uuid
+  /// Composite (academicYearId, schoolId) key to AcademicYears.
+  academicYearId String @db.Uuid
+
+  /// The teacher's highest teaching time at FULL TIME, hours per läsår; null = none set (the ordinance's edge applies).
+  /// Part time is scaled as 3 § second paragraph says. 1..1500 (CHECK); the gateway holds it to the ordinance's edge.
+  teachingLevelHours Int?
+  exceptionKind      AssignmentScopeException?
+  /// The day the teacher took the initiative; required for OWN_INITIATIVE and forbidden otherwise (CHECK).
+  ownInitiativeOn    DateTime?                 @db.Date
+  /// At most 500 characters (CHECK). Never health or other sensitive data.
+  note               String?
+  /// Set by a trigger from the session, never by the caller; null when the person was removed (SET NULL).
+  decidedById        String?                   @db.Uuid
+  decidedAt          DateTime                  @default(now()) @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user         User         @relation("ScopeAssessmentTeacher", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  academicYear AcademicYear @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  decidedBy    User?        @relation("ScopeAssessmentDecider", fields: [decidedById, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+
+  /// One assessment per teacher per year; schoolId leads so one school cannot fill another's slot.
+  @@unique([schoolId, userId, academicYearId])
+  @@index([schoolId, academicYearId])
+  @@index([decidedById, schoolId])
+  @@map("AssignmentScopeAssessments")
 }
 
 /// A teacher's post for one läsår. Per year, unlike TeacherWorkRule: a
