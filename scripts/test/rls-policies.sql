@@ -27,6 +27,17 @@
 -- and passes it in with -v. Run scripts/test/rls-fixtures.sql first so a
 -- second tenant exists; without one, every isolation assertion passes
 -- vacuously.
+--
+-- ## Independent of the database's collation and of its oid counter
+--
+-- CI runs this on postgres:16-alpine, whose default collation compares byte by byte. Production (Supabase) sorts en_US, where
+-- punctuation, spaces and case weigh differently: "calendar_feed_create" comes before "calendar_feed(text)" there. So a check
+-- that sorts TEXT and compares the result with a string written in byte order says COLLATE "C" on the sort. That goes for text
+-- made from the catalogue (oid::regprocedure::text, regclass::text, a concatenation with a literal) and for the text columns
+-- of the schema's own tables, but not for the catalogue's `name` columns (proname, polname, conname, tgname ...), which are
+-- always "C". Nor may a check lean on the oids of the catalogue as text: a trigger is named "RI_ConstraintTrigger_a_<oid>",
+-- PostgreSQL fires triggers in the order of their names, and "100000" sorts before "99999" (section 492o of
+-- rls-owner-checks.sql names the two triggers whose order it needs instead of trusting the counter).
 
 \set ON_ERROR_STOP on
 
@@ -13880,7 +13891,7 @@ BEGIN
   IF has_schema_privilege('supabase_auth_admin', 'app', 'USAGE') THEN
     RAISE EXCEPTION 'sign-in functions: supabase_auth_admin may use schema app and run its PUBLIC helpers';
   END IF;
-  IF (SELECT string_agg(p.oid::regprocedure::text, ', ' ORDER BY p.oid::regprocedure::text) FROM pg_proc p
+  IF (SELECT string_agg(p.oid::regprocedure::text, ', ' ORDER BY p.oid::regprocedure::text COLLATE "C") FROM pg_proc p
        WHERE p.pronamespace = 'sign_in'::regnamespace)
      IS DISTINCT FROM 'sign_in.custom_access_token_hook(jsonb), sign_in.rules(uuid), sign_in.verdict("UserRole","SignInProvider",uuid,text,boolean,text[],jsonb,interval)' THEN
     RAISE EXCEPTION 'sign-in functions: schema sign_in holds something besides the hook and its two callees';
@@ -18515,7 +18526,7 @@ BEGIN
      IS DISTINCT FROM ARRAY['leaveRequestId', 'userId'] THEN
     RAISE EXCEPTION 'told: LeaveRequestNotices is not keyed by request and mentor';
   END IF;
-  IF (SELECT string_agg(confrelid::regclass::text || ':' || confdeltype::text, ',' ORDER BY confrelid::regclass::text) FROM pg_constraint
+  IF (SELECT string_agg(confrelid::regclass::text || ':' || confdeltype::text, ',' ORDER BY confrelid::regclass::text COLLATE "C") FROM pg_constraint
        WHERE conrelid = '"LeaveRequestNotices"'::regclass AND contype = 'f')
      IS DISTINCT FROM '"LeaveRequests":c,"Users":c' THEN
     RAISE EXCEPTION 'told: LeaveRequestNotices'' keys are %', (SELECT string_agg(confrelid::regclass::text || ':' || confdeltype::text, ',')
@@ -30338,13 +30349,13 @@ BEGIN
     IF current_user <> via THEN RAISE EXCEPTION 'replacing: could not act as %', via; END IF;
     FOR i IN 1 .. array_length(cases, 1) LOOP
       PERFORM set_config('request.jwt.claims', json_build_object('sub', cases[i][1])::text, true);
-      SELECT coalesce(string_agg(name, ',' ORDER BY name), '') INTO seen FROM "StudentGroups" WHERE name LIKE 'EG%';
+      SELECT coalesce(string_agg(name, ',' ORDER BY name COLLATE "C"), '') INTO seen FROM "StudentGroups" WHERE name LIKE 'EG%';
       expected := CASE via WHEN 'app_authenticated' THEN cases[i][2] ELSE cases[i][4] END;
       IF seen IS DISTINCT FROM expected THEN
         RAISE EXCEPTION 'replacing: % (%) as % reads the groups "%"', cases[i][1], app.current_user_role(), via, seen;
       END IF;
       IF via = 'app_authenticated' THEN
-        SELECT coalesce(string_agg(note, ',' ORDER BY note), '') INTO seen FROM "CalendarLessons" WHERE note LIKE 'EG-%';
+        SELECT coalesce(string_agg(note, ',' ORDER BY note COLLATE "C"), '') INTO seen FROM "CalendarLessons" WHERE note LIKE 'EG-%';
         IF seen IS DISTINCT FROM cases[i][3] THEN
           RAISE EXCEPTION 'replacing: % (%) reads the lessons "%", not "%"', cases[i][1], app.current_user_role(), seen, cases[i][3];
         END IF;
@@ -32387,8 +32398,8 @@ BEGIN
     wrong := wrong || '267a nobody reads a key'::text;
   END IF;
   PERFORM set_config('app.service_key_lookup', 'on', true);
-  IF (SELECT array_agg(name ORDER BY name) FROM "HuvudmanApiKeys") IS DISTINCT FROM ARRAY['RLS H nyckel', 'RLS H2 nyckel'] THEN
-    wrong := wrong || format('267a the lookup reads %s', (SELECT array_agg(name ORDER BY name) FROM "HuvudmanApiKeys"));
+  IF (SELECT array_agg(name ORDER BY name COLLATE "C") FROM "HuvudmanApiKeys") IS DISTINCT FROM ARRAY['RLS H nyckel', 'RLS H2 nyckel'] THEN
+    wrong := wrong || format('267a the lookup reads %s', (SELECT array_agg(name ORDER BY name COLLATE "C") FROM "HuvudmanApiKeys"));
   END IF;
   UPDATE "HuvudmanApiKeys" SET "lastUsedAt" = now() WHERE id = hkey;
   GET DIAGNOSTICS n = ROW_COUNT;
@@ -46460,7 +46471,7 @@ BEGIN
   END LOOP;
 
   -- The doors are exactly these: every function the API role may execute that takes a link's hash.
-  SELECT string_agg(p.oid::regprocedure::text, ', ' ORDER BY p.oid::regprocedure::text) INTO got
+  SELECT string_agg(p.oid::regprocedure::text, ', ' ORDER BY p.oid::regprocedure::text COLLATE "C") INTO got
     FROM pg_proc p
    WHERE p.pronamespace = 'app'::regnamespace
      AND (p.proargnames @> ARRAY['token_hash'] OR p.proargnames @> ARRAY['p_token_hash'])
@@ -63020,9 +63031,9 @@ BEGIN
   PERFORM pg_temp.gb_expect('500 the block''s own table gained no column', (SELECT string_agg(attname, ',' ORDER BY attnum) FROM pg_attribute WHERE attrelid = '"TeachingBlocks"'::regclass AND attnum > 0 AND NOT attisdropped),
     'id,schoolId,academicYearId,name,createdAt,updatedAt,sameTimesAsBlockId');
   PERFORM pg_temp.gb_expect('500 the block''s own table gained no index, key or CHECK',
-    (SELECT string_agg(x.k, ',' ORDER BY x.k) FROM (SELECT 'i:' || indexrelid::regclass::text AS k FROM pg_index WHERE indrelid = '"TeachingBlocks"'::regclass
+    (SELECT string_agg(x.k, ',' ORDER BY x.k COLLATE "C") FROM (SELECT 'i:' || indexrelid::regclass::text AS k FROM pg_index WHERE indrelid = '"TeachingBlocks"'::regclass
                                                     UNION ALL SELECT 'c:' || conname FROM pg_constraint WHERE conrelid = '"TeachingBlocks"'::regclass AND contype IN ('c', 'f')) x),
-    (SELECT string_agg(x.k, ',' ORDER BY x.k) FROM (VALUES ('i:"TeachingBlocks_pkey"'), ('i:"TeachingBlocks_id_academicYearId_schoolId_key"'), ('i:"TeachingBlocks_academicYearId_idx"'),
+    (SELECT string_agg(x.k, ',' ORDER BY x.k COLLATE "C") FROM (VALUES ('i:"TeachingBlocks_pkey"'), ('i:"TeachingBlocks_id_academicYearId_schoolId_key"'), ('i:"TeachingBlocks_academicYearId_idx"'),
                                                     ('i:"TeachingBlocks_sameTimesAsBlockId_key"'), ('i:"TeachingBlocks_schoolId_academicYearId_name_key"'),
                                                     ('c:TeachingBlocks_name_is_sane'), ('c:TeachingBlocks_sameTimesAs_is_another_block'), ('c:TeachingBlocks_academicYearId_schoolId_fkey'),
                                                     ('c:TeachingBlocks_sameTimesAsBlockId_academicYearId_schoolId_fkey'), ('c:TeachingBlocks_schoolId_fkey')) x(k)));

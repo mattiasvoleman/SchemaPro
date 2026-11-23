@@ -3584,7 +3584,7 @@ BEGIN
   PERFORM pg_temp.d6o_expect('390o the columns', cols,
     'id,schoolId,studentGroupId,month,throughDay,pupils,pupilsRegistered,recordedMinutes,validMinutes,absentMinutes,lateMinutes,lateCount,lessonsHeld,lessonsReported,computedAt');
   PERFORM pg_temp.d6o_expect('390o the keys',
-    (SELECT string_agg(c.confrelid::regclass::text || ' ' || c.confdeltype::text || c.confupdtype::text, ', ' ORDER BY c.confrelid::regclass::text)
+    (SELECT string_agg(c.confrelid::regclass::text || ' ' || c.confdeltype::text || c.confupdtype::text, ', ' ORDER BY c.confrelid::regclass::text COLLATE "C")
        FROM pg_constraint c WHERE c.conrelid = '"AbsenceStatsMonths"'::regclass AND c.contype = 'f'),
     '"Schools" cc, "StudentGroups" ca');
   PERFORM pg_temp.d6o_expect('390o the class key is composite',
@@ -6222,14 +6222,28 @@ DECLARE
   yr uuid;
   yr2 uuid;
   step int;
+  r record;
 BEGIN
   FOR step IN 1..2 LOOP
     tag := '492o' || step;
     IF step = 2 THEN
-      -- Users' key to Schools made again, so its cascade trigger is the newest and fires after TeacherEmployments'.
+      -- Users' key to Schools made again, so its cascade trigger is the newest.
       ALTER TABLE "Users" DROP CONSTRAINT "Users_schoolId_fkey";
       ALTER TABLE "Users" ADD CONSTRAINT "Users_schoolId_fkey" FOREIGN KEY ("schoolId") REFERENCES "Schools"("id") ON DELETE CASCADE ON UPDATE CASCADE;
     END IF;
+    -- PostgreSQL fires the two cascade triggers in the order of their NAMES, compared byte by byte ("RI_ConstraintTrigger_a_<oid>"). That
+    -- is the order they were made in only while both oids have the same number of digits: a counter that passes 99999 -> 100000 between
+    -- them puts the newer one first ("100000" < "99999"), and a key made again would then fire BEFORE the older one, not after it.
+    -- So the order a step means is made by name, in both steps, and the counter has no say in it: Users' trigger first in step 1,
+    -- TeacherEmployments' first in step 2 (the names are the step's own, so none is taken twice).
+    FOR r IN SELECT t.tgname, k.conname = 'Users_schoolId_fkey' AS is_users
+               FROM pg_trigger t JOIN pg_constraint k ON k.oid = t.tgconstraint
+              WHERE t.tgrelid = '"Schools"'::regclass AND t.tgisinternal AND t.tgtype & 8 = 8 AND k.confdeltype = 'c'
+                AND k.conname IN ('Users_schoolId_fkey', 'TeacherEmployments_schoolId_fkey')
+    LOOP
+      EXECUTE format('ALTER TRIGGER %I ON "Schools" RENAME TO %I', r.tgname,
+                     'RI_ConstraintTrigger_a_492o' || step || '_' || CASE WHEN r.is_users = (step = 1) THEN 1 ELSE 2 END);
+    END LOOP;
     s := pg_temp.tlo_school(tag);
     yr := (SELECT id FROM "AcademicYears" WHERE "schoolId" = s);
     INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
