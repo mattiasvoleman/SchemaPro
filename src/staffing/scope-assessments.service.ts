@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import type { AssignmentScopeAssessment, AssignmentScopeException } from '@prisma/client';
+import type { AssignmentScopeAssessment, AssignmentScopeException, Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
@@ -36,10 +36,38 @@ export const SCOPE_INITIATIVE_NEEDS_DAY = 'Ett undantag på lärarens eget initi
 export const SCOPE_DAY_NEEDS_INITIATIVE = 'Dagen gäller bara ett undantag på lärarens eget initiativ.';
 export const SCOPE_NOT_IN_FORCE = 'Förordningen (SFS 2026:1487) gäller läsår som börjar den 1 juli 2027 eller senare: det här läsåret har ingen omfattning att bedöma.';
 export const SCOPE_NUMBERING_NOT_COVERED = 'Förordningen har ännu inga nivåer för det här läsårets årskursnumrering (tioårig grundskola): det finns ingen omfattning att bedöma.';
+/** The day a teacher took their own initiative (11 § p. 1) lies in the läsår or at most a year before it: a typo (2072 for 2027) is not a day. */
+export const scopeDayOutsideYear = (from: string, to: string): string =>
+  `Dagen då läraren tog initiativet ska ligga i läsåret eller högst ett år före det: från ${from} till och med ${to}.`;
 export const scopeAboveEdge = (edge: number): string =>
   `Nivån kan inte vara över förordningens högsta nivå, ${edge} timmar vid heltid (SFS 2026:1487 3 §). Rektorn väljer en nivå inom spannet eller under det.`;
 
 const day = (value: Date): string => value.toISOString().slice(0, 10);
+
+/** The same calendar day a year earlier, as yyyy-mm-dd (UTC: a @db.Date is midnight UTC). */
+const yearBefore = (value: Date): string => {
+  const earlier = new Date(value.getTime());
+  earlier.setUTCFullYear(earlier.getUTCFullYear() - 1);
+  return day(earlier);
+};
+
+/**
+ * The läsår's days and numbering, read FOR SHARE as every other service reads a date-bound value (readYearBoundsForShare): a PATCH of the
+ * year that moves its start across a lydelse's day waits for this write, or is waited for, so a level is never judged against a lydelse
+ * the year has just left (review of #410, L-6). One statement, with the numbering beside the days.
+ */
+async function readYearForShare(
+  tx: Prisma.TransactionClient,
+  academicYearId: string,
+): Promise<{ startDate: Date; endDate: Date; gradeNumbering: string } | null> {
+  const [year] = await tx.$queryRaw<{ startDate: Date; endDate: Date; gradeNumbering: string }[]>`
+    SELECT "startDate", "endDate", "gradeNumbering"
+    FROM "AcademicYears"
+    WHERE "id" = ${academicYearId}::uuid
+    FOR SHARE
+  `;
+  return year ?? null;
+}
 
 export function toScopeAssessmentResponse(row: AssignmentScopeAssessment): ScopeAssessmentResponse {
   return {
@@ -82,6 +110,11 @@ export class ScopeAssessmentsService {
   async list(academicYearId: string, user: AuthenticatedUser): Promise<ScopeAssessmentResponse[]> {
     requireSchoolId(user);
     const rows = await this.prisma.withRls(user, async (tx) => {
+      // A year that is not the school's (or does not exist) is answered as the write answers it, 404, and not as a year without
+      // assessments: row security gives such a year no rows, and a page cannot tell "none yet" from "the wrong year" by an empty list
+      // (review of #410, L-3).
+      const year = await tx.academicYear.findUnique({ where: { id: academicYearId }, select: { id: true } });
+      if (!year) throw new NotFoundException('Academic year not found.');
       const found = await tx.assignmentScopeAssessment.findMany({ where: { academicYearId }, orderBy: { userId: 'asc' } });
       // The level, the day, the note and who decided are about each person in the list: EMPLOYMENT in the läslogg, as the posts' list
       // and the load report write it, in the read's own transaction (the reader's own row is left out by the function). Recorded
@@ -116,7 +149,7 @@ export class ScopeAssessmentsService {
         // The person is a teacher (or a teaching administrator), read under the lock every staffing write takes, so a demotion to
         // pupil cannot interleave with this write.
         await lockStaffRow(tx, userId, 'bedömning');
-        const year = await tx.academicYear.findUnique({ where: { id: academicYearId }, select: { startDate: true, gradeNumbering: true } });
+        const year = await readYearForShare(tx, academicYearId);
         if (!year) throw new NotFoundException('Academic year not found.');
         const [version] = await readScopeVersions(tx, day(year.startDate));
         if (!version) throw new BadRequestException(SCOPE_NOT_IN_FORCE);
@@ -126,6 +159,11 @@ export class ScopeAssessmentsService {
         if (edges.length === 0) throw new BadRequestException(SCOPE_NUMBERING_NOT_COVERED);
         const edge = Math.max(...edges);
         if (level !== null && level > edge) throw new BadRequestException(scopeAboveEdge(edge));
+        if (ownInitiativeOn !== null) {
+          const from = yearBefore(year.startDate);
+          const to = day(year.endDate);
+          if (ownInitiativeOn < from || ownInitiativeOn > to) throw new BadRequestException(scopeDayOutsideYear(from, to));
+        }
         const saved = await tx.assignmentScopeAssessment.upsert({
           where: { schoolId_userId_academicYearId: { schoolId, userId, academicYearId } },
           create: { schoolId, userId, academicYearId, ...data },

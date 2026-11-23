@@ -320,15 +320,18 @@ describe('ProposalTeacher.scope: what the dialog prints, from the gateway\'s own
   it('says hours before and after for the whole proposal, and over or not over, before and after, by the ordinance\'s edge', async () => {
     const proposal = await given();
     const scopeOf = (id: string) => proposal.teachers.find((teacher) => teacher.userId === id)!.scope;
-    expect(scopeOf(ANNA)).toEqual({ hoursBefore: 344, hoursAfter: 774, highestHours: 600, overBefore: false, overAfter: true });
-    expect(scopeOf(CY)).toEqual({ hoursBefore: 645, hoursAfter: 645, highestHours: 600, overBefore: true, overAfter: true });
+    expect(scopeOf(ANNA)).toEqual({ hoursBefore: 344, hoursAfter: 774, overBefore: false, overAfter: true });
+    expect(scopeOf(CY)).toEqual({ hoursBefore: 645, hoursAfter: 645, overBefore: true, overAfter: true });
   });
 
-  it('gives a reader without HR-läs the verdict and the hours, and not the highest level, which with the span gives the post back', async () => {
+  it('sends no highest level to anybody: it is the span times the post, which gives the post back, and no page shows it', async () => {
     const planner = testUser({ schoolId: SCHOOL, userId: REKTOR, adminProfile: 'SCHEMALAGGARE', hrRead: false });
-    const proposal = await given(planner);
-    const anna = proposal.teachers.find((teacher) => teacher.userId === ANNA)!.scope!;
-    expect(anna).toEqual({ hoursBefore: 344, hoursAfter: 774, highestHours: null, overBefore: false, overAfter: true });
+    for (const reader of [undefined, planner]) {
+      const proposal = await given(reader);
+      const anna = proposal.teachers.find((teacher) => teacher.userId === ANNA)!.scope!;
+      expect(anna).toEqual({ hoursBefore: 344, hoursAfter: 774, overBefore: false, overAfter: true });
+      expect(anna).not.toHaveProperty('highestHours');
+    }
   });
 });
 
