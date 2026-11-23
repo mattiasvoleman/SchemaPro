@@ -429,6 +429,40 @@ describe("StaffingProposalDialog", () => {
       expect(screen.getByText("1 post har en lärare som har slutat.")).toBeInTheDocument();
     });
 
+    it("says, per teacher, what the proposal does to their teaching time against the ordinance's highest level (SFS 2026:1487 3 §), beside the riktmärke's minutes", async () => {
+      const user = userEvent.setup();
+      const base = proposal();
+      post.mockResolvedValue(
+        proposal({
+          teachers: base.teachers.map((teacher) => {
+            if (teacher.userId === "t-anna") {
+              return { ...teacher, scope: { hoursBefore: 559, hoursAfter: 602, highestHours: 600, overBefore: false, overAfter: true } };
+            }
+            if (teacher.userId === "t-bo") {
+              return { ...teacher, scope: { hoursBefore: 300, hoursAfter: 340, highestHours: 480, overBefore: false, overAfter: false } };
+            }
+            if (teacher.userId === "t-cilla") {
+              return { ...teacher, scope: { hoursBefore: 700, hoursAfter: 650, highestHours: 600, overBefore: true, overAfter: true } };
+            }
+            return teacher;
+          }),
+        }),
+      );
+      renderDialog();
+      await user.click(screen.getByRole("button", { name: "Beräkna förslag" }));
+      expect(await screen.findByText(/Över förordningens högsta nivå efter förslaget: 559 → 602 h/)).toBeInTheDocument();
+      expect(screen.getByText(/Enligt förordningen: 300 → 340 h undervisning \(hela förslaget\)/)).toBeInTheDocument();
+      expect(screen.getByText(/Fortfarande över förordningens högsta nivå: 700 → 650 h/)).toBeInTheDocument();
+    });
+
+    it("says nothing of the ordinance for a school that asks nothing of it (no scope in the answer)", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      expect(screen.queryByText(/förordningens högsta nivå/)).toBeNull();
+      expect(screen.queryByText(/Enligt förordningen/)).toBeNull();
+    });
+
     it("says an optimal answer that changes nothing without a zero", async () => {
       const user = userEvent.setup();
       post.mockResolvedValue(proposal({ status: "OPTIMAL", assignments: [], unstaffed: [], conflicts: [] }));
@@ -1284,6 +1318,43 @@ describe("StaffingProposalDialog", () => {
       expect(onOpenChange).toHaveBeenCalledWith(false);
       expect(screen.queryByRole("heading", { name: "Bekräfta ny undervisning" })).toBeNull();
       expect(screen.getByRole("button", { name: "Beräkna förslag" })).toBeInTheDocument();
+    });
+
+    it("writes the ordinance's hours with the reader's own decimal separator: 559.5 in English", async () => {
+      const user = userEvent.setup();
+      const base = proposal();
+      post.mockResolvedValue(
+        proposal({
+          teachers: base.teachers.map((teacher) =>
+            teacher.userId === "t-anna"
+              ? { ...teacher, scope: { hoursBefore: 559.5, hoursAfter: 602.5, highestHours: 600, overBefore: false, overAfter: true } }
+              : teacher,
+          ),
+        }),
+      );
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <NextIntlClientProvider locale="en" messages={en} timeZone="Europe/Stockholm" onError={(error) => { throw error; }}>
+            <StaffingProposalDialog
+              open
+              onOpenChange={vi.fn()}
+              academicYearId="y1"
+              academicYearName="2026/27"
+              teachersWithTarget={2}
+              teachersTotal={4}
+              qualificationsRecorded
+              policy={{ qualificationMode: "WARN", overAllocationTolerancePercent: 10 }}
+              teacherName={(id) => names[id] ?? id}
+              groupName={(id) => groups[id] ?? "—"}
+              subjectName={(id) => subjects[id] ?? "—"}
+              onOpenSettings={vi.fn()}
+            />
+          </NextIntlClientProvider>
+        </QueryClientProvider>,
+      );
+      await user.click(screen.getByRole("button", { name: "Compute proposal" }));
+      expect(await screen.findByText(/Over the ordinance's highest level after the proposal: 559\.5 → 602\.5 h/)).toBeInTheDocument();
     });
 
     it("says it in English", async () => {

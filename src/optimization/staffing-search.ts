@@ -217,6 +217,12 @@ export interface SearchTeacher {
   currentTenths: number;
   /** The most they may lead (limitTenthsOf their target), null when their room is unknown. */
   limitTenths: number | null;
+  /**
+   * The ordinance's highest level of their teaching time as a standardvecka in tenths (SFS 2026:1487 3 §, planOf), when the school
+   * asks the question. Under REFUSE it is already in limitTenths; under WARN the plan does not lower the engine's limit, but a search
+   * is an improvement and never takes a teacher over the ordinance who was not over it: a move is judged by it as by the limit.
+   */
+  scopeCeilingTenths?: number;
 }
 
 export interface SearchModel {
@@ -279,7 +285,14 @@ export function searchModelOf(
   }
   rows.sort((a, b) => (a.requirementId < b.requirementId ? -1 : a.requirementId > b.requirementId ? 1 : 0));
   const teachers = new Map<string, SearchTeacher>(
-    plan.teachers.map((teacher) => [teacher.userId, { currentTenths: teacher.currentTenths, limitTenths: teacher.limitTenths }]),
+    plan.teachers.map((teacher) => [
+      teacher.userId,
+      {
+        currentTenths: teacher.currentTenths,
+        limitTenths: teacher.limitTenths,
+        ...(teacher.scopeCeilingTenths === undefined ? {} : { scopeCeilingTenths: teacher.scopeCeilingTenths }),
+      },
+    ]),
   );
   return { model: { rows, teachers }, excluded };
 }
@@ -331,12 +344,18 @@ export function movesOf(
 ): Move[] {
   const { rows } = movableRows(model, judged);
   const tenths = tenthsIn(model, leads);
-  /** Whether `userId` ends with no more than they began with, or within their limit, after `delta` more tenths. */
+  /** Whether `userId` ends with no more than they began with, or within their limit and the ordinance's edge, after `delta` more tenths. */
   const room = (userId: string, delta: number): boolean => {
     const teacher = model.teachers.get(userId);
     if (teacher === undefined) return false;
     const after = (tenths.get(userId) ?? 0) + delta;
-    return after <= teacher.currentTenths || (teacher.limitTenths !== null && after <= teacher.limitTenths);
+    if (after <= teacher.currentTenths) return true;
+    // Within their limit AND within the ordinance's edge: a teacher over either begins no worse off, and ends no more over.
+    return (
+      teacher.limitTenths !== null &&
+      after <= teacher.limitTenths &&
+      (teacher.scopeCeilingTenths === undefined || after <= teacher.scopeCeilingTenths)
+    );
   };
   const yearsOf = (...posts: SearchRow[]): number[] => [...new Set(posts.flatMap((post) => post.years))].sort((a, b) => a - b);
 

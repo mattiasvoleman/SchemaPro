@@ -1127,6 +1127,21 @@ function ProposalResult({
                           {load.overLimit ? (
                             <span className="block text-xs text-foreground">{t("overLimitSelection")}</span>
                           ) : null}
+                          {teacher.scope ? (
+                            // The ordinance's own measure, hours over the läsår, for the whole proposal: said in words, never by
+                            // colour alone, and beside the riktmärke's minutes and status, which it does not touch.
+                            <span className="block text-xs text-foreground">
+                              {teacher.scope.overAfter
+                                ? t(teacher.scope.overBefore ? "scopeStillOver" : "scopeNewlyOver", {
+                                    before: number.format(teacher.scope.hoursBefore),
+                                    after: number.format(teacher.scope.hoursAfter),
+                                  })
+                                : t("scopeLine", {
+                                    before: number.format(teacher.scope.hoursBefore),
+                                    after: number.format(teacher.scope.hoursAfter),
+                                  })}
+                            </span>
+                          ) : null}
                         </td>
                         <td className="py-1.5">
                           <StatusBadge status={load.status} />

@@ -2101,6 +2101,66 @@ describe('StaffingProposalService.apply', () => {
   });
 
   /*
+   * The ordinance's highest level of teaching time (SFS 2026:1487 3 §, assignmentScopeMode): the apply asks it of the batch with the
+   * lydelser the state read, like the load. A lydelse with a one-hour edge puts any row over it, so the question is answered by the
+   * wiring and not by the figures (those are the pure judge's: staffing-checks.spec.ts, staffing-enforcement.spec.ts).
+   */
+  describe('the ordinance\'s highest level of teaching time', () => {
+    const withTinyOrdinance = (mode: 'OFF' | 'WARN') => {
+      const rows = schoolRows();
+      rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['lessonsPerWeek'] = 2;
+      rows['staffingPolicy']![0]!['assignmentScopeMode'] = mode;
+      const band = (gradeFrom: number, gradeTo: number): Row => ({
+        schoolForm: 'GRUNDSKOLA',
+        gradeNumbering: 'NIOARIG',
+        gradeFrom,
+        gradeTo,
+        teachingHoursLow: 1,
+        teachingHoursHigh: 1,
+        planningFloorPercent: 100,
+        teachingSection: '3 §',
+        planningSection: '4 §',
+        note: null,
+      });
+      rows['assignmentScopeVersion'] = [
+        {
+          id: 'ordinance',
+          code: 'SFS2026:1487',
+          sfs: 'SFS 2026:1487',
+          title: 'Förordning',
+          validFrom: new Date('2000-01-01T00:00:00.000Z'),
+          validTo: null,
+          source: 'https://example.invalid/sfs',
+          bands: [band(1, 6), band(7, 9)],
+        },
+      ];
+      // The reader asks for the bands from their own table (one statement for the lydelse, one for its bands: review of #404, M-3).
+      rows['assignmentScopeBand'] = [band(1, 6), band(7, 9)].map((b) => ({ ...b, versionId: 'ordinance' }));
+      return rows;
+    };
+    const giveBo = (proposal: StaffingProposal) => ({
+      academicYearId: YEAR,
+      basisSha256: proposal.basisSha256,
+      confirmedNewTeaching: [{ requirementId: R_MA8, toTeacherId: BO }],
+      changes: [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId: BO }],
+    });
+
+    it('warns, under WARN, of a teacher the apply takes over the highest level, naming the teacher and the row, and writes', async () => {
+      const { service, world, proposal } = await proposeThenApply(withTinyOrdinance('WARN'));
+      const result = await service.apply(giveBo(proposal), admin());
+      expect(result.warnings).toContainEqual(expect.objectContaining({ code: 'STAFF_TEACHER_OVER_SCOPE', userId: BO, requirementIds: [R_MA8] }));
+      expect(leadOf(world, R_MA8)).toBe(BO);
+    });
+
+    it('asks nothing of the ordinance under OFF', async () => {
+      const { service, world, proposal } = await proposeThenApply(withTinyOrdinance('OFF'));
+      const result = await service.apply(giveBo(proposal), admin());
+      expect(result.warnings.map((warning) => warning.code)).not.toContain('STAFF_TEACHER_OVER_SCOPE');
+      expect(leadOf(world, R_MA8)).toBe(BO);
+    });
+  });
+
+  /*
    * A tioårig läsår under qualificationMode REFUSE: the apply judges the batch
    * on the year it reads under the lock, its numbering on it, so the 7–9
    * teacher put on a tioårig 10A is no refusal; the 11 is, named as the läsår
