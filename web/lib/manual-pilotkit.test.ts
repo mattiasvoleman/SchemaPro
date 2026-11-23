@@ -31,6 +31,13 @@ const MANUAL = readFileSync(join(ROOT, "docs", "manual", "anvandarmanual.html"),
 const ADMIN_NAV = readFileSync(join(__dirname, "..", "components", "layout", "admin-nav.ts"), "utf8");
 const EXCHANGE_MODEL = readFileSync(join(ROOT, "src", "schedule-exchange", "exchange-model.ts"), "utf8");
 const UNTIS_READER = readFileSync(join(ROOT, "src", "schedule-exchange", "untis-gpu.ts"), "utf8");
+const INTAKE = readFileSync(join(ROOT, "src", "intake", "intake.ts"), "utf8");
+
+/** Every gap Vad kom in has and its level, as src/intake/intake.ts defines them: one line each, so that this can read them. */
+const INTAKE_GAPS = [...INTAKE.matchAll(/\{ code: '([A-Z_]+)', area: '[A-Z_]+', level: '(HARD|SOFT|INFO)' \}/g)].map((match) => ({
+  code: match[1]!,
+  level: match[2]! as "HARD" | "SOFT" | "INFO",
+}));
 
 const decode = (text: string): string => text.replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 const flat = (markup: string): string => decode(markup.replace(/<[^>]+>/g, " "));
@@ -85,6 +92,10 @@ const LABEL_HOME: Readonly<Record<string, string>> = {
   Aktivt: "setup.active",
   "Alla timplansposter har lärare": "generate.preStaffed",
   "Filen kommer från Skola24": "columnMapping.format.label",
+  // Vad kom in: the three levels a gap has, as the page says them.
+  "Stoppar Generera": "intake.levels.HARD",
+  "Ger ett sämre schema": "intake.levels.SOFT",
+  "För andra steg": "intake.levels.INFO",
   "Från ett annat program": "scheduleExchange.table.title",
   Förutsättningar: "generate.prerequisites",
   "Generera schema": "generate.run",
@@ -237,6 +248,22 @@ function problemsOf(manual: string, world: World = REAL): string[] {
     if (!exchange.has(id)) problems.push(`no row for the schedule exchange's format "${id}"`);
   }
 
+  // Vad kom in: one row for each gap the gateway counts, at the level the gateway gives it, in the words the page gives that level.
+  const gapRows = rows("data-gap");
+  for (const code of gapRows.keys()) {
+    if (!INTAKE_GAPS.some((entry) => entry.code === code)) problems.push(`a row for the gap "${code}", which Vad kom in does not count`);
+  }
+  for (const { code, level } of INTAKE_GAPS) {
+    const row = gapRows.get(code);
+    if (row === undefined) {
+      problems.push(`no row for the gap "${code}", which Vad kom in counts`);
+      continue;
+    }
+    if (!row.includes(`data-level="${level}"`)) problems.push(`the row for "${code}" does not say "${level}", which is the gateway's level for it`);
+    const words = (sv.intake.levels as Record<string, string>)[level];
+    if (flat(cellOf(row, 1)) !== words) problems.push(`the row for "${code}" does not name its level "${words}" in words`);
+  }
+
   const text = flat(section);
   const kilobytes = MAX_UPLOAD_BYTES / 1024;
   if (!text.includes(`högst ${kilobytes} kB`)) problems.push(`the guide does not say that a file may be at most ${kilobytes} kB`);
@@ -258,8 +285,13 @@ function problemsOf(manual: string, world: World = REAL): string[] {
 }
 
 describe("the first week and the move (3.7, 3.8) say what the program does", () => {
-  it("holds against the menu, the labels, the Skola24 descriptions and the exchange", () => {
+  it("holds against the menu, the labels, the Skola24 descriptions, the exchange and Vad kom in", () => {
     expect(problemsOf(MANUAL)).toEqual([]);
+  });
+
+  it("reads the gateway's gaps (a parse that finds none would pass the table below by having none to check)", () => {
+    expect(INTAKE_GAPS.length).toBeGreaterThan(15);
+    expect(INTAKE_GAPS.filter((entry) => entry.level === "HARD").length).toBeGreaterThan(3);
   });
 
   it("has the menu it reads", () => {
@@ -318,6 +350,10 @@ describe("the check finds what it is for", () => {
     ["a file whose words say the opposite of its data-reads", inSection((x) => x.replace("<td>Läses: namn och e-postadress.", "<td>Läses inte: namn och e-postadress."))],
     ["a file that is only named, said to be read", inSection((x) => x.replace("Känns igen och namnges, men läses inte: Rastra Schema har ingen import av förskolans", "Läses in som personal: Rastra Schema har ingen import av förskolans"))],
     ["a label that has no home in this test", inSection((x) => x.replace('<span class="ui">Kontrollera veckan</span>', '<span class="ui">Läs in tabellen</span>'))],
+    ["a gap at another level than the gateway gives it", inSection((x) => x.replace('data-gap="NO_ROOMS" data-level="HARD"', 'data-gap="NO_ROOMS" data-level="SOFT"'))],
+    ["a gap whose level is not said in words", inSection((x) => x.replace('<td class="k">Inga salar</td><td>Stoppar Generera</td>', '<td class="k">Inga salar</td><td>Allvarligt</td>'))],
+    ["a gap the gateway counts that has no row", inSection((x) => x.replace(/<tr data-gap="NO_TEACHERS"[\s\S]*?<\/tr>/, ""))],
+    ["a row for a gap the gateway does not count", inSection((x) => x.replace('data-gap="NO_RASTS"', 'data-gap="NO_BREAKS"'))],
   ];
   for (const [name, mutate] of faults) {
     it(`finds ${name}`, () => {

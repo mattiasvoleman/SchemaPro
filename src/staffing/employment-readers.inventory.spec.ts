@@ -92,6 +92,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'POST',
     why: 'locks the base row of every teacher a write ends up with; the period writes take the same lock, and the judgement reads the periods through load-input',
   },
+  'src/intake/intake.service.ts': {
+    basis: 'POST',
+    why: 'Vad kom in counts the active year’s posts, the teachers who have none and the posts with no signature: that a row exists and the base row’s signature, never a figure a period changes',
+  },
   'src/cover/cover-reports.service.ts': {
     basis: 'POST',
     why: 'whether a pool member has a post at all (STAFF or POOL); a period never removes a post',

@@ -179,6 +179,7 @@
     "dashboard": "Dashboard",
     "planning": "Planning",
     "setup": "School setup",
+    "intake": "What came in",
     "subjects": "Subjects",
     "rooms": "Rooms",
     "groups": "Classes",
@@ -284,6 +285,147 @@
     "readStaffingHint": "The teachers' load against their targets.",
     "readReports": "Reports",
     "readReportsHint": "Absence, cover and teaching time."
+  },
+  "intake": {
+    "title": "What came in",
+    "subtitle": "What the school's base data holds, and what is missing before Generera can run",
+    "intro": "This page counts what is in the school for the active school year and changes nothing. A year planned for the next term is not counted here: its posts and classes are checked on the Generera page when you pick that year. It does not say that a week can be laid: only Kontrollera veckan on the Generera page can answer that, and only sometimes.",
+    "year": "Active school year: {name}",
+    "loadFailed": "What came in could not be fetched",
+    "loadFailedHint": "No figures are shown, because an empty list must not be read as a school with no base data. Reload the page.",
+    "retry": "Try again",
+    "summary": {
+      "hardTitle": "{count, plural, one {# thing stops} other {# things stop}} Generera",
+      "hardBody": "Fix them in the order the cards are in. Then you can run Kontrollera veckan.",
+      "okTitle": "Nothing this page counts stops Generera",
+      "okBody": "That does not mean the week can be laid. Run Kontrollera veckan on the Generera page before you generate.",
+      "soft": "{count, plural, one {# thing gives a worse timetable} other {# things give a worse timetable}}",
+      "info": "{count, plural, one {# thing is used by other steps} other {# things are used by other steps}}",
+      "generate": "Go to Generera"
+    },
+    "levels": {
+      "HARD": "Stops Generera",
+      "SOFT": "Gives a worse timetable",
+      "INFO": "For other steps"
+    },
+    "foundHeading": "What came in",
+    "missingHeading": "What is missing",
+    "waitsForYear": "Waiting for an active school year: the classes, entries and posts belong to a school year.",
+    "nothingMissing": "Nothing is missing.",
+    "open": "Open {page}",
+    "more": "and {count} more",
+    "grade": "year {grade}",
+    "appliesTo": "Applies to: {items}",
+    "areas": {
+      "YEAR": "School year",
+      "SUBJECTS": "Subjects",
+      "ROOMS": "Rooms",
+      "FRAME_TIMES": "Frame times",
+      "RASTS": "Breaks",
+      "CLASSES": "Classes",
+      "TEACHING_GROUPS": "Teaching groups",
+      "PEOPLE": "People",
+      "TIMPLAN": "Local timplan",
+      "REQUIREMENTS": "Curriculum entries",
+      "STAFFING": "Staffing"
+    },
+    "found": {
+      "years": "{count, plural, one {# school year} other {# school years}}",
+      "subjects": "{count, plural, one {# subject} other {# subjects}}",
+      "rooms": "{count, plural, one {# room} other {# rooms}}",
+      "frameTimes": "{count, plural, one {# frame time} other {# frame times}}",
+      "rasts": "{count, plural, one {# break} other {# breaks}}",
+      "classes": "{count, plural, one {# class} other {# classes}}",
+      "teachingGroups": "{count, plural, one {# teaching group} other {# teaching groups}}",
+      "teachers": "{count, plural, one {# teacher} other {# teachers}}",
+      "students": "{count, plural, one {# pupil} other {# pupils}}",
+      "gradesWithTimplan": "{count, plural, one {# year with a local timplan} other {# years with a local timplan}}",
+      "requirements": "{count, plural, one {# curriculum entry} other {# curriculum entries}}",
+      "posts": "{count, plural, one {# post} other {# posts}}"
+    },
+    "gaps": {
+      "NO_YEAR": {
+        "title": "No school year is active",
+        "hint": "Create the school year and turn on Active. Classes, curriculum entries and the timetable belong to a school year."
+      },
+      "NO_SUBJECTS": {
+        "title": "No subjects have been added",
+        "hint": "Add the school's subjects: the curriculum entries refer to them."
+      },
+      "SUBJECTS_WITHOUT_POSTS": {
+        "title": "{count, plural, one {# subject has} other {# subjects have}} no curriculum entries this year",
+        "hint": "Lessons in the subject are not placed in the timetable. If that is intended, leave it."
+      },
+      "ROOM_TYPE_WITHOUT_ROOM": {
+        "title": "{count, plural, one {# subject needs} other {# subjects need}} a room type that no room has",
+        "hint": "The engine refuses a week where a subject needs a room type with no room. Add a room of that type, or change the subject's requirement."
+      },
+      "NO_ROOMS": {
+        "title": "No rooms have been added",
+        "hint": "The engine refuses a week with no rooms. Add the rooms with their capacity and type."
+      },
+      "FRAME_TIMES_MISSING": {
+        "title": "{count, plural, one {One year with classes has} other {# years with classes have}} no frame time",
+        "hint": "Without a frame time the engine places the year anywhere in its standard day. Add frame times for the school's stages."
+      },
+      "NO_RASTS": {
+        "title": "No breaks have been added",
+        "hint": "Add the school's breaks if it has any."
+      },
+      "NO_CLASSES": {
+        "title": "The school year has no classes",
+        "hint": "Create the classes with a year group. Every class is scheduled as one unit."
+      },
+      "CLASSES_WITHOUT_GRADE": {
+        "title": "{count, plural, one {# class has} other {# classes have}} no year group",
+        "hint": "A class with no year group is bound by no frame time or break."
+      },
+      "CLASSES_WITHOUT_POSTS": {
+        "title": "{count, plural, one {# class is} other {# classes are}} reached by no curriculum entry",
+        "hint": "The class has no entry, none of its halves has one, and none of its pupils is in a group that has one. It then gets no lessons."
+      },
+      "TEACHING_GROUPS_WITHOUT_MEMBERS": {
+        "title": "{count, plural, one {# teaching group with curriculum entries has} other {# teaching groups with curriculum entries have}} no year",
+        "hint": "The year is derived from the members’ home classes, or from the group’s own. Neither is there, so frame times and breaks do not bind the group’s lessons. Add the members or a year under Classes."
+      },
+      "NO_TEACHERS": {
+        "title": "No teachers have been added",
+        "hint": "Generera needs at least one teacher. Add the teachers under People."
+      },
+      "NO_STUDENTS": {
+        "title": "No pupils have been added",
+        "hint": "Generera can run, but room capacity and the dining hall's seats are checked against the size of the classes, and a class with no pupils has none."
+      },
+      "STUDENTS_WITHOUT_CLASS": {
+        "title": "{count, plural, one {# pupil belongs} other {# pupils belong}} to no class",
+        "hint": "A pupil with no class gets no timetable. An import cannot give a class afterwards: set it under People."
+      },
+      "TIMPLAN_MISSING": {
+        "title": "{count, plural, one {One year with classes has} other {# years with classes have}} no local timplan",
+        "hint": "Without a timplan the coverage cannot be counted for the year. It does not stop Generera: a shortfall is under target, never a refusal."
+      },
+      "TIMPLAN_NOT_DECIDED": {
+        "title": "{count, plural, one {One year follows} other {# years follow}} a timplan that is not decided",
+        "hint": "The decision is made by the rektor or a full administrator. It does not stop Generera."
+      },
+      "NO_REQUIREMENTS": {
+        "title": "The school year has no curriculum entries",
+        "hint": "With no entries there is nothing to place: the engine refuses an empty week. Add the entries per class and subject."
+      },
+      "UNSTAFFED_POSTS": {
+        "title": "{count, plural, one {# curriculum entry has} other {# curriculum entries have}} no teacher",
+        "hint": "The entry is placed without a teacher. Under Staffing, Propose staffing can staff all the entries at once.",
+        "hintHard": "The school has chosen Generation without teachers: Refuse, so the Generera button is off until every entry has a teacher."
+      },
+      "TEACHERS_WITHOUT_POST": {
+        "title": "{count, plural, one {# teacher has} other {# teachers have}} no post this year",
+        "hint": "A teacher with no post has no target to be staffed against. Add the post under Staffing."
+      },
+      "POSTS_WITHOUT_SIGNATURE": {
+        "title": "{count, plural, one {# post has} other {# posts have}} no signature",
+        "hint": "A schedule from Untis or aSc finds the teacher by signature or e-mail address. Add the signatures before you read a schedule in."
+      }
+    }
   },
   "setup": {
     "title": "School setup",

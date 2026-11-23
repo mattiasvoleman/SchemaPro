@@ -19,6 +19,7 @@ import { mealRoutes } from "./gateway-meals";
 import { miscRoutes } from "./gateway-misc";
 import { publicRoutes } from "./gateway-public";
 import { readRoutes } from "./gateway-reads";
+import { intakeRoutes } from "./gateway-intake";
 import { reportingRateRoutes } from "./gateway-reporting-rate";
 import { roleRoutes } from "./gateway-roles";
 import { schoolDayRoutes } from "./gateway-school-day";
@@ -51,6 +52,7 @@ export const ROUTE_FILES: Array<{ file: string; routes: GatewayRoute[] }> = [
   { file: "gateway-absence-watch.ts", routes: absenceWatchRoutes },
   { file: "gateway-absence-stats.ts", routes: absenceStatsRoutes },
   { file: "gateway-crisis.ts", routes: crisisRoutes },
+  { file: "gateway-intake.ts", routes: intakeRoutes },
   { file: "gateway-reporting-rate.ts", routes: reportingRateRoutes },
   { file: "gateway-school-day.ts", routes: schoolDayRoutes },
   { file: "gateway-ack.ts", routes: ackRoutes },

@@ -70,6 +70,11 @@ export const ADMIN_NAV: NavGroup[] = [
       { labelKey: "rooms", href: "/admin/rooms", icon: MapPin },
       { labelKey: "groups", href: "/admin/groups", icon: Users },
       { labelKey: "people", href: "/admin/people", icon: UserCheck },
+      // Vad kom in: what the base data holds and what is missing from it, counted against what Generera asks for. Last in the phase,
+      // because it reads what the pages above hold and says which of them to go back to. A page of its own and not under
+      // /admin/setup, so the menu marks one row and not two. It reads and writes nothing. Kom igång's icon: the second half of the
+      // same step.
+      { labelKey: "intake", href: "/admin/intake", icon: GraduationCap },
     ],
   },
   {
