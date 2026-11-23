@@ -262,6 +262,18 @@ vi.mock("@/components/staffing/engine-release-card", () => ({
   },
 }));
 
+/*
+ * Rektorns bedömning (R1 del G3): the card writes through react-query and is tested on its own (scope-assessment-card.test.tsx). Here only
+ * what the page decides: that the drawer draws it from the report's `scope` block, and what it is handed.
+ */
+const assessmentProps = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock("@/components/staffing/scope-assessment-card", () => ({
+  ScopeAssessmentCard: (props: Record<string, unknown>) => {
+    assessmentProps.push(props);
+    return <section aria-label="scope-assessment" />;
+  },
+}));
+
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
   useTranslations: (namespace: string) => {
@@ -488,6 +500,16 @@ describe("StaffingPage", () => {
       expect(within(screen.getByText("Bo Alm").closest("tr")!).getByText("scopeOverBadge")).toBeInTheDocument();
     });
 
+    it("does not say a teacher over only the level the rektor set is over the ordinance: the warning counts the ordinance's, and the level's has its own", () => {
+      withScope("OVER_MAX", {
+        teachers: [bo("OVER_MAX"), { ...bo("INSIDE"), userId: "t-ny", verdict: "OVER_OWN" }, { ...bo("INSIDE"), userId: "t-inne" }],
+      });
+      render(<StaffingPage />);
+      expect(screen.getByText("scopeNoticeTitle(1)")).toBeInTheDocument();
+      expect(screen.getByText("scopeOwnNoticeTitle(1)")).toBeInTheDocument();
+      expect(within(screen.getByText("Bo Alm").closest("tr")!).getByText("scopeOverBadge")).toBeInTheDocument();
+    });
+
     it("says nothing when nobody is over, when the year is one the ordinance does not reach, and from a gateway with no such block", () => {
       withScope("INSIDE");
       const { unmount } = render(<StaffingPage />);
@@ -505,17 +527,72 @@ describe("StaffingPage", () => {
 
     it("draws the card in the teacher's drawer from the same block, and none for a year the ordinance does not reach", async () => {
       const user = userEvent.setup();
-      withScope("OVER_MAX");
+      assessmentProps.length = 0;
+      const assessment = { levelHours: 600, exceptionKind: null, ownInitiativeOn: null, note: null, decidedAt: "2027-03-05T08:00:00.000Z" };
+      withScope("OVER_MAX", { teachers: [{ ...bo("OVER_MAX"), assessment }] });
       const first = render(<StaffingPage />);
       await user.click(screen.getByRole("button", { name: "openDrawer(Bo Alm)" }));
       const dialog = within(await screen.findByRole("dialog", {}, { timeout: 5000 }));
       expect(await dialog.findByText("verdictOverMax(81)")).toBeInTheDocument();
+      // The rektor's assessment is drawn under it, handed the teacher, the year, what the block says of them and the span's full-time edge.
+      expect(dialog.getByRole("region", { name: "scope-assessment" })).toBeInTheDocument();
+      expect(assessmentProps.at(-1)).toMatchObject({
+        teacher: expect.objectContaining({ id: "t-bo" }),
+        academicYearId: "y1",
+        assessment,
+        fullTimeHighestHours: 600,
+      });
       first.unmount();
+      assessmentProps.length = 0;
       withScope("OVER_MAX", { version: null, yearReason: "NOT_IN_FORCE" });
       render(<StaffingPage />);
       await user.click(screen.getByRole("button", { name: "openDrawer(Bo Alm)" }));
       await screen.findByRole("dialog", {}, { timeout: 5000 });
       expect(screen.queryByText("verdictOverMax(81)")).not.toBeInTheDocument();
+      // A year the ordinance does not reach has no report to assess against: the card is not drawn there either.
+      expect(screen.queryByRole("region", { name: "scope-assessment" })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Rektorns bedömning: for the teacher who has no hours yet", () => {
+    const version = { code: "SFS2026:1487", sfs: "SFS 2026:1487", title: "x", validFrom: "2027-07-01", validTo: null, source: "https://example.invalid/sfs" };
+    // A post and no teaching: the report has the row (NO_TEACHING), and scopeCardOf draws no card for it.
+    const idle = {
+      userId: "t-bo",
+      verdict: "NOT_JUDGED",
+      notJudged: "NO_TEACHING",
+      teachingHours: 0,
+      stages: [],
+      unregulatedHours: 0,
+      unknownGradeHours: 0,
+      fullTimeHighestHours: null,
+      fullTimeLowestHours: null,
+      highestHours: null,
+      ordinanceHighestHours: null,
+      planningFloorHours: null,
+      remainingHours: null,
+      planningFits: null,
+    };
+
+    it("draws the card for a teacher with a post and no hours, where a level is wanted before Föreslå bemanning hands any out", async () => {
+      const user = userEvent.setup();
+      assessmentProps.length = 0;
+      state.report = { ...report, scope: { version, yearReason: null, interpretations: [], teachers: [idle] } };
+      render(<StaffingPage />);
+      await user.click(screen.getByRole("button", { name: "openDrawer(Bo Alm)" }));
+      const dialog = within(await screen.findByRole("dialog", {}, { timeout: 5000 }));
+      expect(await dialog.findByRole("region", { name: "scope-assessment" })).toBeInTheDocument();
+      expect(assessmentProps.at(-1)).toMatchObject({ teacher: expect.objectContaining({ id: "t-bo" }), academicYearId: "y1", assessment: undefined, fullTimeHighestHours: null });
+    });
+
+    it("draws none in the ten-year numbering, where the gateway refuses every write", async () => {
+      const user = userEvent.setup();
+      assessmentProps.length = 0;
+      state.report = { ...report, scope: { version, yearReason: "NUMBERING_NOT_COVERED", interpretations: [], teachers: [{ ...idle, teachingHours: 600, notJudged: null, verdict: "INSIDE" }] } };
+      render(<StaffingPage />);
+      await user.click(screen.getByRole("button", { name: "openDrawer(Bo Alm)" }));
+      await screen.findByRole("dialog", {}, { timeout: 5000 });
+      expect(screen.queryByRole("region", { name: "scope-assessment" })).not.toBeInTheDocument();
     });
   });
 

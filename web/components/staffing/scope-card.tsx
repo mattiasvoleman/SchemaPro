@@ -42,8 +42,11 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
   const rows: { label: string; value: string }[] = [
     { label: own ? t("teachingOwn") : t("teaching"), value: hours(teacher.teachingHours) },
   ];
-  if (judged && teacher.highestHours !== null) {
-    rows.push({ label: own ? t("highestOwn") : t("highest"), value: hours(teacher.highestHours) });
+  // The row says "the ordinance's": the edge the verdict OVER_MAX is judged against. A level the rektor set lies lower (and is its own
+  // row below), so the row never shows it under the ordinance's name (the review of #397, L-5 and L-9).
+  const ordinanceEdge = teacher.ordinanceHighestHours ?? teacher.highestHours;
+  if (judged && ordinanceEdge !== null) {
+    rows.push({ label: own ? t("highestOwn") : t("highest"), value: hours(ordinanceEdge) });
   }
   if (teacher.fullTimeHighestHours !== null && teacher.fullTimeLowestHours !== null && yearReason === null) {
     rows.push({
@@ -66,6 +69,28 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
   }
   if (judged && teacher.remainingHours !== null) {
     rows.push({ label: t("remaining"), value: hours(teacher.remainingHours) });
+  }
+  // The rektor's assessment (8 §, 11 §), as the gateway lets this reader read it: the level, or only the kind of exception.
+  const assessment = teacher.assessment;
+  if (assessment && assessment.levelHours !== null) {
+    rows.push({ label: own ? t("assessmentLevelOwn") : t("assessmentLevel"), value: hours(assessment.levelHours) });
+  }
+  // A level that was set and that this reader may not read: the gateway keeps the row and masks its fields (hr-visibility.ts), and a row
+  // with neither a level nor an exception can only be that (an empty assessment is refused on write). Said as what it is, without the figure,
+  // so that the manual's "en nivå är satt, men inte vilken" is what the card shows and not only what the verdict's wording lets one infer.
+  if (assessment && assessment.levelHours === null && assessment.exceptionKind === null) {
+    rows.push({ label: own ? t("assessmentLevelOwn") : t("assessmentLevel"), value: t("assessmentLevelHidden") });
+  }
+  // What OVER_OWN is judged against: that level scaled by the post. Shown only where it is a figure of its own (a part-time post, or a level
+  // above the ordinance's edge makes it the same as one of the rows above), so that "over by 45 h" can be checked against a row.
+  if (
+    judged &&
+    teacher.highestHours !== null &&
+    teacher.ordinanceHighestHours !== null &&
+    teacher.highestHours < teacher.ordinanceHighestHours &&
+    teacher.highestHours !== assessment?.levelHours
+  ) {
+    rows.push({ label: own ? t("assessmentHighestOwn") : t("assessmentHighest"), value: hours(teacher.highestHours) });
   }
 
   // The one sentence that is the answer, first under the heading: tone by the words themselves, never by colour alone.
@@ -122,6 +147,13 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
         // and this says the second (for INSIDE the verdict sentence itself says it).
         <p className="text-xs text-muted-foreground">{own ? t("own.overOnlyWithUnregulated") : t("overOnlyWithUnregulated")}</p>
       ) : null}
+      {assessment?.exceptionKind ? (
+        <p className="text-xs text-muted-foreground">
+          {t("exceptionRegistered", { kind: own ? t(`own.exceptionKind${assessment.exceptionKind}`) : t(`exceptionKind${assessment.exceptionKind}`) })}
+          {assessment.ownInitiativeOn ? ` ${assessment.ownInitiativeOn}.` : ""} {t("exceptionKeepsVerdict")}
+        </p>
+      ) : null}
+      {assessment?.note ? <p className="text-xs text-muted-foreground">{t("assessmentNote", { note: assessment.note })}</p> : null}
       {blended && judged ? <p className="text-xs text-muted-foreground">{own ? t("own.blended") : t("blended")}</p> : null}
       {judged && teacher.planningFits !== null ? (
         <p className="text-xs text-muted-foreground">{teacher.planningFits ? t("fits") : t("doesNotFit")}</p>
