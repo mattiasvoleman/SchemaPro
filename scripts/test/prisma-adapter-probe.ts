@@ -107,6 +107,7 @@ import { StaffingRolloverService } from '../../src/year-rollover/staffing-rollov
 import { TeacherEmploymentsService, rethrowPeriodError } from '../../src/staffing/teacher-employments.service';
 import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
 import { readScopeVersions } from '../../src/staffing/assignment-scope-reader';
+import { ScopeAssessmentsService } from '../../src/staffing/scope-assessments.service';
 import { lockStaffRow } from '../../src/staffing/staff-lock';
 import { countHomePupils, rostersOfYear, type RosterBasis } from '../../src/year-rollover/projected-rosters';
 import { loadRosters } from '../../src/optimization/room-eligibility';
@@ -4951,6 +4952,62 @@ async function runChecks(
         );
       }
     }
+
+    // Rektorns bedömning (20270306090000) through the real adapter, in a nine-year läsår the ordinance reaches (one of its own: a year from 2028-07-01 is tioårig, which has no bands):
+    // the upsert (INSERT ... ON CONFLICT) with its BEFORE trigger, the day as a @db.Date, the enum cast, and who decided from the
+    // session and never from the call. A teacher reads their own assessment through the report (the own-row arm, TO app_authenticated)
+    // and no colleague's, and no teacher writes one.
+    {
+      const ownerClient = new Client({ connectionString: ownerUrl });
+      await ownerClient.connect();
+      let niYear: string;
+      try {
+        niYear = (
+          await ownerClient.query<{ id: string }>(
+            `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+             VALUES ($1, $2, '2099-08-17', '2100-06-12', false, 'NIOARIG', now()) RETURNING id`,
+            [tj.schoolId, `${MARKER} tj bedömning`],
+          )
+        ).rows[0]!.id;
+      } finally {
+        await ownerClient.end();
+      }
+      // A teacher with a post has a row in the report even with no teaching, and that row carries the assessment.
+      const posts = new TeacherEmploymentsService(api);
+      await posts.upsert(tj.t1.id, niYear, { employmentPercent: 100 }, tjAdmin);
+      await posts.upsert(tj.t2.id, niYear, { employmentPercent: 80 }, tjAdmin);
+      const assessments = new ScopeAssessmentsService(api);
+      const written = await assessments.upsert(
+        tj.t1.id,
+        niYear,
+        { teachingLevelHours: 560, exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: '2093-05-02', note: 'probe bedömning' },
+        tjAdmin,
+      );
+      assert.deepEqual(
+        [written.teachingLevelHours, written.exceptionKind, written.ownInitiativeOn, written.decidedById],
+        [560, 'OWN_INITIATIVE', '2093-05-02', tjAdmin.userId],
+        'the row goes through the adapter as it was written, with the one who wrote it from the session',
+      );
+      const rewritten = await assessments.upsert(tj.t1.id, niYear, { teachingLevelHours: 540 }, tjAdmin);
+      assert.deepEqual([rewritten.teachingLevelHours, rewritten.exceptionKind, rewritten.ownInitiativeOn], [540, null, null], 'a second PUT replaces the row');
+      await assessments.upsert(tj.t1.id, niYear, { exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: '2093-05-02', note: 'probe bedömning' }, tjAdmin);
+      const reportOf = async (who: { id: string; authId: string }) =>
+        (await new StaffingLoadService(api).load(niYear, 'planned', tjTeacher(who))).scope?.teachers ?? [];
+      const own = (await reportOf(tj.t1)).find((row) => row.userId === tj.t1.id);
+      assert.deepEqual(
+        own?.assessment && [own.assessment.levelHours, own.assessment.exceptionKind, own.assessment.ownInitiativeOn, own.assessment.note],
+        [null, 'OWN_INITIATIVE', '2093-05-02', 'probe bedömning'],
+        'a teacher reads their own assessment through the report',
+      );
+      assert.ok((await reportOf(tj.t2)).every((row) => row.assessment === undefined), 'a teacher reads no colleague\'s assessment');
+      await assert.rejects(
+        assessments.upsert(tj.t1.id, niYear, { teachingLevelHours: 500 }, tjTeacher(tj.t1)),
+        'no teacher writes an assessment',
+      );
+      assert.deepEqual((await assessments.list(niYear, tjAdmin)).map((row) => row.userId), [tj.t1.id]);
+      await assessments.remove(tj.t1.id, niYear, tjAdmin);
+      assert.deepEqual(await assessments.list(niYear, tjAdmin), [], 'the assessment is gone');
+    }
     await clearTarget();
 
     // (c) A signature taken in the target by a teacher outside the carried
@@ -5766,7 +5823,13 @@ async function runChecks(
           // band. The post lock that precedes it was already sent for the
           // over-target question; a school that has turned both questions OFF
           // sends neither.
-          'give a timplanspost a teacher': 29,
+          // +1 since Rektorns bedömning (20270306090000): in a läsår the ordinance
+          // reaches the rektor's levels and exceptions of the year are read too,
+          // ONE statement on AssignmentScopeAssessments, because a teacher with a
+          // registered exception is warned and not refused (11 §). Not sent in a
+          // läsår that begins before 2027-07-01 (no lydelse holds: nothing to
+          // judge), nor by a school that asks the question of nobody.
+          'give a timplanspost a teacher': 30,
           // +1 since Lärarens dag (20261123090000) on a create that names a
           // teacher, in a school without a cap, as here, and the one thing a
           // create pays for it: the teachers' caps, one indexed SELECT,

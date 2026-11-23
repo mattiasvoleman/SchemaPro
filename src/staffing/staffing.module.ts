@@ -3,6 +3,8 @@ import { StaffingPolicyController } from './staffing-policy.controller';
 import { StaffingPolicyService } from './staffing-policy.service';
 import { TeacherEmploymentsController } from './teacher-employments.controller';
 import { TeacherEmploymentsService } from './teacher-employments.service';
+import { ScopeAssessmentsController } from './scope-assessments.controller';
+import { ScopeAssessmentsService } from './scope-assessments.service';
 import { TeacherQualificationsController } from './teacher-qualifications.controller';
 import { TeacherQualificationsService } from './teacher-qualifications.service';
 import { StaffingLoadController } from './staffing-load.controller';
@@ -38,6 +40,7 @@ import { ScbFileService } from './scb/scb-file.service';
   controllers: [
     StaffingPolicyController,
     TeacherEmploymentsController,
+    ScopeAssessmentsController,
     TeacherQualificationsController,
     StaffingLoadController,
     EngineReleaseController,
@@ -47,6 +50,7 @@ import { ScbFileService } from './scb/scb-file.service';
   providers: [
     StaffingPolicyService,
     TeacherEmploymentsService,
+    ScopeAssessmentsService,
     TeacherQualificationsService,
     StaffingLoadService,
     EngineReleaseService,

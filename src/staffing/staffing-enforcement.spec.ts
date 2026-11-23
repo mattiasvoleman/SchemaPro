@@ -550,6 +550,79 @@ describe('enforceRequirementWrite and RequirementImportChecks and the ordinance\
     await expect(create(14)).resolves.toEqual([]);
   });
 
+  describe('the rektor\'s assessments of the year (AssignmentScopeAssessments)', () => {
+    const stored = (exceptionKind: 'OWN_INITIATIVE' | 'SMALL_GROUP' | null, level: number | null = null) => ({
+      id: 'a-1',
+      schoolId: 'school',
+      userId: ANNA,
+      academicYearId: WORLD_YEAR.id,
+      teachingLevelHours: level,
+      exceptionKind,
+      ownInitiativeOn: exceptionKind === 'OWN_INITIATIVE' ? new Date('2026-05-02T00:00:00.000Z') : null,
+      note: null,
+      decidedById: null,
+      decidedAt: new Date('2026-03-05T08:00:00.000Z'),
+      createdAt: new Date('2026-03-05T08:00:00.000Z'),
+      updatedAt: new Date('2026-03-05T08:00:00.000Z'),
+    });
+
+    it('warns, and writes, for a teacher with a registered exception though the school refuses: 11 § allows it', async () => {
+      arrange({ assignmentScopeMode: 'REFUSE' });
+      tx.assignmentScopeAssessment.findMany.mockResolvedValue([stored('SMALL_GROUP')]);
+      await expect(create(14)).resolves.toEqual([
+        { code: 'STAFF_TEACHER_OVER_SCOPE', params: { role: 'TEACHER', hours: '602', limit: '600' } },
+      ]);
+    });
+
+    it('still refuses a teacher whose assessment is a level and no exception', async () => {
+      arrange({ assignmentScopeMode: 'REFUSE' });
+      tx.assignmentScopeAssessment.findMany.mockResolvedValue([stored(null, 500)]);
+      await expect(create(14)).rejects.toMatchObject({ status: 409, response: { code: 'STAFF_TEACHER_OVER_SCOPE' } });
+    });
+
+    it('reads the year\'s assessments once, in the same transaction, after the lydelse, and only for a year the ordinance reaches', async () => {
+      arrange({ assignmentScopeMode: 'WARN' });
+      await create(13);
+      expect(tx.assignmentScopeAssessment.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.assignmentScopeAssessment.findMany).toHaveBeenCalledWith({ where: { academicYearId: WORLD_YEAR.id }, orderBy: { userId: 'asc' } });
+    });
+
+    it('reads none for a year the ordinance does not reach, a school that asks nothing, or a teacher with no post', async () => {
+      arrange({ assignmentScopeMode: 'REFUSE' }, { validFrom: '2027-07-01' });
+      await create(14);
+      arrange({ assignmentScopeMode: 'OFF' });
+      await create(14);
+      arrange({ assignmentScopeMode: 'REFUSE' }, { employments: false });
+      await create(14);
+      expect(tx.assignmentScopeAssessment.findMany).not.toHaveBeenCalled();
+    });
+
+    it('a requirements file reads them once for the whole upload and excuses the same teacher on every row', async () => {
+      arrange({ assignmentScopeMode: 'REFUSE' });
+      tx.assignmentScopeAssessment.findMany.mockResolvedValue([stored('OWN_INITIATIVE')]);
+      const checks = await RequirementImportChecks.open(tx as unknown as PrismaClient, {
+        viewer: testUser(),
+        showsPeriods: true,
+        schoolId: 'school',
+        academicYearId: WORLD_YEAR.id,
+        teacherIds: [ANNA],
+        groupIds: [G7],
+      });
+      expect(tx.assignmentScopeAssessment.findMany).toHaveBeenCalledTimes(1);
+      const row = checks!.judge({
+        requirementId: null,
+        rowNumber: 2,
+        subjectId: 'ma',
+        subjectName: 'ma',
+        studentGroupId: G7,
+        groupName: '7A',
+        patch: { teacherId: ANNA, lessonsPerWeek: 14, minutesPerLesson: 60 },
+      });
+      expect(row.findings.map((finding) => finding.mode)).toEqual(['WARN']);
+      expect(tx.assignmentScopeAssessment.findMany).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('says only the verdict to a reader without HR-läs', async () => {
     arrange({ assignmentScopeMode: 'REFUSE' });
     await expect(

@@ -131,6 +131,19 @@ export interface ScopeStageHours {
   planningFloorPercent: number;
 }
 
+/**
+ * The rektor's assessment of one teacher as the report shows it (AssignmentScopeAssessments). A reader without HR-läs gets the
+ * exception kind alone, so the verdict can say why a write was not refused; the level, the day, the note and the time are the
+ * assessment of an employee, read like the post beside them.
+ */
+export interface ScopeAssessmentView {
+  levelHours: number | null;
+  exceptionKind: 'OWN_INITIATIVE' | 'SMALL_GROUP' | null;
+  ownInitiativeOn: string | null;
+  note: string | null;
+  decidedAt: string | null;
+}
+
 export interface TeacherScope {
   userId: string;
   verdict: ScopeVerdict;
@@ -181,6 +194,12 @@ export interface TeacherScope {
    * (not false) otherwise, so a report of a school with no such teacher is the report it was.
    */
   overOnlyWithUnregulated?: true;
+  /**
+   * The rektor's assessment of the teacher, when one is written. Absent (not null) otherwise, so a report of a school that
+   * assesses nobody is the report it always was. A level lowers `highestHours` and gives OVER_OWN; an exception changes nothing
+   * in the verdict, only what a write is refused for (staffing-checks.ts overScopeFinding).
+   */
+  assessment?: ScopeAssessmentView;
 }
 
 /**
@@ -375,6 +394,7 @@ export function buildScopeReport(
       }))
       .sort((a, b) => a.gradeFrom - b.gradeFrom);
 
+    const assessment = input.scopeAssessments?.get(userId);
     const base: TeacherScope = {
       userId,
       verdict: 'NOT_JUDGED',
@@ -390,6 +410,7 @@ export function buildScopeReport(
       planningFloorHours: null,
       remainingHours: null,
       planningFits: null,
+      ...(assessment ? { assessment } : {}),
     };
     if (yearReason !== null) {
       teachers.push(base);
@@ -428,7 +449,8 @@ export function buildScopeReport(
     const active = activePercentOf(employment, stretches);
     const share = active === null ? 0 : active / 100;
     const ordinanceHighest = high * share;
-    const own = options.ownLevelHours?.get(userId);
+    // The rektor's level: an explicit map (a caller's what-if) first, then the assessment the input carries.
+    const own = options.ownLevelHours?.get(userId) ?? assessment?.levelHours ?? undefined;
     const ownHighest = own === undefined ? null : Math.min(own, high) * share;
     const highest = ownHighest === null ? ordinanceHighest : Math.min(ownHighest, ordinanceHighest);
     // Judged on the printed figures: 650.04 h prints as 650.0 and is not over 650.0.
@@ -509,5 +531,9 @@ export function scopeOfTeacher(
  * ordinance's span known either gives the percentage back.
  */
 export function hideScopeHr(teacher: TeacherScope): TeacherScope {
-  return { ...teacher, highestHours: null, ordinanceHighestHours: null, remainingHours: null, planningFits: null };
+  const hidden: TeacherScope = { ...teacher, highestHours: null, ordinanceHighestHours: null, remainingHours: null, planningFits: null };
+  if (teacher.assessment) {
+    hidden.assessment = { levelHours: null, exceptionKind: teacher.assessment.exceptionKind, ownInitiativeOn: null, note: null, decidedAt: null };
+  }
+  return hidden;
 }

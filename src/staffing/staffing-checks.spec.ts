@@ -23,7 +23,7 @@ import {
   type StaffingFinding,
   type StaffingWarning,
 } from './staffing-checks';
-import type { JudgedYear, LoadEmployment, LoadInput, LoadQualification, LoadRequirement } from './teacher-load';
+import type { JudgedYear, LoadEmployment, LoadInput, LoadQualification, LoadRequirement, LoadScopeAssessment } from './teacher-load';
 import { scopeOfTeacher, type ScopeVersion } from './assignment-scope';
 
 const YEAR = { startDate: '2026-08-17', endDate: '2027-06-11' };
@@ -847,9 +847,10 @@ describe('the ordinance\'s highest level of teaching time (STAFF_TEACHER_OVER_SC
     after: LoadRequirement;
     policy?: CheckPolicy;
     versions?: readonly ScopeVersion[];
+    assessments?: ReadonlyMap<string, LoadScopeAssessment>;
   }) =>
     judgeRequirementWrite({
-      input: input({ requirements: args.existing ?? [], qualifications: [] }),
+      input: input({ requirements: args.existing ?? [], qualifications: [], ...(args.assessments ? { scopeAssessments: args.assessments } : {}) }),
       policy: args.policy ?? asking(),
       before: args.before ?? null,
       after: args.after,
@@ -918,6 +919,54 @@ describe('the ordinance\'s highest level of teaching time (STAFF_TEACHER_OVER_SC
         params: { role: 'TEACHER', hours: '602', limit: '600' },
       });
     }
+  });
+
+  describe('a registered exception under 11 §', () => {
+    const assessed = (exceptionKind: 'OWN_INITIATIVE' | 'SMALL_GROUP' | null, levelHours: number | null = null) =>
+      new Map<string, LoadScopeAssessment>([
+        [ANNA, { levelHours, exceptionKind, ownInitiativeOn: exceptionKind === 'OWN_INITIATIVE' ? '2026-05-02' : null, note: null, decidedAt: '2026-03-05T08:00:00.000Z' }],
+      ]);
+    const over = (assessments: ReadonlyMap<string, LoadScopeAssessment> | undefined, policyOverrides: Partial<CheckPolicy> = {}) =>
+      write({
+        after: requirement({ teacherId: ANNA, lessonsPerWeek: 14 }),
+        policy: asking({ assignmentScopeMode: 'REFUSE', ...policyOverrides }),
+        ...(assessments ? { assessments } : {}),
+      });
+
+    it.each(['OWN_INITIATIVE', 'SMALL_GROUP'] as const)('is warned and never refused under REFUSE: %s, with the sentence it always has', (kind) => {
+      const findings = over(assessed(kind));
+      expect(findings).toEqual([
+        { code: STAFF_TEACHER_OVER_SCOPE, mode: 'WARN', userId: ANNA, params: { role: 'TEACHER', hours: '602', limit: '600' } },
+      ]);
+      expect(() => settleFindings(findings)).not.toThrow();
+    });
+
+    it('is warned, not refused, in the reader-without-HR wording too', () => {
+      expect(over(assessed('SMALL_GROUP'), { showsPeriods: false })).toEqual([
+        { code: STAFF_TEACHER_OVER_SCOPE_HIDDEN, mode: 'WARN', userId: ANNA, params: { role: 'TEACHER' } },
+      ]);
+    });
+
+    it('does not excuse a teacher whose assessment is a level only, nor one with no assessment: REFUSE refuses them', () => {
+      expect(over(assessed(null, 580))[0]!.mode).toBe('REFUSE');
+      expect(over(undefined)[0]!.mode).toBe('REFUSE');
+      expect(over(new Map())[0]!.mode).toBe('REFUSE');
+    });
+
+    it('does not excuse a colleague: the exception is the teacher\'s own', () => {
+      const colleague = new Map<string, LoadScopeAssessment>([
+        [BO, { levelHours: null, exceptionKind: 'SMALL_GROUP', ownInitiativeOn: null, note: null, decidedAt: '2026-03-05T08:00:00.000Z' }],
+      ]);
+      expect(over(colleague)[0]!.mode).toBe('REFUSE');
+    });
+
+    it('still gives the warning under WARN, which is what it was', () => {
+      expect(over(assessed('SMALL_GROUP'), { assignmentScopeMode: 'WARN' })[0]!.mode).toBe('WARN');
+    });
+
+    it('is the ordinance\'s edge it is warned of, not the teacher\'s own level: a level under the edge never refuses and an exception does not change that', () => {
+      expect(over(assessed('SMALL_GROUP', 500))).toHaveLength(1);
+    });
   });
 
   it('asks nothing under OFF, nor without the lydelser, nor in a policy that has no mode of its own (from before the column)', () => {

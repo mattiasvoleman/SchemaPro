@@ -2106,8 +2106,21 @@ describe('StaffingProposalService.apply', () => {
    * wiring and not by the figures (those are the pure judge's: staffing-checks.spec.ts, staffing-enforcement.spec.ts).
    */
   describe('the ordinance\'s highest level of teaching time', () => {
-    const withTinyOrdinance = (mode: 'OFF' | 'WARN') => {
+    const withTinyOrdinance = (mode: 'OFF' | 'WARN' | 'REFUSE', excepted: string[] = []) => {
       const rows = schoolRows();
+      // The rektor's registered exceptions under 11 § (AssignmentScopeAssessments): one row each, the day when it is the teacher's own initiative.
+      rows['assignmentScopeAssessment'] = excepted.map((userId) => ({
+        id: `assessment-${userId}`,
+        schoolId: 'school',
+        userId,
+        academicYearId: YEAR,
+        teachingLevelHours: null,
+        exceptionKind: 'SMALL_GROUP',
+        ownInitiativeOn: null,
+        note: null,
+        decidedById: null,
+        decidedAt: new Date('2026-03-05T08:00:00.000Z'),
+      }));
       rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['lessonsPerWeek'] = 2;
       rows['staffingPolicy']![0]!['assignmentScopeMode'] = mode;
       const band = (gradeFrom: number, gradeTo: number): Row => ({
@@ -2150,6 +2163,19 @@ describe('StaffingProposalService.apply', () => {
       const result = await service.apply(giveBo(proposal), admin());
       expect(result.warnings).toContainEqual(expect.objectContaining({ code: 'STAFF_TEACHER_OVER_SCOPE', userId: BO, requirementIds: [R_MA8] }));
       expect(leadOf(world, R_MA8)).toBe(BO);
+    });
+
+    it('refuses under REFUSE a change that takes a teacher past the edge, and warns instead of one with a registered exception under 11 §', async () => {
+      const refused = await proposeThenApply(withTinyOrdinance('REFUSE'));
+      await expect(refused.service.apply(giveBo(refused.proposal), admin())).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'STAFF_TEACHER_OVER_SCOPE' },
+      });
+      expect(leadOf(refused.world, R_MA8)).toBeNull();
+      const excepted = await proposeThenApply(withTinyOrdinance('REFUSE', [BO]));
+      const result = await excepted.service.apply(giveBo(excepted.proposal), admin());
+      expect(result.warnings).toContainEqual(expect.objectContaining({ code: 'STAFF_TEACHER_OVER_SCOPE', userId: BO, requirementIds: [R_MA8] }));
+      expect(leadOf(excepted.world, R_MA8)).toBe(BO);
     });
 
     it('asks nothing of the ordinance under OFF', async () => {
