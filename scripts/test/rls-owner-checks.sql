@@ -2402,12 +2402,12 @@ BEGIN
 
   -- Receipts marked: all of Q1's, G2's of Q2, only G1's of Q3, none of Q4, Q5, Q6, Q9, Q10.
   PERFORM pg_temp.kvo_expect('373o receipts reminded',
-    (SELECT string_agg(q.title || ':' || (SELECT count(*) FROM "AckReceipts" r WHERE r."requestId" = q.id AND r."remindedAt" IS NOT NULL), ' ' ORDER BY q.title)
+    (SELECT string_agg(q.title || ':' || (SELECT count(*) FROM "AckReceipts" r WHERE r."requestId" = q.id AND r."remindedAt" IS NOT NULL), ' ' ORDER BY q.title COLLATE "C")
        FROM "AckRequests" q WHERE q.id IN (q1, q2, q3, q4, q5, q6, q7, q9, q10)),
     'Q1:3 Q10:0 Q2:1 Q3:1 Q4:0 Q5:0 Q6:0 Q7:1 Q9:0');
   -- How each ended, and a time only where something was sent.
   PERFORM pg_temp.kvo_expect('373o how the reminders ended',
-    (SELECT string_agg(q.title || ':' || coalesce(q."reminderOutcome"::text, '-') || ':' || (q."reminderSentAt" IS NOT NULL)::text, ' ' ORDER BY q.title)
+    (SELECT string_agg(q.title || ':' || coalesce(q."reminderOutcome"::text, '-') || ':' || (q."reminderSentAt" IS NOT NULL)::text, ' ' ORDER BY q.title COLLATE "C")
        FROM "AckRequests" q WHERE q.id IN (q1, q2, q3, q4, q5, q6, q7, q9, q10)),
     'Q1:SENT:true Q10:NOT_NEEDED:false Q2:SENT:true Q3:SENT:true Q4:-:false Q5:LAPSED:false Q6:NOT_NEEDED:false Q7:SENT:true Q9:STOPPED:false');
   -- Never twice: none of these is in the queue again, and the request is not asked again by name.

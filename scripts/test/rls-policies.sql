@@ -26012,7 +26012,10 @@ BEGIN
               WHERE id IN ('00000000-0000-4000-8000-000000001661', '00000000-0000-4000-8000-000000001662')) THEN
     RAISE EXCEPTION 'sweep and held rows: the second connection left its runs behind';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 176 AND objsubid = 2) THEN
+  -- pg_locks lists the whole cluster's locks: the wait above asks for this database's, and so must this, or a suite running in
+  -- another database of the same cluster (a second job, a reviewer's copy) is taken for this one's second connection.
+  IF EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                AND classid = 176 AND objsubid = 2) THEN
     RAISE EXCEPTION 'sweep and held rows: the second connection is still there';
   END IF;
 END $$;
@@ -30213,16 +30216,16 @@ DECLARE
   teachers text;
   helper text;
 BEGIN
-  SELECT coalesce(string_agg(coalesce(note, id::text), ',' ORDER BY coalesce(note, id::text)), '') INTO lessons
+  SELECT coalesce(string_agg(coalesce(note, id::text), ',' ORDER BY coalesce(note, id::text) COLLATE "C"), '') INTO lessons
     FROM "CalendarLessons" WHERE note LIKE 'EG-%' OR note IS NULL;
   IF api THEN
-    SELECT coalesce(string_agg(topic, ',' ORDER BY topic), '') INTO logs FROM "LessonLogs" WHERE topic LIKE 'EG %';
+    SELECT coalesce(string_agg(topic, ',' ORDER BY topic COLLATE "C"), '') INTO logs FROM "LessonLogs" WHERE topic LIKE 'EG %';
   END IF;
-  SELECT coalesce(string_agg(DISTINCT coalesce(l.note, t."calendarLessonId"::text), ',' ORDER BY coalesce(l.note, t."calendarLessonId"::text)), '')
+  SELECT coalesce(string_agg(DISTINCT coalesce(l.note, t."calendarLessonId"::text) COLLATE "C", ',' ORDER BY coalesce(l.note, t."calendarLessonId"::text) COLLATE "C"), '')
     INTO teachers
     FROM "CalendarLessonTeachers" t LEFT JOIN "CalendarLessons" l ON l.id = t."calendarLessonId"
    WHERE l.note LIKE 'EG-%' OR l.id IS NULL;
-  SELECT coalesce(string_agg(coalesce(l.note, x::text), ',' ORDER BY coalesce(l.note, x::text)), '') INTO helper
+  SELECT coalesce(string_agg(coalesce(l.note, x::text), ',' ORDER BY coalesce(l.note, x::text) COLLATE "C"), '') INTO helper
     FROM unnest(app.current_student_replaced_lesson_ids()) x LEFT JOIN "CalendarLessons" l ON l.id = x;
   RETURN lessons || ' | ' || logs || ' | ' || teachers || ' | ' || helper;
 END
@@ -30283,7 +30286,7 @@ BEGIN
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001502')::text, true);
   CREATE TEMP TABLE eg_hidden ON COMMIT DROP AS SELECT unnest(app.current_student_replaced_lesson_ids()) AS id;
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001500')::text, true);
-  SELECT string_agg(l.note, ',' ORDER BY l.note) INTO got FROM eg_hidden h JOIN "CalendarLessons" l ON l.id = h.id;
+  SELECT string_agg(l.note, ',' ORDER BY l.note COLLATE "C") INTO got FROM eg_hidden h JOIN "CalendarLessons" l ON l.id = h.id;
   IF got IS DISTINCT FROM 'EG-1,EG-10,EG-12,EG-14,EG-6,EG-7' THEN
     RAISE EXCEPTION 'replacing: P1''s helper takes them off %, not EG-1,EG-10,EG-12,EG-14,EG-6,EG-7', coalesce(got, '(nothing)');
   END IF;
@@ -30309,7 +30312,7 @@ BEGIN
       PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001509')::text, true);
       PERFORM set_config('app.chosen_school_id', CASE WHEN via = 'app_authenticated' THEN named ELSE '' END, true);
       PERFORM set_config('request.headers', CASE WHEN via = 'authenticated' AND named <> '' THEN json_build_object('x-school-id', named)::text ELSE '' END, true);
-      SELECT coalesce(string_agg(note, ',' ORDER BY note), '') INTO seen FROM "CalendarLessons" WHERE note LIKE 'EG-%';
+      SELECT coalesce(string_agg(note, ',' ORDER BY note COLLATE "C"), '') INTO seen FROM "CalendarLessons" WHERE note LIKE 'EG-%';
       IF seen IS DISTINCT FROM cases[i][2] THEN
         RAISE EXCEPTION 'replacing: M naming "%" as % reads "%", not "%"', cases[i][1], via, seen, cases[i][2];
       END IF;
@@ -30397,7 +30400,7 @@ BEGIN
   PERFORM pg_temp.eg_as('00000000-0000-4000-8000-000000001500');
   IF got IS NULL THEN RETURN '(no feed)'; END IF;
   SELECT array_agg((e->>'id')::uuid) INTO ids FROM jsonb_array_elements(got->'lessons') e;
-  SELECT coalesce(string_agg(l.note, ',' ORDER BY l.note), '') INTO notes FROM "CalendarLessons" l WHERE l.id = ANY (coalesce(ids, '{}'));
+  SELECT coalesce(string_agg(l.note, ',' ORDER BY l.note COLLATE "C"), '') INTO notes FROM "CalendarLessons" l WHERE l.id = ANY (coalesce(ids, '{}'));
   RETURN notes;
 END $$;
 DO $$
@@ -32541,12 +32544,12 @@ BEGIN
   IF (SELECT array_agg("schoolId"::text || '/' || "role"::text || '/' || ("loginSince" = 'infinity')::text || '/' || "isActive"::text
                        || '/' || "huvudmanReader"::text ORDER BY "loginSince", "schoolId")
         FROM sign_in.rules(p::uuid)) IS DISTINCT FROM
-     (SELECT array_agg(s || '/SCHOOL_ADMIN/true/true/true' ORDER BY s) FROM unnest(ARRAY[a, m, c]) s) THEN
+     (SELECT array_agg(s || '/SCHOOL_ADMIN/true/true/true' ORDER BY s COLLATE "C") FROM unnest(ARRAY[a, m, c]) s) THEN
     RAISE EXCEPTION 'huvudman 268a: P''s rules are %', (SELECT json_agg(x) FROM sign_in.rules(p::uuid) x);
   END IF;
   IF (SELECT array_agg("schoolId"::text || '/' || "role"::text || '/' || "huvudmanReader"::text ORDER BY "loginSince", "schoolId")
         FROM sign_in.rules(l::uuid))
-     IS DISTINCT FROM ARRAY[a || '/TEACHER/false'] || (SELECT array_agg(s || '/SCHOOL_ADMIN/true' ORDER BY s) FROM unnest(ARRAY[a, m, c]) s) THEN
+     IS DISTINCT FROM ARRAY[a || '/TEACHER/false'] || (SELECT array_agg(s || '/SCHOOL_ADMIN/true' ORDER BY s COLLATE "C") FROM unnest(ARRAY[a, m, c]) s) THEN
     RAISE EXCEPTION 'huvudman 268a: L''s rules are %', (SELECT json_agg(x) FROM sign_in.rules(l::uuid) x);
   END IF;
   IF (SELECT count(*) FROM sign_in.rules(g::uuid) WHERE "schoolId"::text = m) <> 2
@@ -33228,7 +33231,7 @@ BEGIN
   PERFORM pg_temp.delade_as(current_setting('app.test_d_admin'), NULL);
   SELECT string_agg(teacher_id || '@' || school_id, ',' ORDER BY teacher_id, school_id) INTO got
     FROM app.shared_teachers() WHERE teacher_id::text = ANY (not_shared || ARRAY[ids ->> 't_a', ids ->> 'y_a', ids ->> 'p_a']);
-  IF got IS DISTINCT FROM (SELECT string_agg(x, ',' ORDER BY x) FROM unnest(ARRAY[
+  IF got IS DISTINCT FROM (SELECT string_agg(x, ',' ORDER BY x COLLATE "C") FROM unnest(ARRAY[
         (ids ->> 't_a') || '@' || m, (ids ->> 't_a') || '@' || c, (ids ->> 'y_a') || '@' || m, (ids ->> 'p_a') || '@' || m]) x) THEN
     wrong := wrong || format('276a A''s shared teachers among T, Y, P, U, V, W, Z, Q, K, L, N are %s', got);
   END IF;
@@ -33518,8 +33521,8 @@ DECLARE
   m uuid := ids ->> 'm';
   c uuid := ids ->> 'c';
   d uuid := ids ->> 'd';
-  lo uuid := least(ids ->> 'a', ids ->> 'm');
-  hi uuid := greatest(ids ->> 'a', ids ->> 'm');
+  lo uuid := least(a, m);
+  hi uuid := greatest(a, m);
   wrong text[] := '{}';
   rec record;
   st text;
@@ -53312,7 +53315,9 @@ BEGIN
   PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", "subjectId", title) VALUES (%L, %L, '  cirkelsågen ')$q$, school, pg_temp.clf('subject')),
                              '23505', 'the same moment twice in a subject');
   INSERT INTO "InstructionTemplates" ("schoolId", title) VALUES (school, 'Cirkelsågen');
-  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", title) VALUES (%L, 'CIRKELSÅGEN')$q$, school),
+  -- The index folds case with the database's LC_CTYPE: a C one folds ASCII only and leaves Å as it is, so there the å stays small.
+  PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", title) VALUES (%L, %L)$q$, school,
+                                    CASE WHEN lower('Å') = 'å' THEN 'CIRKELSÅGEN' ELSE 'CIRKELSåGEN' END),
                              '23505', 'the same moment twice with no subject');
   PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", title) VALUES (%L, '')$q$, school), '23514', 'an empty title');
   PERFORM pg_temp.cl_refuses(format($q$INSERT INTO "InstructionTemplates" ("schoolId", title) VALUES (%L, %L)$q$, school, repeat('t', 121)), '23514', 'a title of 121 characters');
