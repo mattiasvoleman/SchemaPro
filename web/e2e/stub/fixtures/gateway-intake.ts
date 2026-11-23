@@ -52,7 +52,7 @@ function view(school: School, gaps: Record<string, IntakeGap>): IntakeView {
       area: "CLASSES",
       waitsForYear: waits,
       found: { classes: school.classes },
-      gaps: [presence("NO_CLASSES", "HARD", school.year !== null && school.classes === 0), g("CLASSES_WITHOUT_GRADE", "SOFT"), g("CLASSES_WITHOUT_POSTS", "SOFT")],
+      gaps: [presence("NO_CLASSES", "SOFT", school.year !== null && school.classes === 0), g("CLASSES_WITHOUT_GRADE", "SOFT"), g("CLASSES_WITHOUT_POSTS", "SOFT")],
     },
     { area: "TEACHING_GROUPS", found: { teachingGroups: school.teachingGroups }, waitsForYear: waits, gaps: [g("TEACHING_GROUPS_WITHOUT_MEMBERS", "SOFT")] },
     {
@@ -228,7 +228,7 @@ const DEMO_SCHOOL: IntakeView = {
       gaps: [
         {
           code: "NO_CLASSES",
-          level: "HARD",
+          level: "SOFT",
           count: 0,
           items: [],
           more: 0

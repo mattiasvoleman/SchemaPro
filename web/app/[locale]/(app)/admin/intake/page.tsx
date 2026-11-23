@@ -35,8 +35,12 @@ const BADGE: Record<IntakeLevel, NonNullable<BadgeProps["variant"]>> = {
 
 export default function IntakePage() {
   const t = useTranslations("intake");
+  const tCommon = useTranslations("common");
   const intake = useIntake();
   const view = intake.data;
+  // A read that fails over figures already in hand leaves them standing (the query keeps its data), and "Inget som sidan räknar stoppar
+  // Generera" must not be said over a school as it was a minute ago without saying so: the figures stay, and the page says they may be old.
+  const refetchFailed = intake.isError && view !== undefined;
 
   return (
     <Page width="wide">
@@ -60,6 +64,7 @@ export default function IntakePage() {
         />
       ) : (
         <>
+          {refetchFailed ? <LoadError variant="inline" title={t("loadFailed")} hint={tCommon("refetchFailedHint")} /> : null}
           <Summary hard={view.hard} soft={view.soft} info={view.info} yearName={view.year?.name ?? null} />
           <p className="max-w-3xl text-sm text-muted-foreground">{t("intro")}</p>
           <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">

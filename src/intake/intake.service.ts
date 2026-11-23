@@ -2,8 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../common/utils/request-context';
+import { unstaffedRequirementsWhere } from '../staffing/unstaffed-requirements';
 import { PrismaService } from '../database/prisma.service';
-import { assess, ITEM_CAP, type IntakeFacts, type IntakeView, type Named } from './intake';
+import { assess, type IntakeFacts, type IntakeView, type Named } from './intake';
 
 /**
  * Vad kom in (/admin/intake): the school's base data counted against what Generera and the steps after it ask for.
@@ -30,7 +31,9 @@ export class IntakeService {
 /** Who teaches: a teacher, or an administrator marked as one (Users.teaches). */
 const TEACHES = { isActive: true, OR: [{ role: 'TEACHER' as const }, { role: 'SCHOOL_ADMIN' as const, teaches: true }] };
 
-const named = (rows: readonly { name: string }[]): Named => ({ count: rows.length, names: rows.slice(0, ITEM_CAP).map((row) => row.name) });
+// Every name, and never the first few in the order the database happened to give them: `assess` sorts them the way the page reads them (sv, numeric
+// 7A before 10A) and then takes the first ITEM_CAP, so the card lists the first classes by name and not an arbitrary eight of them.
+const named = (rows: readonly { name: string }[]): Named => ({ count: rows.length, names: rows.map((row) => row.name) });
 
 /**
  * Every fact `assess` needs, read in one transaction. Exported for the database probe, which reads the same facts from a
@@ -88,16 +91,28 @@ export async function readFacts(tx: PrismaClient, schoolId: string): Promise<Int
   }
 
   const academicYearId = year.id;
-  const [classes, groups, withoutPost, subjectsWithoutPost, needingMissingRoomType, timplans, requirements, unstaffed, posts, withoutSignature, withoutPostTeachers] =
+  const [classes, teachingGroups, spanlessGroups, withoutPost, subjectsWithoutPost, needingMissingRoomType, timplans, requirements, unstaffed, posts, withoutSignature, withoutPostTeachers] =
     await Promise.all([
       tx.studentGroup.findMany({ where: { academicYearId, kind: 'CLASS' }, select: { name: true, gradeLevel: true } }),
+      tx.studentGroup.count({ where: { academicYearId, kind: 'TEACHING_GROUP' } }),
+      // The groups Generera binds to no årskurs: the gateway's own "spanless" (gradeSpanOf, shown on Generera as noYearTitle). A group the
+      // timplan names whose year cannot be derived: no pupil sits in a class that has one, and the group has none of its own. A half is made
+      // with its class's årskurs (student-groups.service.ts), and is planned before its pupils are placed: an empty half is not unbound.
       tx.studentGroup.findMany({
-        where: { academicYearId, kind: 'TEACHING_GROUP' },
-        select: { name: true, _count: { select: { teachingMembers: true } } },
+        where: {
+          academicYearId,
+          kind: 'TEACHING_GROUP',
+          gradeLevel: null,
+          teachingRequirements: { some: { academicYearId } },
+          teachingMembers: { none: { student: { studentGroup: { gradeLevel: { not: null } } } } },
+        },
+        select: { name: true },
+        orderBy: { name: 'asc' },
       }),
       classesWithoutPosts(tx, academicYearId),
       tx.subject.findMany({ where: { teachingRequirements: { none: { academicYearId } } }, select: { name: true }, orderBy: { name: 'asc' } }),
-      // A post of the year that asks for a room type no room has: the engine refuses it by name (ROOM_NO_ROOM_OF_TYPE_FOR_REQUIREMENT).
+      // A post of the year that asks for a room type no room has: the engine refuses it by name (ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT).
+      // The same refusal has two more causes this does not count: no room big enough for the group, and no room for its årskurser.
       tx.subject.findMany({
         where: {
           requiredRoomTypeId: { not: null },
@@ -109,7 +124,8 @@ export async function readFacts(tx: PrismaClient, schoolId: string): Promise<Int
       }),
       tx.academicYearTimplan.findMany({ where: { academicYearId }, select: { gradeLevel: true, localTimplan: { select: { status: true } } } }),
       tx.teachingRequirement.count({ where: { academicYearId } }),
-      tx.teachingRequirement.count({ where: { academicYearId, teacherId: null } }),
+      // The rows Generera's pre-flight and the publish gate call unstaffed: no lead, or a share nobody teaches (one predicate, theirs).
+      tx.teachingRequirement.count({ where: unstaffedRequirementsWhere(academicYearId) }),
       tx.teacherEmployment.count({ where: { academicYearId } }),
       // The table refuses an empty signature (TeacherEmployments_signature_is_sane): no signature is a null.
       tx.teacherEmployment.count({ where: { academicYearId, signature: null } }),
@@ -117,7 +133,6 @@ export async function readFacts(tx: PrismaClient, schoolId: string): Promise<Int
     ]);
 
   const noGrade = classes.filter((row) => row.gradeLevel === null);
-  const emptyGroups = groups.filter((row) => row._count.teachingMembers === 0);
   return {
     ...school,
     year,
@@ -127,8 +142,8 @@ export async function readFacts(tx: PrismaClient, schoolId: string): Promise<Int
     classGrades: classes.map((row) => row.gradeLevel),
     classesWithoutGrade: named(noGrade),
     classesWithoutPost: withoutPost,
-    teachingGroups: groups.length,
-    teachingGroupsWithoutMembers: named(emptyGroups),
+    teachingGroups,
+    teachingGroupsWithoutMembers: named(spanlessGroups),
     timplanGrades: timplans.map((row) => ({ gradeLevel: row.gradeLevel, decided: row.localTimplan.status === 'DECIDED' })),
     requirements,
     unstaffedRequirements: unstaffed,
@@ -145,26 +160,33 @@ export async function readFacts(tx: PrismaClient, schoolId: string): Promise<Int
  * unplanned. Only a class none of these reaches is listed.
  */
 async function classesWithoutPosts(tx: PrismaClient, academicYearId: string): Promise<Named> {
+  // The classes the year's posts reach, found once from the posts and not once per class: an OR between a class's own post and a subselect
+  // over its halves cannot be hashed, so the planner nested-looped every class against every post (300 classes and 10 000 posts: 0,45 s,
+  // against 0,015 s from this shape, the same classes). The three ways a class is reached are the three arms of `reached`.
   const rows = await tx.$queryRaw<{ name: string }[]>(Prisma.sql`
+    WITH posts AS MATERIALIZED (
+      SELECT r."studentGroupId" AS "groupId" FROM "TeachingRequirements" r WHERE r."academicYearId" = ${academicYearId}::uuid
+    ),
+    reached AS (
+      -- a post of the class's own
+      SELECT p."groupId" AS "classId" FROM posts p
+      UNION
+      -- a post of one of its halves
+      SELECT h."halfOfId" FROM "StudentGroups" h JOIN posts p ON p."groupId" = h."id" WHERE h."halfOfId" IS NOT NULL
+      UNION
+      -- a post of a teaching group one of its pupils sits in
+      SELECT u."studentGroupId"
+      FROM "Users" u
+      JOIN "StudentGroupMembers" m ON m."studentId" = u."id"
+      JOIN posts p ON p."groupId" = m."studentGroupId"
+      WHERE u."studentGroupId" IS NOT NULL
+    )
     SELECT g."name"
     FROM "StudentGroups" g
     WHERE g."academicYearId" = ${academicYearId}::uuid
       AND g."kind" = 'CLASS'
-      AND NOT EXISTS (
-        SELECT 1 FROM "TeachingRequirements" r
-        WHERE r."academicYearId" = ${academicYearId}::uuid
-          AND (r."studentGroupId" = g."id"
-               OR r."studentGroupId" IN (SELECT h."id" FROM "StudentGroups" h WHERE h."halfOfId" = g."id"))
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM "Users" u
-        JOIN "StudentGroupMembers" m ON m."studentId" = u."id"
-        JOIN "TeachingRequirements" r ON r."studentGroupId" = m."studentGroupId"
-        WHERE u."studentGroupId" = g."id"
-          AND r."academicYearId" = ${academicYearId}::uuid
-      )
+      AND NOT EXISTS (SELECT 1 FROM reached x WHERE x."classId" = g."id")
     ORDER BY g."name"
   `);
-  return { count: rows.length, names: rows.slice(0, ITEM_CAP).map((row) => row.name) };
+  return named(rows);
 }

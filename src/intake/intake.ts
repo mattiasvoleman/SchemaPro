@@ -11,9 +11,11 @@ import { toNioarig, type GradeNumbering } from '../common/grade-numbering';
  * THREE LEVELS, and each rests on something the code does, never on a guess:
  *
  *   HARD  Generera cannot run without it. Either the engine refuses the request by name (INPUT_NO_REQUIREMENTS,
- *         INPUT_NO_ROOMS, ROOM_NO_ROOM_OF_TYPE_FOR_REQUIREMENT in optimization-engine/app/messages.py), or the
+ *         INPUT_NO_ROOMS, ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT: each raised before the search in optimization-engine/app/solver/scheduler_solver.py as an
+ *         InvalidScheduleInputError; the label of an infeasibility core is only a sentence, and no refusal), or the
  *         Generera page's own Förutsättningar hold the button (a läsår, a teacher, the staffed posts under Vägra), or
- *         a post, which Generera needs, cannot exist without it (a subject, a class).
+ *         a post, which Generera needs, cannot exist without it (a subject). A class is not one of them: a post belongs to a class OR to
+ *         a teaching group, and nothing in the gateway or the engine asks for a class (NO_CLASSES is SOFT).
  *   SOFT  Generera runs, and the result is worse or a warning follows: a class with no årskurs is bound by no frame
  *         or rast (handboken 5.2), a year with no frame time is laid in the engine's standard day, a class with no
  *         post gets no lessons.
@@ -76,7 +78,7 @@ export const GAP_DEFINITIONS = [
   { code: 'NO_ROOMS', area: 'ROOMS', level: 'HARD' },
   { code: 'FRAME_TIMES_MISSING', area: 'FRAME_TIMES', level: 'SOFT' },
   { code: 'NO_RASTS', area: 'RASTS', level: 'INFO' },
-  { code: 'NO_CLASSES', area: 'CLASSES', level: 'HARD' },
+  { code: 'NO_CLASSES', area: 'CLASSES', level: 'SOFT' },
   { code: 'CLASSES_WITHOUT_GRADE', area: 'CLASSES', level: 'SOFT' },
   { code: 'CLASSES_WITHOUT_POSTS', area: 'CLASSES', level: 'SOFT' },
   { code: 'TEACHING_GROUPS_WITHOUT_MEMBERS', area: 'TEACHING_GROUPS', level: 'SOFT' },
@@ -96,7 +98,7 @@ export type IntakeGapCode = (typeof GAP_DEFINITIONS)[number]['code'];
 /** The most names a gap lists. A school of thirty classes does not get thirty lines in a card; `more` says how many were left out. */
 export const ITEM_CAP = 8;
 
-/** A count and the names of the first ones, in the order the service read them. */
+/** A count and ALL the names, in any order: `assess` sorts them and lists the first ITEM_CAP (the count is not the length of what is listed). */
 export interface Named {
   count: number;
   names: readonly string[];
@@ -123,6 +125,7 @@ export interface IntakeFacts {
   classesWithoutGrade: Named;
   classesWithoutPost: Named;
   teachingGroups: number;
+  /** The teaching groups with a post in the year whose årskurs cannot be derived (no pupil in a graded class, none of their own): see the service. */
   teachingGroupsWithoutMembers: Named;
   teachers: number;
   students: number;

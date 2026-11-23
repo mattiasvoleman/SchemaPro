@@ -289,8 +289,8 @@
   "intake": {
     "title": "What came in",
     "subtitle": "What the school's base data holds, and what is missing before Generera can run",
-    "intro": "This page counts what is in the school and changes nothing. It does not say that a week can be laid: only Kontrollera veckan on the Generera page can answer that, and only sometimes.",
-    "year": "School year: {name}",
+    "intro": "This page counts what is in the school for the active school year and changes nothing. A year planned for the next term is not counted here: its posts and classes are checked on the Generera page when you pick that year. It does not say that a week can be laid: only Kontrollera veckan on the Generera page can answer that, and only sometimes.",
+    "year": "Active school year: {name}",
     "loadFailed": "What came in could not be fetched",
     "loadFailedHint": "No figures are shown, because an empty list must not be read as a school with no base data. Reload the page.",
     "retry": "Try again",
@@ -385,8 +385,8 @@
         "hint": "The class has no entry, none of its halves has one, and none of its pupils is in a group that has one. It then gets no lessons."
       },
       "TEACHING_GROUPS_WITHOUT_MEMBERS": {
-        "title": "{count, plural, one {# teaching group has} other {# teaching groups have}} no members",
-        "hint": "A group with no pupils is bound by no year group. Add the members under Classes."
+        "title": "{count, plural, one {# teaching group with curriculum entries has} other {# teaching groups with curriculum entries have}} no year",
+        "hint": "The year is derived from the members’ home classes, or from the group’s own. Neither is there, so frame times and breaks do not bind the group’s lessons. Add the members or a year under Classes."
       },
       "NO_TEACHERS": {
         "title": "No teachers have been added",

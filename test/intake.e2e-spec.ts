@@ -33,6 +33,7 @@ describe('/api/v1/intake (e2e)', () => {
     harness.tx['staffingPolicy']!['findUnique']!.mockResolvedValue(null);
     harness.tx['frameTime']!['findMany']!.mockResolvedValue([{ minGradeLevel: 7, maxGradeLevel: 9 }]);
     harness.tx['studentGroup']!['findMany']!.mockResolvedValue([]);
+    harness.tx['studentGroup']!['count']!.mockResolvedValue(0);
     harness.tx.$queryRaw.mockResolvedValue([]);
   });
 
@@ -80,7 +81,7 @@ describe('/api/v1/intake (e2e)', () => {
 
   it('holds no person: nothing in the answer is a name, an address or a number of a post', async () => {
     harness.tx['studentGroup']!['findMany']!.mockImplementation(async (args: { where: { kind: string } }) =>
-      args.where.kind === 'CLASS' ? [{ name: 'Förberedelse', gradeLevel: null }] : [{ name: 'En74', _count: { teachingMembers: 0 } }],
+      args.where.kind === 'CLASS' ? [{ name: 'Förberedelse', gradeLevel: null }] : [{ name: 'En74' }],
     );
     const response = await http().get('/api/v1/intake').set('x-test-user', asUser({})).expect(200);
     expect(JSON.stringify(response.body)).toContain('Förberedelse');

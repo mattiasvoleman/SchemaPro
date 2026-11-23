@@ -289,8 +289,8 @@
   "intake": {
     "title": "Vad kom in",
     "subtitle": "Vad skolans grunddata innehåller, och vad som saknas för att Generera ska kunna köra",
-    "intro": "Sidan räknar det som finns i skolan och ändrar ingenting. Den säger inte att en vecka går att lägga: det kan bara Kontrollera veckan på Generera-sidan svara på, och bara ibland.",
-    "year": "Läsår: {name}",
+    "intro": "Sidan räknar det som finns i skolan under det aktiva läsåret och ändrar ingenting. Ett läsår som planeras inför nästa termin räknas inte här: dess poster och klasser prövas på Generera-sidan när du väljer det läsåret. Den säger inte att en vecka går att lägga: det kan bara Kontrollera veckan på Generera-sidan svara på, och bara ibland.",
+    "year": "Aktivt läsår: {name}",
     "loadFailed": "Det som kom in kunde inte hämtas",
     "loadFailedHint": "Inga siffror visas, eftersom en tom lista inte ska läsas som en skola utan grunddata. Ladda om sidan.",
     "retry": "Försök igen",
@@ -385,8 +385,8 @@
         "hint": "Klassen har ingen post, ingen halva av den har en, och ingen av dess elever går i en grupp som har en. Då får den inga lektioner."
       },
       "TEACHING_GROUPS_WITHOUT_MEMBERS": {
-        "title": "{count, plural, one {# undervisningsgrupp har} other {# undervisningsgrupper har}} inga medlemmar",
-        "hint": "En grupp utan elever binds inte av någon årskurs. Lägg till medlemmarna under Klasser."
+        "title": "{count, plural, one {# undervisningsgrupp med poster saknar} other {# undervisningsgrupper med poster saknar}} årskurs",
+        "hint": "Årskursen härleds ur medlemmarnas hemklasser, eller ur gruppens egen. Här finns ingen av dem, så ramtider och raster binder inte gruppens lektioner. Lägg till medlemmarna eller en årskurs under Klasser."
       },
       "NO_TEACHERS": {
         "title": "Inga lärare är inlagda",

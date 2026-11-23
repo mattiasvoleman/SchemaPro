@@ -66,6 +66,14 @@ describe.each([
     expect((messages as { waitsForYear: string }).waitsForYear.length).toBeGreaterThan(0);
   });
 
+  it("say that the page counts the ACTIVE läsår and not a year planned for the next term (the route takes no year; the Generera page plans the successor)", () => {
+    const text = messages as { year: string; intro: string };
+    expect(text.year).toMatch(/\{name\}/);
+    expect(text.year.toLowerCase()).toMatch(/aktivt|active/);
+    expect(text.intro.toLowerCase()).toMatch(/aktiva läsåret|active school year/);
+    expect(text.intro.toLowerCase()).toMatch(/nästa termin|next term/);
+  });
+
   it("name the three levels", () => {
     expect(Object.keys(messages.levels).sort()).toEqual(["HARD", "INFO", "SOFT"]);
   });

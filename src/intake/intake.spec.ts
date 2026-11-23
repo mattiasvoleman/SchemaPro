@@ -126,7 +126,6 @@ describe('what stops Generera', () => {
     ['NO_YEAR', { year: null }],
     ['NO_SUBJECTS', { subjects: 0 }],
     ['NO_ROOMS', { rooms: 0 }],
-    ['NO_CLASSES', { classes: 0, classGrades: [] }],
     ['NO_TEACHERS', { teachers: 0 }],
     ['NO_REQUIREMENTS', { requirements: 0 }],
     ['ROOM_TYPE_WITHOUT_ROOM', { subjectsNeedingMissingRoomType: { count: 1, names: ['Slöjd'] } }],
@@ -134,6 +133,13 @@ describe('what stops Generera', () => {
     const gap = gapOf(assess(healthy(overrides)), code);
     expect(gap.count).toBeGreaterThan(0);
     expect(gap.level).toBe('HARD');
+  });
+
+  it('is no class something that stops Generera: a post belongs to a class or to a teaching group, and the gateway and the engine ask for neither', () => {
+    // A school whose posts are all on teaching groups has no class and a week to lay.
+    const view = assess(healthy({ classes: 0, classGrades: [], classesWithoutGrade: none, classesWithoutPost: none, teachingGroups: 3 }));
+    expect(gapOf(view, 'NO_CLASSES')).toMatchObject({ count: 1, level: 'SOFT' });
+    expect(view.hard).toBe(0);
   });
 
   it('is a post with no teacher only when the school has chosen Vägra', () => {

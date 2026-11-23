@@ -36,6 +36,7 @@ import { createPgAdapter } from '../../src/database/pool-config';
 import { PrismaService } from '../../src/database/prisma.service';
 import type { IntakeGapCode, IntakeView } from '../../src/intake/intake';
 import { IntakeService } from '../../src/intake/intake.service';
+import { readUnstaffedRequirements } from '../../src/staffing/unstaffed-requirements';
 
 type Owner = PrismaClient;
 
@@ -142,7 +143,8 @@ async function buildSchool(owner: Owner, tag: string, cleanup: Array<() => Promi
 
   // The groups. 7A has a post of its own. 7B has none of its own, and its pupil sits in Ma7, which has one. 8A and 8B have none
   // and no pupil in a group with one. 9A has none of its own, but its half 9A-1 has, and a pupil of the class is in it. 9B has none
-  // of its own and no pupil in its half 9B-1, which has one: only the half reaches it. Förb has no årskurs and no post.
+  // of its own and no pupil in its half 9B-1, which has one: only the half reaches it. Förb has no årskurs and no post. En8 is a group with a post and
+  // nothing to derive its årskurs from; Ö8 is one with no post at all.
   const group: Record<string, string> = {};
   const makeGroup = async (name: string, kind: 'CLASS' | 'TEACHING_GROUP', gradeLevel: number | null, halfOf?: string) => {
     group[name] = (await owner.studentGroup.create({ data: { schoolId, academicYearId: yearId, name, kind, gradeLevel, ...(halfOf ? { halfOfId: group[halfOf]! } : {}) } })).id;
@@ -152,6 +154,7 @@ async function buildSchool(owner: Owner, tag: string, cleanup: Array<() => Promi
   await makeGroup('9A-1', 'TEACHING_GROUP', 9, '9A');
   await makeGroup('9B-1', 'TEACHING_GROUP', 9, '9B');
   await makeGroup('En8', 'TEACHING_GROUP', null);
+  await makeGroup('Ö8', 'TEACHING_GROUP', null);
 
   // Pupils: four in a class (one of them in Ma7 from 7B, one in the half 9A-1), one with no class, one deactivated with none.
   const pupil = async (key: string, cls: string | null, extra: Record<string, unknown> = {}) =>
@@ -174,6 +177,7 @@ async function buildSchool(owner: Owner, tag: string, cleanup: Array<() => Promi
   await requirement('Ma7', 'Svenska', t2.id);
   await requirement('9A-1', 'Matematik', t1.id);
   await requirement('9B-1', 'Svenska', t2.id);
+  await requirement('En8', 'Svenska', t2.id);
 
   // The frame times: a frame for åk 7 and 8, so åk 9 has none. No rast at all.
   await owner.frameTime.create({ data: { schoolId, minGradeLevel: 7, maxGradeLevel: 8, startTime: time('08:00'), endTime: time('16:00') } });
@@ -222,8 +226,8 @@ async function main(): Promise<void> {
       assert.deepEqual(found(view, 'FRAME_TIMES'), { frameTimes: 1 });
       assert.deepEqual(found(view, 'RASTS'), { rasts: 0 });
       assert.deepEqual(found(view, 'CLASSES'), { classes: 7 });
-      assert.deepEqual(found(view, 'TEACHING_GROUPS'), { teachingGroups: 4 });
-      assert.deepEqual(found(view, 'REQUIREMENTS'), { requirements: 5 });
+      assert.deepEqual(found(view, 'TEACHING_GROUPS'), { teachingGroups: 5 });
+      assert.deepEqual(found(view, 'REQUIREMENTS'), { requirements: 6 });
       assert.deepEqual(found(view, 'STAFFING'), { posts: 4 });
       assert.deepEqual(found(view, 'TIMPLAN'), { gradesWithTimplan: 2 });
     });
@@ -241,9 +245,11 @@ async function main(): Promise<void> {
       assert.equal(without.count, 3);
       assert.equal(without.level, 'SOFT');
     });
-    await check('(b) a class with no årskurs and a teaching group with no member are found by name', async () => {
+    await check('(b) a class with no årskurs and a teaching group Generera binds to no årskurs are found by name', async () => {
       assert.deepEqual(gap(view, 'CLASSES_WITHOUT_GRADE').items, ['Förb']);
-      assert.deepEqual(gap(view, 'TEACHING_GROUPS_WITHOUT_MEMBERS').items, ['9B-1', 'En8']);
+      // En8 has a post, no pupil and no årskurs of its own. Not listed: 9B-1 (a half, made with its class's årskurs 9: planned before its pupils are placed), Ma7
+      // (its pupils sit in classes that have one) and Ö8 (no post: Generera does not lay a group the timplan does not name).
+      assert.deepEqual(gap(view, 'TEACHING_GROUPS_WITHOUT_MEMBERS').items, ['En8']);
     });
     await check('(b) a subject with no post, a subject that needs a room type no room has, and a post with no teacher', async () => {
       assert.deepEqual(gap(view, 'SUBJECTS_WITHOUT_POSTS').items, ['Teknik']);
@@ -353,6 +359,46 @@ async function main(): Promise<void> {
       await owner.frameTime.create({ data: { schoolId, minGradeLevel: 8, maxGradeLevel: 9, startTime: time('08:00'), endTime: time('16:00') } });
       const short = await service.read(await adminOf(owner, schoolId));
       assert.deepEqual(gap(short, 'FRAME_TIMES_MISSING').items, ['8'], 'TIOARIG 8 is NIOARIG 7, which a frame for 8–9 does not span');
+    });
+
+    // (h) a post whose share nobody teaches
+    await check('(h) a post with a lead and a share whose teacher was deleted is unstaffed, as the pre-flight and the publish gate read it', async () => {
+      const { schoolId } = await newSchool(owner, tag, 'delad', cleanup);
+      const year = await owner.academicYear.create({ data: { schoolId, name: '2026/2027', startDate: new Date('2026-08-17'), endDate: new Date('2027-06-11'), gradeNumbering: 'NIOARIG', isActive: true } });
+      const person = (key: string) => owner.user.create({ data: { schoolId, authId: randomUUID(), role: 'TEACHER', firstName: key, lastName: 'Probe', email: `${key.toLowerCase()}-${tag}@probe.example.com` } });
+      const lead = await person('L1');
+      const sharer = await person('L2');
+      const klass = await owner.studentGroup.create({ data: { schoolId, academicYearId: year.id, name: '7A', kind: 'CLASS', gradeLevel: 7 } });
+      const subject = await owner.subject.create({ data: { schoolId, name: 'Matematik', code: 'MA' } });
+      await owner.room.create({ data: { schoolId, name: 'A101', capacity: 30 } });
+      const post = await owner.teachingRequirement.create({ data: { schoolId, academicYearId: year.id, studentGroupId: klass.id, subjectId: subject.id, teacherId: lead.id, lessonsPerWeek: 4, minutesPerLesson: 60 } });
+      await owner.teachingRequirementShare.create({ data: { schoolId, requirementId: post.id, teacherId: sharer.id, lessons: 2, minutes: 60 } });
+      const admin = await adminOf(owner, schoolId);
+      assert.equal(gap(await service.read(admin), 'UNSTAFFED_POSTS').count, 0, 'every lesson has a teacher while the share has one');
+      // Delade lektioner: the share's teacher is deleted (SET NULL), and 2 of the post's 4 lessons are nobody's.
+      await owner.user.delete({ where: { id: sharer.id } });
+      const view = await service.read(admin);
+      assert.equal(gap(view, 'UNSTAFFED_POSTS').count, 1);
+      const asked = await api.withRls(admin, (tx) => readUnstaffedRequirements(tx, year.id));
+      assert.equal(asked.length, gap(view, 'UNSTAFFED_POSTS').count, 'the pre-flight and the publish gate count the same rows');
+      await owner.staffingPolicy.upsert({ where: { schoolId }, create: { schoolId, unstaffedGeneration: 'REFUSE' }, update: { unstaffedGeneration: 'REFUSE' } });
+      const refused = await service.read(admin);
+      assert.deepEqual([gap(refused, 'UNSTAFFED_POSTS').count, gap(refused, 'UNSTAFFED_POSTS').level], [1, 'HARD']);
+      assert.equal(refused.hard, 1, 'under Vägra a share nobody teaches is the one thing that stops Generera here, and the page says so');
+    });
+
+    // (i) posts on teaching groups only: no class, and a week Generera lays
+    await check('(i) a school whose posts are all on a teaching group has no class and nothing that stops Generera', async () => {
+      const { schoolId } = await newSchool(owner, tag, 'grupper', cleanup);
+      const year = await owner.academicYear.create({ data: { schoolId, name: '2026/2027', startDate: new Date('2026-08-17'), endDate: new Date('2027-06-11'), gradeNumbering: 'NIOARIG', isActive: true } });
+      const teacher = await owner.user.create({ data: { schoolId, authId: randomUUID(), role: 'TEACHER', firstName: 'G1', lastName: 'Probe', email: `g1-${tag}@probe.example.com` } });
+      await owner.room.create({ data: { schoolId, name: 'A101', capacity: 30 } });
+      const subject = await owner.subject.create({ data: { schoolId, name: 'Matematik', code: 'MA' } });
+      const group = await owner.studentGroup.create({ data: { schoolId, academicYearId: year.id, name: 'Ma7', kind: 'TEACHING_GROUP', gradeLevel: 7 } });
+      await owner.teachingRequirement.create({ data: { schoolId, academicYearId: year.id, studentGroupId: group.id, subjectId: subject.id, teacherId: teacher.id, lessonsPerWeek: 3, minutesPerLesson: 60 } });
+      const view = await service.read(await adminOf(owner, schoolId));
+      assert.deepEqual([gap(view, 'NO_CLASSES').count, gap(view, 'NO_CLASSES').level], [1, 'SOFT']);
+      assert.equal(view.hard, 0, 'the year, a subject, a room, a teacher and a post: Generera has what its Förutsättningar ask for');
     });
 
     // (g) no person in the answer

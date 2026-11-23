@@ -11,7 +11,7 @@ import IntakePage from "./page";
  */
 
 const state = vi.hoisted(() => ({
-  query: { data: undefined as unknown, isLoading: false, refetch: vi.fn() },
+  query: { data: undefined as unknown, isLoading: false, isError: false, refetch: vi.fn() },
 }));
 
 vi.mock("@/lib/intake-queries", () => ({ useIntake: () => state.query }));
@@ -45,7 +45,7 @@ const view = (areas: IntakeArea[], year: IntakeView["year"] = { id: "y", name: "
 const card = (name: string) => screen.getByRole("region", { name: `intake.areas.${name}` });
 
 beforeEach(() => {
-  state.query = { data: undefined, isLoading: false, refetch: vi.fn() };
+  state.query = { data: undefined, isLoading: false, isError: false, refetch: vi.fn() };
 });
 
 describe("while it is read, and when it cannot be", () => {
@@ -58,13 +58,30 @@ describe("while it is read, and when it cannot be", () => {
 
   it("says it could not read, offers another try, and shows no area as empty", async () => {
     const refetch = vi.fn();
-    state.query = { data: undefined, isLoading: false, refetch };
+    state.query = { data: undefined, isLoading: false, isError: true, refetch };
     render(<IntakePage />);
     expect(screen.getByText("intake.loadFailed")).toBeTruthy();
     expect(screen.queryByText("intake.nothingMissing")).toBeNull();
     expect(screen.queryByRole("region")).toBeNull();
     await userEvent.setup().click(screen.getByRole("button", { name: "intake.retry" }));
     expect(refetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("when a read fails over figures the page already holds", () => {
+  it("keeps the figures and says they may be out of date, and says nothing of the kind when the read went well", () => {
+    const old = view([area("ROOMS", { rooms: 7 }, [gap("NO_ROOMS", "HARD", 0)])]);
+    state.query = { ...state.query, data: old, isError: true };
+    const { unmount } = render(<IntakePage />);
+    expect(screen.getByText("intake.loadFailed")).toBeTruthy();
+    expect(screen.getByText("common.refetchFailedHint")).toBeTruthy();
+    // The last answer is still there, under the notice: nothing was taken away, and nothing is said as if it were new.
+    expect(screen.getByText("intake.summary.okTitle")).toBeTruthy();
+    unmount();
+    state.query = { ...state.query, data: old, isError: false };
+    render(<IntakePage />);
+    expect(screen.queryByText("intake.loadFailed")).toBeNull();
+    expect(screen.queryByText("common.refetchFailedHint")).toBeNull();
   });
 });
 
