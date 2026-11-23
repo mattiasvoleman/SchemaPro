@@ -69922,6 +69922,12 @@ BEGIN
     -- row (1), before (2), insert (4), delete (8), update (16): row, before, insert and update
     'AssignmentScopeAssessments_decided 1 2 4 0 16');
   PERFORM pg_temp.ut_true('566 the trigger function does not run as its owner', NOT (SELECT prosecdef FROM pg_proc WHERE oid = 'app.assignment_scope_assessments_decided'::regproc));
+  -- ... and it pins its search_path. The migration writes (public, pg_temp) so that the function resolves every name the same way for every
+  -- caller; without the pin a mutant that drops the SET clause passes every other line of this section (the production check holds it too,
+  -- as cfg= in the function's fingerprint, but a suite that does not would let the change through on the day the migration is edited).
+  PERFORM pg_temp.ut_expect('566 the trigger function pins its search_path',
+    (SELECT coalesce(array_to_string(proconfig, ','), '-') FROM pg_proc WHERE oid = 'app.assignment_scope_assessments_decided'::regproc),
+    'search_path=public, pg_temp');
   RAISE NOTICE 'ut 566: % checks', current_setting('ut.checks');
 END $$;
 ROLLBACK;
