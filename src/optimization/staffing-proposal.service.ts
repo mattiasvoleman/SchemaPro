@@ -168,10 +168,11 @@ export interface ProposalTeacher {
   /**
    * The ordinance's highest level of teaching time (SFS 2026:1487 3 §, assignment-scope.ts), in clock hours over the läsår,
    * before and after the proposal: asked when the school's mode is not OFF, absent otherwise. Whether the teacher is OVER it
-   * is the dialog's warning (WARN) or the reason the proposal gave them nothing more (REFUSE). `highestHours` is the span times
-   * the post, so null for a reader without HR-läs.
+   * is the dialog's warning (WARN) or the reason the proposal gave them nothing more (REFUSE). The level itself (the span times the
+   * post, which gives the post back) is not sent: no page shows it, and a number nothing reads is a number that can leak the next
+   * time somebody touches the line (review of #408, L-6).
    */
-  scope?: { hoursBefore: number; hoursAfter: number; highestHours: number | null; overBefore: boolean; overAfter: boolean };
+  scope?: { hoursBefore: number; hoursAfter: number; overBefore: boolean; overAfter: boolean };
 }
 
 /** One stretch of a changing post: its dates, weeks and target, and its minutes before and after, exact to two decimals. */
@@ -1260,8 +1261,6 @@ export class StaffingProposalService {
         scope: {
           hoursBefore: was.teachingHours,
           hoursAfter: is.teachingHours,
-          // The span times the post gives the post back: a reader without HR-läs gets the verdict and no line.
-          highestHours: showsPeriods ? is.ordinanceHighestHours : null,
           overBefore: was.verdict === 'OVER_MAX',
           overAfter: is.verdict === 'OVER_MAX',
         },

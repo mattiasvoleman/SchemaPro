@@ -436,13 +436,13 @@ describe("StaffingProposalDialog", () => {
         proposal({
           teachers: base.teachers.map((teacher) => {
             if (teacher.userId === "t-anna") {
-              return { ...teacher, scope: { hoursBefore: 559, hoursAfter: 602, highestHours: 600, overBefore: false, overAfter: true } };
+              return { ...teacher, scope: { hoursBefore: 559, hoursAfter: 602, overBefore: false, overAfter: true } };
             }
             if (teacher.userId === "t-bo") {
-              return { ...teacher, scope: { hoursBefore: 300, hoursAfter: 340, highestHours: 480, overBefore: false, overAfter: false } };
+              return { ...teacher, scope: { hoursBefore: 300, hoursAfter: 340, overBefore: false, overAfter: false } };
             }
             if (teacher.userId === "t-cilla") {
-              return { ...teacher, scope: { hoursBefore: 700, hoursAfter: 650, highestHours: 600, overBefore: true, overAfter: true } };
+              return { ...teacher, scope: { hoursBefore: 700, hoursAfter: 650, overBefore: true, overAfter: true } };
             }
             return teacher;
           }),
@@ -1327,7 +1327,7 @@ describe("StaffingProposalDialog", () => {
         proposal({
           teachers: base.teachers.map((teacher) =>
             teacher.userId === "t-anna"
-              ? { ...teacher, scope: { hoursBefore: 559.5, hoursAfter: 602.5, highestHours: 600, overBefore: false, overAfter: true } }
+              ? { ...teacher, scope: { hoursBefore: 559.5, hoursAfter: 602.5, overBefore: false, overAfter: true } }
               : teacher,
           ),
         }),

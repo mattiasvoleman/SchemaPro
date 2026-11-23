@@ -87,6 +87,11 @@ function parseDay(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
 
+/** yyyy-mm-dd as whole days since 1970-01-01 (UTC); NaN for a string that is no date. */
+function dayNumber(value: string): number {
+  return parseDay(value).getTime() / DAY_MS;
+}
+
 /** Midnight UTC back to yyyy-mm-dd. */
 function toDay(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -243,17 +248,29 @@ export function teachingWeeksByDays(
   const window = clampToYear(period, year);
   if (!window) return 0;
 
-  const applicable = (closures ?? []).filter((closure) =>
-    closesForGrade(closure, gradeLevel),
-  );
+  // Whole days since the epoch, so a week is walked with integer arithmetic: this is called once per requirement of a year by the
+  // staffing report, the proposal and the checks on a write, and a Date, an ISO string and a pass over every closure per day cost
+  // 0.19 ms a call (review of #408, L-5). The answer is the one the day-by-day walk gives, which the contract spec replays.
+  const from = dayNumber(window.from);
+  const to = dayNumber(window.to);
+  if (Number.isNaN(from) || Number.isNaN(to)) return 0;
+
+  const closed: [number, number][] = [];
+  for (const closure of closures ?? []) {
+    if (!closesForGrade(closure, gradeLevel)) continue;
+    const start = dayNumber(closure.startDate);
+    const end = dayNumber(closure.endDate);
+    if (start <= end) closed.push([start, end]);
+  }
 
   let days = 0;
-  for (const monday of mondaysBetween(window.from, window.to)) {
-    if (!teachesInWeek(window, monday)) continue;
-    for (let offset = 0; offset < TEACHING_DAYS_IN_WEEK; offset += 1) {
-      const day = toDay(addDays(monday, offset));
-      if (day < window.from || day > window.to) continue;
-      if (applicable.some((closure) => day >= closure.startDate && day <= closure.endDate)) continue;
+  // 1970-01-01 was a Thursday, so (day + 3) mod 7 is 0 for a Monday.
+  for (let monday = from - ((((from + 3) % DAYS_IN_WEEK) + DAYS_IN_WEEK) % DAYS_IN_WEEK); monday <= to; monday += DAYS_IN_WEEK) {
+    if (window.recurrence !== 'ALL_WEEKS' && !runsInWeek(window.recurrence, new Date(monday * DAY_MS))) continue;
+    const first = Math.max(monday, from);
+    const last = Math.min(monday + TEACHING_DAYS_IN_WEEK - 1, to);
+    for (let day = first; day <= last; day += 1) {
+      if (closed.some(([start, end]) => day >= start && day <= end)) continue;
       days += 1;
     }
   }
