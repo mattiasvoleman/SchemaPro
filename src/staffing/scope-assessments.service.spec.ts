@@ -1,7 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
-import { lockingRead, type LockedTable } from '../../test/utils/locking-read';
+import { lockingRead, rawSql, type LockedTable } from '../../test/utils/locking-read';
 import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import {
@@ -13,6 +13,7 @@ import {
   ScopeAssessmentsService,
   hideScopeAssessment,
   scopeAboveEdge,
+  scopeDayOutsideYear,
   toScopeAssessmentResponse,
 } from './scope-assessments.service';
 
@@ -27,6 +28,20 @@ const USERS: LockedTable = {
   columns: ['id', 'schoolId', 'authId', 'role', 'firstName', 'lastName', 'email', 'phone', 'isActive', 'invitedAt', 'createdAt', 'updatedAt', 'studentGroupId'],
   lock: 'FOR NO KEY UPDATE',
 };
+
+/** The läsår as the service reads it: FOR SHARE, so that a PATCH of its dates waits (review of #410, L-6). */
+const YEARS: LockedTable = {
+  name: 'AcademicYears',
+  columns: ['id', 'startDate', 'endDate', 'gradeNumbering'],
+  lock: 'FOR SHARE',
+};
+const yearRow = (over: Record<string, unknown> = {}) => ({
+  id: YEAR_ID,
+  startDate: new Date('2027-08-16T00:00:00.000Z'),
+  endDate: new Date('2028-06-09T00:00:00.000Z'),
+  gradeNumbering: 'NIOARIG',
+  ...over,
+});
 
 const band = (over: Record<string, unknown>) => ({
   schoolForm: 'GRUNDSKOLA',
@@ -78,15 +93,22 @@ describe('ScopeAssessmentsService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
   let users: Record<string, unknown>[];
+  let years: Record<string, unknown>[];
 
   beforeEach(() => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
     service = new ScopeAssessmentsService(prisma as unknown as PrismaService);
     users = [{ id: COLLEAGUE, role: 'TEACHER' }];
-    Object.assign(tx, { $queryRaw: jest.fn((...call: unknown[]) => Promise.resolve(lockingRead(USERS, users, call))) });
     // A year that begins after the ordinance does, in the nine-year numbering; the lydelse that holds on its first day.
-    tx.academicYear.findUnique.mockResolvedValue({ startDate: new Date('2027-08-16T00:00:00.000Z'), gradeNumbering: 'NIOARIG' });
+    years = [yearRow()];
+    Object.assign(tx, {
+      $queryRaw: jest.fn((...call: unknown[]) =>
+        Promise.resolve(rawSql(call).includes('"AcademicYears"') ? lockingRead(YEARS, years, call) : lockingRead(USERS, users, call)),
+      ),
+    });
+    // The list asks that the year is the school's before it asks for its rows (a plain read: nothing is written).
+    tx.academicYear.findUnique.mockResolvedValue({ id: YEAR_ID });
     tx.assignmentScopeVersion.findFirst.mockResolvedValue(lydelse());
     tx.assignmentScopeBand.findMany.mockResolvedValue(lydelseBands());
     tx.assignmentScopeAssessment.upsert.mockImplementation(({ create }: { create: Record<string, unknown> }) =>
@@ -95,6 +117,18 @@ describe('ScopeAssessmentsService', () => {
   });
 
   describe('list', () => {
+    it('is a 404 for a year that is not the school\'s, as the write is, and reads no rows (L-3)', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(null);
+      await expect(service.list(YEAR_ID, testUser())).rejects.toBeInstanceOf(NotFoundException);
+      expect(tx.assignmentScopeAssessment.findMany).not.toHaveBeenCalled();
+      expect(tx.academicYear.findUnique).toHaveBeenCalledWith({ where: { id: YEAR_ID }, select: { id: true } });
+    });
+
+    it('is refused for a login with no school before anything is read (requireSchoolId)', async () => {
+      await expect(service.list(YEAR_ID, testUser({ schoolId: undefined }))).rejects.toThrow();
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
     it('hands the year\'s rows to an administrator who reads HR, whole, ordered by teacher', async () => {
       tx.assignmentScopeAssessment.findMany.mockResolvedValue([stored()]);
       const answer = await service.list(YEAR_ID, testUser());
@@ -221,7 +255,7 @@ describe('ScopeAssessmentsService', () => {
       await expect(put({ teachingLevelHours: 600 })).rejects.toThrow(new BadRequestException(SCOPE_NOT_IN_FORCE));
       expect(tx.assignmentScopeBand.findMany).not.toHaveBeenCalled();
       tx.assignmentScopeVersion.findFirst.mockResolvedValue(lydelse());
-      tx.academicYear.findUnique.mockResolvedValue({ startDate: new Date('2028-08-16T00:00:00.000Z'), gradeNumbering: 'TIOARIG' });
+      years = [yearRow({ startDate: new Date('2028-08-16T00:00:00.000Z'), endDate: new Date('2029-06-08T00:00:00.000Z'), gradeNumbering: 'TIOARIG' })];
       await expect(put({ teachingLevelHours: 600 })).rejects.toThrow(new BadRequestException(SCOPE_NUMBERING_NOT_COVERED));
       expect(tx.assignmentScopeAssessment.upsert).not.toHaveBeenCalled();
     });
@@ -237,9 +271,48 @@ describe('ScopeAssessmentsService', () => {
     });
 
     it('is a 404 for a year that is not the school\'s, and writes nothing', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(null);
+      years = [];
       await expect(put({ teachingLevelHours: 600 })).rejects.toBeInstanceOf(NotFoundException);
       expect(tx.assignmentScopeAssessment.upsert).not.toHaveBeenCalled();
+    });
+
+    it('reads the year FOR SHARE, once, before it reads the lydelse, so that a PATCH of the year\'s dates cannot move it between the two (L-6)', async () => {
+      await put({ teachingLevelHours: 600 });
+      const raw = (tx['$queryRaw'] as unknown as jest.Mock).mock.calls.map((call) => rawSql(call).replace(/\s+/g, ' ').trim());
+      expect(raw.filter((sql) => sql.includes('"AcademicYears"'))).toEqual([
+        'SELECT "startDate", "endDate", "gradeNumbering" FROM "AcademicYears" WHERE "id" = ?::uuid FOR SHARE',
+      ]);
+      const year = (tx['$queryRaw'] as unknown as jest.Mock).mock.invocationCallOrder.at(-1)!;
+      expect(tx.assignmentScopeVersion.findFirst.mock.invocationCallOrder[0]!).toBeGreaterThan(year - 1);
+    });
+
+    describe('the day of an own initiative (11 § p. 1) lies in the läsår or at most a year before it (L-4)', () => {
+      const initiative = (ownInitiativeOn: string) => put({ exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn });
+
+      it('takes the first day of the year before the läsår, the läsår\'s own days and its last day', async () => {
+        for (const on of ['2026-08-16', '2027-01-20', '2027-08-16', '2028-06-09']) {
+          await expect(initiative(on)).resolves.toMatchObject({ exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: on });
+        }
+      });
+
+      it('refuses the day before that, a day after the läsår, and the typos the table would have kept (1900, 2999, 2072 for 2027)', async () => {
+        for (const on of ['2026-08-15', '2028-06-10', '1900-01-01', '2999-01-01', '2072-09-01']) {
+          await expect(initiative(on)).rejects.toThrow(new BadRequestException(scopeDayOutsideYear('2026-08-16', '2028-06-09')));
+        }
+        expect(tx.assignmentScopeAssessment.upsert).not.toHaveBeenCalled();
+      });
+
+      it('asks nothing of the day when there is none (a level alone, or an exception that is not the teacher\'s own initiative)', async () => {
+        await expect(put({ teachingLevelHours: 600 })).resolves.toBeDefined();
+        await expect(put({ exceptionKind: 'SMALL_GROUP' })).resolves.toBeDefined();
+      });
+
+      it('moves with the läsår it is written for and not with a constant', async () => {
+        years = [yearRow({ startDate: new Date('2027-08-18T00:00:00.000Z'), endDate: new Date('2028-06-12T00:00:00.000Z') })];
+        await expect(initiative('2026-08-18')).resolves.toBeDefined();
+        await expect(initiative('2026-08-17')).rejects.toThrow(new BadRequestException(scopeDayOutsideYear('2026-08-18', '2028-06-12')));
+        await expect(initiative('2028-06-13')).rejects.toBeInstanceOf(BadRequestException);
+      });
     });
 
     it('is refused for a person who is not staff, under the lock every staffing write takes', async () => {

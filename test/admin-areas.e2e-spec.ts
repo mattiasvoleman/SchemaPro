@@ -231,6 +231,7 @@ describe('Administrator profiles and areas (e2e)', () => {
       decidedById: '77777777-7777-4777-8777-777777777777', decidedAt: new Date('2099-05-03T08:00:00Z'),
       createdAt: new Date('2099-05-03T08:00:00Z'), updatedAt: new Date('2099-05-03T08:00:00Z'),
     };
+    harness.tx['academicYear']!['findUnique']!.mockResolvedValue({ id: YEAR_ID });
     harness.tx['assignmentScopeAssessment']!['findMany']!.mockResolvedValue([row]);
     const list = (header: string) =>
       request(http()).get(`/api/v1/scope-assessments?academicYearId=${YEAR_ID}`).set('x-test-user', header).expect(200);

@@ -29,8 +29,16 @@ describe('Scope assessments (e2e)', () => {
 
   /** The transaction a good body reaches: the person is a teacher, the year begins after the ordinance does, the lydelse has its bands. */
   const givenAYearTheOrdinanceReaches = () => {
-    (harness.tx as unknown as { $queryRaw: jest.Mock }).$queryRaw.mockResolvedValue([{ role: 'TEACHER' }]);
-    harness.tx['academicYear']!['findUnique']!.mockResolvedValue({ startDate: new Date('2027-08-16T00:00:00.000Z'), gradeNumbering: 'NIOARIG' });
+    // The person's row (a locking read of Users) and the läsår's days and numbering (a locking read of AcademicYears, FOR SHARE).
+    (harness.tx as unknown as { $queryRaw: jest.Mock }).$queryRaw.mockImplementation((...call: unknown[]) => {
+      const first = call[0] as readonly string[];
+      return Promise.resolve(
+        first.join('?').includes('"AcademicYears"')
+          ? [{ startDate: new Date('2027-08-16T00:00:00.000Z'), endDate: new Date('2028-06-09T00:00:00.000Z'), gradeNumbering: 'NIOARIG' }]
+          : [{ role: 'TEACHER' }],
+      );
+    });
+    harness.tx['academicYear']!['findUnique']!.mockResolvedValue({ id: YEAR_ID });
     harness.tx['assignmentScopeVersion']!['findFirst']!.mockResolvedValue({
       id: 'v1', code: 'SFS2026:1487', sfs: 'SFS 2026:1487', title: 'Förordning', validFrom: new Date('2027-07-01T00:00:00.000Z'), validTo: null, source: 'https://example.invalid',
     });

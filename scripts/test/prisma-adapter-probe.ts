@@ -4980,23 +4980,23 @@ async function runChecks(
       const written = await assessments.upsert(
         tj.t1.id,
         niYear,
-        { teachingLevelHours: 560, exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: '2093-05-02', note: 'probe bedömning' },
+        { teachingLevelHours: 560, exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: '2099-05-02', note: 'probe bedömning' },
         tjAdmin,
       );
       assert.deepEqual(
         [written.teachingLevelHours, written.exceptionKind, written.ownInitiativeOn, written.decidedById],
-        [560, 'OWN_INITIATIVE', '2093-05-02', tjAdmin.userId],
+        [560, 'OWN_INITIATIVE', '2099-05-02', tjAdmin.userId],
         'the row goes through the adapter as it was written, with the one who wrote it from the session',
       );
       const rewritten = await assessments.upsert(tj.t1.id, niYear, { teachingLevelHours: 540 }, tjAdmin);
       assert.deepEqual([rewritten.teachingLevelHours, rewritten.exceptionKind, rewritten.ownInitiativeOn], [540, null, null], 'a second PUT replaces the row');
-      await assessments.upsert(tj.t1.id, niYear, { exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: '2093-05-02', note: 'probe bedömning' }, tjAdmin);
+      await assessments.upsert(tj.t1.id, niYear, { exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: '2099-05-02', note: 'probe bedömning' }, tjAdmin);
       const reportOf = async (who: { id: string; authId: string }) =>
         (await new StaffingLoadService(api).load(niYear, 'planned', tjTeacher(who))).scope?.teachers ?? [];
       const own = (await reportOf(tj.t1)).find((row) => row.userId === tj.t1.id);
       assert.deepEqual(
         own?.assessment && [own.assessment.levelHours, own.assessment.exceptionKind, own.assessment.ownInitiativeOn, own.assessment.note],
-        [null, 'OWN_INITIATIVE', '2093-05-02', 'probe bedömning'],
+        [null, 'OWN_INITIATIVE', '2099-05-02', 'probe bedömning'],
         'a teacher reads their own assessment through the report',
       );
       assert.ok((await reportOf(tj.t2)).every((row) => row.assessment === undefined), 'a teacher reads no colleague\'s assessment');
@@ -5005,6 +5005,24 @@ async function runChecks(
         'no teacher writes an assessment',
       );
       assert.deepEqual((await assessments.list(niYear, tjAdmin)).map((row) => row.userId), [tj.t1.id]);
+      // The day of an own initiative lies in the läsår or at most a year before it (2098-08-17 to 2100-06-12 here): the bounds come from
+      // the läsår row read FOR SHARE, as a raw read through the adapter (the numbering is an enum), and 2093 is a typo for 2099.
+      await assert.rejects(
+        assessments.upsert(tj.t1.id, niYear, { exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: '2093-05-02' }, tjAdmin),
+        (error) => error instanceof BadRequestException && error.message.includes('från 2098-08-17 till och med 2100-06-12'),
+        'a day outside the läsår is refused with the bounds in the sentence',
+      );
+      assert.equal(
+        (await assessments.list(niYear, tjAdmin)).find((row) => row.userId === tj.t1.id)?.ownInitiativeOn,
+        '2099-05-02',
+        'a refused write left the row as it was',
+      );
+      // A year that is not the school's is a 404 in the list, as it is in the write, and not an empty list.
+      await assert.rejects(
+        assessments.list('00000000-0000-4000-8000-0000000000ff', tjAdmin),
+        (error) => error instanceof NotFoundException,
+        'the list of a year that is not the school\'s is a 404',
+      );
       await assessments.remove(tj.t1.id, niYear, tjAdmin);
       assert.deepEqual(await assessments.list(niYear, tjAdmin), [], 'the assessment is gone');
     }
