@@ -384,6 +384,17 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-schedule-exchange.ts
 
+      # Demoskolans återställning (P1 Pilotkit, part 3): a reset deletes a school, and this shows it never deletes one that is not the
+      # demo school. Schools made here from a spec of their own (never `demo-skola`, which the RLS fixtures and the adapter probe have
+      # put rows in): a real school untouched row for row, a school with the demo's name and a real person (deactivated, look-alike
+      # address, no people) refused with nothing deleted, a huvudman or another school tied to it refused, a person added during the
+      # reset waiting on the school's lock, a failure after the delete rolled back, a login kept or not kept. Owner credentials only:
+      # the reset is the operator's, and no route reaches it.
+      - name: Demo reset probe
+        env:
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-demo-reset.ts
+
       # Byten och flyttar (round 9, G1): a small högstadium with parallel
       # blocks cut across its classes, laid by the fixture, asked for swaps and
       # chains as a scheduler under row security. Every proposal is checked by

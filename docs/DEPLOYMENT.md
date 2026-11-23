@@ -4173,7 +4173,7 @@ to whoever the gateway holds, so it runs against a test stack:
 
 - a Supabase project that is not production's, set up as in §1 to §3, with
   test accounts only. `npm run db:seed`, run against that project's
-  `DIRECT_URL`, gives a demo school whose people have no login and which has
+  `DIRECT_URL`, gives a demo school (a later `npm run db:reset-demo -- --yes` keeps the login you link on a seeded row, and is refused once the school holds a person you invited to a mailbox of your own: §37) whose people have no login and which has
   no lessons yet. Link its admin as in §7: create the auth user, then set
   the seeded admin row's `"authId"` and `"invitedAt"`. Do the same for one
   seeded teacher, or invite a test teacher at `/admin/people` to a mailbox
@@ -7396,3 +7396,40 @@ node scripts/bench/solve-corpus-calibrate.mjs convert prod.json trajectory.json
   lists of its pupils. A second school is the only real second opinion.
 - The weeks the search gives up on are measured to the budget twice over (two searches) and are left out of the gate for what they cost; when one of them starts to solve, the sweep shows it and
   the gate's weeks can be moved to follow.
+
+## 37. Resetting the demo school, and never any other ("Demoskolans återställning", P1 Pilotkit, part 3)
+
+`prisma/seed.ts` has always made one school, "Demo Skola" (slug `demo-skola`), with eight teachers, eighty pupils and the posts a week is generated from; `--reset` deleted it and made it again. It looked at the school's slug and nothing else, and `School.slug` is unique: a real school that had been given the slug would have been found and deleted with all its data. It also deleted in one statement and built in many, so a failure halfway left half a school, and it dropped the one thing a tester sets up: the login linked to the demo's administrator (§15.6).
+
+```
+npm run db:reset-demo              what a reset would do, and whether it may; nothing is written
+npm run db:reset-demo -- --yes     do it
+npm run db:seed -- --reset         the same as --yes, as it has always been run
+```
+
+All three connect with `DIRECT_URL`, the table owner's, as the seed does. **It is the operator's.** There is no button in the product, no role and no route that can reach it, and a school's own administrator cannot reset anything: a button would need a `SECURITY DEFINER` function that deletes a school and a mark on the school the API cannot set, which is a migration and a new door in a database whose doors were just inventoried (§29); it is a decision for when a pilot school is to practise on a demo school, and none has one.
+
+**What stands between it and a real school.** In one transaction the school's row is locked (`SELECT … FOR UPDATE`), its facts are read *after* the lock, and `src/demo-school/demo-guard.ts` judges them. A school is the demo school when every person in it, active or not, whatever the role, has an address at the demo's domain, `demo-skola.example.com`, which is reserved (RFC 2606) and has no mailbox behind it, and when it also has the demo's slug and name and nothing tied to it from outside. It is refused, with nothing deleted, when:
+
+| Refusal | When |
+|---|---|
+| `DATABASE_HAS_A_REAL_SCHOOL` | the demo school is **not there** and some school in the database has a person at an address outside the names reserved for examples: see below |
+| `NOT_THE_DEMO_SCHOOL` | the slug or the name is not the demo's |
+| `NO_PEOPLE` | nobody is in it: an empty school proves nothing |
+| `PEOPLE_OUTSIDE_THE_DEMO` | one person has any other address, a deactivated one or a look-alike (`x@evil.demo-skola.example.com`, `x@demo-skola.example.com.evil.org`) included |
+| `TIED_TO_A_HUVUDMAN` | a huvudman owns it, has asked for it or has it in its history |
+| `TIED_TO_ANOTHER_SCHOOL` | a travel time, a room on loan or a shared teacher joins it to another school: a delete cascades through those rows and would reach the other end |
+
+The refusal names a count and never an address. A person added while the reset runs cannot be missed: adding one takes a share lock on the school's row, which waits for the reset; the person then finds the school gone and the insert fails, so nobody is ever deleted unseen. A failure after the delete rolls everything back, the old school's id and rows included.
+
+**A tester's own people stop it, and there is one way back.** §15.6 has a tester invite a test teacher, a pupil and a guardian to mailboxes of their own. Each is a person at an address outside the demo's domain, so the reset refuses the school (`PEOPLE_OUTSIDE_THE_DEMO`), a deactivated person included and a pseudonymised one too (it is at `pseudonym.invalid`, which is not the demo's domain), and it goes on refusing: the guard cannot tell a tester's mailbox from a real school's, and does not try. What a reset keeps in §15.6 is the login on a *seeded* row (the administrator's, or a seeded teacher's), never an invited person. To start over, the owner deletes the demo school by hand (`DELETE FROM "Schools" WHERE "slug" = 'demo-skola';`, which takes everything in it with it, the invited people too) and runs `npm run db:seed`, which is allowed when no person left in the database has a real address; the logins have to be linked again.
+
+**A database with a real school and no demo.** `db:seed` runs against whatever `DIRECT_URL` names, and the production database holds one school and none with the demo's slug: without a stop, a seed or a `--reset` run against it by mistake would have added a school of eighty fictional pupils beside the real one. Where the demo school is not there, the script now makes it only if no person in the database, in any school, has an address outside the names reserved for examples (RFC 2606 and 6761: `example.com`, `example.net`, `example.org` and everything under them, and the top domains `.test`, `.example`, `.invalid` and `.localhost`). Otherwise it prints `NOT SEEDED`, with the number of schools that hold such a person and never an address, exits 1 and makes nothing; so do `db:seed`, `db:seed -- --reset` and `db:reset-demo`, with or without `--yes`. A school with nobody in it holds no personal data and does not count; a look-alike such as `example.com.evil.org` is a real domain. A new database (CI's, a developer's) and one that holds made-up schools only (the RLS fixtures', the probes', the högstadium seed's) are not stopped. Where the demo school **is** there, a reset is judged by its own people as above and a real school in the same database is untouched; that case, and the refusal where the demo is not there, are proved on a throwaway database. There is no override: a database that holds a real school and also needs a demo school is a decision for a person, not a flag.
+
+**Logins.** The seed's people have no login (random `authId`s that are in no Supabase project). A login only the demo school holds, such as the administrator linked in §15.6, is written back to the new row with the same address, `authId` and `invitedAt`. A login is a row with an `invitedAt` (§7: *`invitedAt` says the person has a login*): a seeded row given an `authId` and no `invitedAt` is not counted as a login, is not written back and is not in the count the script prints. A login another school also holds is **not**: a row takes a login another row holds only through the gateway's invitation (`Users_a_login_joins_another_school_by_invitation`, migration 20261204090000), and a script that went round that would open the door the invitation is for. That person is invited again at `/admin/people`, and the other school's row is untouched. The Supabase user is never deleted, and the script says how many logins were kept and how many were not, never whose.
+
+**What the reset does not change.** The content is exactly what the seed made before it was a function (`prisma/demo-school.ts`): the RLS suite and the adapter probe count its rows, and all 171 tables that carry a school's rows hold the same counts as before. The demo school has no frame time, no rast, no lokal timplan and no teacher's post, and nothing in it stops Generera. The guard makes a reset safe for every *other* school in the database it is run against; it does not make a demo school belong in production, and the seed's warning, never to run it with production credentials, stands.
+
+**The proofs.** `src/demo-school/demo-guard.spec.ts` holds the judgement with no database (the address boundaries, the order of the reasons, a spec of another name). `scripts/test/probe-demo-reset.ts`, which CI's Database job runs after the schedule exchange probe (it needs a database that holds no school with a real address when it starts, which CI's does), holds what a database adds, on schools it makes from a spec of its own and never on `demo-skola`: a real school's every row, counted and hashed in every table that has a `schoolId`, the same after a reset of the demo school; each refusal, with the refused school's rows unchanged; the two orders of a person added at the same time; the rollback; a login kept and one not kept; the read log (`PersonalDataAccess`, append-only, no foreign key to the school) not stopping a reset; and a database with a real school, where nothing is made by a seed, a reset or a dry run, and a demo school that is there is reset beside it. Run by hand against a scratch database:
+`PROBE_OWNER_URL='postgresql://postgres:postgres_local@localhost:<port>/schemapro' npx ts-node --transpile-only scripts/test/probe-demo-reset.ts`
+The seed, the reset and the demo school's builder are typechecked by `npm run typecheck:scripts`: they run with `ts-node --transpile-only`, so nothing else sees a renamed import until the day somebody resets.
