@@ -9,7 +9,6 @@ import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import { warningText } from "@/lib/staffing-warnings";
 import { placementChangeSentence } from "@/lib/requirement-placement-text";
 import { DEFAULT_LOAD_POLICY } from "@/lib/teacher-load";
-import { formatPercent } from "@/lib/staffing-view";
 import type { StaffingSearchFiguresDoc } from "@/lib/staffing-search";
 import type { StaffingPolicy } from "@/lib/types";
 import { StatusBadge } from "@/components/staffing/staffing-matrix";
@@ -1134,12 +1133,12 @@ function ProposalResult({
                             <span className="block text-xs text-foreground">
                               {teacher.scope.overAfter
                                 ? t(teacher.scope.overBefore ? "scopeStillOver" : "scopeNewlyOver", {
-                                    before: formatPercent(teacher.scope.hoursBefore),
-                                    after: formatPercent(teacher.scope.hoursAfter),
+                                    before: number.format(teacher.scope.hoursBefore),
+                                    after: number.format(teacher.scope.hoursAfter),
                                   })
                                 : t("scopeLine", {
-                                    before: formatPercent(teacher.scope.hoursBefore),
-                                    after: formatPercent(teacher.scope.hoursAfter),
+                                    before: number.format(teacher.scope.hoursBefore),
+                                    after: number.format(teacher.scope.hoursAfter),
                                   })}
                             </span>
                           ) : null}

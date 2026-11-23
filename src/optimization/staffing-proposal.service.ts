@@ -29,12 +29,13 @@ import {
 } from '../staffing/staffing-enforcement';
 import { subjectFamiliarTeachers, type LastYearTeachers } from '../staffing/suggest-teachers';
 import { readsHr } from '../staffing/hr-visibility';
-import { scopeOfTeacher, type ScopeVersion } from '../staffing/assignment-scope';
+import { placeSpan, scopeOfTeacher, SCOPE_SCHOOL_FORM, versionInForce, type ScopeVersion } from '../staffing/assignment-scope';
 import { readScopeVersions } from '../staffing/assignment-scope-reader';
 import { scopeModeOf } from '../staffing/staffing-checks';
 import { teachingWeeks } from '../staffing/teaching-weeks';
 import {
   DEFAULT_LOAD_POLICY,
+  activePercentOf,
   chargedMinutes,
   countedMinutesByTeacher,
   dutyStandardWeekMinutes,
@@ -45,6 +46,7 @@ import {
   strongestCoveringQualification,
   targetMinutesPerWeek,
   yearTargetMinutesPerWeek,
+  type GradeSpan,
   type LoadEmployment,
   type LoadInput,
   type LoadModel,
@@ -565,15 +567,18 @@ export class StaffingProposalService {
     this.logger.log(
       `Staffing proposal [requestId=${requestId}, status=${response.status}, teachers=${plan.teachers.length}, ` +
         `rows=${plan.rows.length}, free=${free.length}, staffed=${realised.leads.size}, unstaffed=${realised.unstaffed.size}, ` +
-        `conflicts=${realised.conflicts.length}]`,
+        `conflicts=${realised.conflicts.length}, givenBack=${realised.givenBack}]`,
     );
+    // An answer that had rows given back is no longer the engine's optimum: nothing proves what stays unstaffed and its figures
+    // describe another answer, so it is a feasible one without them (as a choice a search made is).
+    const asAnswered = realised.givenBack === 0;
     return answer(
-      response.status,
-      response.unstaffedProven === true,
+      asAnswered ? response.status : 'FEASIBLE',
+      asAnswered && response.unstaffedProven === true,
       realised.leads,
       realised.unstaffed,
       realised.conflicts,
-      response.terms ? { before: terms(response.terms.before), after: terms(response.terms.after) } : null,
+      asAnswered && response.terms ? { before: terms(response.terms.before), after: terms(response.terms.after) } : null,
     );
   }
 
@@ -1094,7 +1099,7 @@ export class StaffingProposalService {
     state: StaffingState,
     plan: Plan,
     maps: StaffAnonMaps,
-  ): { leads: Map<string, string>; unstaffed: Map<string, StaffUnstaffedReason>; conflicts: ProposalConflict[] } {
+  ): { leads: Map<string, string>; unstaffed: Map<string, StaffUnstaffedReason>; conflicts: ProposalConflict[]; givenBack: number } {
     const bad = (what: string): HttpException => {
       this.logger.error(`Rejected a staffing proposal: ${what}`);
       return new HttpException(
@@ -1149,13 +1154,13 @@ export class StaffingProposalService {
           : `teacher ${maps.teachers.get(growth.userId)} grows past the limit`,
       );
     }
-    // The ordinance's highest level of teaching time, under REFUSE: the apply refuses a teacher who ends over it with more hours, so a
-    // proposal that gave one is refused here (the engine planned against a standardvecka edge, which is not the ordinance's exactly
-    // where a lesson is charged other than whole).
-    const overScope = scopeGrowthRefusal(state, plan, leads);
-    if (overScope !== null) {
-      throw bad(`teacher ${maps.teachers.get(overScope)} ends over the ordinance's highest level of teaching time`);
-    }
+    // The ordinance's highest level of teaching time, under REFUSE: the apply refuses a teacher who ends over it with more hours. The
+    // engine planned against a standardvecka edge (scopeCeilingTenths), which is the ordinance's only where the school charges whole
+    // lessons and the teacher keeps the stages they have, so an answer can leave a teacher over the real hours without any fault of
+    // the engine's, and asking again gives the same answer. The rows given beyond the edge are given back (giveBackOverScope), not the
+    // whole proposal refused as an outage.
+    const givenBack = giveBackOverScope(state, plan, leads, unstaffed);
+    if (givenBack === null) throw bad("a teacher ends over the ordinance's highest level of teaching time");
 
     // Conflicts, realised by this service from its own maps — subjects to
     // their names, rows to "Matematik för 7B", teachers to real ids in their
@@ -1197,7 +1202,7 @@ export class StaffingProposalService {
       };
     });
 
-    return { leads, unstaffed, conflicts };
+    return { leads, unstaffed, conflicts, givenBack: givenBack.length };
   }
 
   /**
@@ -1245,6 +1250,9 @@ export class StaffingProposalService {
       const was = scopeOfTeacher(input, state.scopeVersions, teacher.userId);
       const is = scopeOfTeacher(afterInput, state.scopeVersions, teacher.userId);
       if (!was || !is) return {};
+      // Nothing is said of a teacher the ordinance judges neither before nor after: a läsår it does not reach (every one that begins
+      // before 2027-07-01: "Enligt förordningen: 129 → 387 h" under a year it does not govern), a teacher with no post, hours in no stage.
+      if (was.verdict === 'NOT_JUDGED' && is.verdict === 'NOT_JUDGED') return {};
       return {
         scope: {
           hoursBefore: was.teachingHours,
@@ -1598,9 +1606,14 @@ export function planOf(
   const scopeMode = scopeModeOf(state.policy);
   const scopeVersions = scopeMode === 'OFF' ? undefined : state.scopeVersions;
   const schoolWeeks = scopeVersions ? teachingWeeks({}, input.year, input.closures, null) : 0;
+  // The rows a teacher may be given: every free row they are a candidate for (behörig, when behörigheter are respected).
+  const reachableSpans = (userId: string): (GradeSpan | null)[] =>
+    candidates.has(userId)
+      ? rows.filter((row) => row.kind !== 'FIXED' && (!respect || row.eligible.includes(userId))).map((row) => row.row.gradeSpan)
+      : [];
   const withScopeCeiling = (teacher: TeacherPlan): TeacherPlan => {
     if (!scopeVersions || schoolWeeks === 0) return teacher;
-    const ceiling = scopeCeilingTenths(input, scopeVersions, teacher.userId, schoolWeeks);
+    const ceiling = scopeCeilingTenths(input, scopeVersions, teacher.userId, schoolWeeks, reachableSpans(teacher.userId));
     if (ceiling === null) return teacher;
     const noted = { ...teacher, scopeCeilingTenths: ceiling };
     if (scopeMode !== 'REFUSE' || teacher.limitTenths === null || ceiling >= teacher.limitTenths) return noted;
@@ -2014,39 +2027,64 @@ export function growthRefusal(
 /**
  * The ordinance's highest level of a teacher's teaching time as a standardvecka in tenths of a minute: the level in clock hours over
  * the läsår (scopeOfTeacher, scaled by the post), over the school's teaching weeks, floored so the model never allows more than the
- * ordinance does. A teacher with no teaching today is held to the STRICTEST band of the lydelse (they may be given a row in any stage),
- * scaled by their post; one whose level cannot be judged (no post, the numbering the ordinance has no band for, a year before it) has
- * none. Null: no ceiling.
+ * ordinance does.
+ *
+ * THE LEVEL FOLLOWS THE STAGES A TEACHER ENDS IN, not the ones they teach in today: the ordinance's edge is blended over the stages by
+ * hours, so a teacher with 435 hours in åk 6 who is given åk 7 has a lower edge than the 650 hours they began with (review of #408:
+ * the engine filled such a teacher to 650 and the proposal was refused whole). `reachable` is the grade span of every row the teacher
+ * may be given; the edge is held to the strictest band any of them lies in, scaled by the post as the report scales it (a post that
+ * changes during the year by its stretches, not by its base row). A teacher with no teaching today is held to the strictest of those,
+ * or of every band of the lydelse when nothing is known of what they may be given; one whose level cannot be judged (no post, the
+ * numbering the ordinance has no band for, a year before it) has none. Null: no ceiling.
  */
 export function scopeCeilingTenths(
   input: LoadInput,
   versions: readonly ScopeVersion[],
   userId: string,
   schoolWeeks: number,
+  reachable: readonly (GradeSpan | null)[] = [],
 ): number | null {
   if (schoolWeeks <= 0) return null;
   const scope = scopeOfTeacher(input, versions, userId);
   if (scope === null) return null;
-  // Nothing taught today: held to the strictest edge a row could put them on, scaled by their post.
-  const hours = scope.ordinanceHighestHours ?? (scope.notJudged === 'NO_TEACHING' ? strictestEdgeHours(input, versions, userId) : null);
+  const strictest = strictestEdgeHours(input, versions, userId, reachable);
+  const hours =
+    scope.ordinanceHighestHours === null
+      ? scope.notJudged === 'NO_TEACHING'
+        ? strictest
+        : null
+      : reachable.length === 0 || strictest === null
+        ? scope.ordinanceHighestHours
+        : Math.min(scope.ordinanceHighestHours, strictest);
   if (hours === null) return null;
   return Math.floor((10 * hours * 60) / schoolWeeks);
 }
 
-/** The lowest upper edge any band of the lydelse in force gives, scaled by the teacher's post; null where it cannot be judged. */
-function strictestEdgeHours(input: LoadInput, versions: readonly ScopeVersion[], userId: string): number | null {
+/**
+ * The lowest upper edge of the bands the rows in `reachable` lie in (placeSpan: a span over two stages is the stricter), scaled by the
+ * teacher's post; of every band of the lydelse when `reachable` is empty. Null where it cannot be judged: no post, no band.
+ */
+function strictestEdgeHours(
+  input: LoadInput,
+  versions: readonly ScopeVersion[],
+  userId: string,
+  reachable: readonly (GradeSpan | null)[],
+): number | null {
   const employment = input.employments.find((row) => row.userId === userId);
   if (!employment) return null;
   const numbering = input.year.gradeNumbering ?? 'NIOARIG';
-  const version = versions
-    .filter((one) => one.validFrom <= input.year.startDate && (one.validTo === null || one.validTo >= input.year.startDate))
-    .sort((a, b) => (a.validFrom < b.validFrom ? 1 : -1))[0];
-  const edges = (version?.bands ?? []).filter((band) => band.gradeNumbering === numbering).map((band) => band.teachingHoursHigh);
+  const version = versionInForce(versions, input.year.startDate);
+  const bands = (version?.bands ?? []).filter((band) => band.schoolForm === SCOPE_SCHOOL_FORM && band.gradeNumbering === numbering);
+  const touched = reachable.flatMap((span) => {
+    const placed = placeSpan(span, bands);
+    return placed.kind === 'BAND' ? [placed.band.teachingHoursHigh] : [];
+  });
+  const edges = reachable.length === 0 ? bands.map((band) => band.teachingHoursHigh) : touched;
   if (edges.length === 0) return null;
-  // The same scaling the report uses: tjänst minus nedsättning, here the post's base row (a changing post is weighed in scopeOfTeacher
-  // once it teaches anything; with nothing taught the base row is the estimate).
-  const share = (employment.employmentPercent - employment.reductionPercent) / 100;
-  return Math.min(...edges) * share;
+  // The share the report uses (buildScopeReport): tjänst minus nedsättning, a post that changes during the year by its stretches.
+  const stretches = changesDuringYear(employment, input.year) ? stretchLoads({ ...input, requirements: [], duties: [] }, employment) : null;
+  const active = activePercentOf(employment, stretches);
+  return active === null ? null : Math.min(...edges) * (active / 100);
 }
 
 /**
@@ -2067,6 +2105,36 @@ export function scopeGrowthRefusal(
     if (after?.verdict === 'OVER_MAX' && after.teachingHours > (before?.teachingHours ?? 0) + 1e-9) return teacher.userId;
   }
   return null;
+}
+
+/**
+ * Gives back, one row at a time, what an answer gave a teacher who then ends over the ordinance's highest level of teaching time with
+ * more hours than they began with (scopeGrowthRefusal): the largest row they were given first, so that as few as possible go back. A
+ * kept row goes back to the lead it has today and an open one to nobody (NO_CAPACITY_LEFT: no teacher has room left for it). The
+ * maps are changed in place; the ids of the rows given back, in the order they went, or null when somebody is over and was given
+ * no row (which no answer can be). Nothing is done when nobody is over, so a school that warns or asks nothing is never touched.
+ */
+export function giveBackOverScope(
+  state: Pick<StaffingState, 'read' | 'policy' | 'scopeVersions'>,
+  plan: Plan,
+  leads: Map<string, string>,
+  unstaffed: Map<string, StaffUnstaffedReason>,
+): string[] | null {
+  const back: string[] = [];
+  for (let over = scopeGrowthRefusal(state, plan, leads); over !== null; over = scopeGrowthRefusal(state, plan, leads)) {
+    const given = plan.rows
+      .filter((row) => row.kind !== 'FIXED' && leads.get(row.row.id) === over && row.current !== over)
+      .sort((a, b) => b.chargeTenths - a.chargeTenths || compareIds(a.row.id, b.row.id))[0];
+    if (!given) return null;
+    if (given.kind === 'KEPT' && given.current !== null) {
+      leads.set(given.row.id, given.current);
+    } else {
+      leads.delete(given.row.id);
+      unstaffed.set(given.row.id, 'NO_CAPACITY_LEFT');
+    }
+    back.push(given.row.id);
+  }
+  return back;
 }
 
 /** The year with the proposal's leads laid over its free rows. */
