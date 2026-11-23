@@ -37,6 +37,11 @@ export interface StaffingMatrixProps {
    * the status. The status itself is the school's riktmärke and is not touched.
    */
   overScope?: ReadonlySet<string>;
+  /**
+   * Of those, the ones over the ORDINANCE's level (overOrdinanceIds). The rest are over the level the rektor set, which is not the
+   * ordinance's and is said in its own words. Absent: all of overScope are the ordinance's, as before the rektor could set a level.
+   */
+  overOrdinance?: ReadonlySet<string>;
 }
 
 /** The colours the manual names (OVER red, UNDER amber, OK green, NO_TARGET outline), from the app's one map. */
@@ -81,6 +86,7 @@ export function StaffingMatrix({
   unit,
   onOpenTeacher,
   overScope,
+  overOrdinance,
 }: StaffingMatrixProps) {
   const t = useTranslations("staffing");
   const tAreas = useTranslations("adminAreas");
@@ -217,9 +223,15 @@ export function StaffingMatrix({
                       a button's children are presentational, so a mark inside it is seen and never heard. */}
                   {overScope?.has(teacher.userId) ? (
                     <div className="mt-1">
-                      <Badge variant="destructive" title={t("scopeOverBadgeTitle")}>
-                        {t("scopeOverBadge")}
-                      </Badge>
+                      {(overOrdinance ?? overScope).has(teacher.userId) ? (
+                        <Badge variant="destructive" title={t("scopeOverBadgeTitle")}>
+                          {t("scopeOverBadge")}
+                        </Badge>
+                      ) : (
+                        <Badge variant="destructive" title={t("scopeOverOwnBadgeTitle")}>
+                          {t("scopeOverOwnBadge")}
+                        </Badge>
+                      )}
                     </div>
                   ) : null}
                   {/* A post that changes during the year (20261022120000): the

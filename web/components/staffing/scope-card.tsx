@@ -75,6 +75,12 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
   if (assessment && assessment.levelHours !== null) {
     rows.push({ label: own ? t("assessmentLevelOwn") : t("assessmentLevel"), value: hours(assessment.levelHours) });
   }
+  // A level that was set and that this reader may not read: the gateway keeps the row and masks its fields (hr-visibility.ts), and a row
+  // with neither a level nor an exception can only be that (an empty assessment is refused on write). Said as what it is, without the figure,
+  // so that the manual's "en nivå är satt, men inte vilken" is what the card shows and not only what the verdict's wording lets one infer.
+  if (assessment && assessment.levelHours === null && assessment.exceptionKind === null) {
+    rows.push({ label: own ? t("assessmentLevelOwn") : t("assessmentLevel"), value: t("assessmentLevelHidden") });
+  }
   // What OVER_OWN is judged against: that level scaled by the post. Shown only where it is a figure of its own (a part-time post, or a level
   // above the ordinance's edge makes it the same as one of the rows above), so that "over by 45 h" can be checked against a row.
   if (

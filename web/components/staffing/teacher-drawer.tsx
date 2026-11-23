@@ -24,7 +24,7 @@ import { DutiesCard } from "@/components/staffing/duties-card";
 import { AnnualCard } from "@/components/staffing/annual-card";
 import { ScopeCard } from "@/components/staffing/scope-card";
 import { ScopeAssessmentCard } from "@/components/staffing/scope-assessment-card";
-import type { ScopeCardData } from "@/lib/assignment-scope";
+import type { ScopeAssessmentSlot, ScopeCardData } from "@/lib/assignment-scope";
 import { EmploymentHistoryCard } from "@/components/staffing/employment-history-card";
 import { PeriodLoadList } from "@/components/staffing/period-load-list";
 import { SectionCard } from "@/components/ui/section-card";
@@ -63,6 +63,11 @@ export interface TeacherDrawerProps {
    * stage. Null where there is nothing to say (a läsår the ordinance does not reach).
    */
   scope?: ScopeCardData | null;
+  /**
+   * Where the rektor's assessment is written (scopeAssessmentOf): the teacher's row of the report, with or without teaching hours. Not
+   * `scope`'s, which is null for a teacher with nothing to judge, and that is a teacher a level is wanted for.
+   */
+  scopeAssessment?: ScopeAssessmentSlot | null;
 }
 
 /**
@@ -95,6 +100,7 @@ export function TeacherDrawer({
   travel = null,
   supervision = null,
   scope = null,
+  scopeAssessment = null,
   personName = () => null,
 }: TeacherDrawerProps) {
   const t = useTranslations("staffing");
@@ -217,12 +223,12 @@ export function TeacherDrawer({
 
         {scope ? <ScopeCard data={scope} /> : null}
 
-        {scope ? (
+        {scopeAssessment ? (
           <ScopeAssessmentCard
             teacher={teacher}
             academicYearId={academicYearId}
-            assessment={scope.teacher.assessment}
-            fullTimeHighestHours={scope.teacher.fullTimeHighestHours}
+            assessment={scopeAssessment.assessment}
+            fullTimeHighestHours={scopeAssessment.fullTimeHighestHours}
           />
         ) : null}
 

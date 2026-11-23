@@ -123,11 +123,46 @@ export function scopeCardOf(report: WithScope, userId: string): ScopeCardData | 
   return { teacher, version: scope.version, yearReason: scope.yearReason, interpretations };
 }
 
+/** What the rektor's assessment card is drawn from: the teacher's row of the report (where the assessment is, if one is written) and the span's edge. */
+export interface ScopeAssessmentSlot {
+  assessment: ScopeAssessmentView | undefined;
+  fullTimeHighestHours: number | null;
+}
+
+/**
+ * Where the rektor's assessment can be written, and what it holds now: any teacher the report has a row for in a läsår the ordinance
+ * reaches, WITH OR WITHOUT TEACHING HOURS. scopeCardOf gives no card to a teacher with nothing to judge, and the assessment card was drawn
+ * from that, so a rektor could not set a level for a teacher who had no hours yet (the gateway allows it: "a teacher with no teaching
+ * yet has none [edge]", scope-assessments.service.ts), which is the teacher the level is wanted for before Föreslå bemanning hands out
+ * hours. Null for a läsår the ordinance does not reach, and for the ten-year numbering, where the gateway refuses every write
+ * (SCOPE_NUMBERING_NOT_COVERED): a card that can only be refused is not drawn.
+ */
+export function scopeAssessmentOf(report: WithScope, userId: string): ScopeAssessmentSlot | null {
+  const scope = report?.scope;
+  if (!scope || scope.version === null || scope.yearReason !== null) return null;
+  const row = scope.teachers.find((teacher) => teacher.userId === userId);
+  if (!row) return null;
+  return { assessment: row.assessment, fullTimeHighestHours: row.fullTimeHighestHours };
+}
+
 /** The teachers the matrix marks: over the ordinance's highest level, or over the level set for them. */
 export function overScopeIds(report: WithScope): ReadonlySet<string> {
   const ids = new Set<string>();
   for (const row of report?.scope?.teachers ?? []) {
     if (row.verdict === "OVER_MAX" || row.verdict === "OVER_OWN") ids.add(row.userId);
+  }
+  return ids;
+}
+
+/**
+ * The teachers over the ORDINANCE's highest level (OVER_MAX), a subset of overScopeIds. "Över förordningen" and "mer än förordningen
+ * tillåter" are said of them alone: a teacher over the level the rektor set (OVER_OWN) is, in the verdict's own words, "inte över
+ * förordningens", and the card on the same page says so.
+ */
+export function overOrdinanceIds(report: WithScope): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const row of report?.scope?.teachers ?? []) {
+    if (row.verdict === "OVER_MAX") ids.add(row.userId);
   }
   return ids;
 }

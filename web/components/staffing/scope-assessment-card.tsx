@@ -160,7 +160,12 @@ export function ScopeAssessmentCard({ teacher, academicYearId, assessment, fullT
             <Label htmlFor={id("exception")}>{t("exceptionLabel")}</Label>
             <Select
               value={draft.exceptionKind === "" ? NO_EXCEPTION : draft.exceptionKind}
-              onValueChange={(value) => patch({ exceptionKind: value === NO_EXCEPTION ? "" : (value as ScopeExceptionKind) })}
+              onValueChange={(value) => {
+                const kind: "" | ScopeExceptionKind = value === NO_EXCEPTION ? "" : (value as ScopeExceptionKind);
+                // The day belongs to the exception on the teacher's own initiative and the field is drawn for no other: a day left in the
+                // draft would be refused (problems.dayNeedsInitiative) with nothing on screen to clear, and Save disabled for good.
+                patch(kind === "OWN_INITIATIVE" ? { exceptionKind: kind } : { exceptionKind: kind, ownInitiativeOn: "" });
+              }}
             >
               <SelectTrigger id={id("exception")}>
                 <SelectValue />
@@ -186,6 +191,8 @@ export function ScopeAssessmentCard({ teacher, academicYearId, assessment, fullT
             <Label htmlFor={id("note")}>{t("note")}</Label>
             <Textarea id={id("note")} rows={3} maxLength={SCOPE_NOTE_MAX} value={draft.note} onChange={(event) => patch({ note: event.target.value })} />
             <p className="text-xs text-muted-foreground">{t("noteHint", { max: SCOPE_NOTE_MAX })}</p>
+            {/* The teacher reads their own assessment, the note with it (Min tjänst's card): the one who writes it is told before they do. */}
+            <p className="text-xs text-muted-foreground">{t("noteTeacherSees")}</p>
           </div>
           {problem ? (
             <p role="alert" className="text-sm text-destructive">

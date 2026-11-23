@@ -82,7 +82,7 @@ import {
 import { travelOf } from "@/lib/staffing-travel";
 import { sharesByRequirement, useRequirementShares } from "@/lib/requirement-shares";
 import { supervisionOf } from "@/lib/staffing-supervision";
-import { overScopeIds, scopeCardOf } from "@/lib/assignment-scope";
+import { overOrdinanceIds, overScopeIds, scopeCardOf } from "@/lib/assignment-scope";
 import { kpis, type UnitView, type WeekView } from "@/lib/staffing-view";
 import { NextStep } from "@/components/layout/next-step";
 import { Page } from "@/components/layout/page";
@@ -102,6 +102,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useProfile } from "@/components/profile-context";
 import { profileDecides } from "@/lib/admin-areas";
+import { scopeAssessmentOf } from "@/lib/assignment-scope";
 
 /**
  * The drawer is click-opened, so it is React's lazy() — not next/dynamic,
@@ -291,6 +292,9 @@ export default function StaffingPage() {
   // SFS 2026:1487 3 §: the teachers whose teaching hours are over the ordinance's highest level (empty for a läsår the
   // ordinance does not reach, and from a gateway with no such block).
   const overScope = overScopeIds(report);
+  // Of them, the ones over the ordinance's level: the others are over the level the rektor set, which the law does not say.
+  const overOrdinance = overOrdinanceIds(report);
+  const overOwnCount = overScope.size - overOrdinance.size;
   const noTarget = policy !== undefined && (policy === null || policy.fullTimeTeachingMinutesPerWeek === null);
 
   const openSettings = () => {
@@ -374,11 +378,18 @@ export default function StaffingPage() {
             </Notice>
           ) : null}
 
-          {overScope.size > 0 ? (
+          {overOrdinance.size > 0 ? (
             // The law's own measure, beside the school's riktmärke and never in it: a warning, not a block (the school picks
             // under Inställningar what a write over the level does). foreground on the warning tint as Notice measures it.
-            <Notice tone="warning" title={t("scopeNoticeTitle", { count: overScope.size })}>
+            <Notice tone="warning" title={t("scopeNoticeTitle", { count: overOrdinance.size })}>
               {t("scopeNoticeBody")}
+            </Notice>
+          ) : null}
+          {overOwnCount > 0 ? (
+            // The rektor's own level (8 §), not the law's: said as that, so the page never says "mer än förordningen tillåter" of a
+            // teacher whose card says "inte över förordningens".
+            <Notice tone="warning" title={t("scopeOwnNoticeTitle", { count: overOwnCount })}>
+              {t("scopeOwnNoticeBody")}
             </Notice>
           ) : null}
 
@@ -480,6 +491,7 @@ export default function StaffingPage() {
               unit={unit}
               onOpenTeacher={setOpenTeacherId}
               overScope={overScope}
+              overOrdinance={overOrdinance}
             />
           )}
 
@@ -569,6 +581,7 @@ export default function StaffingPage() {
             travel={travelOf(report, openTeacher.id)}
             supervision={supervisionOf(report, openTeacher.id)}
             scope={scopeCardOf(report, openTeacher.id)}
+            scopeAssessment={scopeAssessmentOf(report, openTeacher.id)}
             personName={personName}
           />
         </Suspense>

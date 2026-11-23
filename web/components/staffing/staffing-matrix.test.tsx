@@ -186,6 +186,16 @@ describe("StaffingMatrix", () => {
     expect(screen.queryByText("scopeOverBadge")).not.toBeInTheDocument();
   });
 
+  it("says of a teacher over only the level the rektor set that it is that level, and never that it is the ordinance's", () => {
+    renderMatrix({ overScope: new Set(["t-anna", "t-bo"]), overOrdinance: new Set(["t-bo"]) });
+    const anna = within(screen.getByText("Anna Ek").closest("tr")!);
+    expect(anna.getByText("scopeOverOwnBadge")).toHaveAttribute("title", "scopeOverOwnBadgeTitle");
+    expect(anna.queryByText("scopeOverBadge")).not.toBeInTheDocument();
+    const bo = within(screen.getByText("Bo Alm").closest("tr")!);
+    expect(bo.getByText("scopeOverBadge")).toHaveAttribute("title", "scopeOverBadgeTitle");
+    expect(bo.queryByText("scopeOverOwnBadge")).not.toBeInTheDocument();
+  });
+
   it("keeps the mark out of the row's button, whose aria-label is its whole name for a screen reader", () => {
     renderMatrix({ overScope: new Set(["t-anna"]) });
     const row = screen.getByText("Anna Ek").closest("tr")!;

@@ -26,9 +26,9 @@ export interface ScopeAssessmentAnswer extends ScopeAssessmentShape {
 
 export function useScopeAssessmentActions() {
   const queryClient = useQueryClient();
-  const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
-  };
+  // Returned, so that the write stays pending until the report has been read again (as engine-release-queries.ts does): the card then closes on
+  // the row as it is and not on the one it was, which it showed for as long as the report took to come back.
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
   const save = useMutation({
     mutationFn: ({ userId, academicYearId, ...body }: { userId: string; academicYearId: string } & ScopeAssessmentBody) =>
       api.put<ScopeAssessmentAnswer>(`/api/v1/scope-assessments/${userId}?academicYearId=${encodeURIComponent(academicYearId)}`, body),
