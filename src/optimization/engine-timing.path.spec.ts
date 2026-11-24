@@ -99,7 +99,11 @@ describe('pathShortfall', () => {
     expect(shortfall.sentence).toContain('SOLVER_MAX_TIME_SECONDS=540 s');
     expect(shortfall.sentence).toContain('up to 590 s');
     expect(shortfall.sentence).toContain('the API waits 290 s at most');
-    expect(shortfall.sentence).toContain('its search is cut to about 235 s of its 540 s');
+    // The 235 is the budget that FITS the wait, and it is the remedy's number. It is not how long the search runs: the
+    // engine works that out itself from the deadline it is sent (measured 251 to 259 s for a deadline of 290 s, the
+    // review of #416, L-4), so the sentence says the search is cut short of its 540 s and names no length for it.
+    expect(shortfall.sentence).toContain('its search is cut short of its 540 s');
+    expect(shortfall.sentence).not.toContain('about 235 s');
     expect(shortfall.sentence).toContain('a TIMEOUT with its explanation and suggestions');
     expect(shortfall.sentence).toContain('AI_ENGINE_URL=http://<the engine\'s service>.railway.internal:<its port>');
     expect(shortfall.sentence).toContain('set SOLVER_MAX_TIME_SECONDS on the engine to 235 or less');
@@ -113,6 +117,8 @@ describe('pathShortfall', () => {
     expect(shortfall.sentence).toContain('ends when the API\'s wait does, with nothing to show of it');
     expect(shortfall.sentence).not.toContain('its search is cut');
     expect(shortfall.sentence).toContain('set SOLVER_MAX_TIME_SECONDS on the engine to 235 or less');
+    // Here, and only here, the 235 is a length of the search: an engine that cannot be asked searches until the wait ends.
+    expect(shortfall.sentence).toContain('a run that needs more than 235 s ends when the API\'s wait does');
   });
 
   it('offers no budget to lower to when the road leaves nothing for one', () => {

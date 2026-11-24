@@ -746,7 +746,11 @@ describe('OptimizationProxyService: the road to the engine closes a request that
       const said = warnings.filter((line) => line.includes('closes a request that sends nothing'));
       expect(said).toHaveLength(1);
       expect(said[0]).toContain('the API waits 290 s at most');
-      expect(said[0]).toContain('its search is cut to about 235 s of its 540 s');
+      // The search is cut short of its 540 s, to what the deadline leaves it; 235 is the budget that would fit whole
+      // and is the remedy's number, not the search's length (the review of #416, L-4).
+      expect(said[0]).toContain('its search is cut short of its 540 s');
+      expect(said[0]).toContain('set SOLVER_MAX_TIME_SECONDS on the engine to 235 or less');
+      expect(said[0]).not.toContain('about 235 s');
     });
 
     it('says nothing for a road that holds what the engine needs, or has no limit', async () => {

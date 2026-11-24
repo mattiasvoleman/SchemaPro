@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { ENGINE_STAGES } from './engine-timing';
 import { TIMEOUT_PHASES, TIMEOUT_STAGES, timeoutReportOf, type TimeoutReportView } from './timeout-report';
 
 /*
@@ -42,6 +45,33 @@ describe('timeoutReportOf', () => {
   it('knows the six steps and the two searches the engine names', () => {
     expect([...TIMEOUT_STAGES]).toEqual(['PRECHECKS', 'BUILD', 'SITES', 'SEARCH_CLEAN', 'SEARCH_CLONE', 'PROBE']);
     expect([...TIMEOUT_PHASES]).toEqual(['CLEAN', 'CLONE']);
+  });
+
+  describe('the names, read from the engine’s schema (the review of #376, U-1)', () => {
+    // A step the engine adds passes a hand-written list on each side and every report with it is refused (null) in
+    // production until the gateway follows. The three lists the gateway keeps (TIMEOUT_STAGES, TIMEOUT_PHASES and
+    // engine-timing's ENGINE_STAGES, which reads a 503's details) are held to the two `Literal[...]` of
+    // optimization-engine/app/schemas/schedule.py, read as text: the repository's way (year-periods.spec.ts reads
+    // MAX_PERIODS from the same file) and no Python.
+    const schema = readFileSync(join(__dirname, '..', '..', 'optimization-engine/app/schemas/schedule.py'), 'utf8');
+    const literalOf = (name: string): string[] => {
+      const match = new RegExp(`^${name} = Literal\\[([^\\]]*)\\]`, 'm').exec(schema);
+      expect(match).not.toBeNull();
+      return [...match![1]!.matchAll(/"([A-Z_]+)"/g)].map((quoted) => quoted[1]!);
+    };
+
+    it('lists the steps in the order the engine does, and the gateway’s two lists of them agree', () => {
+      const engine = literalOf('TimeoutStageName');
+      expect(engine.length).toBeGreaterThanOrEqual(6);
+      expect([...TIMEOUT_STAGES]).toEqual(engine);
+      expect([...ENGINE_STAGES]).toEqual(engine);
+    });
+
+    it('lists the searches that report their effort as the engine does', () => {
+      const engine = literalOf('TimeoutPhaseName');
+      expect(engine.length).toBeGreaterThanOrEqual(2);
+      expect([...TIMEOUT_PHASES]).toEqual(engine);
+    });
   });
 
   it('carries no key of its own choosing, at any depth', () => {
@@ -112,6 +142,63 @@ describe('timeoutReportOf', () => {
     ['solutions that are not a whole number', { ...report(), search: { solutions: 0.5, phases: [] } }],
   ])('keeps nothing of %s: a half-read account is worse than none', (_label, value) => {
     expect(timeoutReportOf(value)).toBeNull();
+  });
+
+  it('accepts a figure at its upper limit and keeps nothing past it: a day of seconds, a million million counts', () => {
+    const day = 86_400;
+    const most = 1_000_000_000_000;
+    const kept = timeoutReportOf({
+      ...report(),
+      totalSeconds: day,
+      budgetSeconds: day,
+      configuredBudgetSeconds: day,
+      callerWaitSeconds: day,
+      stages: [{ stage: 'BUILD', seconds: day }],
+      search: { solutions: most, phases: [{ phase: 'CLEAN', seconds: day, conflicts: most, branches: most }] },
+    });
+    expect(kept).toEqual({
+      totalSeconds: day,
+      budgetSeconds: day,
+      configuredBudgetSeconds: day,
+      callerWaitSeconds: day,
+      stages: [{ stage: 'BUILD', seconds: day }],
+      search: { solutions: most, phases: [{ phase: 'CLEAN', seconds: day, conflicts: most, branches: most }] },
+      weekLoadCut: false,
+    });
+
+    expect(timeoutReportOf({ ...report(), budgetSeconds: day + 1 })).toBeNull();
+    expect(timeoutReportOf({ ...report(), callerWaitSeconds: day + 1 })).toBeNull();
+    expect(timeoutReportOf({ ...report(), stages: [{ stage: 'BUILD', seconds: day + 1 }] })).toBeNull();
+    expect(timeoutReportOf({ ...report(), search: { solutions: most + 1, phases: [] } })).toBeNull();
+    expect(timeoutReportOf({ ...report(), search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: 1, conflicts: most + 1 }] } })).toBeNull();
+    expect(timeoutReportOf({ ...report(), search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: 1, branches: most + 1 }] } })).toBeNull();
+  });
+
+  it('can never be larger than the column’s own check lets through: the fullest report it keeps is a fraction of 8 KiB', () => {
+    // OptimizationJobs_report_is_a_small_object (20270228090000) refuses a report over 8192 bytes of jsonb text, and a refused write
+    // would turn a TIMEOUT into a failed run. The limits are found by asking, not read from the constants: the most stages and the
+    // most searches it accepts, each with every figure at its top. jsonb text is a little wider than JSON.stringify (a space after
+    // every colon and comma), so the bound is twice the compact length: a limit raised here that would not fit there fails this
+    // test, not a school's run.
+    const day = 86_400;
+    const most = 1_000_000_000_000;
+    const full = (stages: number, phases: number) => ({
+      totalSeconds: day,
+      budgetSeconds: day,
+      configuredBudgetSeconds: day,
+      callerWaitSeconds: day,
+      stages: Array.from({ length: stages }, () => ({ stage: 'SEARCH_CLEAN', seconds: day })),
+      search: { solutions: most, phases: Array.from({ length: phases }, () => ({ phase: 'CLEAN', seconds: day, conflicts: most, branches: most })) },
+      weekLoadCut: true,
+    });
+    let stages = 0;
+    while (stages < 5_000 && timeoutReportOf(full(stages + 1, 0)) !== null) stages += 1;
+    let phases = 0;
+    while (phases < 5_000 && timeoutReportOf(full(0, phases + 1)) !== null) phases += 1;
+
+    const fullest = timeoutReportOf(full(stages, phases));
+    expect(fullest).not.toBeNull();
+    expect(JSON.stringify(fullest).length * 2).toBeLessThanOrEqual(8192);
   });
 
   it('accepts the least a report is: no stage and no search, as a solve that closed before any step reports', () => {
