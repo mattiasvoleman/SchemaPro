@@ -1,4 +1,7 @@
+import { IntlMessageFormat } from "intl-messageformat";
 import { describe, expect, it } from "vitest";
+import en from "@/messages/en.json";
+import sv from "@/messages/sv.json";
 import { runEnding } from "./run-ending";
 
 /*
@@ -118,5 +121,25 @@ describe("an engine that was not reached, and a run that was abandoned", () => {
 describe("a code that is not one of these endings", () => {
   it.each([null, "GENERATE_STALE", "SCHEDULE_BUSY", "ENGINE_ERROR", ""])("is left to the page (%s)", (code) => {
     expect(runEnding(code, { ceilingSeconds: 230 })).toBeNull();
+  });
+});
+
+describe("what a school reads when the road closed the call (ENGINE_PATH_CLOSED_AFTER)", () => {
+  const say = (messages: unknown, locale: string, values: Record<string, number>): string =>
+    new IntlMessageFormat(
+      (messages as { scheduleCandidates: { jobErrors: Record<string, string> } }).scheduleCandidates.jobErrors.ENGINE_PATH_CLOSED_AFTER!,
+      locale,
+    ).format(values) as string;
+
+  it.each([
+    ["the API's own wait, ten seconds before the road would have closed it", 290, 300],
+    ["the road's own close, a little after its limit", 303, 300],
+  ])("is true of %s: it names how long there was no answer and what the road allows, and never says the call was closed after a time other than the road's", (_name, elapsedSeconds, pathLimitSeconds) => {
+    for (const [messages, locale] of [[sv, "sv"], [en, "en"]] as const) {
+      const sentence = say(messages, locale, { elapsedSeconds, pathLimitSeconds });
+      expect(sentence).toContain(String(elapsedSeconds));
+      expect(sentence).toContain(String(pathLimitSeconds));
+      expect(sentence).not.toMatch(/stängdes efter|was closed after/);
+    }
   });
 });
