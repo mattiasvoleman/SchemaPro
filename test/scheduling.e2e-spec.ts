@@ -800,7 +800,7 @@ describe('Scheduling surface (e2e)', () => {
       expect(harness.tx.$executeRaw).not.toHaveBeenCalled();
     });
 
-    it('refuses a run that is not the year\'s newest with 409 SUGGESTIONS_RUN_IS_OLD', async () => {
+    it('refuses a run that is not the year\'s newest with 409 SUGGESTIONS_RUN_IS_OLD, which is what a Generera going in the year gives: it is the newest run', async () => {
       harness.tx['optimizationJob']!['findFirst']!.mockResolvedValue({ id: 'another-run' });
 
       const response = await request(http())
@@ -811,8 +811,11 @@ describe('Scheduling surface (e2e)', () => {
       expect(response.body.code).toBe('SUGGESTIONS_RUN_IS_OLD');
     });
 
-    it('refuses a year with a run going with 409 SUGGESTIONS_YEAR_BUSY', async () => {
-      harness.tx['optimizationJob']!['count']!.mockResolvedValue(1);
+    it('refuses a year with a schemaförslag run going with 409 SUGGESTIONS_YEAR_BUSY', async () => {
+      // The one thing that holds the year off while this run is still its newest: a live schemaförslag run (ScheduleCandidateRuns). A
+      // Generera going is a newer run than any that was refused, so it is RUN_IS_OLD above; the `count` of running jobs is 0 here, as it
+      // is in every state a person can reach (the review of #385, L-6).
+      harness.tx.$queryRaw.mockResolvedValue([{ active: 1 }]);
 
       const response = await request(http())
         .post(`/api/v1/optimization/jobs/${VERSION_ID}/suggestions`)
@@ -820,6 +823,10 @@ describe('Scheduling surface (e2e)', () => {
         .expect(409);
 
       expect(response.body.code).toBe('SUGGESTIONS_YEAR_BUSY');
+      expect(harness.tx['optimizationJob']!['count']).toHaveBeenCalled();
+      // The year's start lock is taken before the year is judged; the claim of the column (the UPDATE) is not made.
+      const statements = harness.tx.$executeRaw.mock.calls.map(([statement]) => String((statement as { sql?: string })?.sql ?? statement));
+      expect(statements.some((statement) => statement.includes('UPDATE "OptimizationJobs"'))).toBe(false);
     });
 
     it('404s a run that is not visible to the caller, and 400s an id that is not one', async () => {

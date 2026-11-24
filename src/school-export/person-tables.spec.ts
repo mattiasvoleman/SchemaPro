@@ -1,5 +1,5 @@
 import { STUDENT_BELOW, STUDENT_KEYS } from '../common/removal-inventory';
-import { ACCOUNT_KINDS, NOT_A_USER, SUBJECT_ACCESS, WITHOUT_KEY, WITHOUT_SCHOOL_COLUMN, cellOf, emptyPupilPart, excludedTables, inventoriedTables, tableFiles, type CellRules } from './person-tables';
+import { ACCOUNT_KINDS, NOT_A_USER, SUBJECT_ACCESS, WITHOUT_KEY, WITHOUT_SCHOOL_COLUMN, cellOf, emptyPupilPart, excludedTables, inventoriedTables, readTable, tableFiles, type CellRules } from './person-tables';
 
 /**
  * "All your data" is only true while the extract knows every table that holds
@@ -115,6 +115,35 @@ describe('the registerutdrag of a member of staff who booked or registered for L
 
   it('gives the series a file of its own under data/person', () => {
     expect(tableFiles().find((file) => file.table === 'ExternalBookings')?.path).toBe('data/person/externalbookings.csv');
+  });
+});
+
+describe('the json columns of a table that name a person (the review of #385, L-9)', () => {
+  const TEACHER = '22222222-2222-4222-8222-222222222222';
+  const SCHOOL = '33333333-3333-4333-8333-333333333333';
+
+  /** The statement readTable sends for `table`, with no database: what it asks of each column is in the text. */
+  const statementFor = async (table: string): Promise<string> => {
+    const file = tableFiles().find((candidate) => candidate.table === table)!;
+    const sent: Array<{ sql: string }> = [];
+    const tx = { $queryRaw: async (statement: { sql: string }) => (sent.push(statement), []) } as unknown as Parameters<typeof readTable>[0];
+    await readTable(tx, SCHOOL, file, [TEACHER]);
+    return sent[0]!.sql;
+  };
+
+  it('reads a Generera run by every json column that holds a teacher\'s Users id, so that a teacher named only there is in the extract', async () => {
+    // A run keeps teacher ids in the json of its conflicts, notes and summary params (subjectIds), of its failure's params, and of the
+    // analysis that offers changes (teacherIds, resourceIds). The actor's column was the only one read.
+    const sql = await statementFor('OptimizationJobs');
+
+    expect(sql).toContain('t."actorId" = ANY(');
+    for (const column of ['conflicts', 'notes', 'suggestions', 'conflictSummaryParams', 'errorParams']) {
+      expect(sql).toContain(`t."${column}"::text LIKE`);
+    }
+  });
+
+  it('keeps reading the search\'s own json, as before', async () => {
+    expect(await statementFor('StaffingSearchRuns')).toContain('t."checkpoint"::text LIKE');
   });
 });
 

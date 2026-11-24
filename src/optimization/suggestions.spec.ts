@@ -311,6 +311,26 @@ describe('the whitelist', () => {
     expect(suggestionsOf({ ...value, changes: [{ ...value.changes[0], ...patch }] })).toBeNull();
   });
 
+  it('refuses a proof the strict model has not given: a list that was not verified holds MAY_HELP and nothing more (the review of #388, U-1)', () => {
+    // The write says so (an unverified answer's changes are stored MAY_HELP); the read says it too, so that a column written by anything
+    // else, or edited by hand, cannot show "SOLVED" over a list the strict model never accepted. The card guards itself (listProofOf).
+    const unverified = stored(answer([cap(), lock()], { verified: false }));
+    expect(unverified.verified).toBe(false);
+    expect(unverified.changes.map((change) => change.proof)).toEqual(['MAY_HELP', 'MAY_HELP']);
+    expect(suggestionsOf(unverified)).toEqual(unverified);
+
+    for (const proof of ['SOLVED', 'SOLVED_TOGETHER'] as const) {
+      const claimed = { ...unverified, changes: [{ ...unverified.changes[0]!, proof }, unverified.changes[1]!] };
+      expect(suggestionsOf(claimed)).toBeNull();
+    }
+    // Verified, the proofs are the engine's own and stay: SOLVED, SOLVED_TOGETHER and a MAY_HELP the engine gave itself.
+    const verified = good();
+    expect(verified.verified).toBe(true);
+    expect(new Set(verified.changes.map((change) => change.proof)).size).toBeGreaterThan(1);
+    expect(suggestionsOf(verified)).toEqual(verified);
+    expect(suggestionsOf({ ...verified, changes: [{ ...verified.changes[0]!, proof: 'MAY_HELP' }] })).not.toBeNull();
+  });
+
   it('refuses a part-timer\'s days in any form but the hidden one, and a hidden change that says more', () => {
     const visible = { ...good().changes.find((change) => change.hidden)!, hidden: false };
     expect(suggestionsOf({ ...good(), changes: [visible] })).toBeNull();

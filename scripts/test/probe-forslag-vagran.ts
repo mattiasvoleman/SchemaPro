@@ -9,8 +9,8 @@
  *         conditional UPDATE): the engine was asked once;
  *   ag-c  an analysis that has been RUNNING for longer than any lasts is read as FAILED/ABANDONED before anything sweeps it, and a
  *         new press takes it over; the late answer of the process that lost it does NOT overwrite the one that took over;
- *   ag-d  a run it may not be asked for (a timetable, an older run than the year's newest, a year with a run going) is 409 with
- *         its code, and wakes nothing; another school's administrator sees no such run (404);
+ *   ag-d  a run it may not be asked for (a timetable, an older run than the year's newest, which is also what a Generera going in
+ *         the year gives) is 409 with its code, and wakes nothing; another school's administrator sees no such run (404);
  *   ag-e  the whitelist holds across the database: a column a hand edited (a part-timer's days in the open) is shown as nothing;
  *   ag-f  the engine's cores are one stream at a time (D2): Generera's start is refused 409 SUGGESTIONS_RUNNING while an analysis of the year
  *         is alive, and an analysis is refused 409 SUGGESTIONS_YEAR_BUSY while a schemaförslag run of the year is alive.
@@ -199,13 +199,16 @@ export async function suggestionsChecks(owner: Client, api: PrismaService, marke
       await assert.rejects(service.start(withTimetable, a.admin), (error: unknown) => codeOf(error) === 'SUGGESTIONS_NOT_FOR_THIS_RUN');
       // `first` is a refusal, but no longer the year's newest run.
       await assert.rejects(service.start(first, a.admin), (error: unknown) => codeOf(error) === 'SUGGESTIONS_RUN_IS_OLD');
-      // A run going in the year holds the engine's cores: an older one, so that the refusal below is the newest run's.
-      await owner.query(
-        `INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "createdAt") VALUES ($1, $2, $3, 'RUNNING', now() - interval '1 hour')`,
-        [a.school, a.year, a.adminId],
-      );
+      // A Generera going in the year is the year's NEWEST run (one is active at a time, and a start needs the year free), so the press on
+      // the refusal before it is told that it is old, and not that the year is busy: SUGGESTIONS_YEAR_BUSY is a live schemaförslag run's
+      // (ag-f). The probe used to plant a RUNNING job OLDER than the refusal and expect YEAR_BUSY, a state nobody can reach (the review
+      // of #385, L-6).
       const newest = await plantRun(a, { createdAt: future(120) });
-      await assert.rejects(service.start(newest, a.admin), (error: unknown) => codeOf(error) === 'SUGGESTIONS_YEAR_BUSY');
+      await owner.query(
+        `INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "createdAt") VALUES ($1, $2, $3, 'RUNNING', $4)`,
+        [a.school, a.year, a.adminId, future(240)],
+      );
+      await assert.rejects(service.start(newest, a.admin), (error: unknown) => codeOf(error) === 'SUGGESTIONS_RUN_IS_OLD');
       assert.equal(calls.length, 0, 'none of them woke the engine');
       await owner.query(`DELETE FROM "OptimizationJobs" WHERE "academicYearId" = $1 AND status = 'RUNNING'`, [a.year]);
       // Another school: the run is not there for its administrator.

@@ -233,7 +233,9 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   GuardianStudentHistory: dump(['guardianId', 'studentId', 'unlinkedById'], 'GUARDIANS'),
   PersonProtectionEvents: dump(['userId', 'actorId']),
   IntegrationApiKeys: dump(['createdById']),
-  OptimizationJobs: dump(['actorId']),
+  // A run keeps teacher ids in json too: subjectIds in its conflicts, notes and the params of its summary and its failure, and teacherIds
+  // and resourceIds in the analysis that offers changes (the review of #385, L-9). Read as StaffingSearchRuns' checkpoint is.
+  OptimizationJobs: dump(['actorId'], 'PEOPLE', [], ['conflicts', 'notes', 'suggestions', 'conflictSummaryParams', 'errorParams']),
   ScheduleCandidateRuns: dump(['createdById']),
   // Lärarval F3 (20270227090000): who asked for a search, and the moves it kept (a lead's teacher id, in json) for a day.
   StaffingSearchRuns: dump(['createdById'], 'PEOPLE', [], ['checkpoint']),

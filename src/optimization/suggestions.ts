@@ -255,6 +255,9 @@ export function suggestionsOf(value: unknown): SuggestionsStored | null {
     changes.push(change);
   }
   if (changes.length > total) return null;
+  // A list the strict model did not accept holds MAY_HELP and nothing more: suggestionsFromEngine stores it so, and a column that says
+  // SOLVED over an unverified list was written by something else (the review of #388, U-1).
+  if (!value.verified && changes.some((change) => change.proof !== 'MAY_HELP')) return null;
   const stored: SuggestionsStored = {
     version: 1,
     state: state as SuggestionsState,

@@ -1243,6 +1243,104 @@ describe('Planning surface (e2e)', () => {
       expect(harness.tx['teachingRequirement']!['update']).not.toHaveBeenCalled();
     });
 
+    /*
+     * THE ORDINANCE'S HIGHEST LEVEL (SFS 2026:1487 3 §), over HTTP (the review of #404, L-4). Only STAFF_TEACHER_OVER_TARGET had a row
+     * through the real filter: the question is pinned in staffing-checks.spec.ts, and what a client gets of it is the code and FLAT params
+     * the page words its sentence from. Karin teaches årskurs 7: 13 lessons of 60 minutes over the 43 weeks of the läsår are 559 hours
+     * against the edge of 600, and 14 are 602.
+     */
+    describe('the ordinance\'s highest level of teaching time', () => {
+      const band = (over: Record<string, unknown>) => ({
+        schoolForm: 'GRUNDSKOLA',
+        gradeNumbering: 'NIOARIG',
+        gradeFrom: 1,
+        gradeTo: 6,
+        teachingHoursLow: 550,
+        teachingHoursHigh: 650,
+        planningFloorPercent: 100,
+        teachingSection: '3 § p. 1',
+        planningSection: '4 § p. 1',
+        note: null,
+        ...over,
+      });
+      const scopeWorld = () =>
+        givenStaffingWorld(
+          harness.tx,
+          world({
+            policy: { assignmentScopeMode: 'REFUSE', overAllocationMode: 'OFF', qualificationMode: 'OFF' },
+            requirements: [
+              { id: REQUIREMENT_ID, subjectId: SUBJECT_ID, studentGroupId: GROUP_ID, teacherId: KARIN, coTeacherId: null, lessonsPerWeek: 13, minutesPerLesson: 60 },
+            ],
+          }),
+        );
+      const patchToFourteen = (reader: string) => {
+        harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue({
+          academicYearId: YEAR_ID,
+          subjectId: SUBJECT_ID,
+          studentGroupId: GROUP_ID,
+          teacherId: KARIN,
+          coTeacherId: null,
+          lessonsPerWeek: 13,
+          minutesPerLesson: 60,
+          lessonLengths: [],
+          recurrence: 'ALL_WEEKS',
+          blockId: null,
+          startDate: null,
+          endDate: null,
+        });
+        return request(http())
+          .patch(`/api/v1/teaching-requirements/${REQUIREMENT_ID}`)
+          .set('x-test-user', reader)
+          .send({ lessonsPerWeek: 14 });
+      };
+
+      beforeEach(() => {
+        harness.tx['assignmentScopeVersion']!['findFirst']!.mockResolvedValue({
+          code: 'SFS2026:1487',
+          sfs: 'SFS 2026:1487',
+          title: 'Förordning',
+          validFrom: new Date('2020-01-01T00:00:00.000Z'),
+          validTo: null,
+          source: 'https://example.invalid/sfs',
+        });
+        harness.tx['assignmentScopeBand']!['findMany']!.mockResolvedValue([
+          band({}),
+          band({ gradeFrom: 7, gradeTo: 9, teachingHoursLow: 500, teachingHoursHigh: 600, planningFloorPercent: 110, teachingSection: '3 § p. 2' }),
+        ]);
+        harness.tx['assignmentScopeAssessment']!['findMany']!.mockResolvedValue([]);
+      });
+
+      afterEach(() => {
+        for (const model of ['assignmentScopeVersion', 'assignmentScopeBand', 'assignmentScopeAssessment']) {
+          for (const method of ['findFirst', 'findMany']) harness.tx[model]![method]?.mockReset();
+        }
+      });
+
+      it('REFUSE on a PATCH: 409 with the code, and the hours and the limit as flat params, for a reader of the post\'s hours (a full administrator)', async () => {
+        scopeWorld();
+
+        const response = await patchToFourteen(admin()).expect(409);
+
+        expect(response.body).toMatchObject({
+          status: 409,
+          code: 'STAFF_TEACHER_OVER_SCOPE',
+          params: { role: 'TEACHER', hours: '602', limit: '600' },
+        });
+        expect(harness.tx['teachingRequirement']!['update']).not.toHaveBeenCalled();
+      });
+
+      it('REFUSE for a reader who may not see the post (a schemaläggare without HR-läs): the hidden code, and no more than the role in params', async () => {
+        scopeWorld();
+
+        const response = await patchToFourteen(asUser({ adminProfile: 'SCHEMALAGGARE' as never, hrRead: false })).expect(409);
+
+        expect(response.body).toMatchObject({ status: 409, code: 'STAFF_TEACHER_OVER_SCOPE_HIDDEN', params: { role: 'TEACHER' } });
+        expect(Object.keys(response.body.params)).toEqual(['role']);
+        expect(JSON.stringify(response.body)).not.toMatch(/602|600/);
+        expect(harness.tx['teachingRequirement']!['update']).not.toHaveBeenCalled();
+      });
+    });
+
     it('delade lektioner: a share removed under its förläggning is a 409 that names the förläggning flat in params, and no person', async () => {
       const BO = '55555555-5555-4555-8555-555555555555';
       // The post's row lock before its shares are replaced (lockPostForShares).
