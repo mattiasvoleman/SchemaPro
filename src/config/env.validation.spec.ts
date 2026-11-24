@@ -71,7 +71,7 @@ describe('validateEnv', () => {
       expect(validated.AI_ENGINE_TIMEOUT_MS).toBeUndefined();
     });
 
-    it('may be set to nothing, which is what clearing the field in a host leaves and is not a setting either', () => {
+    it('may be set to nothing, which is what clearing the field in a host leaves and is not a setting either (spaces too: they are no 0, and 0 says there is no limit)', () => {
       expect(() => validateEnv({ ...without(), AI_ENGINE_TIMEOUT_MS: undefined })).not.toThrow();
       for (const blank of ['', null]) {
         expect(validateEnv({ ...valid(), AI_ENGINE_TIMEOUT_MS: blank }).AI_ENGINE_TIMEOUT_MS).toBeUndefined();
@@ -96,8 +96,8 @@ describe('validateEnv', () => {
       expect(validateEnv(valid()).AI_ENGINE_PATH_IDLE_LIMIT_SECONDS).toBeUndefined();
     });
 
-    it('may be set to nothing, which is what clearing the field in a host leaves and is not a setting either', () => {
-      for (const blank of ['', null, undefined]) {
+    it('may be set to nothing, which is what clearing the field in a host leaves and is not a setting either (spaces too: they are no 0, and 0 says there is no limit)', () => {
+      for (const blank of ['', ' ', '   ', null, undefined]) {
         expect(validateEnv({ ...valid(), AI_ENGINE_PATH_IDLE_LIMIT_SECONDS: blank }).AI_ENGINE_PATH_IDLE_LIMIT_SECONDS).toBeUndefined();
       }
     });
