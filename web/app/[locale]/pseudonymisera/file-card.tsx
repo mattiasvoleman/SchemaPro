@@ -63,7 +63,7 @@ export function FileCard({
     <section className={CARD} aria-labelledby={`${id}-heading`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 id={`${id}-heading`} className="text-base font-semibold">
+          <h3 id={`${id}-heading`} className="text-base font-semibold" translate="no">
             {say("file.heading", { n: index + 1, name: entry.name })}
           </h3>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -72,7 +72,7 @@ export function FileCard({
         </div>
         <button type="button" className={BUTTON_SMALL} onClick={onRemove}>
           {say("file.remove")}
-          <span className="sr-only"> {entry.name}</span>
+          <span className="sr-only" translate="no"> {entry.name}</span>
         </button>
       </div>
 
@@ -104,7 +104,7 @@ export function FileCard({
                   const at = input.body.shape === "table" ? input.body.rowNumbers.indexOf(row) : -1;
                   const cells = input.body.shape === "table" && at !== -1 ? input.body.rows[at]!.filter((cell) => cell.trim() !== "").slice(0, 4) : [];
                   return (
-                    <option key={row} value={String(row)}>
+                    <option key={row} value={String(row)} translate="no">
                       {say("file.headerRowOption", { n: row, cells: cells.join(" · ").slice(0, 60) })}
                     </option>
                   );
@@ -148,8 +148,8 @@ export function FileCard({
                   return (
                     <tr key={column.index}>
                       <th scope="row" className={`${TD} font-medium ${effective === null ? "border-l-4 border-l-destructive" : ""}`}>{column.index + 1}</th>
-                      <td className={TD}>{column.header === "" ? <span className="text-muted-foreground">{say("col.noHeader")}</span> : column.header}</td>
-                      <td className={`${TD} max-w-56 break-words font-mono text-xs`}>{column.stats.samples.length > 0 ? column.stats.samples.join(" · ") : "—"}</td>
+                      <td className={TD} translate={column.header === "" ? undefined : "no"}>{column.header === "" ? <span className="text-muted-foreground">{say("col.noHeader")}</span> : column.header}</td>
+                      <td className={`${TD} max-w-56 break-words font-mono text-xs`} translate="no">{column.stats.samples.length > 0 ? column.stats.samples.join(" · ") : "—"}</td>
                       <td className={`${TD} text-xs`}>{contents(column, say)}</td>
                       <td className={`${TD} text-xs ${column.proposal === null ? "font-semibold text-destructive" : ""}`}>{proposalText(column, say)}</td>
                       <td className={TD}>

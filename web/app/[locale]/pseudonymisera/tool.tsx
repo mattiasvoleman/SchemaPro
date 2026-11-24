@@ -131,6 +131,15 @@ export function PseudonymiserareTool({ labels, locale }: { labels: Labels; local
     setWorking(false);
   };
 
+  // "Rensa allt" is on the page whenever there is anything for it to drop: a file, text pasted and not yet added, the user's own words, or the message
+  // about a file that could not be read (it names the file). It stands by the run button once a file is added, and by the paste box before.
+  const holdsSomething = entries.length > 0 || pasted !== "" || words !== "" || problems.length > 0;
+  const clearButton = (
+    <button type="button" className={BUTTON_OUTLINE} onClick={clearAll}>
+      {say("tool.clearAll")}
+    </button>
+  );
+
   const undecided = entries.reduce(
     (sum, entry) => sum + entry.plan.columns.filter((column) => (entry.treatments[column.index] ?? column.proposal?.treatment) === undefined).length,
     0,
@@ -173,9 +182,12 @@ export function PseudonymiserareTool({ labels, locale }: { labels: Labels; local
             <p id="paste-hint" className="text-xs text-muted-foreground">
               {say("tool.pasteHint")}
             </p>
-            <button type="button" className={BUTTON_OUTLINE} onClick={() => void addPaste()} disabled={pasted.trim() === "" || reading}>
-              {say("tool.addPaste")}
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" className={BUTTON_OUTLINE} onClick={() => void addPaste()} disabled={pasted.trim() === "" || reading}>
+                {say("tool.addPaste")}
+              </button>
+              {entries.length === 0 && holdsSomething ? clearButton : null}
+            </div>
           </div>
         </div>
         <div aria-live="polite" className="text-sm">
@@ -255,9 +267,7 @@ export function PseudonymiserareTool({ labels, locale }: { labels: Labels; local
               <button type="button" className={BUTTON} onClick={() => void run()} disabled={undecided > 0 || working || reading}>
                 {say("tool.run")}
               </button>
-              <button type="button" className={BUTTON_OUTLINE} onClick={clearAll}>
-                {say("tool.clearAll")}
-              </button>
+              {clearButton}
             </div>
             <div aria-live="polite" className="text-sm">
               {working ? <p>{say("tool.working")}</p> : null}

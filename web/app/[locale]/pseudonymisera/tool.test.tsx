@@ -203,6 +203,106 @@ describe("the tool, a file at a time", () => {
     expect(screen.queryByRole("region", { name: sv["result.heading"] })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: sv["tool.run"] })).not.toBeInTheDocument();
   });
+
+  // "Rensa allt" drops what the page holds. Text pasted and not yet added is held too, and before a file is added the button used to be missing.
+  describe("clears what the page holds even when no file is added", () => {
+    const clearAll = () => screen.queryAllByRole("button", { name: sv["tool.clearAll"] });
+
+    it("text in the paste box: the button is there as soon as there is text, and empties the box", async () => {
+      const user = setup();
+      expect(clearAll()).toHaveLength(0);
+      await user.click(screen.getByLabelText(sv["tool.pasteLabel"]));
+      await user.paste("Lärare\tKlass\nAnna Svensson\t7A\n");
+      expect(clearAll()).toHaveLength(1);
+      await user.click(clearAll()[0]!);
+      expect(screen.getByLabelText(sv["tool.pasteLabel"])).toHaveValue("");
+      expect(clearAll()).toHaveLength(0);
+    });
+
+    it("is one button, not two, once a file is added and the paste box still has text", async () => {
+      const user = setup();
+      await user.click(screen.getByLabelText(sv["tool.pasteLabel"]));
+      await user.paste("Anna Svensson");
+      await addFile(user, csv("lektioner.csv", FILE));
+      await screen.findByRole("button", { name: sv["tool.run"] });
+      expect(clearAll()).toHaveLength(1);
+      await user.click(clearAll()[0]!);
+      expect(screen.getByLabelText(sv["tool.pasteLabel"])).toHaveValue("");
+    });
+
+    it("the message about a file that could not be read, which names the file: the button drops it", async () => {
+      const user = setup();
+      await addFile(user, csv("tom-lista.csv", ""));
+      expect(await screen.findByRole("alert")).toHaveTextContent("tom-lista.csv");
+      expect(clearAll()).toHaveLength(1);
+      await user.click(clearAll()[0]!);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("the user's own words, kept in the page after the last file is taken away: the button is there and drops them", async () => {
+      const user = setup();
+      await addFile(user, csv("lektioner.csv", FILE));
+      await user.type(await screen.findByLabelText(sv["tool.wordsLabel"]), "Matte");
+      await user.click(screen.getByRole("button", { name: new RegExp(`^${sv["file.remove"]}\\s*lektioner\\.csv$`) }));
+      expect(screen.queryByLabelText(sv["tool.wordsLabel"])).not.toBeInTheDocument();
+      expect(clearAll()).toHaveLength(1);
+      await user.click(clearAll()[0]!);
+      await addFile(user, csv("lektioner.csv", FILE));
+      expect(await screen.findByLabelText(sv["tool.wordsLabel"])).toHaveValue("");
+    });
+  });
+});
+
+/*
+ * The page's language is sv (or en), and a browser's translation service offers to translate a page that says so to its reader: it then sends what is on the page to
+ * a server. "Ingen server ser den" holds only if the file's own text is marked `translate="no"` wherever the page shows it (the review of #398). The test finds every element whose
+ * own text holds a probe taken from the file and asks for an ancestor that says so, so a copy of the page without the attribute fails it.
+ */
+describe("what a translating browser is not given: the file's own text", () => {
+  /** The elements that show `probe` as their own text, and whether each is inside something marked translate="no". */
+  const shown = (probe: string | RegExp) => screen.queryAllByText(probe, { exact: false }).map((element) => ({ element, marked: element.closest('[translate="no"]') !== null }));
+  const expectMarked = (probe: string | RegExp, where: string) => {
+    const found = shown(probe);
+    expect(found.length, `${where}: nothing on the page shows ${String(probe)}`).toBeGreaterThan(0);
+    for (const { element, marked } of found) expect(marked, `${where}: <${element.tagName.toLowerCase()}> "${element.textContent}" is offered to a translator`).toBe(true);
+  };
+
+  it("on the file's card: its name, a column's header, the example cells and the header row's cells in the list of rows", async () => {
+    const user = setup();
+    await addFile(user, csv("lektioner-åk7.csv", FILE));
+    await screen.findByRole("table", { name: sv["col.caption"].replace("{n}", "1") });
+    expectMarked("lektioner-åk7.csv", "the file's name");
+    expectMarked("Notis", "a column's header");
+    expectMarked("Prov på fredag", "an example cell");
+    expectMarked("Lärare · Ämne", "the cells of a row in the list of header rows");
+  });
+
+  it("in the result: the cells of the safe file's preview, and the report shown on the page", async () => {
+    const user = setup();
+    await runFile(user);
+    expectMarked("Prov på fredag", "a cell of the preview");
+    expectMarked("Svenska", "a cell of the preview");
+    // The report names the columns by their headers as they stand in the safe file.
+    expectMarked(/Kolumn 4 \(Notis\)/, "the report shown on the page");
+  });
+
+  it("for a file that is not a table: its lines in the preview", async () => {
+    const user = setup();
+    await addFile(user, csv("brev.txt", "Kära Anna,\nVi ses kl 8, och sen, kanske\nHälsningar\n"));
+    await user.click(await screen.findByRole("button", { name: sv["tool.run"] }));
+    await screen.findByRole("region", { name: sv["result.heading"] });
+    expectMarked(/Vi ses kl 8/, "a line of the preview");
+  });
+
+  it("marks nothing else on the page: the page's own sentences stay translatable", async () => {
+    const user = setup();
+    await runFile(user);
+    for (const label of [sv["tool.addHeading"], sv["result.heading"], sv["result.previewHeading"]]) {
+      const found = shown(label);
+      expect(found.length, label).toBeGreaterThan(0);
+      for (const { element, marked } of found) expect(marked, `${label} (<${element.tagName.toLowerCase()}>)`).toBe(false);
+    }
+  });
 });
 
 describe("the tool asks where it cannot tell", () => {
