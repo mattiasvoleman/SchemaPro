@@ -47,6 +47,7 @@ vi.mock("@/i18n/navigation", () => ({
   Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
 }));
 vi.mock("next-intl", () => ({
+  useLocale: () => "sv",
   useTranslations: (namespace: string) => (key: string, values?: Record<string, unknown>) =>
     values ? `${namespace}.${key}(${Object.values(values).join("|")})` : `${namespace}.${key}`,
 }));

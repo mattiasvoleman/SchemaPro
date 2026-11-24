@@ -4838,6 +4838,7 @@
       "exceptionKindOWN_INITIATIVE": "at the teacher's own initiative (§ 11 point 1)",
       "exceptionKindSMALL_GROUP": "a single pupil or a small group (§ 11 point 3)",
       "exceptionRegistered": "Exception registered under § 11: {kind}.",
+      "exceptionRegisteredOn": "Exception registered under § 11: {kind}, on {day}.",
       "exceptionKeepsVerdict": "An exception does not change the verdict above. It only means that an assignment over the highest level is warned of and not refused.",
       "assessmentNote": "Note: {note}",
       "opensInNewTab": "(opens in a new tab)",

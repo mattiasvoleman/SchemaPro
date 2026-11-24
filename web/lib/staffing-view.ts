@@ -46,10 +46,22 @@ export function matrixColumns(
   return sortByName(columns, (subject) => subject.code ?? subject.name);
 }
 
-/** One decimal, decimal comma, no trailing ",0": "53,3", "80". */
-export function formatPercent(value: number): string {
+/**
+ * One decimal, no trailing ",0", in the reader's language: Swedish has the decimal comma and no grouping ("53,3", "1122"), another language
+ * writes the number its own way ("53.3", "1,122"). The cards of the omfattning say the language; `formatPercent` below is Swedish only.
+ */
+export function formatFigure(value: number, locale: string): string {
   const rounded = Math.round(value * 10) / 10;
+  if (locale !== "sv") return rounded.toLocaleString(locale);
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1).replace(".", ",");
+}
+
+/**
+ * One decimal, decimal comma, no trailing ",0": "53,3", "80". Takes the value alone, as it always did: several callers pass it to `map`,
+ * which would hand it the index as a second argument.
+ */
+export function formatPercent(value: number): string {
+  return formatFigure(value, "sv");
 }
 
 /**

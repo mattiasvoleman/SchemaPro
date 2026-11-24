@@ -4838,6 +4838,7 @@
       "exceptionKindOWN_INITIATIVE": "på lärarens eget initiativ (11 § p. 1)",
       "exceptionKindSMALL_GROUP": "enskild elev eller mindre grupp (11 § p. 3)",
       "exceptionRegistered": "Undantag registrerat enligt 11 §: {kind}.",
+      "exceptionRegisteredOn": "Undantag registrerat enligt 11 §: {kind}, den {day}.",
       "exceptionKeepsVerdict": "Ett undantag ändrar inte utlåtandet ovan. Det betyder bara att en tilldelning över den högsta nivån varnar och inte vägras.",
       "assessmentNote": "Anteckning: {note}",
       "opensInNewTab": "(öppnas i en ny flik)",

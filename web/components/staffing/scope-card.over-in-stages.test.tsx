@@ -51,7 +51,7 @@ describe("how far over the ordinance's highest level", () => {
 
   it.each([
     ["sv", sv, "Över förordningens högsta nivå med 0,8 h (3 §)."],
-    ["en", en, "Over the ordinance's highest level by 0,8 h (§ 3)."],
+    ["en", en, "Over the ordinance's highest level by 0.8 h (§ 3)."],
   ] as const)("is the sentence the card opens with (%s)", (locale, messages, sentence) => {
     const { container } = render(
       <NextIntlClientProvider locale={locale} messages={messages as never}>
