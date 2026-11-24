@@ -259,8 +259,8 @@ describe("api client", () => {
     });
   });
 
-  it("keeps at most ten sentences, and only strings, and leaves them out when there are none", async () => {
-    const many = Array.from({ length: 14 }, (_, index) => `fel ${index}`);
+  it("keeps at most a hundred sentences, so that the count the reader is told is the count there is, and only strings, and leaves them out when there are none", async () => {
+    const many = Array.from({ length: 120 }, (_, index) => `fel ${index}`);
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 400, detail: "x", errors: { body: [...many, 7, ""] } }), { status: 400 }));
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 400, detail: "x", errors: { body: [] } }), { status: 400 }));
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 400, detail: "x", errors: ["a"] }), { status: 400 }));
@@ -268,7 +268,7 @@ describe("api client", () => {
     const first = (await api.get("/a").catch((caught: unknown) => caught)) as { problems?: string[] };
     const second = (await api.get("/b").catch((caught: unknown) => caught)) as { problems?: string[] };
     const third = (await api.get("/c").catch((caught: unknown) => caught)) as { problems?: string[] };
-    expect(first.problems).toEqual(many.slice(0, 10));
+    expect(first.problems).toEqual(many.slice(0, 100));
     expect(second.problems).toBeUndefined();
     expect(third.problems).toBeUndefined();
   });

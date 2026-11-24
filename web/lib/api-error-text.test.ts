@@ -43,6 +43,21 @@ describe("apiErrorText", () => {
       expect(apiErrorText(refused(["a.", "b.", "c."]), english)).toBe("The details could not be saved. a. b. c.");
     });
 
+    it("ends the sentences class-validator words itself, which have no full stop, so that they do not run into one another", () => {
+      // What the gateway sends for CreateRoomDto with no name, a capacity of 20000 and a roomTypeId that is no UUID.
+      const error = refused(["name should not be empty", "capacity must not be greater than 10000", "roomTypeId must be a UUID"]);
+      expect(apiErrorText(error, swedish)).toBe(
+        "Uppgifterna kunde inte sparas. name should not be empty. capacity must not be greater than 10000. roomTypeId must be a UUID.",
+      );
+      expect(apiErrorText(error, english)).toBe(
+        "The details could not be saved. name should not be empty. capacity must not be greater than 10000. roomTypeId must be a UUID.",
+      );
+      // One that already ends in a mark keeps it, and a count follows a sentence of its own.
+      expect(apiErrorText(refused(["Nivån är för hög.", "x", "y", "z"]), swedish)).toBe(
+        "Uppgifterna kunde inte sparas. Nivån är för hög. x. y. Dessutom 1 fel till.",
+      );
+    });
+
     it("falls back to the detail for a 400 that sent no sentences", () => {
       expect(apiErrorText(apiError(400, "Bedömningen säger ingenting."), swedish)).toBe("Bedömningen säger ingenting.");
       expect(apiErrorText(refused([]), swedish)).toBe("One or more fields failed validation.");
@@ -96,7 +111,7 @@ describe("apiErrorText", () => {
     };
     expect(apiErrorText(apiError(404, "x"), echo)).toBe("common.problemNotFound");
     expect(apiErrorText(apiError(0, "x", NETWORK_FAILURE), echo)).toBe("common.problemNetwork");
-    expect(apiErrorText(apiError(400, "x", undefined, ["a"]), echo)).toBe('common.problemValidation{"problems":"a"}');
+    expect(apiErrorText(apiError(400, "x", undefined, ["a"]), echo)).toBe('common.problemValidation{"problems":"a."}');
     expect(asked).toEqual(["problemNotFound", "problemNetwork", "problemValidation"]);
   });
 });

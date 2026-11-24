@@ -189,6 +189,23 @@ describe("StaffingCarryDialog", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["a 500 with no code", new ApiError(500, "An unexpected error occurred. Please try again later."), "Något gick fel hos oss. Försök igen om en stund."],
+    ["a 429", new ApiError(429, "ThrottlerException: Too Many Requests"), "För många förfrågningar på kort tid. Vänta en stund och försök igen."],
+    ["a request that got no answer", new ApiError(0, "Failed to fetch", "CLIENT_NETWORK_FAILURE"), "Servern gick inte att nå. Kontrollera anslutningen och försök igen."],
+  ])("says %s in Swedish, not as the gateway's log line or the browser's English", async (_name, failure, sentence) => {
+    post.mockImplementation(async (path: string) => {
+      if (path.endsWith("/preview")) return preview();
+      throw failure;
+    });
+    const user = userEvent.setup();
+    renderDialog();
+    const button = await screen.findByRole("button", { name: "Ta med" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    expect(await screen.findByRole("alert")).toHaveTextContent(sentence);
+  });
+
   it("says a stale preview wrote nothing, and fetches it again", async () => {
     post.mockImplementation(async (path: string) => {
       if (path.endsWith("/preview")) return preview();

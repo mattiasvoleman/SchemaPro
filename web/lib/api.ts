@@ -51,8 +51,11 @@ export class ApiError extends Error {
   }
 }
 
-/** How many of the validation sentences are kept: a list of fifty is no sentence to show. */
-const MAX_PROBLEMS = 10;
+/**
+ * How many of the validation sentences are kept. Three are shown (lib/api-error-text.ts) and the rest are counted for the reader, so
+ * the count is true as far as this reaches: a bound on a runaway list, not on what is told.
+ */
+const MAX_PROBLEMS = 100;
 
 /** The sentences of a problem's `errors` (field name → sentences), in order, or undefined when it holds none. */
 function problemSentences(errors: unknown): string[] | undefined {

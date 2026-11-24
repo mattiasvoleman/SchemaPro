@@ -139,6 +139,13 @@ describe("a refusal in words", () => {
     expect(crisisErrorText(t, new TypeError("Failed to fetch"), "x")).toBe("Ingen kontakt.");
   });
 
+  it("says the network's for the failure api.ts names, which is an ApiError and no refusal", () => {
+    // What api.ts throws when fetch rejects: the krisläge's own "no contact", not the caller's general sentence.
+    const noAnswer = new ApiError(0, "Failed to fetch", "CLIENT_NETWORK_FAILURE");
+    expect(crisisErrorText(t, noAnswer, "Det gick inte")).toBe("Ingen kontakt.");
+    expect(crisisErrorText(lookup({}), noAnswer, "Det gick inte")).toBe("Det gick inte");
+  });
+
   it("is the caller's own for anything it has no sentence for, never the gateway's prose", () => {
     expect(crisisErrorText(t, new ApiError(500, "Internal error"), "Det gick inte")).toBe("Det gick inte");
     expect(crisisErrorText(t, new ApiError(409, "Ett larm pågår", "SOMETHING_NEW"), "Det gick inte")).toBe("Det gick inte");

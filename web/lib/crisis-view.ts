@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api";
+import { isNetworkFailure } from "@/lib/api-error-text";
 import type { MessageLookup } from "@/lib/engine-message";
 import type { AdminProfile } from "@/lib/admin-areas";
 import type {
@@ -163,6 +164,8 @@ export const modeKey = (mode: CrisisMode) => `mode.${mode}` as const;
  * own sentence is Swedish prose written for a log, so it is not shown.
  */
 export function crisisErrorText(t: MessageLookup, error: unknown, fallback: string): string {
+  // No answer at all is api.ts's ApiError(0), and no refusal: the page tells it as it told the TypeError it was before.
+  if (isNetworkFailure(error)) return t.has("OFFLINE") ? t("OFFLINE") : fallback;
   if (error instanceof ApiError) {
     if (error.code && t.has(error.code)) return t(error.code);
     if (error.status === 429 && t.has("THROTTLED")) return t("THROTTLED");

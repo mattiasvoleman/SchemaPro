@@ -34,11 +34,28 @@
  */
 export const NETWORK_FAILURE = "CLIENT_NETWORK_FAILURE";
 
+/**
+ * Whether a request got no answer at all. api.ts throws that as an ApiError (status 0) so that the sinks that were converted tell it
+ * in the reader's language, which makes it an ApiError that is NOT the gateway's: a branch that reads "an ApiError" as "the gateway
+ * answered" has to ask this first. Before api.ts named the failure it was a bare TypeError and fell to such a branch's "anything
+ * else": the krisläge's "no contact with the server", the generic sentence of a notice with no sentence of the gateway's to show.
+ */
+export function isNetworkFailure(error: unknown): boolean {
+  return error instanceof Error && (error as Error & { code?: unknown }).code === NETWORK_FAILURE;
+}
+
 /** The half of next-intl's translator for `common` this needs, so a test can pass a stub. */
 export type ProblemLookup = (key: string, values?: Record<string, string | number>) => string;
 
 /** How many validation sentences are shown; the rest are counted. */
 const SHOWN = 3;
+
+/**
+ * A validation sentence as a sentence in a row of them. The ones a DTO words itself end in a full stop ("Nivån kan vara högst 1500
+ * timmar."); class-validator's own, which most of the gateway's decorators use, do not ("name should not be empty"), and joined with a
+ * space they run into one another.
+ */
+const asSentence = (sentence: string): string => (/[.!?…]\s*$/.test(sentence) ? sentence.trim() : `${sentence.trim()}.`);
 
 /** What of an ApiError (lib/api.ts) is read, as a shape: the class is not imported. */
 interface Problem {
@@ -60,7 +77,7 @@ export function apiErrorText(error: unknown, t: ProblemLookup): string {
   if (Array.isArray(problems) && problems.length > 0) {
     const sentences = problems.filter((sentence): sentence is string => typeof sentence === "string");
     if (sentences.length > 0) {
-      const shown = sentences.slice(0, SHOWN).join(" ");
+      const shown = sentences.slice(0, SHOWN).map(asSentence).join(" ");
       const more = sentences.length - SHOWN;
       return more > 0 ? t("problemValidationMore", { problems: shown, count: more }) : t("problemValidation", { problems: shown });
     }
