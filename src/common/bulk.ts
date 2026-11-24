@@ -8,6 +8,7 @@ import {
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsObject, IsOptional, IsUUID } from 'class-validator';
+import { NEVER_STARTED } from '../database/pool-wait';
 import { WRITE_CONFLICT, rethrowPrismaError } from './utils/prisma-errors';
 
 /*
@@ -328,13 +329,6 @@ export function bulkTransaction<U>(
     }
   };
 }
-
-/**
- * Prisma's message for a transaction that found no connection within
- * maxWait (TransactionManagerError, P2028). Every other P2028 is a
- * transaction that started: expired, or closed by its timeout.
- */
-const NEVER_STARTED = 'Unable to start a transaction in the given time';
 
 /**
  * How a call ran out of time, if it did: 'never started' (P2028 with

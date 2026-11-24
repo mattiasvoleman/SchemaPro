@@ -5,9 +5,40 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import type { PrismaPromise } from '@prisma/client';
+import type { Prisma, PrismaPromise } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { createPgAdapter } from './pool-config';
+
+/**
+ * How long a transaction may wait for one of the pool's connections before it
+ * is refused, for every door below.
+ *
+ * Prisma gives an interactive transaction 2 s to get a connection unless it
+ * is told otherwise, and a transaction that finds none in that time fails with
+ * P2028 "Unable to start a transaction in the given time". With a pool of one
+ * that is the whole API: whatever holds the connection for two seconds refuses
+ * every other request, and every background job's tick, that arrives meanwhile.
+ * A Generera's and a Kontrollera veckan's fetch of a school's week does: some
+ * forty round trips to the database in one transaction, which is four seconds
+ * at 100 ms a round trip. That is what the real school's first Generera did
+ * (2026-11-23, 26 s of 500s), and scripts/test/probe-anslutningar.ts runs it
+ * against a pool of 1, 3 and 10.
+ *
+ * 10 s is the wait Prisma 5 gave a batch (its pool's `pool_timeout`), and what
+ * the batch helpers have stated since the move to Prisma 7. It equals pg's own
+ * wait for a connection (pool-config.ts), and Prisma's timer starts first, so
+ * the refusal is Prisma's P2028 and not pg's plain "timeout exceeded when
+ * trying to connect". The exception filter answers either as a 503
+ * (pool-wait.ts), because it is a busy server and not a bug.
+ */
+export const CONNECTION_WAIT_MS = 10_000;
+
+/**
+ * The public viewer's door is for anonymous callers, and the one door whose
+ * load nobody signed in for: under a full pool it refuses after 5 s, as its
+ * transaction does, where a school's own requests wait 10.
+ */
+const PUBLIC_VIEWER_WAIT_MS = 5_000;
 
 /**
  * The batch helpers' transaction options, stated rather than inherited.
@@ -17,9 +48,10 @@ import { createPgAdapter } from './pool-config';
  * took. Prisma 7 applies its interactive defaults to a batch as well — 2 s to
  * get a connection, 5 s to finish — and withVerifiedSubject is a batch on
  * every authenticated request, so a busy pool would start refusing logins
- * after two seconds. 10 s is the old wait; 15 s is withRls's own timeout.
+ * after two seconds. CONNECTION_WAIT_MS is the old wait; 15 s is withRls's own
+ * timeout.
  */
-const BATCH_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 15_000 } as const;
+const BATCH_TRANSACTION_OPTIONS = { maxWait: CONNECTION_WAIT_MS, timeout: 15_000 } as const;
 
 /**
  * What one `withRls` transaction carries beside its client: the hooks that run
@@ -278,15 +310,13 @@ export class PrismaService
     options?: { timeoutMs?: number },
   ): Promise<T> {
     const scope: CommitScope = { hooks: [], locals: new Map() };
-    const result = await this.$transaction(
+    const result = await this.interactive(
       async (tx) => {
         COMMIT_SCOPES.set(tx, scope);
         await this.claimsFor(tx, user.authId, sessionOf(user));
         return fn(tx as unknown as PrismaClient);
       },
-      {
-        timeout: options?.timeoutMs ?? 15_000,
-      },
+      options?.timeoutMs ?? 15_000,
     );
     runAfterCommit(scope);
     return result;
@@ -331,12 +361,12 @@ export class PrismaService
    * Shaped like withPublicViewer.
    */
   async withDeliveryService<T>(fn: (tx: PrismaClient) => Promise<T>): Promise<T> {
-    return this.$transaction(
+    return this.interactive(
       async (tx) => {
         await tx.$executeRaw`SET LOCAL statement_timeout = '5s'`;
         return fn(tx as unknown as PrismaClient);
       },
-      { timeout: 10_000 },
+      10_000,
     );
   }
 
@@ -465,7 +495,7 @@ export class PrismaService
   async withServiceKeyLookup<T>(
     fn: (tx: PrismaClient) => Promise<T>,
   ): Promise<T> {
-    return this.$transaction(async (tx) => {
+    return this.interactive(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.service_key_lookup', 'on', true)`;
       return fn(tx as unknown as PrismaClient);
     });
@@ -495,7 +525,7 @@ export class PrismaService
     options?: { timeoutMs?: number; keyId?: string },
   ): Promise<T> {
     const keyId = options?.keyId;
-    return this.$transaction(
+    return this.interactive(
       async (tx) => {
         if (keyId === undefined) {
           await tx.$executeRaw`
@@ -509,7 +539,7 @@ export class PrismaService
         }
         return fn(tx as unknown as PrismaClient);
       },
-      { timeout: options?.timeoutMs ?? 30_000 },
+      options?.timeoutMs ?? 30_000,
     );
   }
 
@@ -531,12 +561,12 @@ export class PrismaService
     fn: (tx: PrismaClient) => Promise<T>,
     options?: { timeoutMs?: number },
   ): Promise<T> {
-    return this.$transaction(
+    return this.interactive(
       async (tx) => {
         await tx.$executeRaw`SELECT app.huvudman_key_opens_school(${keyId}::uuid, ${schoolId}::uuid)`;
         return fn(tx as unknown as PrismaClient);
       },
-      { timeout: options?.timeoutMs ?? 30_000 },
+      options?.timeoutMs ?? 30_000,
     );
   }
 
@@ -547,7 +577,7 @@ export class PrismaService
    * school is readable. `keyId` MUST come from a verified huvudman key.
    */
   async withHuvudmanKey<T>(keyId: string, fn: (tx: PrismaClient) => Promise<T>): Promise<T> {
-    return this.$transaction(async (tx) => {
+    return this.interactive(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.service_huvudman_key_id', ${keyId}, true)`;
       return fn(tx as unknown as PrismaClient);
     });
@@ -572,14 +602,14 @@ export class PrismaService
     fn: (tx: PrismaClient) => Promise<T>,
     options?: { timeoutMs?: number },
   ): Promise<T> {
-    return this.$transaction(
+    return this.interactive(
       async (tx) => {
         await tx.$executeRaw`
           SELECT set_config('app.sync_school_id', ${schoolId}, true)
         `;
         return fn(tx as unknown as PrismaClient);
       },
-      { timeout: options?.timeoutMs ?? 30_000 },
+      options?.timeoutMs ?? 30_000,
     );
   }
 
@@ -598,13 +628,14 @@ export class PrismaService
    * short statements; nothing in them is worth compiling.
    */
   async withPublicViewer<T>(fn: (tx: PrismaClient) => Promise<T>): Promise<T> {
-    return this.$transaction(
+    return this.interactive(
       async (tx) => {
         await tx.$executeRaw`SET LOCAL statement_timeout = '2s'`;
         await tx.$executeRaw`SET LOCAL jit = off`;
         return fn(tx as unknown as PrismaClient);
       },
-      { timeout: 5_000 },
+      5_000,
+      PUBLIC_VIEWER_WAIT_MS,
     );
   }
 
@@ -639,6 +670,20 @@ export class PrismaService
   async withSystemTransaction<T>(
     fn: (tx: PrismaClient) => Promise<T>,
   ): Promise<T> {
-    return this.$transaction((tx) => fn(tx as unknown as PrismaClient));
+    return this.interactive((tx) => fn(tx as unknown as PrismaClient));
+  }
+
+  /**
+   * Every interactive door's one way into `$transaction`, so that none of them
+   * is left with Prisma's 2 s wait for a connection (CONNECTION_WAIT_MS).
+   * `timeout` is the transaction's own, and left to Prisma's 5 s where a door
+   * gives none; `maxWait` is how long it may wait for a connection first.
+   */
+  private interactive<T>(
+    fn: (tx: Prisma.TransactionClient) => Promise<T>,
+    timeout?: number,
+    maxWait: number = CONNECTION_WAIT_MS,
+  ): Promise<T> {
+    return this.$transaction(fn, { maxWait, ...(timeout === undefined ? {} : { timeout }) });
   }
 }
