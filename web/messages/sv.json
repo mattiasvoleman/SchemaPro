@@ -4827,7 +4827,7 @@
       "planningFloorOnStages": "Planeringens golv räknas på timmarna i stadierna: förordningen anger ingen nivå för de andra timmarna, så de ger inget golv.",
       "fitsNotShown": "Om årsarbetstiden rymmer planeringens golv visas inte här: det räknas bara för en ferietjänst, och visas bara för den som får se tjänstens omfattning.",
       "interpretation": "{note} ({section})",
-      "notAnnual": "Kan skilja sig från Undervisning per läsår under Årsarbetstid, som räknar med procent och faktor. Den här siffran är lektionernas egen tid, oviktad. Båda räknar skoldagar.",
+      "notAnnual": "Kan skilja sig från raden för undervisning per läsår under Årsarbetstid, som räknar med procent och faktor. Den här siffran är lektionernas egen tid, oviktad. Båda räknar skoldagar.",
       "caption": "Räknat ur timplansposterna: lektionernas egen tid över de veckor de löper, oviktad och utan uppdrag. Inte riktmärket, som är skolens eget mått. Källa: {sfs}, i kraft från {from}.",
       "source": "Läs förordningen",
       "assessmentLevel": "Rektorns nivå för läraren, vid heltid",
