@@ -36,6 +36,7 @@ import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NativeSelect } from "@/components/ui/native-select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const TYPES: AbsenceReportType[] = ["SICK", "APPOINTMENT", "OTHER"];
 
@@ -220,7 +221,7 @@ export default function GuardianPage() {
       toast.success(t("reported"));
       setNote("");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -247,7 +248,7 @@ export default function GuardianPage() {
         leaveRequestError(error, {
           tooLong: (days) => t("leaveTooLong", { days }),
           endsBeforeStart: t("leaveEndsBeforeStart"),
-          fallback: tCommon("error"),
+          fallback: tCommon,
           tooLate: (days) => t("leaveTooLate", { days }),
           contactRequired: t("leaveContactRequired"),
           contactIncomplete: t("leaveContactIncomplete"),
@@ -262,7 +263,7 @@ export default function GuardianPage() {
       toast.success(tCommon("deleted"));
       setConfirmOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

@@ -779,7 +779,7 @@ describe("a refused save", () => {
 
   it("says what the gateway said of any other failure", async () => {
     answer([stored()]);
-    state.put.mockRejectedValue(new ApiError(500, "Servern svarade inte."));
+    state.put.mockRejectedValue(new ApiError(422, "Servern svarade inte."));
     const { user } = await opened();
 
     await user.click(saveButton());

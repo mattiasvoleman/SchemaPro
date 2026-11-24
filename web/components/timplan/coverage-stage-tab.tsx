@@ -68,6 +68,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CohortNotice, versionText } from "@/components/timplan/cohort-notice";
 import type { CoverageTabProps } from "@/components/timplan/coverage-scheduled-tab";
 import { TableScroll } from "@/components/ui/table-scroll";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const WARN = "bg-warning/15 text-warning-foreground dark:text-warning";
 
@@ -238,9 +239,7 @@ function Publication({
     toast.error(
       code === "TIMPLAN_STAGE_NOT_ACTIVE_YEAR" || code === "TIMPLAN_STAGE_PUBLISH_IN_PROGRESS"
         ? t(`publishError.${code}`)
-        : error instanceof Error && error.message
-          ? error.message
-          : tCommon("error"),
+        : apiErrorText(error, tCommon),
     );
   };
   const pending = publish.isPending || withdraw.isPending;

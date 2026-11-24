@@ -52,6 +52,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** Registrera frånvaro: the form is loaded on its first click (React.lazy). */
 const AbsenceDialog = lazy(() =>
@@ -204,7 +205,7 @@ export default function TeacherAbsencePage() {
       toast.success(tDay("cancelledToast"));
       setTarget(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -220,7 +221,7 @@ export default function TeacherAbsencePage() {
       savedToast(tWarnings, tDay("substitutedToast"), result.warnings);
       setTarget(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -230,7 +231,7 @@ export default function TeacherAbsencePage() {
       toast.success(tDay("roomChangedToast"));
       setTarget(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

@@ -128,7 +128,7 @@ export function ViewerCard({ settings }: { settings: PublicationSettings }) {
       setChanges({});
       toast.success(t("saved"));
     } catch (error) {
-      setProblem(publicationErrorText(tErrors, error, tCommon("error")));
+      setProblem(publicationErrorText(tErrors, error, tCommon));
     }
   };
 

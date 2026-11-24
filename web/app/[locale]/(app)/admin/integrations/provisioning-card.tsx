@@ -58,7 +58,7 @@ export function ProvisioningCard() {
         <LoadError
           variant="inline"
           title={t("loadFailed")}
-          hint={errorText(tErrors, people.error, tCommon("error"))}
+          hint={errorText(tErrors, people.error, tCommon)}
         />
       ) : null}
       {people.data && list.length === 0 ? <p className="text-sm text-muted-foreground">{t("empty")}</p> : null}
@@ -84,7 +84,7 @@ export function ProvisioningCard() {
                     setChosen(new Set());
                     toast.success(t("invited", { sent: result.sent }));
                   },
-                  onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+                  onError: (error) => toast.error(errorText(tErrors, error, tCommon)),
                 })
               }
             >

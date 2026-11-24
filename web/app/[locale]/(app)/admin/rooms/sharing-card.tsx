@@ -44,6 +44,7 @@ import {
   type RoomLoan,
   type RoomLoanAction,
 } from "./use-sharing";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const RoomLoanDialog = lazy(() => import("./room-loan-dialog").then((module) => ({ default: module.RoomLoanDialog })));
 
@@ -100,9 +101,7 @@ export function SharingCard() {
   const errorText = (error: unknown) =>
     error instanceof ApiError && error.code && t.has(`errors.${error.code}`)
       ? t(`errors.${error.code}`)
-      : error instanceof Error
-        ? error.message
-        : tCommon("error");
+      : apiErrorText(error, tCommon);
 
   const changed = schools.filter((school) => {
     const minutes = minutesFromField(typed[school.id] ?? "");

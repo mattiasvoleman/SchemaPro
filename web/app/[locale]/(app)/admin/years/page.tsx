@@ -96,7 +96,7 @@ export default function YearsPage() {
       toast.success(t("deleted", { name: deleting.name }));
       setDeleting(null);
     } catch (error) {
-      toast.error(yearErrorText(tErrors, error, tCommon("error")));
+      toast.error(yearErrorText(tErrors, error, tCommon));
     }
   };
 

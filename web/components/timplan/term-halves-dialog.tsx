@@ -136,6 +136,7 @@ import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { Link } from "@/i18n/navigation";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** A block's name, as TeachingBlocks_name_is_sane holds it. */
 const BLOCK_NAME_MAX = 80;
@@ -619,7 +620,7 @@ function TermHalvesForm({
       // Delade lektioner: a shared post is refused before anything is written,
       // said in the reader's language (the gateway's sentence is Swedish).
       else if (error instanceof ApiError && error.code === "TERM_SPLIT_HAS_SHARES") setFailed(t("sharesRefused", { post: postName }));
-      else setFailed(error instanceof Error ? error.message : tCommon("error"));
+      else setFailed(apiErrorText(error, tCommon));
     } finally {
       setBusy(false);
     }

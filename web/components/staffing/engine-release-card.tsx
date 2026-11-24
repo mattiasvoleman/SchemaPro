@@ -30,6 +30,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { TableScroll } from "@/components/ui/table-scroll";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** The panel's anchor: Föreslå bemanning's "nothing to propose" sentence points here. */
 export const ENGINE_RELEASE_ANCHOR = "engine-release";
@@ -118,7 +119,7 @@ export function EngineReleaseCard({
     if (error.code === ENGINE_RELEASE_POST_NOT_IN_YEAR) return t("notInYear");
     if (error.code === "SCHEDULE_BUSY") return t("busy");
     if (error.status === 404) return t("yearMissing");
-    return error.message || tCommon("error");
+    return apiErrorText(error, tCommon);
   };
 
   const write = async (ids: string[], released: boolean, focusId: string, line: string | null) => {

@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
 import { useResourceTypeActions, useResourceTypes } from "@/lib/local-queries";
 import type { ResourceTypeResponse } from "@/lib/local";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** The type form, fetched when first opened. */
 const loadTypeDialog = () => import("./resource-dialogs").then((module) => ({ default: module.ResourceTypeDialog }));
@@ -67,7 +68,7 @@ export function ResourceTypesCard() {
       if (error instanceof ApiError && error.status === 400) {
         setInUse(deleting);
       } else {
-        toast.error(error instanceof Error ? error.message : tCommon("error"));
+        toast.error(apiErrorText(error, tCommon));
       }
     }
   };

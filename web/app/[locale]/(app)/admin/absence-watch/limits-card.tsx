@@ -20,6 +20,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableCard } from "@/components/ui/table-card";
 import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /*
  * The form and the question before a removal are fetched on the first click,
@@ -76,7 +77,7 @@ export function LimitsCard({ limits }: { limits: readonly AbsenceWatchLimit[] })
       toast.success(t("limits.removed"));
       setRemoving(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

@@ -2,6 +2,7 @@ import { ApiError } from "@/lib/api";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import { messageValues } from "@/lib/year-rollover-form";
 import type { RolloverProblem } from "@/lib/types";
+import { failureText, type ProblemLookup } from "@/lib/api-error-text";
 
 /*
  * The läsår pages' sentences from the gateway's codes.
@@ -16,7 +17,7 @@ import type { RolloverProblem } from "@/lib/types";
  */
 
 /** A failed rollover or activation call, as one sentence. */
-export function yearErrorText(t: MessageLookup, error: unknown, fallback: string): string {
+export function yearErrorText(t: MessageLookup, error: unknown, fallback: string | ProblemLookup): string {
   if (error instanceof ApiError) {
     // next-intl in the browser does not throw on a missing argument — it
     // prints the key path — so the one code whose param is optional picks
@@ -27,11 +28,11 @@ export function yearErrorText(t: MessageLookup, error: unknown, fallback: string
         : error.code;
     return engineMessage(t, {
       code: code ?? null,
-      message: error.message,
+      message: failureText(error, fallback),
       params: error.params ?? null,
     });
   }
-  return error instanceof Error ? error.message : fallback;
+  return failureText(error, fallback);
 }
 
 /** A finding of a preview, as one sentence; the code itself when untranslated. */

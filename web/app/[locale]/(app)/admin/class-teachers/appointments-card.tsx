@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableCard } from "@/components/ui/table-card";
 import { useAreaGate } from "./use-area-gate";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * Who is klasslärare of which class in the läsår.
@@ -49,7 +50,7 @@ export function AppointmentsCard({ yearId }: { yearId: string }) {
 
   const fail = (error: unknown) => {
     const problem = problemOf(error);
-    toast.error(problem.kind === "areaNotYours" ? problem.message : error instanceof Error ? error.message : tCommon("error"));
+    toast.error(problem.kind === "areaNotYours" ? problem.message : apiErrorText(error, tCommon));
   };
 
   const appointPair = async (studentGroupId: string, userId: string): Promise<boolean> => {

@@ -434,6 +434,7 @@ describe("Frånvarobevakning, the administrator's page", () => {
 
     it("says a refused removal and keeps the limit in the list", async () => {
       const user = userEvent.setup();
+      // A limit already gone is a 404 with no code: said in the reader's language, not the gateway's English.
       api.delete.mockRejectedValueOnce(new ApiError(404, "No such limit."));
       renderPage();
       await user.click(await screen.findByRole("button", { name: /^Ta bort Mentor/ }));
@@ -441,7 +442,7 @@ describe("Frånvarobevakning, the administrator's page", () => {
 
       await user.click(within(dialog).getByRole("button", { name: "Ta bort" }));
 
-      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("No such limit."));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Det du försökte nå finns inte längre. Ladda om sidan och försök igen."));
       expect(toast.success).not.toHaveBeenCalled();
     });
   });

@@ -13,6 +13,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const DAYS = Array.from({ length: OPEN_AFTER_DAYS.max - OPEN_AFTER_DAYS.min + 1 }, (_, index) => OPEN_AFTER_DAYS.min + index);
 
@@ -39,7 +40,7 @@ export function SettingsCard() {
       await updateSettings.mutateAsync(change);
       toast.success(saved);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

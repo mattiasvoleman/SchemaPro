@@ -402,7 +402,7 @@ describe("Bocka av", () => {
   });
 
   it("falls back to the gateway's own words for a failure we have no sentence for", async () => {
-    api.post.mockRejectedValueOnce(apiError(500, undefined, "Något hos servern"));
+    api.post.mockRejectedValueOnce(apiError(422, undefined, "Något hos servern"));
     const user = await open();
     const table = await chooseRoster(user);
     await user.click(within(table).getByRole("checkbox", { name: "Välj Bo Ek" }));

@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/client";
 import { pageSchool, schoolHeaders } from "@/lib/school-choice";
+import { NETWORK_FAILURE } from "@/lib/api-error-text";
 
 /**
  * Typed client for the NestJS gateway. All mutations and AI actions go
@@ -37,10 +38,29 @@ export class ApiError extends Error {
      * The gateway forwards only a flat object of short scalars.
      */
     public readonly params?: Record<string, string | number>,
+    /**
+     * The sentences the gateway's validation gave for a 400, when it gave any:
+     * `errors` of the problem, flattened. They are the one place the gateway
+     * says WHICH field it refused, and `detail` beside them is the constant
+     * "One or more fields failed validation." (lib/api-error-text.ts shows them).
+     */
+    public readonly problems?: readonly string[],
   ) {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/** How many of the validation sentences are kept: a list of fifty is no sentence to show. */
+const MAX_PROBLEMS = 10;
+
+/** The sentences of a problem's `errors` (field name → sentences), in order, or undefined when it holds none. */
+function problemSentences(errors: unknown): string[] | undefined {
+  if (typeof errors !== "object" || errors === null || Array.isArray(errors)) return undefined;
+  const sentences = Object.values(errors)
+    .flatMap((list) => (Array.isArray(list) ? list : []))
+    .filter((sentence): sentence is string => typeof sentence === "string" && sentence !== "");
+  return sentences.length > 0 ? sentences.slice(0, MAX_PROBLEMS) : undefined;
 }
 
 async function authHeader(): Promise<Record<string, string>> {
@@ -72,29 +92,43 @@ async function request<T>(
     headers["Content-Type"] = "application/json";
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method,
-    headers,
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    ...(signal ? { signal } : {}),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method,
+      headers,
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      ...(signal ? { signal } : {}),
+    });
+  } catch (cause) {
+    // A cancelled request is the caller's own doing and stays what it was.
+    if (signal?.aborted || (cause as { name?: unknown } | null)?.name === "AbortError") throw cause;
+    // No answer at all: offline, the gateway down, a refused connection. fetch
+    // rejects with a bare TypeError ("Failed to fetch", "Load failed"), which a
+    // handler cannot tell from its own bug; this one is named, so the reader is
+    // told in their language that the server was not reached (apiErrorText).
+    throw new ApiError(0, cause instanceof Error ? cause.message : String(cause), NETWORK_FAILURE);
+  }
 
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
     let code: string | undefined;
     let params: Record<string, string | number> | undefined;
+    let problems: string[] | undefined;
     try {
       const problem = (await response.json()) as {
         detail?: string;
         message?: string;
         code?: unknown;
         params?: unknown;
+        errors?: unknown;
       };
       detail = problem.detail ?? problem.message ?? detail;
       if (typeof problem.code === "string") code = problem.code;
       if (problem.params && typeof problem.params === "object" && !Array.isArray(problem.params)) {
         params = problem.params as Record<string, string | number>;
       }
+      problems = problemSentences(problem.errors);
     } catch {
       // Non-JSON error body; keep the generic message.
     }
@@ -105,7 +139,7 @@ async function request<T>(
     // would ask it again.
     const page = pageSchool();
     if (code === "SCHOOL_NOT_AVAILABLE" && page && (school ?? page) === page) window.location.reload();
-    throw new ApiError(response.status, detail, code, params);
+    throw new ApiError(response.status, detail, code, params, problems);
   }
 
   if (response.status === 204) {

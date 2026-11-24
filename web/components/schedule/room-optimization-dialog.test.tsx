@@ -491,7 +491,7 @@ describe("applying it", () => {
   });
 
   it("keeps the proposal on screen for any other failure", async () => {
-    optimisation.apply.mutateAsync.mockRejectedValueOnce(new ApiError(500, "Boom."));
+    optimisation.apply.mutateAsync.mockRejectedValueOnce(new ApiError(422, "Boom."));
     const user = await computeProposal();
 
     await user.click(screen.getByRole("button", { name: "apply" }));

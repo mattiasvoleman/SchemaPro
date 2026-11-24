@@ -21,6 +21,7 @@ import { Notice } from "@/components/ui/notice";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { AreaBody } from "./use-supervision";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** The select's stand-in for "no site", which a Select cannot hold as null. */
 const NO_SITE = "none";
@@ -137,9 +138,7 @@ function AreaForm({ onOpenChange, area, sites, saving, onSave }: Omit<AreaDialog
       setError(
         caught instanceof ApiError && caught.code && t.has(`errors.${caught.code}`)
           ? (caught.params ? t(`errors.${caught.code}`, caught.params) : t(`errors.${caught.code}`))
-          : caught instanceof Error
-            ? caught.message
-            : tCommon("error"),
+          : apiErrorText(caught, tCommon),
       );
     }
   };

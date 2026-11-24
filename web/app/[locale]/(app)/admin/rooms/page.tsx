@@ -44,6 +44,7 @@ import { SitesCard } from "./sites-card";
 import { SharingCard } from "./sharing-card";
 import { SITES_KEY, useSites } from "./use-sites";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
+import { apiErrorText } from "@/lib/api-error-text";
 
 interface RoomForm {
   name: string;
@@ -244,7 +245,7 @@ export default function RoomsPage() {
       }
       setDialogOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -255,7 +256,7 @@ export default function RoomsPage() {
       toast.success(tCommon("deleted"));
       setDeleting(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

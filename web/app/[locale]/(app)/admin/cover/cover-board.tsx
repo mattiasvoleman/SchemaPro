@@ -354,7 +354,7 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
     const code = errorCode(error);
     if (code === "PUBLISH_IN_PROGRESS") setPublishing(true);
     toast.error(
-      code === "COVER_STALE" ? t("staleRefetched") : coverErrorText(tErrors, error, tCommon("error")),
+      code === "COVER_STALE" ? t("staleRefetched") : coverErrorText(tErrors, error, tCommon),
     );
   };
 

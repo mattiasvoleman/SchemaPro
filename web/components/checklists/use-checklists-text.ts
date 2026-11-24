@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { refusalOf } from "@/lib/checklists";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * The words of Checklistor that more than one part of it says: a day ("3 okt.
@@ -54,7 +55,7 @@ export function useChecklistsText() {
     refusal: (error: unknown): string => {
       const key = refusalOf(error);
       if (key) return t(`refusal.${key}`);
-      return error instanceof Error && error.message ? error.message : tCommon("error");
+      return apiErrorText(error, tCommon);
     },
   };
 }

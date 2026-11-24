@@ -60,6 +60,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const RESOURCES: ConstraintResource[] = [
   "TEACHER",
@@ -269,7 +270,7 @@ export default function ConstraintsPage() {
       }
       setDialogOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -280,7 +281,7 @@ export default function ConstraintsPage() {
       toast.success(tCommon("deleted"));
       setDeleting(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

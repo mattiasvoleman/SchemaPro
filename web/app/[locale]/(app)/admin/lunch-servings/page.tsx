@@ -62,6 +62,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** The select's stand-in for `dayOfWeek: null`, which a Select cannot hold. */
 const EVERY_DAY = "all";
@@ -199,7 +200,7 @@ export default function LunchServingsPage() {
       }
       setDialogOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -210,7 +211,7 @@ export default function LunchServingsPage() {
       toast.success(tCommon("deleted"));
       setDeleting(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

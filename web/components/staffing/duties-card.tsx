@@ -42,6 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** Radix Select cannot hold "": the "none" choice of the two optional pickers. */
 const NONE = "__none__";
@@ -188,7 +189,7 @@ export function DutiesCard({
       toast.success(t("dutySaved"));
       setEditing(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -199,7 +200,7 @@ export function DutiesCard({
       toast.success(t("dutyRemoved"));
       setRemoving(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

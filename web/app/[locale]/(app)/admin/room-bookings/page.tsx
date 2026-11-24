@@ -21,6 +21,7 @@ import { FilterBar } from "@/components/ui/filter-bar";
 import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { apiErrorText } from "@/lib/api-error-text";
 
 type Filter = Extract<RoomBookingStatus, "PENDING" | "APPROVED" | "REJECTED">;
 type Kind = "ROOM" | "RESOURCE";
@@ -121,7 +122,7 @@ function RoomRequests({ filter }: { filter: Filter }) {
       await actions.decide.mutateAsync({ id, status, note });
       toast.success(status === "APPROVED" ? t("approved") : t("rejected"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

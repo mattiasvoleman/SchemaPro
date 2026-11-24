@@ -130,7 +130,7 @@ export function AbsenceDialog({
         setAskUndo(decisionCounts(error));
         return;
       }
-      toast.error(coverErrorText(tErrors, error, tCommon("error")));
+      toast.error(coverErrorText(tErrors, error, tCommon));
     }
   };
 

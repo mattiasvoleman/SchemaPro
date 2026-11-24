@@ -8,7 +8,6 @@ import { useAnalysisActions, useCostRates, useSchoolParts } from "@/lib/analysis
 import { spanLabel } from "@/lib/analysis";
 import { COST_CATEGORIES, type CostCategory, type SchoolPart, type SchoolPartInput } from "@/lib/analysis-types";
 import { profileDecides } from "@/lib/admin-areas";
-import { ApiError } from "@/lib/api";
 import { useProfile, useReadOnly } from "@/components/profile-context";
 import { useAnalysisText } from "@/components/analysis/use-analysis-text";
 import { Button } from "@/components/ui/button";
@@ -21,6 +20,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableCard } from "@/components/ui/table-card";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const GRADES = Array.from({ length: 10 }, (_, index) => index);
 
@@ -51,7 +51,7 @@ export function SettingsPanel() {
   const [rateDraft, setRateDraft] = useState<Partial<Record<CostCategory, string>>>({});
 
   const fail = (error: unknown) =>
-    toast.error(error instanceof ApiError || error instanceof Error ? error.message : tCommon("error"));
+    toast.error(apiErrorText(error, tCommon));
 
   const savePart = async () => {
     if (actions.createPart.isPending || actions.updatePart.isPending) return;

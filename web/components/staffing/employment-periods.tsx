@@ -23,6 +23,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Notice } from "@/components/ui/notice";
+import { apiErrorText } from "@/lib/api-error-text";
 
 export interface EmploymentPeriodsProps {
   teacher: { id: string };
@@ -133,7 +134,7 @@ export function EmploymentPeriods({ teacher, academicYearId, year, employment, p
       toast.success(t("periodSaved"));
       setEditing(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -143,7 +144,7 @@ export function EmploymentPeriods({ teacher, academicYearId, year, employment, p
       await actions.removePeriod.mutateAsync(removing.id);
       toast.success(t("periodRemoved"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     } finally {
       setRemoving(null);
     }

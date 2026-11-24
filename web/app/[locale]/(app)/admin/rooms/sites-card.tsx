@@ -47,6 +47,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableCard } from "@/components/ui/table-card";
 import { SITES_KEY, pairKey, sitePairs, travelBasis, useSaveTravelTimes, useSites, type Site } from "./use-sites";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** The range the database holds a travel time to (SiteTravelTimes_minutes_range). */
 const MAX_MINUTES = 240;
@@ -126,9 +127,7 @@ export function SitesCard() {
   const errorText = (error: unknown) =>
     error instanceof ApiError && error.code && t.has(`errors.${error.code}`)
       ? t(`errors.${error.code}`)
-      : error instanceof Error
-        ? error.message
-        : tCommon("error");
+      : apiErrorText(error, tCommon);
 
   const startCreate = () => {
     setEditing(null);

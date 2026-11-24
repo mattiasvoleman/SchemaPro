@@ -81,7 +81,7 @@ function SecretRow({ kind, setAt, optional, unused = false }: { kind: SecretKind
       { kind, value: sent },
       {
         onSuccess: () => toast.success(t("saved", { kind: t(`kinds.${kind}`) })),
-        onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+        onError: (error) => toast.error(errorText(tErrors, error, tCommon)),
         onSettled: () => setValue(""),
       },
     );
@@ -142,7 +142,7 @@ function SecretRow({ kind, setAt, optional, unused = false }: { kind: SecretKind
               onClick={() =>
                 clear.mutate(kind, {
                   onSuccess: () => toast.success(t("cleared", { kind: t(`kinds.${kind}`) })),
-                  onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+                  onError: (error) => toast.error(errorText(tErrors, error, tCommon)),
                 })
               }
             >

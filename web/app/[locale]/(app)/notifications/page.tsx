@@ -16,6 +16,7 @@ import {
   withChoice,
   type NotificationPreference,
 } from "@/lib/notification-preferences-queries";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * "Notiser": what each person lets leave SchemaPro as e-mail and push, per
@@ -63,7 +64,7 @@ export default function NotificationSettingsPage() {
       await save.mutateAsync(withChoice(types, entry.type, enabled));
       toast.success(t("saved"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

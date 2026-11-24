@@ -180,6 +180,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const ROLES: UserRole[] = ["STUDENT", "TEACHER", "SCHOOL_ADMIN", "GUARDIAN"];
 const NO_GROUP = "__none__";
@@ -843,7 +844,7 @@ export default function PeoplePage() {
             });
           }
           const refused = teachesErrorOf(error);
-          const why = refused ? tAreas(`teaches.errors.${refused}`) : error instanceof Error ? error.message : tCommon("error");
+          const why = refused ? tAreas(`teaches.errors.${refused}`) : apiErrorText(error, tCommon);
           toast.error(tAreas("teaches.markRefused", { reason: why }));
           return;
         }
@@ -854,7 +855,7 @@ export default function PeoplePage() {
     } catch (error) {
       // The post failed after the person was saved: the held message is still true, and is said before the error.
       if (saved) toast.success(saved);
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -871,7 +872,7 @@ export default function PeoplePage() {
               : t("invitationAlreadyRegistered", { name: person.firstName }),
       );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -892,7 +893,7 @@ export default function PeoplePage() {
         toast.error(t("invitationsFailed", { count: report.errors.length }));
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -909,7 +910,7 @@ export default function PeoplePage() {
         toast.error(t("removeHasPassCovers", { date: String(error.params?.date ?? "") }));
         return;
       }
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -925,7 +926,7 @@ export default function PeoplePage() {
       toast.success(t("guardianUnlinked", { name: unlinking.name }));
       setUnlinking(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -1600,7 +1601,7 @@ export default function PeoplePage() {
                   .then(() => setNewGuardianId(""))
                   .catch((error: unknown) =>
                     toast.error(
-                      error instanceof Error ? error.message : tCommon("error"),
+                      apiErrorText(error, tCommon),
                     ),
                   );
               }}

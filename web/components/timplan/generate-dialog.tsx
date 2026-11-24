@@ -101,6 +101,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 export interface GenerateDialogProps {
   open: boolean;
@@ -220,7 +221,7 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId,
     : 0;
 
   const fail = (caught: unknown) =>
-    setError(caught instanceof Error && caught.message ? caught.message : tCommon("error"));
+    setError(apiErrorText(caught, tCommon));
 
   const askPreview = async () => {
     if (!yearId || length === null) return;

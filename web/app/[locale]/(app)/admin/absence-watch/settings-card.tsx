@@ -20,6 +20,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Switch } from "@/components/ui/switch";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * The switch and how often each group gets its sammanställning.
@@ -45,7 +46,7 @@ export function SettingsCard({ overview }: { overview: AbsenceWatchOverview }) {
       await updateSettings.mutateAsync(change);
       toast.success(saved);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

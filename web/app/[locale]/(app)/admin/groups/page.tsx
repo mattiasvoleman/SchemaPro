@@ -61,6 +61,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /*
  * Massåtgärder's dialogs, fetched on the first click of Redigera or Ta bort in
@@ -190,7 +191,7 @@ export default function GroupsPage() {
       toast.success(t("membersSaved", { count }));
       setMembersFor(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
   const [form, setForm] = useState<GroupForm>({
@@ -307,7 +308,7 @@ export default function GroupsPage() {
       }
       setDialogOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -318,7 +319,7 @@ export default function GroupsPage() {
       toast.success(tCommon("deleted"));
       setDeleting(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

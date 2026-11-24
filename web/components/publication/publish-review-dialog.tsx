@@ -161,7 +161,7 @@ export function PublishReviewDialog({
       toast.success(t("publishedToast", { count: outcome.result.created }));
       close(false);
     } catch (error) {
-      setProblem(publicationErrorText(tErrors, error, tCommon("error")));
+      setProblem(publicationErrorText(tErrors, error, tCommon));
     }
   };
 
@@ -183,7 +183,7 @@ export function PublishReviewDialog({
 
         {loadFailed ? (
           <Notice tone="destructive">
-            {publicationErrorText(tErrors, settings.error ?? timeline.error, tCommon("error"))}
+            {publicationErrorText(tErrors, settings.error ?? timeline.error, tCommon)}
           </Notice>
         ) : null}
 
@@ -237,7 +237,7 @@ export function PublishReviewDialog({
           </h3>
           {preview.isFetching && !result ? <p className="text-sm">{t("previewLoading")}</p> : null}
           {preview.isError ? (
-            <Notice tone="destructive">{publicationErrorText(tErrors, preview.error, tCommon("error"))}</Notice>
+            <Notice tone="destructive">{publicationErrorText(tErrors, preview.error, tCommon)}</Notice>
           ) : null}
           {result ? (
             <>

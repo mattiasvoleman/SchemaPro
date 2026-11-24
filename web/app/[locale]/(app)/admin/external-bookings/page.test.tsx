@@ -336,7 +336,7 @@ describe("Externa bokningar, one series", () => {
   });
 
   it("says a refused cancellation as it came and keeps the series", async () => {
-    api.patch.mockRejectedValueOnce(new ApiError(500, "boom"));
+    api.patch.mockRejectedValueOnce(new ApiError(422, "boom"));
     const user = userEvent.setup();
     renderPage();
     const dialog = within(await openSeries(user));
@@ -609,14 +609,14 @@ describe("Externa bokningar, a new series", () => {
     expect(table.getByRole("row", { name: /9 mars/ })).toHaveTextContent("Ramtid: 08:00-16:00");
   });
 
-  it("says a failed preview as it came, and shows no days", async () => {
+  it("says a failed preview in the reader's language, and shows no days", async () => {
     state.preview = new ApiError(500, "boom");
     const user = userEvent.setup();
     renderPage();
     const dialog = await openNew(user);
     await fillRule(user);
     await user.click(dialog.getByRole("button", { name: "Förhandsgranska" }));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("boom"));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Något gick fel hos oss. Försök igen om en stund."));
     expect(dialog.queryByRole("table")).not.toBeInTheDocument();
   });
 

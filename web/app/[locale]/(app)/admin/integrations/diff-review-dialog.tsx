@@ -134,7 +134,7 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
             setStale(true);
             setConfirming(false);
           }
-          toast.error(errorText(tErrors, error, tCommon("error")));
+          toast.error(errorText(tErrors, error, tCommon));
         },
       },
     );
@@ -157,7 +157,7 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
 
         {changes.isError ? (
           <Notice tone="destructive" title={t("changesLoadFailed")}>
-            {errorText(tErrors, changes.error, tCommon("error"))}
+            {errorText(tErrors, changes.error, tCommon)}
           </Notice>
         ) : !complete ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
@@ -384,7 +384,7 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
                 setDiscarding(false);
                 onClose();
               },
-              onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+              onError: (error) => toast.error(errorText(tErrors, error, tCommon)),
             })
           }
         />

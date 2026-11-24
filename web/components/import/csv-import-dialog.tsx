@@ -63,6 +63,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** Parsed CSV -> typed rows + row-numbered errors, per import kind. */
 const MAPPERS: Record<
@@ -321,7 +322,7 @@ export function CsvImportDialog({
       });
       setReport(result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : tCommon("error");
+      const message = apiErrorText(error, tCommon);
       toast.error(message === REFUSED_BODY ? t("rejectedByServer") : message);
     }
   };

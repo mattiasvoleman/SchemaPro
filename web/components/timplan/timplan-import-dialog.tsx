@@ -45,6 +45,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const PREVIEW_ROWS = 5;
 const NO_TEMPLATES: MappingTemplate[] = [];
@@ -158,7 +159,7 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
         }),
       );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

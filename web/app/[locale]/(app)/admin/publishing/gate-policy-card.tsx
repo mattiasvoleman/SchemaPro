@@ -50,7 +50,7 @@ export function GatePolicyCard({ settings }: { settings: PublicationSettings }) 
       setChanges({});
       toast.success(t("policySaved"));
     } catch (error) {
-      toast.error(publicationErrorText(tErrors, error, tCommon("error")));
+      toast.error(publicationErrorText(tErrors, error, tCommon));
     }
   };
 

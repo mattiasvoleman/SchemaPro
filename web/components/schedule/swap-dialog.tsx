@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** How long the applied toast, and with it Ångra, stays up (as after the room optimisation). */
 const UNDO_TOAST_MS = 15_000;
@@ -73,6 +74,7 @@ export function SwapDialog({
 }: SwapDialogProps) {
   const t = useTranslations("swaps");
   const tDays = useTranslations("days");
+  const tCommon = useTranslations("common");
   const { suggest, apply } = useSwaps();
   const [suggestion, setSuggestion] = useState<SwapSuggestion | null>(null);
   const [failed, setFailed] = useState(false);
@@ -117,7 +119,7 @@ export function SwapDialog({
     return lesson ? `${lesson.subjectName} ${lesson.groupName}` : "?";
   };
 
-  const message = (error: unknown) => (error instanceof Error ? error.message : t("failed"));
+  const message = (error: unknown) => (error instanceof Error ? apiErrorText(error, tCommon) : t("failed"));
 
   /**
    * The same moves sent back: the apply's answer names them. What it says is

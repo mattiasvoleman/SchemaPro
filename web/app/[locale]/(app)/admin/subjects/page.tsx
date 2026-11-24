@@ -57,6 +57,7 @@ import {
   perDayInRange,
   perDayValue,
 } from "@/components/timplan/distribution-fields";
+import { apiErrorText } from "@/lib/api-error-text";
 
 interface SubjectForm {
   name: string;
@@ -249,7 +250,7 @@ export default function SubjectsPage() {
       }
       setDialogOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -260,7 +261,7 @@ export default function SubjectsPage() {
       toast.success(tCommon("deleted"));
       setDeleting(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -688,7 +689,7 @@ export default function SubjectsPage() {
                   setCreatingType(false);
                 } catch (error) {
                   toast.error(
-                    error instanceof Error ? error.message : tCommon("error"),
+                    apiErrorText(error, tCommon),
                   );
                 }
               }}

@@ -15,6 +15,7 @@ import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAreaGate } from "./use-area-gate";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** What publication said of a class's drafts, with each draft said in words as it stood. */
 interface Published {
@@ -59,7 +60,7 @@ export function DraftsCard() {
 
   const fail = (error: unknown) => {
     const problem = problemOf(error);
-    toast.error(problem.kind === "areaNotYours" ? problem.message : error instanceof Error ? error.message : tCommon("error"));
+    toast.error(problem.kind === "areaNotYours" ? problem.message : apiErrorText(error, tCommon));
   };
 
   const publish = async (cls: (typeof classes)[number]) => {

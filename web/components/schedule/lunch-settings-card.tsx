@@ -22,6 +22,7 @@ import {
   type PlacementErrors,
   type PlacementValues,
 } from "./placement-rules-fields";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** The solver's grid: 08:00-18:00 in quarter hours, and it rejects anything else. */
 const QUARTER_HOUR_STEP = 15 * 60;
@@ -357,10 +358,8 @@ export function LunchSettingsCard() {
           ? // A code the web has a sentence for is said in the reader's language
             // (a rule 1 that is Hård, or a rule 2 with no limit, from a tab or a
             // client that did not stop it first); any other shows the gateway's.
-            engineMessage(tErrors, { code: error.code ?? null, message: error.message })
-          : error instanceof Error
-            ? error.message
-            : tCommon("error"),
+            engineMessage(tErrors, { code: error.code ?? null, message: apiErrorText(error, tCommon) })
+          : apiErrorText(error, tCommon),
       );
     }
   };

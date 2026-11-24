@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
 import { useSites } from "../rooms/use-sites";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /*
  * The two forms of Resurser, fetched when first opened (components/local/lazy-dialog.tsx).
@@ -71,7 +72,7 @@ function TypeForm({ editing, onDone }: { editing: ResourceTypeResponse | null; o
       toast.success(editing ? tCommon("updated") : tCommon("created"));
       onDone();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -159,7 +160,7 @@ function ResourceFormBody({
       toast.success(editing ? tCommon("updated") : tCommon("created"));
       onDone();
     } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : tCommon("error"));
+      toast.error(apiErrorText(failure, tCommon));
     }
   };
 

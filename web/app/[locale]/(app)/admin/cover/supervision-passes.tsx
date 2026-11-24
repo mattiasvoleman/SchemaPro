@@ -59,7 +59,7 @@ export function SupervisionPasses({ items, summary, view, dayText, timeText, nam
   const passText = (item: PassBoardItem) => `${placeOf(item)}, ${timeText(item)}`;
 
   const failed = (error: unknown) =>
-    toast.error(errorCode(error) === "COVER_STALE" ? t("staleRefetched") : coverErrorText(tErrors, error, tCommon("error")));
+    toast.error(errorCode(error) === "COVER_STALE" ? t("staleRefetched") : coverErrorText(tErrors, error, tCommon));
 
   const run = async (item: PassBoardItem, kind: "SUBSTITUTE" | "NO_COVER", substituteId?: string) => {
     try {
@@ -84,7 +84,7 @@ export function SupervisionPasses({ items, summary, view, dayText, timeText, nam
 
   const gone = useCallback(
     (error: unknown) => {
-      toast.error(coverErrorText(tErrors, error, tCommon("error")));
+      toast.error(coverErrorText(tErrors, error, tCommon));
       refresh();
       setCandidatesFor(null);
     },

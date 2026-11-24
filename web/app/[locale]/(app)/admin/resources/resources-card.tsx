@@ -17,6 +17,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { ApiError } from "@/lib/api";
 import { placeText, type ResourceResponse } from "@/lib/local";
 import { useResourceActions, useResourceTypes, useResources } from "@/lib/local-queries";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** The resource form, fetched when first opened. */
 const loadResourceDialog = () => import("./resource-dialogs").then((module) => ({ default: module.ResourceDialog }));
@@ -67,7 +68,7 @@ export function ResourcesCard() {
       if (error instanceof ApiError && error.status === 409) {
         setInUse(deleting);
       } else {
-        toast.error(error instanceof Error ? error.message : tCommon("error"));
+        toast.error(apiErrorText(error, tCommon));
       }
     }
   };

@@ -30,6 +30,7 @@ import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /*
  * /teacher/lektion/[lessonId]: one lesson as its teacher keeps it.
@@ -180,7 +181,7 @@ function useSaveFailure(onStale: () => void) {
         setStale(true);
         return;
       }
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     },
     reload() {
       setStale(false);

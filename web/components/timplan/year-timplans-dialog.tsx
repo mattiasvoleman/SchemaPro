@@ -62,6 +62,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** Radix Select refuses "" as an item value; this stands for "no plan". */
 const NONE = "none";
@@ -171,7 +172,7 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
       toast.success(t("saved", { year: year?.name ?? "" }));
       onOpenChange(false);
     } catch (caught) {
-      setError(caught instanceof Error && caught.message ? caught.message : tCommon("error"));
+      setError(apiErrorText(caught, tCommon));
     }
   };
 

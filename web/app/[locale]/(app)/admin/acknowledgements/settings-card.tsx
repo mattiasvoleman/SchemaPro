@@ -13,6 +13,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** The value of the select's "no reminder" option; the days are their own numbers. */
 const NONE = "none";
@@ -40,7 +41,7 @@ export function SettingsCard() {
       await updateSettings.mutateAsync(change);
       toast.success(saved);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

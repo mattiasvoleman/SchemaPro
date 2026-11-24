@@ -9,6 +9,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useAreaGate } from "./use-area-gate";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * Whether a klasslärare publishes their own class's drafts.
@@ -35,7 +36,7 @@ export function SettingsCard() {
       await updateSettings.mutateAsync(selfPublish);
       toast.success(selfPublish ? t("settings.turnedOn") : t("settings.turnedOff"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

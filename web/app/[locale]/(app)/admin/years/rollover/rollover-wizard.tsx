@@ -214,7 +214,7 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
       );
       router.push("/admin/years");
     } catch (error) {
-      toast.error(yearErrorText(tErrors, error, tCommon("error")));
+      toast.error(yearErrorText(tErrors, error, tCommon));
     }
   };
 
@@ -271,7 +271,7 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
   // A refusal of the whole rollover (already rolled, not yet activated, a
   // year RLS hides) leaves nothing to fill in; a 400 names a field and the
   // form stays.
-  const refusal = preview.isError ? yearErrorText(tErrors, preview.error, tCommon("error")) : null;
+  const refusal = preview.isError ? yearErrorText(tErrors, preview.error, tCommon) : null;
   const refusedWhole = preview.error instanceof ApiError && [404, 409].includes(preview.error.status);
   const stepIndex = STEPS.indexOf(step);
   const stepProblems = plan ? problemsOfStep(plan.problems, step) : [];

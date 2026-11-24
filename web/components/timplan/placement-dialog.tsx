@@ -50,6 +50,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Notice } from "@/components/ui/notice";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /*
  * Förlägg: the lessons of a timplanspost that the school already knows cannot
@@ -510,7 +511,7 @@ function PlacementForm({
         setTopError(t("staleList"));
         setFocusId(topId);
       } else {
-        setTopError(error instanceof Error ? error.message : tCommon("error"));
+        setTopError(apiErrorText(error, tCommon));
         setFocusId(topId);
       }
     } finally {

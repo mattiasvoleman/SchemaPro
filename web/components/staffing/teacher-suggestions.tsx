@@ -21,6 +21,7 @@ import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CandidateBadge } from "@/components/staffing/candidate-badge";
 import { RefusalNotice } from "@/components/staffing/staffing-notices";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** Shown before "Visa alla": a school of sixty is a list nobody reads to the end. */
 export const SUGGESTIONS_SHOWN = 6;
@@ -125,7 +126,7 @@ export function TeacherSuggestions({
       // panel read it), in the reader's language.
       else if (shares && tShares.has(`problem.${shares.rule}`)) toast.error(tShares(`problem.${shares.rule}`));
       else if (placed) toast.error(placed);
-      else toast.error(error instanceof Error ? error.message : tCommon("error"));
+      else toast.error(apiErrorText(error, tCommon));
     } finally {
       setPendingId(undefined);
     }

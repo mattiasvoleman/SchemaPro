@@ -70,7 +70,7 @@ export function MovePupilDialog({
       }
       close(false);
     } catch (error) {
-      toast.error(coverErrorText(tErrors, error, tCommon("error")));
+      toast.error(coverErrorText(tErrors, error, tCommon));
     }
   };
 

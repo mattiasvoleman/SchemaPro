@@ -287,7 +287,7 @@ describe("Resurser, the administrator's page", () => {
   });
 
   it("says another refusal of a removal as it came", async () => {
-    api.delete.mockRejectedValueOnce(new ApiError(500, "boom"));
+    api.delete.mockRejectedValueOnce(new ApiError(422, "boom"));
     const user = userEvent.setup();
     renderPage();
     const table = await screen.findByRole("table", { name: "Skolans resurser" });
