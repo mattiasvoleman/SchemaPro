@@ -32,12 +32,12 @@ vi.mock("next-intl", () => ({
   },
 }));
 
-function renderPanel(kind: TemplateKind, text: string, templates: MappingTemplate[] = []) {
+function renderPanel(kind: TemplateKind, text: string, templates: MappingTemplate[] = [], compact = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const onChange = vi.fn();
   render(
     <QueryClientProvider client={client}>
-      <ColumnMappingPanel kind={kind} table={readTable(text)} templates={templates} onChange={onChange} />
+      <ColumnMappingPanel kind={kind} table={readTable(text)} templates={templates} onChange={onChange} compact={compact} />
     </QueryClientProvider>,
   );
   const state = () => onChange.mock.calls.at(-1)![0] as MappingState;
@@ -87,20 +87,89 @@ describe("a Skola24 description in the column panel", () => {
     expect(screen.getByText("template.applied(Skolans egen)")).toBeInTheDocument();
     expect(state().assignment).toEqual([null, "lastName", "firstName", "className"]);
 
-    // The user's own choice of the description is applied, template or not.
+    // The user's own choice of the description is applied, template or not, and is said as the user's: read as they chose, not "recognised".
     await user.selectOptions(screen.getByLabelText("format.label"), "skola24-elever-klass");
-    expect(screen.getByText(/^format\.recognised\(/)).toBeInTheDocument();
+    expect(screen.getByText(/^format\.read\(/)).toBeInTheDocument();
+    expect(screen.queryByText(/^format\.recognised/)).not.toBeInTheDocument();
     expect(screen.queryByText(/^template\.applied/)).not.toBeInTheDocument();
+  });
+
+  it("says a file the panel applied by itself as recognised, and the same file read as the user chose as read", async () => {
+    const user = userEvent.setup();
+    renderPanel("students", PUPILS);
+    expect(screen.getByText(/^format\.recognised\(/)).toBeInTheDocument();
+    expect(screen.queryByText(/^format\.read/)).not.toBeInTheDocument();
+
+    // Choosing the description the panel had already found is still a choice: the sentence is the user's from then on.
+    await user.selectOptions(screen.getByLabelText("format.label"), "skola24-elever-klass");
+    expect(screen.getByText(/^format\.read\(/)).toBeInTheDocument();
+    expect(screen.queryByText(/^format\.recognised/)).not.toBeInTheDocument();
+
+    // And back to "recognise it": the panel's own again.
+    await user.selectOptions(screen.getByLabelText("format.label"), "");
+    expect(screen.getByText(/^format\.recognised\(/)).toBeInTheDocument();
+    expect(screen.queryByText(/^format\.read/)).not.toBeInTheDocument();
   });
 
   it("offers a file that is not exact and applies it when the user says so, naming the columns it lacks", async () => {
     const user = userEvent.setup();
     const { state } = renderPanel("students", "Personnummer\tEfternamn\tFörnamn\n19000105-0001\tTestsson\tÅsa\n");
-    expect(screen.queryByText(/^format\.recognised/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^format\.(recognised|read)/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "format.use" }));
-    expect(screen.getByText(/^format\.recognised\(/)).toBeInTheDocument();
+    // Said as read, as the user asked ("Läs den så"), never as recognised: it was offered, and the file does not have the whole description's columns.
+    expect(screen.getByText(/^format\.read\(/)).toBeInTheDocument();
+    expect(screen.queryByText(/^format\.recognised/)).not.toBeInTheDocument();
     expect(screen.getByText("format.missing(1|Klass)")).toBeInTheDocument();
     expect(state().assignment).toEqual([null, "lastName", "firstName"]);
+  });
+
+  describe("beside a school's own template that does not quite fit", () => {
+    // A template for the pupils' file that also expects a column ("Mentor") the file does not have: X2 offers it ("Använd ändå"), and does not
+    // apply it by itself, so the description is applied by itself on the file's exact headers. Hiding the offer then made the template the
+    // school wrote invisible for exactly the file it was written for.
+    const almost = (): MappingTemplate => ({
+      ...pupilsTemplate(),
+      placements: [...pupilsTemplate().placements, { key: "mentor", label: "Mentor", field: "phone" }],
+    });
+    const same = (): MappingTemplate => ({ ...pupilsTemplate(), id: "t2", name: "Skolans andra" });
+
+    it.each([false, true])("is still offered when the description is applied by itself (compact: %s), and is taken on the user's say", async (compact) => {
+      const user = userEvent.setup();
+      const { state } = renderPanel("students", PUPILS, [almost()], compact);
+      expect(screen.getByText(/^format\.recognised\(/)).toBeInTheDocument();
+      expect(screen.getByText("template.offered(Skolans egen|1)")).toBeInTheDocument();
+      // The description's own columns are what is placed until the user says otherwise.
+      expect(state().assignment).toEqual([null, "lastName", "firstName", "className"]);
+
+      await user.click(screen.getByRole("button", { name: "template.useAnyway" }));
+      expect(screen.getByText("template.applied(Skolans egen)")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "template.useAnyway" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/^template\.offered/)).not.toBeInTheDocument();
+    });
+
+    it("is not offered once the user has chosen the description: that choice is the user's, template or not", async () => {
+      const user = userEvent.setup();
+      renderPanel("students", PUPILS, [almost()]);
+      expect(screen.getByText("template.offered(Skolans egen|1)")).toBeInTheDocument();
+
+      await user.selectOptions(screen.getByLabelText("format.label"), "skola24-elever-klass");
+      expect(screen.getByText(/^format\.read\(/)).toBeInTheDocument();
+      expect(screen.queryByText(/^template\.offered/)).not.toBeInTheDocument();
+    });
+
+    it("is offered again when the user says none of the descriptions, as it was before the description existed", async () => {
+      const user = userEvent.setup();
+      renderPanel("students", PUPILS, [almost()]);
+      await user.selectOptions(screen.getByLabelText("format.label"), "none");
+      expect(screen.getByText("template.offered(Skolans egen|1)")).toBeInTheDocument();
+    });
+
+    it("names two templates that fit equally, as it does for a file the description does not apply to", () => {
+      renderPanel("students", PUPILS, [pupilsTemplate(), same()]);
+      expect(screen.getByText("template.ambiguous")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Skolans egen" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Skolans andra" })).toBeInTheDocument();
+    });
   });
 
   it("is dropped when the user says none of them, and the columns are as X2 places them", async () => {

@@ -11778,10 +11778,10 @@
     "skipped": "{count, plural, one {# kolumn läses inte, som du valde} other {# kolumner läses inte, som du valde}}: {names}.",
     "dropped": "{count, plural, one {# kolumn som ser ut som personnummer släpptes} other {# kolumner som ser ut som personnummer släpptes}}. Ingenting av dem lämnar webbläsaren.",
     "emptied": "{count, plural, one {# rad har inget i de kolumner som läses och hoppas över} other {# rader har inget i de kolumner som läses och hoppas över}}.",
-    "held": "{count, plural, one {Rad {rows} har} other {Rader {rows} har}} sekretessmarkering i filen och läses inte in, som i Skola24. Resten av filen läses.",
+    "held": "{count, plural, one {Rad {rows} har} other {Rader {rows} har}} sekretessmarkering i filen (en skyddad identitet i Rastra) och läses inte in, som i Skola24. Resten av filen läses.",
     "format": {
       "label": "Filen kommer från Skola24",
-      "auto": "Känn igen själv",
+      "auto": "Känn igen på rubrikerna",
       "none": "Ingen av dem",
       "names": {
         "skola24-foraldrar-csv": "Importera föräldrar CSV",
@@ -11789,6 +11789,7 @@
         "skola24-elever-klass": "Importera elever till klasser"
       },
       "recognised": "Filen känns igen som Skola24:s ”{name}”, och kolumnerna är placerade som Skola24 beskriver den.",
+      "read": "Filen läses som Skola24:s ”{name}”, som du valde, och kolumnerna är placerade som Skola24 beskriver den.",
       "offered": "Filen ser ut att vara Skola24:s ”{name}”.",
       "skipped": "{count, plural, one {# kolumn läses inte} other {# kolumner läses inte}}: {names}.",
       "use": "Läs den så",

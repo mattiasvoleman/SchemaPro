@@ -1358,11 +1358,12 @@ describe("CsvImportDialog a file from Skola24", () => {
     await uploadCsv(user, STAFF_FILE);
     await screen.findByText(/^format\.offered\(/);
     // Not applied by itself: no column is placed (the import waits), but the first person is a row and not the header row.
-    expect(screen.queryByText(/^format\.recognised/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^format\.(recognised|read)/)).not.toBeInTheDocument();
     expect(importButton()).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "format.use" }));
-    await screen.findByText(/^format\.recognised\(/);
+    await screen.findByText(/^format\.read\(/);
+    expect(screen.queryByText(/^format\.recognised/)).not.toBeInTheDocument();
     // Said in the same notice: there is no header row, so the columns stand where Skola24 says they stand.
     expect(screen.getByText(/format\.byPosition/)).toBeInTheDocument();
     // The marked row is left out and named; the other two are read, and the import is not stopped by it.
@@ -1408,7 +1409,7 @@ describe("CsvImportDialog a file from Skola24", () => {
     await screen.findByText("rowsReady(count=2)");
 
     await user.selectOptions(screen.getByLabelText("format.label"), "none");
-    expect(screen.queryByText(/^format\.recognised/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^format\.(recognised|read)/)).not.toBeInTheDocument();
     expect(screen.queryByText(/^held\(/)).not.toBeInTheDocument();
     // As X2 reads a file: the first row is the header, so the columns have a person's names and nothing places them, and the panel says so.
     await screen.findByText("summary.cannot");
@@ -1432,7 +1433,7 @@ describe("CsvImportDialog a file from Skola24", () => {
 
     await uploadCsv(user, "19000101-0001;19000102-0002;Åsa;Testsson;asa@example.invalid;0701234567\r\n19000101-0003;19000102-0004;Bo;Provsson;;\r\n");
     await user.click(await screen.findByRole("button", { name: "format.use" }));
-    await screen.findByText(/^format\.recognised\(/);
+    await screen.findByText(/^format\.read\(/);
     // Two personnummer columns are dropped; the mobile column is not a third.
     expect(screen.getByText("dropped(count=2)")).toBeInTheDocument();
     expect(screen.getByText("format.gap(count=1|names=fields.guardians.studentEmail)")).toBeInTheDocument();
@@ -1446,7 +1447,7 @@ describe("CsvImportDialog a file from Skola24", () => {
     // Five columns, no header row, ÅÅÅÅMMDDTFnn in the ID columns: nothing a personnummer test sees.
     await uploadCsv(user, "19000101TF01;19000102TF01;Åsa;Testsson;asa@example.invalid\r\n19000101TF02;19000102TF02;Bo;Provsson;bo@example.invalid\r\n");
     await user.click(await screen.findByRole("button", { name: "format.use" }));
-    await screen.findByText(/^format\.recognised\(/);
+    await screen.findByText(/^format\.read\(/);
     expect(screen.getByText("dropped(count=2)")).toBeInTheDocument();
     // Both rows are rows of people: the first is not taken for a header (the surname column's examples name both), and no number is shown
     // anywhere in the dialog. The file cannot be imported as it stands (no pupil e-mail), so there is no preview table to look in.
@@ -1461,7 +1462,7 @@ describe("CsvImportDialog a file from Skola24", () => {
 
     await uploadCsv(user, TEACHERS_CSV);
     await screen.findByText("rowsReady(count=1)");
-    expect(screen.queryByText(/^format\.(offered|recognised)/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^format\.(offered|recognised|read)/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "format.use" })).not.toBeInTheDocument();
   });
 });

@@ -82,6 +82,7 @@ export function FormatSelect({
 export function FormatNotices({
   kind,
   inUse,
+  chosen,
   offered,
   formats,
   placed,
@@ -89,6 +90,11 @@ export function FormatNotices({
 }: {
   kind: TemplateKind;
   inUse: FormatView | null;
+  /**
+   * The user chose the description in use, in the select or with "Läs den så" on an offer: it is read as they said, and the sentence says
+   * that. False when the panel applied it by itself, on the exact documented headers, which is what "känns igen" is.
+   */
+  chosen: boolean;
   offered: readonly FormatFit[];
   formats: readonly FormatDescriptor[];
   /** The fields a column is placed on now: a field the user has given a column is no longer a gap. */
@@ -119,7 +125,7 @@ export function FormatNotices({
   return (
     <div className="space-y-2">
       <Notice tone="success">
-        {t("format.recognised", { name: t(`format.names.${descriptor.id}`) })}
+        {t(chosen ? "format.read" : "format.recognised", { name: t(`format.names.${descriptor.id}`) })}
         {reading.by === "position" ? ` ${t("format.byPosition")}` : ""}
       </Notice>
       <Notice tone="neutral">
