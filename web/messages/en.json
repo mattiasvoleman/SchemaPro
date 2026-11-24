@@ -1920,7 +1920,7 @@
     },
     "suggestions": {
       "title": "What can I change?",
-      "offer": "The engine can work out up to three changes that would let the week be laid, and check them against the rules. It takes about a minute and a half. It places no timetable and changes nothing.",
+      "offer": "The engine can work out up to three changes that could let the week be laid, and check them against the rules. It takes about a minute and a half. It places no timetable and changes nothing.",
       "offerTimeout": "Time ran out, so nothing is proved about the week yet. The engine can make a shorter run in which five of the school's own rules may give way, and say whether the week can then be laid and with which changes. It takes about a minute and a half, places no timetable and changes nothing.",
       "offerAction": "Work out suggestions",
       "again": "Work out again",
@@ -1940,8 +1940,8 @@
         "OTHER": "The suggestions could not be asked for. Try again."
       },
       "intro": {
-        "SOLVED": "The engine has solved the week with exactly this change: it laid a timetable that keeps every rule, with the change made.",
-        "SOLVED_TOGETHER": "The engine has solved the week with exactly {total, plural, one {this change, which covers several posts,} other {these # changes}} together: it laid a timetable that keeps every rule, with the changes made. None of them is shown to be enough on its own.",
+        "SOLVED": "The engine has solved the week with exactly this change: in the analysis it laid a timetable that keeps every rule, with the change made. The timetable is not saved.",
+        "SOLVED_TOGETHER": "The engine has solved the week with exactly {total, plural, one {this change, which covers several posts,} other {these # changes}} together: in the analysis it laid a timetable that keeps every rule, with the changes made. The timetable is not saved. None of them is shown to be enough on its own.",
         "MAY_HELP": "The engine laid a week in which these rules gave way, but did not get to check that the changes are enough. They may help, but no more than that is shown."
       },
       "proof": {
