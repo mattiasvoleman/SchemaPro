@@ -116,11 +116,15 @@ export class UpsertTeacherEmploymentDto {
   @MinLength(1, { message: 'Signaturen måste vara minst ett tecken.' })
   @MaxLength(8, { message: 'Signaturen kan vara högst åtta tecken.' })
   @Matches(/\S/, { message: 'Signaturen kan inte bestå av bara mellanslag.' })
+  // PostgreSQL's text cannot hold a NUL (SQLSTATE 22021), which reached the caller as a 500 "unexpected database error": no NUL here.
+  @Matches(/^[^\u0000]*$/, { message: 'Signaturen kan inte innehålla nolltecken (U+0000).' })
   signature?: string | null;
 
   @IsOptional()
   @IsString({ message: 'Anteckningen anges som text.' })
   @MaxLength(500, { message: 'Anteckningen kan vara högst 500 tecken.' })
+  // The same: a NUL in the note was a 500 (the review of #410, U-1), as the scope assessment's note was before it.
+  @Matches(/^[^\u0000]*$/, { message: 'Anteckningen kan inte innehålla nolltecken (U+0000).' })
   note?: string | null;
 
   /**
