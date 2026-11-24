@@ -1373,13 +1373,24 @@ describe("a post somebody else has written", () => {
     expect(cardOf(ANNA_ROW)).toBeInTheDocument();
   });
 
-  it("says that something went wrong without hiding what it was", async () => {
-    state.refuse = () => new ApiError(500, "Boom");
+  it("says that something went wrong, in the reader's language and not in the gateway's English", async () => {
+    state.refuse = () => new ApiError(500, "An unexpected error occurred. Please try again later.");
     renderPage();
     await ready();
     fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
     expect(await screen.findByTestId("placement-message")).toHaveTextContent("notSaved");
-    expect(screen.getByTestId("placement-message")).toHaveTextContent("Boom");
+    // The test's translator echoes the key: this is `common.problemServer`.
+    expect(screen.getByTestId("placement-message")).toHaveTextContent("problemServer");
+    expect(screen.getByTestId("placement-message")).not.toHaveTextContent("unexpected error");
+  });
+
+  it("says what the gateway wrote for the reader when it named the case, without hiding what it was", async () => {
+    state.refuse = () => new ApiError(500, "Något oväntat hände i sparandet. Försök igen.", "SAVE_FAILED");
+    renderPage();
+    await ready();
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    expect(await screen.findByTestId("placement-message")).toHaveTextContent("notSaved");
+    expect(screen.getByTestId("placement-message")).toHaveTextContent("Något oväntat hände i sparandet. Försök igen.");
   });
 });
 

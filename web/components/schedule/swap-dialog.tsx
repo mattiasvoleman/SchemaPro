@@ -179,7 +179,7 @@ export function SwapDialog({
                 ? t("lockedPartner")
                 : error.code === LESSON_IS_PLACED
                   ? t("placed")
-                  : error.message,
+                  : apiErrorText(error, tCommon),
         );
         void search();
         return;

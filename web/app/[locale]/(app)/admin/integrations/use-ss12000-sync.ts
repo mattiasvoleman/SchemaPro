@@ -1,7 +1,9 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
 import { api } from "@/lib/api";
+import { apiErrorText } from "@/lib/api-error-text";
 import type { BulkInvitationReport } from "@/lib/queries";
 import { AFTER_APPLY, INTEGRATION_KEYS } from "./query-keys";
 import {
@@ -130,11 +132,13 @@ export function useProvisioning(enabled: boolean) {
  * "Bjud in valda": the existing POST /api/v1/users/invitations, at most 500
  * ids a call (InviteUsersDto), one call after another, the reports summed.
  * A chunk that fails as a whole is counted against each of its ids, so the
- * total always accounts for every person chosen.
+ * total always accounts for every person chosen, with what `say` makes of the
+ * failure: the reader's sentence for it, not the gateway's English.
  */
 export async function inviteInChunks(
   userIds: string[],
   post: (ids: string[]) => Promise<BulkInvitationReport>,
+  say: (error: unknown) => string,
 ): Promise<BulkInvitationReport> {
   const merged: BulkInvitationReport = { sent: 0, alreadyRegistered: 0, errors: [] };
   for (let at = 0; at < userIds.length; at += INVITE_CHUNK) {
@@ -145,7 +149,7 @@ export async function inviteInChunks(
       merged.alreadyRegistered += report.alreadyRegistered;
       merged.errors.push(...report.errors);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "";
+      const message = say(error);
       merged.errors.push(...chunk.map((userId) => ({ userId, message })));
     }
   }
@@ -154,10 +158,13 @@ export async function inviteInChunks(
 
 export function useInviteSelected() {
   const queryClient = useQueryClient();
+  const tCommon = useTranslations("common");
   return useMutation({
     mutationFn: (userIds: string[]) =>
-      inviteInChunks(userIds, (ids) =>
-        api.post<BulkInvitationReport>("/api/v1/users/invitations", { userIds: ids }),
+      inviteInChunks(
+        userIds,
+        (ids) => api.post<BulkInvitationReport>("/api/v1/users/invitations", { userIds: ids }),
+        (error) => apiErrorText(error, tCommon),
       ),
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.provisioning });

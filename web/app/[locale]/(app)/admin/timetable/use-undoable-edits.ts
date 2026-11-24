@@ -49,7 +49,7 @@ export function useUndoableEdits(inputs: {
         // No clash either: the lesson is its förläggning's, and is changed there.
         toast.error(t("lessonIsPlaced"));
       } else if (error instanceof ApiError && error.status === 409) {
-        toast.error(`${t("editConflict")}: ${error.message}`);
+        toast.error(`${t("editConflict")}: ${apiErrorText(error, tCommon)}`);
       } else {
         toast.error(apiErrorText(error, tCommon));
       }

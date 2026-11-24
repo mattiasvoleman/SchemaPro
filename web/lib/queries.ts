@@ -1812,8 +1812,14 @@ export interface ImportReport {
    * the rows whose link was there already.
    */
   linked?: number;
-  /** The file's rows as Excel numbers them, when the dialog posted them; else 1-based positions. */
-  errors: { row: number; message: string }[];
+  /**
+   * The file's rows as Excel numbers them, when the dialog posted them; else 1-based positions.
+   *
+   * `failure` is on the row a LATER batch stopped at: the gateway's refusal itself (an ApiError), which the result says in the
+   * reader's language (lib/api-error-text.ts) where `message` is its English `detail`. A row the gateway named in its own report
+   * has none: its `message` is the import service's Swedish sentence.
+   */
+  errors: { row: number; message: string; failure?: unknown }[];
   /**
    * Rows that were SAVED but that the school's tjänstefördelning policy warns
    * about (src/import/dto/import.dto.ts ImportWarning): an obehörig lärare or
@@ -2184,6 +2190,8 @@ export async function importCsvInBatches({
           error instanceof Error
             ? error.message
             : "Importen avbröts. Ladda upp filen igen — rader som redan lagts in hoppas över.",
+        // The gateway's refusal, read as a shape: a test that replaces "@/lib/api" brings no ApiError class.
+        ...(error instanceof Error && typeof (error as { status?: unknown }).status === "number" ? { failure: error } : {}),
       });
       break;
     }

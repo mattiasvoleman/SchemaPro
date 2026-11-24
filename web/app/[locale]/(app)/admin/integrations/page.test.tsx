@@ -322,6 +322,16 @@ describe("/admin/integrations — the register", () => {
     expect(put.mock.calls[0]![1]).not.toHaveProperty("confirmRelink");
   });
 
+  it("says a failed read of the source in the reader's language, not in the gateway's English, above what did not happen", async () => {
+    get.mockImplementation(async () => {
+      throw new ApiError(500, "An unexpected error occurred. Please try again later.");
+    });
+    renderPage();
+    // The reason, then what did not happen ("Inget har ändrats …"), in one hint.
+    expect(await screen.findByText(/^Något gick fel hos oss\. Försök igen om en stund\. /)).toBeInTheDocument();
+    expect(screen.queryByText(/An unexpected error occurred/)).not.toBeInTheDocument();
+  });
+
   it("says why a test failed in its own words, never the far side's", async () => {
     const user = userEvent.setup();
     server.source = { ...SOURCE };

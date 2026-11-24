@@ -1,9 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { FileSpreadsheet, FileText, ShieldAlert } from "lucide-react";
 import { HR_NOT_YOURS, isNotYours, isRateLimited, usePayrollBasis, usePayrollFile } from "@/lib/analysis-queries";
+import { apiErrorText } from "@/lib/api-error-text";
 import { hoursOf, spanLabel } from "@/lib/analysis";
 import type { PayrollFormat } from "@/lib/analysis-types";
 import { usePeople } from "@/lib/queries";
@@ -51,6 +53,7 @@ export function previousMonth(today: Date): { from: string; to: string } {
  */
 export function PayrollPanel({ yearId }: { yearId: string }) {
   const { t, number, day } = useAnalysisText();
+  const tCommon = useTranslations("common");
   const initial = useMemo(() => previousMonth(new Date()), []);
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
@@ -107,7 +110,7 @@ export function PayrollPanel({ yearId }: { yearId: string }) {
           : t("payroll.downloaded", { file: file.filename }),
       );
     } catch (error) {
-      toast.error(isNotYours(error, HR_NOT_YOURS) ? t("payroll.notYoursBody") : error instanceof Error ? error.message : t("loadFailedHint"));
+      toast.error(isNotYours(error, HR_NOT_YOURS) ? t("payroll.notYoursBody") : error instanceof Error ? apiErrorText(error, tCommon) : t("loadFailedHint"));
     }
   };
 

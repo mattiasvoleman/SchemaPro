@@ -245,7 +245,7 @@ export function RoomOptimizationDialog({
         // Either the schedule moved since the proposal was read, or the moves
         // would now clash. Both make this proposal unappliable, so the way on
         // is the same: back to step one and compute again.
-        toast.error(error.code === STALE ? t("stale") : error.message);
+        toast.error(error.code === STALE ? t("stale") : errorMessage(error));
         setProposal(null);
         return;
       }

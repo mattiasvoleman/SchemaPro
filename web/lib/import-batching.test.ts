@@ -152,6 +152,22 @@ describe("importCsvInBatches", () => {
     expect(report.errors).toEqual([{ row: 503, message: "HTTP 500" }]);
   });
 
+  it("keeps the gateway's refusal of a later batch on its row, so that the result says it in the reader's language", async () => {
+    // A gateway error as a shape (status): this test replaces "@/lib/api" and so has no ApiError class.
+    const refused = Object.assign(new Error("An unexpected error occurred. Please try again later."), { status: 500 });
+    post.mockResolvedValueOnce({ created: 500, skipped: 0, errors: [] }).mockRejectedValueOnce(refused);
+
+    const report = await importCsvInBatches({
+      kind: "students",
+      academicYearId: YEAR,
+      rows: Array.from({ length: 600 }, (_, i) => ({ firstName: `E${i}` })),
+    });
+
+    expect(report.errors).toHaveLength(1);
+    expect(report.errors[0]).toMatchObject({ row: 501, message: "An unexpected error occurred. Please try again later." });
+    expect(report.errors[0]!.failure).toBe(refused);
+  });
+
   it("mirrors the row caps the API DTOs declare", () => {
     expect(IMPORT_MAX_ROWS).toEqual({
       rooms: 500,

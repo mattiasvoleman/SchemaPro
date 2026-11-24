@@ -28,6 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { teachesLike } from "@/lib/teaching-staff";
 import { profileWrites } from "@/lib/admin-areas";
 import { ApiError } from "@/lib/api";
+import { apiErrorText } from "@/lib/api-error-text";
 import { blockFitSentence, blockPlacementsRefusal } from "@/lib/block-placements";
 import { usePlanningYear } from "@/lib/planning-year";
 import { blockLinkFromAddress, lessonOfBlockLink } from "@/lib/placement-block-link";
@@ -178,6 +179,7 @@ export default function PlacementsPage() {
   // The sentences of the dialog on Timplansposter that a block says the same way: why a block's lessons do not fit it.
   const tBlockFit = useTranslations("requirements.blockPlacements");
   const tDays = useTranslations("days");
+  const tCommon = useTranslations("common");
   const tPair = useTranslations("placementWeek.pair");
   const tNote = useTranslations("placementWeek.note");
   const tWeeks = useTranslations("placementWeek.weeks");
@@ -788,11 +790,11 @@ export default function PlacementsPage() {
         setMessage({ tone: "problem", text: `${t("cannotStandThere", { reason: sentence })}${ofRow ? meetsRed(ofRow.params) : ""}` });
         return;
       }
-      const cannot = cause instanceof ApiError || cause instanceof Error ? cause.message : "";
+      const cannot = cause instanceof ApiError || cause instanceof Error ? apiErrorText(cause, tCommon) : "";
       setMessage({ tone: "problem", text: `${t("notSaved")} ${cannot}`.trim() });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [board, t, tBlock, tBlockFit, tPair, tPlacements, tDays, postById, postName, meetsRed, held],
+    [board, t, tBlock, tBlockFit, tPair, tPlacements, tDays, tCommon, postById, postName, meetsRed, held],
   );
 
   /** One change to one post: written, said, and the keyboard left on what changed. */

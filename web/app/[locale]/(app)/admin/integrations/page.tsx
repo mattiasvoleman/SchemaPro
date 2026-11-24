@@ -44,13 +44,14 @@ const SignInTab = lazy(() => import("./sign-in-tab").then((module) => ({ default
 export default function IntegrationsPage() {
   const t = useTranslations("integrations");
   const tErrors = useTranslations("integrations.errors") as unknown as MessageLookup;
+  const tCommon = useTranslations("common");
   const source = useSs12000Source();
   const [tab, setTab] = useState("source");
   const [keysOpened, setKeysOpened] = useState(false);
 
   // The gateway's reason in the reader's words when it gave one, and always
   // what did not happen: a failed read changes nothing in the school.
-  const reason = source.isError ? errorText(tErrors, source.error, "") : "";
+  const reason = source.isError ? errorText(tErrors, source.error, tCommon) : "";
 
   return (
     <Page width="wide">
