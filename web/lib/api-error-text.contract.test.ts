@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { GATEWAY_LOG } from "@/lib/api-error-text";
 
 /**
  * A handler that shows `error.message` shows the gateway's `detail`: English for a 404, a 429 and a 500, and the constant "One or more
@@ -46,5 +47,19 @@ describe("a failure is told through apiErrorText", () => {
     const named = FILES.filter((path) => text(path).includes("CLIENT_NETWORK_FAILURE")).map((path) => relative(web, path));
     expect(named).toEqual(["lib/api-error-text.ts"]);
     expect(text(join(web, "lib/api.ts"))).toMatch(/import \{ NETWORK_FAILURE \} from "@\/lib\/api-error-text";/);
+  });
+
+  it("lists as the gateway's own only sentences its sources still say", () => {
+    // The gateway is two directories up from web/lib, and its sentences are written over several literals where a line is long.
+    const gateway = ["common/filters/http-exception.filter.ts", "auth/roles.guard.ts", "auth/jwt.strategy.ts"]
+      .map((file) => text(join(web, "..", "src", file)))
+      .join("\n")
+      .replace(/'\s*\+\s*'/g, "");
+    // Nest's own, thrown by the framework when a guard says no: not in src/.
+    const framework = new Set(["Forbidden resource"]);
+    const gone = Object.keys(GATEWAY_LOG).filter((sentence) => !framework.has(sentence) && !gateway.includes(sentence));
+    // A sentence the gateway has reworded or given a code is no longer a log's: take it out of GATEWAY_LOG (lib/api-error-text.ts), and
+    // the web shows what the gateway says now.
+    expect(gone).toEqual([]);
   });
 });

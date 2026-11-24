@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
 import RoomsPage from "./page";
 
 /**
@@ -314,5 +315,40 @@ describe("the Skolområde field (Skolområden och restid)", () => {
     await user.type(screen.getByLabelText("name"), "Sal 10");
     await user.click(screen.getByRole("button", { name: "save" }));
     expect(createMock.mock.calls[0]![0]).not.toHaveProperty("siteId");
+  });
+});
+
+describe("a save the gateway's validation refuses", () => {
+  const refuse = (...problems: string[]) =>
+    createMock.mockRejectedValue(new ApiError(400, "One or more fields failed validation.", undefined, undefined, problems, "POST"));
+
+  it("draws each sentence at the field that holds the property it names, and leaves the others as they were", async () => {
+    refuse("name should not be empty", "capacity must not be greater than 10000");
+    const user = userEvent.setup();
+    render(<RoomsPage />);
+    await user.click(screen.getAllByRole("button", { name: "addRoom" })[0]!);
+    await user.type(screen.getByLabelText("name"), "Sal 10");
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    // The test's translator echoes the key: the capacity's sentence is validationMax with its limit.
+    expect(await screen.findByText("ValidationMax(10000).")).toBeInTheDocument();
+    expect(screen.getByLabelText("capacity")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("name")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("code (optional)")).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("forgets it when the dialog is opened again", async () => {
+    refuse("name should not be empty");
+    const user = userEvent.setup();
+    render(<RoomsPage />);
+    await user.click(screen.getAllByRole("button", { name: "addRoom" })[0]!);
+    await user.type(screen.getByLabelText("name"), "Sal 10");
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(await screen.findByText("ValidationEmpty().")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "cancel" }));
+    await user.click(screen.getAllByRole("button", { name: "addRoom" })[0]!);
+    expect(screen.queryByText("ValidationEmpty().")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("name")).not.toHaveAttribute("aria-invalid");
   });
 });
