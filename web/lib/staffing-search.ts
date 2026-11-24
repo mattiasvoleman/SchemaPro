@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { isNetworkFailure } from "@/lib/api-error-text";
 import type { StaffingProposal } from "@/app/[locale]/(app)/admin/staffing/use-staffing-proposal";
 
 /*
@@ -232,6 +233,8 @@ export type StartProblem =
   | { kind: "OTHER"; message: string; code: string | null; params: Record<string, string | number> | null };
 
 export function classifyStartError(error: unknown): StartProblem {
+  // No answer at all has no sentence of the gateway's: the notice says its general one, as it did for the TypeError this was before.
+  if (isNetworkFailure(error)) return { kind: "OTHER", message: "", code: null, params: null };
   if (error instanceof ApiError) {
     if (error.code === STAFFING_SEARCH_ALREADY_RUNNING) return { kind: "ALREADY_RUNNING" };
     if (error.code === STAFFING_SEARCH_NO_QUALIFICATIONS) return { kind: "NO_QUALIFICATIONS" };
@@ -250,6 +253,7 @@ export type ProposalProblem =
   | { kind: "OTHER"; message: string };
 
 export function classifyProposalError(error: unknown): ProposalProblem {
+  if (isNetworkFailure(error)) return { kind: "OTHER", message: "" };
   if (error instanceof ApiError) {
     if (error.code === STAFF_PROPOSAL_STALE) return { kind: "STALE" };
     if (error.code === STAFFING_SEARCH_GONE) return { kind: "GONE" };

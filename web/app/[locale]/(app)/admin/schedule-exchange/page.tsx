@@ -30,6 +30,7 @@ import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ImportPreview } from "./import-preview";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * Schemat som tabell och i öppna format: the grundschema out as a table (CSV,
@@ -59,6 +60,7 @@ const KEYS = { summary: (yearId: string) => ["schedule-exchange", "summary", yea
 
 export default function ScheduleExchangePage() {
   const t = useTranslations("scheduleExchange");
+  const tCommon = useTranslations("common");
   const queryClient = useQueryClient();
   const { yearId, isLoading: yearsLoading, isError: yearsError, setYearId, years } = useYearScope();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -116,7 +118,7 @@ export default function ScheduleExchangePage() {
       setProblem(null);
     },
     onSuccess: setPlan,
-    onError: (error) => setProblem(error instanceof ApiError ? error.message : t("import.previewFailed")),
+    onError: (error) => setProblem(error instanceof ApiError ? apiErrorText(error, tCommon) : t("import.previewFailed")),
   });
 
   const apply = useMutation({
@@ -133,7 +135,7 @@ export default function ScheduleExchangePage() {
         setPlan(null);
         setProblem(t("import.planChanged"));
       } else {
-        setProblem(error instanceof ApiError ? error.message : t("import.applyFailed"));
+        setProblem(error instanceof ApiError ? apiErrorText(error, tCommon) : t("import.applyFailed"));
       }
     },
   });

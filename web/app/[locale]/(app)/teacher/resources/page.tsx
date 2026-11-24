@@ -24,6 +24,7 @@ import {
 } from "@/lib/local-queries";
 import { BOOKING_STATUS_VARIANT } from "@/lib/status-variants";
 import { toDateString } from "@/lib/utils";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * Boka resurs: what the school lends out that is not a lokal (surfplattor, en
@@ -81,7 +82,7 @@ export default function TeacherResourcesPage() {
       setTitle("");
     } catch (error) {
       // Somebody took them while the list was on screen: say so in the reader's language, and the list is read again.
-      toast.error(error instanceof ApiError && error.status === 409 ? t("takenToast") : error instanceof Error ? error.message : tCommon("error"));
+      toast.error(error instanceof ApiError && error.status === 409 ? t("takenToast") : apiErrorText(error, tCommon));
     } finally {
       setBookingId(null);
     }
@@ -93,7 +94,7 @@ export default function TeacherResourcesPage() {
       toast.success(t("cancelledToast"));
       setConfirmOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

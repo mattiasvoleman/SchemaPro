@@ -43,7 +43,7 @@ export function ModeCard({ mode }: { mode: PublishMode }) {
       await switchMode.mutateAsync(target);
       toast.success(t(target === "DRAFT" ? "modeSwitchedDraft" : "modeSwitchedDirect"));
     } catch (error) {
-      setProblem(publicationErrorText(tErrors, error, tCommon("error")));
+      setProblem(publicationErrorText(tErrors, error, tCommon));
     } finally {
       setConfirming(false);
     }

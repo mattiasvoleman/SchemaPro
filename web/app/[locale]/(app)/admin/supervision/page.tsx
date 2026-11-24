@@ -46,6 +46,7 @@ import {
   type AreaBody,
   type ShiftBody,
 } from "./use-supervision";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * Rastvaktsschema (migration 20261207090000): the places the school watches
@@ -137,9 +138,7 @@ export default function SupervisionPage() {
   const errorText = (error: unknown, scopeKey: "areas" | "shift") =>
     error instanceof ApiError && error.code && t.has(`${scopeKey}.errors.${error.code}`)
       ? (error.params ? t(`${scopeKey}.errors.${error.code}`, error.params) : t(`${scopeKey}.errors.${error.code}`))
-      : error instanceof Error
-        ? error.message
-        : tCommon("error");
+      : apiErrorText(error, tCommon);
 
   const saveArea = async (body: AreaBody) => {
     const editing = areaDialog?.area ?? null;

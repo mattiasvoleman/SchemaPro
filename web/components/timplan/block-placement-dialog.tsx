@@ -46,6 +46,7 @@ import { Label } from "@/components/ui/label";
 import { labelClassName } from "@/components/ui/label-style";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Notice } from "@/components/ui/notice";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /*
  * Förlägg blocket: ONE lesson of a parallel block that the school already knows
@@ -410,7 +411,7 @@ function BlockPlacementForm({
         setTopError({ text: tp("busy"), stale: false });
         setFocusId(topId);
       } else {
-        setTopError({ text: error instanceof Error ? error.message : tCommon("error"), stale: false });
+        setTopError({ text: apiErrorText(error, tCommon), stale: false });
         setFocusId(topId);
       }
     } finally {

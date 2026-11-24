@@ -8,6 +8,7 @@ import { useProfile, useReadOnly } from "@/components/profile-context";
 import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * Elevens lektion för dagen: whether a guardian is told when their child is
@@ -31,7 +32,7 @@ export function MoveNoticeCard() {
       await updateSettings.mutateAsync({ teacherView: settings.data.teacherView, guardianNoticeOnMove: next });
       toast.success(t("saved"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

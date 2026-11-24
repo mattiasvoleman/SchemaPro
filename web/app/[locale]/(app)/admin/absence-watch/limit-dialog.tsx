@@ -36,6 +36,7 @@ import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Notice } from "@/components/ui/notice";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const FIGURE_LABEL: Record<FigureField, string> = {
   percent: "form.percent",
@@ -95,9 +96,7 @@ export function LimitDialog({
       setRefusal(
         error instanceof ApiError && error.code === LIMIT_EXISTS
           ? t("form.exists", { group: t(`group.${form.recipientGroup}`) })
-          : error instanceof Error
-            ? error.message
-            : tCommon("error"),
+          : apiErrorText(error, tCommon),
       );
     }
   };

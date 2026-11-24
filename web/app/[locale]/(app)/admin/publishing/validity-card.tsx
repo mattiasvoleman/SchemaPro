@@ -97,7 +97,7 @@ export function ValidityCard({
       const result = await discard.mutateAsync(year.id);
       toast.success(t("discarded", { count: result.restored }));
     } catch (error) {
-      setProblem(publicationErrorText(tErrors, error, tCommon("error")));
+      setProblem(publicationErrorText(tErrors, error, tCommon));
     } finally {
       setDiscarding(false);
     }
@@ -117,7 +117,7 @@ export function ValidityCard({
     } catch (error) {
       const warnings = warningCodes(error);
       setRefillWarnings(warnings);
-      if (warnings.length === 0) setProblem(publicationErrorText(tErrors, error, tCommon("error")));
+      if (warnings.length === 0) setProblem(publicationErrorText(tErrors, error, tCommon));
     }
   };
 

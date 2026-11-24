@@ -63,6 +63,7 @@ import { CandidatesSection, candidatesHref } from "./candidates-section";
 import { RefusalLink } from "./refusal-link";
 import { placementLinkOfRefusal } from "@/lib/placement-link";
 import { useScheduleCandidates } from "./use-schedule-candidates";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * The row before a run ("N lektioner ligger fast") reads the week's board, which nothing on this page needs to draw: fetched
@@ -588,7 +589,7 @@ export default function GeneratePage() {
         void refetchHistory();
         return;
       }
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

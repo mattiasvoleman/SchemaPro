@@ -233,6 +233,66 @@ describe("api client", () => {
     });
   });
 
+  it("carries the sentences of a DTO's 400 as `problems`, and leaves `message` the constant detail", async () => {
+    // The gateway's HttpExceptionFilter answers a ValidationPipe refusal with
+    // the constant detail and the sentences in errors.body; api.ts used to drop them.
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: "about:blank",
+          title: "Bad Request",
+          status: 400,
+          detail: "One or more fields failed validation.",
+          instance: "/api/v1/scope-assessments",
+          errors: { body: ["Nivån kan vara högst 1500 timmar.", "Anteckningen kan inte innehålla nolltecken (U+0000)."] },
+        }),
+        { status: 400, headers: { "Content-Type": "application/problem+json" } },
+      ),
+    );
+    const { api } = await loadApi();
+    const error = await api.put("/api/v1/scope-assessments", {}).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({
+      status: 400,
+      // The csv import dialog tells this constant from a sentence of its own.
+      message: "One or more fields failed validation.",
+      problems: ["Nivån kan vara högst 1500 timmar.", "Anteckningen kan inte innehålla nolltecken (U+0000)."],
+    });
+  });
+
+  it("keeps at most a hundred sentences, so that the count the reader is told is the count there is, and only strings, and leaves them out when there are none", async () => {
+    const many = Array.from({ length: 120 }, (_, index) => `fel ${index}`);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 400, detail: "x", errors: { body: [...many, 7, ""] } }), { status: 400 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 400, detail: "x", errors: { body: [] } }), { status: 400 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 400, detail: "x", errors: ["a"] }), { status: 400 }));
+    const { api } = await loadApi();
+    const first = (await api.get("/a").catch((caught: unknown) => caught)) as { problems?: string[] };
+    const second = (await api.get("/b").catch((caught: unknown) => caught)) as { problems?: string[] };
+    const third = (await api.get("/c").catch((caught: unknown) => caught)) as { problems?: string[] };
+    expect(first.problems).toEqual(many.slice(0, 100));
+    expect(second.problems).toBeUndefined();
+    expect(third.problems).toBeUndefined();
+  });
+
+  it("names a request that got no answer, so the reader is told the server was not reached", async () => {
+    // fetch rejects with a bare TypeError offline, with the gateway down, or on a refused connection.
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    const { api, ApiError } = await loadApi();
+    const error = await api.get("/lessons").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 0, code: "CLIENT_NETWORK_FAILURE", message: "Failed to fetch" });
+  });
+
+  it("lets a cancelled request stay the AbortError the caller asked for", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const aborted = new DOMException("The operation was aborted.", "AbortError");
+    fetchMock.mockRejectedValue(aborted);
+    const { api } = await loadApi();
+    await expect(api.post("/dry-run", {}, controller.signal)).rejects.toBe(aborted);
+    // And an AbortError the signal does not account for is still not a network failure.
+    await expect(api.post("/dry-run", {})).rejects.toBe(aborted);
+  });
+
   it("strips a trailing slash from the base URL rather than building a double slash", async () => {
     vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.test/");
     vi.resetModules();

@@ -15,6 +15,7 @@ import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * The cut-off, the kitchen's address and the switch for the daily letter. Off until an administrator
@@ -61,7 +62,7 @@ function SettingsForm({ stored }: { stored: MealSettings }) {
       await updateSettings.mutateAsync(change);
       toast.success(t("settings.saved"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

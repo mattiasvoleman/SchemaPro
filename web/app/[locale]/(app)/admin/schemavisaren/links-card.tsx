@@ -182,7 +182,7 @@ export function LinksCard({ year, settings, groups, teachers, students, rooms, h
       });
       setLabel("");
     } catch (error) {
-      setProblem(publicationErrorText(tErrors, error, tCommon("error")));
+      setProblem(publicationErrorText(tErrors, error, tCommon));
     }
   };
 
@@ -202,7 +202,7 @@ export function LinksCard({ year, settings, groups, teachers, students, rooms, h
       await revoke.mutateAsync(revoking.id);
       toast.success(t("linkRevoked"));
     } catch (error) {
-      toast.error(publicationErrorText(tErrors, error, tCommon("error")));
+      toast.error(publicationErrorText(tErrors, error, tCommon));
     } finally {
       setRevoking(null);
     }

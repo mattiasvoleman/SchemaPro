@@ -46,6 +46,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /*
  * Ställ in, Tilldela vikarie and Byt sal, fetched on the first click and
@@ -181,7 +182,7 @@ export default function DayPlannerPage() {
       toast.success(t("cancelledToast"));
       setTarget(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -190,7 +191,7 @@ export default function DayPlannerPage() {
       await reinstate.mutateAsync(id);
       toast.success(t("reinstatedToast"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -206,7 +207,7 @@ export default function DayPlannerPage() {
       savedToast(tWarnings, t("substitutedToast"), result.warnings);
       setTarget(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -216,7 +217,7 @@ export default function DayPlannerPage() {
       toast.success(t("roomChangedToast"));
       setTarget(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

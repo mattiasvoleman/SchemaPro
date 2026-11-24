@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * What the school lets a teacher have of Skolans dag: nothing (until it
@@ -46,7 +47,7 @@ export function SettingsCard() {
       setPicked(null);
       toast.success(t("settings.saved"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

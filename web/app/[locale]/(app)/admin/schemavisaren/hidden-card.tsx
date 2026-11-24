@@ -92,7 +92,7 @@ export function HiddenCard({
   // A hidden pupil the people list no longer has (removed since): still listed, so that it can be shown again.
   const unknown = [...hiddenStudents].filter((id) => !students.some((student) => student.id === id));
 
-  const fail = (error: unknown) => toast.error(publicationErrorText(tErrors, error, tCommon("error")));
+  const fail = (error: unknown) => toast.error(publicationErrorText(tErrors, error, tCommon));
   const toggleTeacher = async (userId: string, hidden: boolean) => {
     try {
       await setTeacher.mutateAsync({ userId, hidden });

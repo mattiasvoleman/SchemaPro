@@ -42,7 +42,7 @@ const PREFERENCES: PoolPreference[] = ["PREFER", "NEUTRAL", "LAST_RESORT"];
 function useErrorToast() {
   const tErrors = useTranslations("coverErrors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
-  return (error: unknown) => toast.error(coverErrorText(tErrors, error, tCommon("error")));
+  return (error: unknown) => toast.error(coverErrorText(tErrors, error, tCommon));
 }
 
 /** Whether teachers report their own absence, and where the pool ranks. */

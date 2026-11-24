@@ -31,6 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ShiftBody } from "./use-supervision";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** What a new pass starts from: a break's area, day and time, and a gap's dates. */
 export type ShiftSeed = Partial<Omit<ShiftDraft, "note">>;
@@ -260,9 +261,7 @@ function ShiftForm({
           ? (caught.params ? t(`errors.${caught.code}`, caught.params) : t(`errors.${caught.code}`))
           : caught instanceof ApiError && caught.status === 404
             ? t("errors.notFound")
-            : caught instanceof Error
-              ? caught.message
-              : tCommon("error"),
+            : apiErrorText(caught, tCommon),
       );
     }
   };

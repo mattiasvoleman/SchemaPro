@@ -15,6 +15,7 @@ import { useHistoryKeyboard, type useScheduleHistory } from "@/lib/use-schedule-
 import type { MessageLookup } from "@/lib/engine-message";
 import type { useTranslations } from "next-intl";
 import { type LessonSnapshot, snapshotOf } from "./timetable-helpers";
+import { apiErrorText } from "@/lib/api-error-text";
 
 type Translator = ReturnType<typeof useTranslations>;
 
@@ -50,7 +51,7 @@ export function useUndoableEdits(inputs: {
       } else if (error instanceof ApiError && error.status === 409) {
         toast.error(`${t("editConflict")}: ${error.message}`);
       } else {
-        toast.error(error instanceof Error ? error.message : tCommon("error"));
+        toast.error(apiErrorText(error, tCommon));
       }
     },
     [t, tCommon, tEngine],

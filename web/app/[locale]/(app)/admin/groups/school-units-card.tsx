@@ -55,6 +55,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { TableCard } from "@/components/ui/table-card";
 import type { GradeNumbering } from "@/lib/grade-numbering";
 import { SCHOOL_UNITS_KEY, useSchoolUnits } from "./use-school-units";
+import { apiErrorText } from "@/lib/api-error-text";
 
 // F–10, in the nine-year numbering a unit's span is stated in.
 const GRADES = Array.from({ length: 11 }, (_, grade) => grade);
@@ -159,9 +160,7 @@ export function SchoolUnitsCard({ classes, numbering }: { classes: StudentGroup[
   const errorText = (error: unknown) =>
     error instanceof ApiError && error.code && t.has(`errors.${error.code}`)
       ? t(`errors.${error.code}`)
-      : error instanceof Error
-        ? error.message
-        : tCommon("error");
+      : apiErrorText(error, tCommon);
 
   const save = async (event: FormEvent) => {
     event.preventDefault();

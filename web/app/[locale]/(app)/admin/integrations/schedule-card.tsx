@@ -40,7 +40,7 @@ export function ScheduleCard({ source }: { source: SourceView }) {
   const patch = (input: ScheduleInput) =>
     save.mutate(input, {
       onSuccess: () => toast.success(t("saved")),
-      onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+      onError: (error) => toast.error(errorText(tErrors, error, tCommon)),
     });
   const fullEveryDays = Number(fullEvery);
   const fullEveryValid = Number.isInteger(fullEveryDays) && fullEveryDays >= 1 && fullEveryDays <= 31;

@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api";
+import { failureText, type ProblemLookup } from "@/lib/api-error-text";
 
 /**
  * What an inbox says of a decision or a referral that failed. A 409
@@ -11,7 +12,7 @@ import { ApiError } from "@/lib/api";
 export function leaveActionError(
   error: unknown,
   view: "admin" | "mentor",
-  copy: { alreadyDecided: string; fallback: string; awaitingConsent?: string },
+  copy: { alreadyDecided: string; fallback: string | ProblemLookup; awaitingConsent?: string },
 ): string {
   // Ledighetspolicy: a request still waiting for a guardian's consent is not
   // decided yet. The buttons are off for it, so this is a stale list.
@@ -24,7 +25,7 @@ export function leaveActionError(
   ) {
     return copy.alreadyDecided;
   }
-  return error instanceof Error ? error.message : copy.fallback;
+  return failureText(error, copy.fallback);
 }
 
 /** The most days a leave request covers, as the gateway counts them (LEAVE_REQUEST_MAX_DAYS). */
@@ -54,7 +55,7 @@ export function leaveRequestError(
   copy: {
     tooLong: (days: number) => string;
     endsBeforeStart: string;
-    fallback: string;
+    fallback: string | ProblemLookup;
     tooLate: (days: number) => string;
     contactRequired: string;
     contactIncomplete: string;
@@ -73,7 +74,7 @@ export function leaveRequestError(
     if (error.code === "LEAVE_CONTACT_REQUIRED") return copy.contactRequired;
     if (error.code === "LEAVE_CONTACT_INCOMPLETE") return copy.contactIncomplete;
   }
-  return error instanceof Error ? error.message : copy.fallback;
+  return failureText(error, copy.fallback);
 }
 
 /**
@@ -90,7 +91,7 @@ export function leaveConsentError(
     requestEnded: string;
     custodyEnded: string;
     answered: string;
-    fallback: string;
+    fallback: string | ProblemLookup;
   },
 ): string {
   if (error instanceof ApiError) {
@@ -102,5 +103,5 @@ export function leaveConsentError(
       if (error.code === "LEAVE_CONSENT_ANSWERED") return copy.answered;
     }
   }
-  return error instanceof Error ? error.message : copy.fallback;
+  return failureText(error, copy.fallback);
 }

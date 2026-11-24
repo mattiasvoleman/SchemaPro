@@ -51,6 +51,7 @@ import {
   type StaffWeights,
 } from "./use-staffing-proposal";
 import { TableScroll } from "@/components/ui/table-scroll";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * The week before and after the proposal: advice under the teachers' figures, asked of the engine when the proposal
@@ -314,7 +315,7 @@ export function StaffingProposalDialog({
         limitRows: Number(limitRequirements),
       });
     }
-    return error.message || tCommon("error");
+    return apiErrorText(error, tCommon);
   };
 
   const sentWeights = (): Partial<StaffWeights> | undefined => {

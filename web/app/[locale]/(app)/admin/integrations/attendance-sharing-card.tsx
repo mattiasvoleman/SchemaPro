@@ -79,7 +79,7 @@ export function AttendanceSharingCard() {
           setReference("");
           setAsked(null);
         },
-        onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+        onError: (error) => toast.error(errorText(tErrors, error, tCommon)),
       },
     );
   };
@@ -92,7 +92,7 @@ export function AttendanceSharingCard() {
           <Skeleton className="h-24 w-full" />
         </div>
       ) : sharing.isError ? (
-        <LoadError variant="inline" title={t("loadFailed")} hint={errorText(tErrors, sharing.error, tCommon("error"))} />
+        <LoadError variant="inline" title={t("loadFailed")} hint={errorText(tErrors, sharing.error, tCommon)} />
       ) : (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2 text-sm">

@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * "Faktor per ämne" — every subject's Subjects.loadFactor in one table, under
@@ -67,7 +68,7 @@ export function SubjectFactorsTable() {
       setDrafts({});
       toast.success(t("saved", { count: changed.length }));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     } finally {
       setSaving(false);
       // Also after a failure part-way: the rows saved before it are saved.

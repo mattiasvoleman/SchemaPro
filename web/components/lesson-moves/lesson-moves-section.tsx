@@ -10,6 +10,7 @@ import { useLessonAttendance, useReportAttendance } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
 import { SectionCard } from "@/components/ui/section-card";
 import { MovePupilDialog } from "./move-pupil-dialog";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * The pupils a lesson lost to a parallel lesson for the day, and the ones it
@@ -54,7 +55,7 @@ export function LessonMovesSection({
       await undo.mutateAsync(entry.moveId);
       toast.success(t("undone"));
     } catch (error) {
-      toast.error(coverErrorText(tErrors, error, tCommon("error")));
+      toast.error(coverErrorText(tErrors, error, tCommon));
     }
   };
 
@@ -64,7 +65,7 @@ export function LessonMovesSection({
       onMarkCleared?.(entry.studentId);
       toast.success(t("markCleared", { name: entry.studentName }));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

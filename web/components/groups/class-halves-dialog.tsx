@@ -30,6 +30,7 @@ import {
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** A pupil the placement lists: an active STUDENT and their home class. */
 export interface HalvesPupil {
@@ -169,7 +170,7 @@ function Split({ theClass, onClose }: { theClass: StudentGroup; onClose: () => v
       toast.success(t("splitDone", { name: theClass.name, first: names[0]!.trim(), second: names[1]!.trim() }));
       onClose();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     } finally {
       setBusy(false);
     }
@@ -269,7 +270,7 @@ function Place({ theClass, onClose, groups, pupils, memberships }: ClassHalvesDi
       toast.success(t("placeDone", { name: theClass.name, placed: saved.placed, unplaced: saved.unplaced }));
       onClose();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     } finally {
       setBusy(false);
     }

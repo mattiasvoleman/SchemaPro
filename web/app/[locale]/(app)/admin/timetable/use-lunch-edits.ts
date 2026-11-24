@@ -4,6 +4,7 @@ import type { useScheduleHistory } from "@/lib/use-schedule-history";
 import type { useTranslations } from "next-intl";
 import { minutesToHHMM } from "./timetable-helpers";
 import type { TimetableReads } from "./use-timetable-reads";
+import { apiErrorText } from "@/lib/api-error-text";
 
 type Translator = ReturnType<typeof useTranslations>;
 
@@ -17,7 +18,7 @@ export function useLunchEdits(inputs: Pick<TimetableReads, "lunchSittings" | "sh
   const { lunchSittings, shownYear, lunchMutations, tCommon, onlyGroup, history, t } = inputs;
 
   const lunchError = (error: unknown) =>
-    toast.error(error instanceof ApiError ? error.message : tCommon("error"));
+    toast.error(error instanceof ApiError ? apiErrorText(error, tCommon) : tCommon("error"));
 
   const sittingOn = (dayOfWeek: number) =>
     (lunchSittings ?? []).find(

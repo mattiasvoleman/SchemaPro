@@ -40,6 +40,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useAckText } from "./use-ack-text";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const NO_PUPILS: AckPupilChoice[] = [];
 /** The names of the pupils left out that the warning spells out before it says "and n more". */
@@ -137,7 +138,7 @@ export function AckRequestForm({
     }
     // The route is throttled besides (five a minute): that 429 has no code of ours, only the throttler's English words.
     if (error instanceof ApiError && error.status === 429) return t("refusal.THROTTLED");
-    return error instanceof Error ? error.message : tCommon("error");
+    return apiErrorText(error, tCommon);
   };
 
   const submit = async (event: React.FormEvent) => {

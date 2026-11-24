@@ -85,7 +85,7 @@ export function ActivationDialog({ year, onOpenChange }: ActivationDialogProps) 
       );
       onOpenChange(false);
     } catch (error) {
-      toast.error(yearErrorText(tErrors, error, tCommon("error")));
+      toast.error(yearErrorText(tErrors, error, tCommon));
     }
   };
 

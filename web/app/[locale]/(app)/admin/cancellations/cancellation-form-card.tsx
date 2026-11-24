@@ -115,7 +115,7 @@ export function CancellationFormCard({
       setPreviewed(selection);
     } catch (error) {
       setPreviewed(null);
-      setProblem(publicationErrorText(tErrors, error, tCommon("error")));
+      setProblem(publicationErrorText(tErrors, error, tCommon));
     }
   };
 
@@ -129,7 +129,7 @@ export function CancellationFormCard({
       setPreviewed(null);
       preview.reset();
     } catch (error) {
-      setProblem(publicationErrorText(tErrors, error, tCommon("error")));
+      setProblem(publicationErrorText(tErrors, error, tCommon));
       // A stale or refused create leaves a preview nobody may act on.
       setPreviewed(null);
     }

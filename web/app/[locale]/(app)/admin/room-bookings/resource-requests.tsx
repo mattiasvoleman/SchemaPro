@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useResourceBookingActions, useResourceBookings } from "@/lib/local-queries";
 import { BOOKING_STATUS_VARIANT } from "@/lib/status-variants";
 import type { RoomBookingStatus } from "@/lib/types";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * The bookings of resources, in the list Lokalbokningar draws for the rooms:
@@ -37,7 +38,7 @@ export default function ResourceRequests({ filter }: { filter: Extract<RoomBooki
       await actions.decide.mutateAsync({ id, status, note });
       toast.success(status === "APPROVED" ? t("approved") : t("rejected"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

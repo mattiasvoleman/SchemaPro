@@ -156,7 +156,7 @@ export function LeaveRowExtras({ leave, name, span }: { leave: LeaveRequest; nam
           requestEnded: t("consent.requestEnded"),
           custodyEnded: t("consent.custodyEnded"),
           answered: t("consent.answered"),
-          fallback: tCommon("error"),
+          fallback: tCommon,
         }),
       );
     }

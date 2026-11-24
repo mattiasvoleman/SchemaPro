@@ -100,7 +100,7 @@ export function BatchesCard({
       const outcome = await reapply.mutateAsync(batch.id);
       toast.success(t("reapplied", { count: outcome.added }));
     } catch (error) {
-      toast.error(publicationErrorText(tErrors, error, tCommon("error")));
+      toast.error(publicationErrorText(tErrors, error, tCommon));
     }
   };
 
@@ -112,7 +112,7 @@ export function BatchesCard({
       toast.success(t("reversed", { count: outcome.reinstate + (outcome.relocated?.length ?? 0) }));
       setReversing(null);
     } catch (error) {
-      toast.error(publicationErrorText(tErrors, error, tCommon("error")));
+      toast.error(publicationErrorText(tErrors, error, tCommon));
     }
   };
 
@@ -233,7 +233,7 @@ export function BatchesCard({
           </DialogHeader>
           {reversePreview.isLoading ? <Skeleton className="h-12 w-full" /> : null}
           {reversePreview.isError ? (
-            <Notice tone="destructive">{publicationErrorText(tErrors, reversePreview.error, tCommon("error"))}</Notice>
+            <Notice tone="destructive">{publicationErrorText(tErrors, reversePreview.error, tCommon)}</Notice>
           ) : null}
           {plan ? (
             <div className="space-y-2 text-sm">

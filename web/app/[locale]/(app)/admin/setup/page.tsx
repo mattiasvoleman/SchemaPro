@@ -55,6 +55,7 @@ import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Stepper } from "@/components/ui/stepper";
 import { GROUP_WRITE_KEYS } from "@/lib/projected-rosters";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const YearTimplansDialog = lazy(() =>
   import("@/components/timplan/year-timplans-dialog").then((module) => ({
@@ -208,7 +209,7 @@ export default function SetupPage() {
       }
       setYearForm({ name: "", startDate: "", endDate: "", isActive: null });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -226,7 +227,7 @@ export default function SetupPage() {
       toast.success(tCommon("created"));
       setQuickName("");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

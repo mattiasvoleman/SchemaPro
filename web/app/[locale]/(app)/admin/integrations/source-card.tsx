@@ -154,7 +154,7 @@ export function SourceCard({ source }: { source: SourceView | null }) {
           setRelink({ input, linked: Number(linked ?? 0) });
           return;
         }
-        toast.error(errorText(tErrors, error, tCommon("error")));
+        toast.error(errorText(tErrors, error, tCommon));
       },
     });
 
@@ -168,7 +168,7 @@ export function SourceCard({ source }: { source: SourceView | null }) {
           setChosenOrgs([result.organisations[0]!.id]);
         }
       },
-      onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+      onError: (error) => toast.error(errorText(tErrors, error, tCommon)),
     });
 
   const toggleOrg = (id: string, on: boolean) =>

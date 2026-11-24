@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
 import { TableScroll } from "@/components/ui/table-scroll";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** The gateway's code for "the schedule moved since the proposal was read". */
 const STALE = "ROOM_PROPOSAL_STALE";
@@ -163,7 +164,7 @@ export function RoomOptimizationDialog({
   const roomsWithoutFloor = rooms.filter((room) => room.floor === null).length;
 
   const errorMessage = (error: unknown) =>
-    error instanceof Error ? error.message : tCommon("error");
+    apiErrorText(error, tCommon);
 
   const changeOpen = (next: boolean) => {
     // A proposal is an answer about the schedule as it was when it was asked.

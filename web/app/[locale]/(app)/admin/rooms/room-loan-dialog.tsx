@@ -33,6 +33,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLendableRooms, useRequestRoomLoan } from "./use-sharing";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** At most ten times in one request, as the gateway takes them (CreateRoomLoanDto). */
 export const MAX_WINDOWS = 10;
@@ -147,9 +148,7 @@ export function RoomLoanDialog({ open, onOpenChange, initial = null }: RoomLoanD
       setFormError(
         error instanceof ApiError && error.code && t.has(`errors.${error.code}`)
           ? t(`errors.${error.code}`)
-          : error instanceof Error
-            ? error.message
-            : tCommon("error"),
+          : apiErrorText(error, tCommon),
       );
     }
   };

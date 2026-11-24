@@ -79,6 +79,7 @@ import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const NAME_MAX = 80;
 
@@ -262,7 +263,7 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
         toast.error(tRequirements("placements.blockRefused"));
         return;
       }
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
   const confirmRemove = async () => {
@@ -272,7 +273,7 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
       toast.success(t("removed", { name: removing.name }));
       setRemoving(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -325,7 +326,7 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
         );
         return;
       }
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

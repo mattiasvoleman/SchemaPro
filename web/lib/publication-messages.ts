@@ -1,5 +1,6 @@
 import { ApiError } from "@/lib/api";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
+import { failureText, type ProblemLookup } from "@/lib/api-error-text";
 
 /*
  * Publicering's refusals in the reader's language.
@@ -10,15 +11,15 @@ import { engineMessage, type MessageLookup } from "@/lib/engine-message";
  * a code the web has not translated yet, or a param a sentence needs and the
  * gateway did not send, shows the gateway's own sentence rather than a hole.
  */
-export function publicationErrorText(t: MessageLookup, error: unknown, fallback: string): string {
+export function publicationErrorText(t: MessageLookup, error: unknown, fallback: string | ProblemLookup): string {
   if (error instanceof ApiError) {
     return engineMessage(t, {
       code: error.code ?? null,
-      message: error.message,
+      message: failureText(error, fallback),
       params: error.params ?? null,
     });
   }
-  return error instanceof Error ? error.message : fallback;
+  return failureText(error, fallback);
 }
 
 /** The refusal's code, when the gateway sent one. */

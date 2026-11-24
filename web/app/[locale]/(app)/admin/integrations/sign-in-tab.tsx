@@ -141,7 +141,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
   const persist = (next: SignInMethodInput, okMessage: string) =>
     save.mutate(next, {
       onSuccess: () => toast.success(okMessage),
-      onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+      onError: (error) => toast.error(errorText(tErrors, error, tCommon)),
     });
 
   const fits = method !== null && sessionFits(session.schoolAccount, method);
@@ -309,7 +309,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
               setConfirmRemove(false);
               toast.success(t("removed"));
             },
-            onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+            onError: (error) => toast.error(errorText(tErrors, error, tCommon)),
           })
         }
       />

@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { BulkEntity } from "@/components/bulk/bulk-selection";
 import { ApiError } from "@/lib/api";
 import type { BulkDeleteBody, BulkRefusal, BulkResult, BulkUpdateBody } from "@/lib/bulk-api";
+import { failureText, type ProblemLookup } from "@/lib/api-error-text";
 
 /*
  * Massåtgärder's two dialogs, the same on Klasser and Personer; each list
@@ -55,12 +56,10 @@ const known = (code: string | null | undefined): code is (typeof KNOWN_REFUSALS)
   code != null && (KNOWN_REFUSALS as readonly string[]).includes(code);
 
 /** A failed call's sentence: the reader's language for a known code, the gateway's otherwise. */
-const errorText = (error: unknown, fallback: string, t: (key: string) => string) =>
+const errorText = (error: unknown, fallback: string | ProblemLookup, t: (key: string) => string) =>
   error instanceof ApiError && known(error.code)
     ? t(`refusal.${error.code}`)
-    : error instanceof Error
-      ? error.message
-      : fallback;
+    : failureText(error, fallback);
 
 /** Each refused row by name, and why. */
 export function RefusalList({ refused, nameOf }: { refused: BulkRefusal[]; nameOf: (id: string) => string }) {
@@ -166,7 +165,7 @@ export function BulkDeleteDialog<Consequences>({
       // No list beside a failed check: a button under an old one would
       // delete what the reader can no longer see is still so.
       setReport(null);
-      setFailed(errorText(error, tCommon("error"), t));
+      setFailed(errorText(error, tCommon, t));
     } finally {
       setBusy(null);
     }
@@ -194,7 +193,7 @@ export function BulkDeleteDialog<Consequences>({
     try {
       result = await remove({ ids: report.done, dryRun: false, expected: report.consequences as object | undefined });
     } catch (error) {
-      setFailed(errorText(error, tCommon("error"), t));
+      setFailed(errorText(error, tCommon, t));
       setBusy(null);
       return;
     }
@@ -433,7 +432,7 @@ export function BulkEditDialog<Changes>({
       }
       setRefusal(result);
     } catch (error) {
-      setFailed(errorText(error, tCommon("error"), t));
+      setFailed(errorText(error, tCommon, t));
     } finally {
       setSaving(false);
     }

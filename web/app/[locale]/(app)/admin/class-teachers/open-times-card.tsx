@@ -15,6 +15,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAreaGate } from "./use-area-gate";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** One span as the inputs hold it. */
 interface SpanRow {
@@ -137,7 +138,7 @@ function SpansEditor({
       setRows(rowsOf(answer.filter((one) => one.studentGroupId === scopeId), next));
       toast.success(t("openTimes.saved"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

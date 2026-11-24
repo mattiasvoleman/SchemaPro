@@ -108,7 +108,7 @@ export function EmbedCard({ settings }: { settings: PublicationSettings }) {
       setSitesText(null);
       toast.success(t("embedSaved"));
     } catch (error) {
-      setProblem(publicationErrorText(tErrors, error, tCommon("error")));
+      setProblem(publicationErrorText(tErrors, error, tCommon));
     }
   };
 

@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /*
  * The cancel confirmation, fetched on its first open: this route is in the
@@ -135,7 +136,7 @@ export default function TeacherRoomsPage() {
       toast.success(room?.requiresApproval ? t("requestedToast") : t("bookedToast"));
       setTitle("");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     } finally {
       setBookingRoomId(null);
     }
@@ -147,7 +148,7 @@ export default function TeacherRoomsPage() {
       toast.success(t("cancelledToast"));
       setConfirmOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

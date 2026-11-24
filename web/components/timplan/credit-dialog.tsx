@@ -67,6 +67,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** Radix Select has no empty value; the "no subject" choice is this. */
 const NO_SUBJECT = "none";
@@ -170,7 +171,7 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
       onOpenChange(false);
     } catch (error) {
       // The server's own sentence: it names the field, and it knows the year.
-      setRefusal(error instanceof Error ? error.message : tCommon("error"));
+      setRefusal(apiErrorText(error, tCommon));
     }
   };
 

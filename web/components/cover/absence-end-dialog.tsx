@@ -94,7 +94,7 @@ export function AbsenceEndDialog({
         setAskUndo(decisionCounts(error));
         return;
       }
-      toast.error(coverErrorText(tErrors, error, tCommon("error")));
+      toast.error(coverErrorText(tErrors, error, tCommon));
     }
   };
 
@@ -181,7 +181,7 @@ export function AbsenceWithdrawDialog({
         setAskUndo(decisionCounts(error));
         return;
       }
-      toast.error(coverErrorText(tErrors, error, tCommon("error")));
+      toast.error(coverErrorText(tErrors, error, tCommon));
     }
   };
 

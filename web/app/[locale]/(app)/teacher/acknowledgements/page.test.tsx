@@ -577,7 +577,7 @@ describe("a new request", () => {
 
   it("says a refusal it has no sentence for with the gateway's own words", async () => {
     const user = userEvent.setup();
-    api.post.mockRejectedValue(new ApiError(500, "Något gick fel hos servern."));
+    api.post.mockRejectedValue(new ApiError(422, "Något gick fel hos servern."));
     renderPage();
     await openForm(user);
     await user.click(await screen.findByRole("checkbox", { name: /Ada Berg/ }));

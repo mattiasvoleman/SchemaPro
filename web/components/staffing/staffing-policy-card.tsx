@@ -34,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * "Faktor per ämne", shown only once the admin picks the Faktor model. Lazy
@@ -96,7 +97,7 @@ export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) 
       await save.mutateAsync(policyDraftToBody(draft));
       toast.success(t("policySaved"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

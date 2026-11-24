@@ -33,6 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 export interface QualificationsCardProps {
   teacher: { id: string; firstName: string; lastName: string };
@@ -113,7 +114,7 @@ export function QualificationsCard({
       toast.success(t("qualificationsSaved"));
       setEditing(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

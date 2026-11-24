@@ -1,5 +1,6 @@
 import { ApiError } from "@/lib/api";
 import type { MessageLookup } from "@/lib/engine-message";
+import { failureText, type ProblemLookup } from "@/lib/api-error-text";
 
 /*
  * The sync's codes in the reader's language.
@@ -40,18 +41,18 @@ export function codeText(t: MessageLookup, code: string | null | undefined): str
  * SS12000_MASS_DEACTIVATION {deactivations, limit}), else the gateway's own
  * sentence. `t` is useTranslations("integrations.errors").
  */
-export function errorText(t: MessageLookup, error: unknown, fallback: string): string {
+export function errorText(t: MessageLookup, error: unknown, fallback: string | ProblemLookup): string {
   if (error instanceof ApiError) {
     if (error.code && t.has(error.code)) {
       try {
         return t(error.code, error.params ?? {});
       } catch {
-        return error.message;
+        return failureText(error, fallback);
       }
     }
-    return error.message || fallback;
+    return failureText(error, fallback);
   }
-  return error instanceof Error && error.message ? error.message : fallback;
+  return failureText(error, fallback);
 }
 
 /** The refusal's code, when the gateway sent one. */

@@ -35,6 +35,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Notice } from "@/components/ui/notice";
 import { ContactFields } from "./contact-fields";
 import { DayTable } from "./day-table";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /*
  * Ny extern bokning: a series for somebody who has no login, fetched when the
@@ -109,7 +110,7 @@ function NewBookingForm({ onClose }: { onClose: () => void }) {
     try {
       setPreview({ key: ruleKey(form), data: await actions.preview.mutateAsync(ruleBody(form)) });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -125,7 +126,7 @@ function NewBookingForm({ onClose }: { onClose: () => void }) {
       if (error instanceof ApiError && error.status === 409 && error.code === EXTERNAL_CONFLICTS_CODE) {
         await explainRefusal();
       } else {
-        toast.error(error instanceof Error ? error.message : tCommon("error"));
+        toast.error(apiErrorText(error, tCommon));
       }
     }
   };

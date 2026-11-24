@@ -27,6 +27,7 @@ import { FormField } from "@/components/ui/form-field";
 import { LoadError } from "@/components/ui/load-error";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /*
  * Elevens lektion för dagen: a mentor who does not teach a lesson moves a mentee from here. The dialog is
@@ -233,6 +234,7 @@ export function ClassBookPage({ audience, initialGroupId, initialFrom, initialTo
 function BookRow({ lesson, admin, onMove }: { lesson: ClassBookLesson; admin: boolean; onMove: () => void }) {
   const t = useTranslations("classBook");
   const tMove = useTranslations("lessonMoves");
+  const tCommon = useTranslations("common");
   // A move is made for today or later, on a lesson that is held.
   const movable = lesson.status === "SCHEDULED" && lesson.date.slice(0, 10) >= toDateString(new Date());
   const [confirming, setConfirming] = useState(false);
@@ -316,7 +318,7 @@ function BookRow({ lesson, admin, onMove }: { lesson: ClassBookLesson; admin: bo
                         toast.error(t("removeStale"));
                         return;
                       }
-                      toast.error(error instanceof Error ? error.message : t("removeFailed"));
+                      toast.error(error instanceof Error ? apiErrorText(error, tCommon) : t("removeFailed"));
                     },
                   },
                 );

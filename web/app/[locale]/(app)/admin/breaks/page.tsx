@@ -150,6 +150,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const KINDS: BreakKind[] = ["HOLIDAY", "STAFF_DAY"];
 
@@ -351,7 +352,7 @@ export default function BreaksPage() {
       toast.success(tCommon("deleted"));
       setDeletingCredit(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -417,7 +418,7 @@ export default function BreaksPage() {
       // Whatever the API refused, in its own words — the range must fall inside
       // the läsår, and a copy of that rule here would be a second opinion that
       // goes stale. Same reasoning as admin/requirements' period fields.
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -432,7 +433,7 @@ export default function BreaksPage() {
       toast.success(tCommon("deleted"));
       setDeleting(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

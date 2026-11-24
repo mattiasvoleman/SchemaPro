@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
+import { apiErrorText } from "@/lib/api-error-text";
 import { StaffingCarrySummary, isEmptyCarry } from "@/components/staffing/staffing-carry-summary";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
@@ -63,10 +64,12 @@ export function StaffingCarryDialog({
   const [refusal, setRefusal] = useState<string | null>(null);
   const plan = preview.data;
 
+  // The gateway's sentence for a code the catalogue has, else what lib/api-error-text.ts says for the failure: a 404, a 429, a 5xx
+  // and a lost connection are not worded in the gateway's English.
   const errorText = (error: unknown) =>
     error instanceof ApiError
-      ? engineMessage(tErrors, { code: error.code ?? null, message: error.message, params: error.params ?? null })
-      : tCommon("error");
+      ? engineMessage(tErrors, { code: error.code ?? null, message: apiErrorText(error, tCommon), params: error.params ?? null })
+      : apiErrorText(error, tCommon);
 
   const nothing = plan ? plan.employments.carried + plan.duties.carried === 0 : true;
   const canCarry =

@@ -56,6 +56,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const CONTRACT_KINDS: TeacherContractKind[] = ["FERIE", "SEMESTER"];
 /** The Select's value for an anställningsform not said: Radix takes no "". */
@@ -206,7 +207,7 @@ export function EmploymentCard({
       toast.success(t("employmentSaved"));
       setEditing(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -225,7 +226,7 @@ export function EmploymentCard({
         toast.error(tAreas("teaches.errors.A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS"));
         return;
       }
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

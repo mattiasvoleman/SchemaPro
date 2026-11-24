@@ -24,6 +24,7 @@ import { FilterBar } from "@/components/ui/filter-bar";
 import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const DelegationDialog = lazy(() =>
   import("@/components/leave/delegation-dialog").then((module) => ({ default: module.DelegationDialog })),
@@ -99,7 +100,7 @@ export default function LeaveRequestsPage() {
       toast.error(
         leaveActionError(error, "admin", {
           alreadyDecided: tInbox("alreadyDecided"),
-          fallback: tCommon("error"),
+          fallback: tCommon,
           awaitingConsent: t("awaitingConsent"),
         }),
       );
@@ -112,7 +113,7 @@ export default function LeaveRequestsPage() {
       toast.success(t("delegationSaved"));
       setEditOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

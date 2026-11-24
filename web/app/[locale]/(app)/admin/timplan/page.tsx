@@ -137,6 +137,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const CreateDialog = lazy(() =>
   import("@/components/timplan/create-dialog").then((module) => ({ default: module.CreateDialog })),
@@ -203,9 +204,6 @@ function draftOf(plan: LocalTimplanDetail): Draft {
     versionId: plan.nationalTimplanVersionId,
   };
 }
-
-const errorText = (error: unknown, fallback: string) =>
-  error instanceof Error && error.message ? error.message : fallback;
 
 export default function TimplanPage() {
   const t = useTranslations("timplan");
@@ -392,7 +390,7 @@ export default function TimplanPage() {
       setEdit(null);
       toast.success(t("saved"));
     } catch (error) {
-      toast.error(errorText(error, tCommon("error")));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -400,7 +398,7 @@ export default function TimplanPage() {
     try {
       await work();
     } catch (error) {
-      toast.error(errorText(error, tCommon("error")));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

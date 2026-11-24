@@ -39,6 +39,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * Five minutes on the clock fields too, mirroring the solver's grid.
@@ -177,7 +178,7 @@ export function TeacherWorkTimeDialog({
       toast.success(tCommon("updated"));
       onOpenChange(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

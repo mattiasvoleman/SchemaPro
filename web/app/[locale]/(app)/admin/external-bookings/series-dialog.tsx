@@ -26,6 +26,7 @@ import { useExternalBooking, useExternalBookingActions } from "@/lib/local-queri
 import { toDateString } from "@/lib/utils";
 import { ContactFields } from "./contact-fields";
 import { DayTable } from "./day-table";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /*
  * One series: who it is for, its days, and what can still be done with it
@@ -87,7 +88,7 @@ function SeriesBody({ seriesId, onClose }: { seriesId: string | null; onClose: (
       setEditing(null);
       setTried(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -110,7 +111,7 @@ function SeriesBody({ seriesId, onClose }: { seriesId: string | null; onClose: (
       setConfirmOpen(false);
     } catch (error) {
       setConfirmOpen(false);
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

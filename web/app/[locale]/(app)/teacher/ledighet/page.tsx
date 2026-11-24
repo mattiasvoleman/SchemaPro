@@ -99,7 +99,7 @@ export default function TeacherLeavePage() {
   // longer the mentor's: the gateway answers 409, or 404 once it is out of
   // their reach, and the inbox is read again either way (useLeaveInboxActions).
   const failed = (error: unknown) =>
-    leaveActionError(error, "mentor", { alreadyDecided: tInbox("noLongerYours"), fallback: tCommon("error") });
+    leaveActionError(error, "mentor", { alreadyDecided: tInbox("noLongerYours"), fallback: tCommon });
 
   const decide = async (id: string, status: Decision, note: string | undefined) => {
     try {

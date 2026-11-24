@@ -1,6 +1,7 @@
 import { ApiError } from "@/lib/api";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import type { BoardItem, BulkInput, CoverMessage } from "@/lib/cover-types";
+import { failureText, type ProblemLookup } from "@/lib/api-error-text";
 
 /*
  * What the cover board shows and offers, as pure functions of the board's
@@ -207,11 +208,11 @@ export function reasonText(t: MessageLookup, reason: CoverMessage): string {
  * gateway's params, or the gateway's own Swedish sentence when the code or a
  * param is missing.
  */
-export function coverErrorText(t: MessageLookup, error: unknown, fallback: string): string {
+export function coverErrorText(t: MessageLookup, error: unknown, fallback: string | ProblemLookup): string {
   if (error instanceof ApiError) {
-    return engineMessage(t, { code: error.code ?? null, message: error.message, params: error.params ?? null });
+    return engineMessage(t, { code: error.code ?? null, message: failureText(error, fallback), params: error.params ?? null });
   }
-  return error instanceof Error ? error.message : fallback;
+  return failureText(error, fallback);
 }
 
 export function errorCode(error: unknown): string | undefined {

@@ -125,7 +125,7 @@ export function CoverHoursReport() {
       downloadCsv(exports.hoursFilename(kind, data.from, data.to), csv);
       if (kept > 0) toast.info(tCsv("keptProtected", { count: kept }), { duration: 10000 });
     } catch (failure) {
-      toast.error(coverErrorText(tErrors, failure, tCommon("error")));
+      toast.error(coverErrorText(tErrors, failure, tCommon));
     } finally {
       setExporting(false);
     }

@@ -88,7 +88,7 @@ export function SyncCard({ source }: { source: SourceView }) {
         setOlder((current) => [...current, ...page]);
         setOlderLeft(page.length >= RUNS_PAGE);
       })
-      .catch((error) => toast.error(errorText(tErrors, error, tCommon("error"))))
+      .catch((error) => toast.error(errorText(tErrors, error, tCommon)))
       .finally(() => setLoadingOlder(false));
   };
   const running = list.some((run) => run.status === "RUNNING");
@@ -99,7 +99,7 @@ export function SyncCard({ source }: { source: SourceView }) {
   const startRun = (mode: RunMode) =>
     start.mutate(mode, {
       onSuccess: (result) => toast.success(result.mode === "FULL" ? t("startedFull") : t("startedIncremental")),
-      onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+      onError: (error) => toast.error(errorText(tErrors, error, tCommon)),
     });
 
   return (
@@ -158,7 +158,7 @@ export function SyncCard({ source }: { source: SourceView }) {
             <LoadError
               variant="inline"
               title={t("historyLoadFailed")}
-              hint={errorText(tErrors, runs.error, tCommon("error"))}
+              hint={errorText(tErrors, runs.error, tCommon)}
             />
           ) : null}
           {runs.data && list.length === 0 ? <p className="text-sm text-muted-foreground">{t("historyEmpty")}</p> : null}

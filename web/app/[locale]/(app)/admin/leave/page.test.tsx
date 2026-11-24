@@ -155,17 +155,17 @@ describe("Ledighetsansökningar", () => {
     );
   });
 
-  it("says a request the mentor decided first is already decided, and any other failure in the gateway's words", async () => {
+  it("says a request the mentor decided first is already decided, and a 404 in the reader's language", async () => {
     decide.mockRejectedValueOnce(new ApiError(409, "Leave request is already decided.", "LEAVE_REQUEST_DECIDED"));
     const user = userEvent.setup();
     renderPage();
     await user.click(screen.getByRole("button", { name: /^Bevilja Ada Berg/ }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Ansökan är redan beslutad. Listan är uppdaterad."));
 
-    // Rektor reads every request: a 404 is no lost race.
+    // Rektor reads every request: a 404 is no lost race, and with no code it is said in the reader's language, not in Nest's English.
     decide.mockRejectedValueOnce(new ApiError(404, "Leave request not found."));
     await user.click(screen.getByRole("button", { name: /^Bevilja Ada Berg/ }));
-    await waitFor(() => expect(toast.error).toHaveBeenLastCalledWith("Leave request not found."));
+    await waitFor(() => expect(toast.error).toHaveBeenLastCalledWith("Det du försökte nå finns inte längre. Ladda om sidan och försök igen."));
   });
 
   it("splits the pending requests into rektor's and the mentors', and says who decides each and why", () => {

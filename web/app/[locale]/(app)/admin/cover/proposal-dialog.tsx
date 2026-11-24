@@ -72,7 +72,7 @@ export function ProposalDialog({
     setUnticked(new Set());
     propose.mutate(
       { date, excludeUserIds: exclude },
-      { onError: (error) => toast.error(coverErrorText(tErrors, error, tCommon("error"))) },
+      { onError: (error) => toast.error(coverErrorText(tErrors, error, tCommon)) },
     );
   };
 
@@ -100,7 +100,7 @@ export function ProposalDialog({
       toast.success(t("applied", { count: result.applied }));
       onOpenChange(false);
     } catch (error) {
-      toast.error(coverErrorText(tErrors, error, tCommon("error")));
+      toast.error(coverErrorText(tErrors, error, tCommon));
       if (errorCode(error) === "COVER_PROPOSAL_STALE") run(excluded);
     }
   };

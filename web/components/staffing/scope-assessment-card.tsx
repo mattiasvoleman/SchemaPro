@@ -28,6 +28,7 @@ import { Label } from "@/components/ui/label";
 import { SectionCard } from "@/components/ui/section-card";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /** The Select's value for "no exception": Radix takes no "". */
 const NO_EXCEPTION = "__none__";
@@ -82,7 +83,7 @@ export function ScopeAssessmentCard({ teacher, academicYearId, assessment, fullT
       toast.success(t("saved"));
       setEditing(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
   const remove = async () => {
@@ -93,7 +94,7 @@ export function ScopeAssessmentCard({ teacher, academicYearId, assessment, fullT
       setEditing(false);
     } catch (error) {
       setConfirmRemove(false);
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

@@ -60,7 +60,7 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
       await add.mutateAsync(input);
       toast.success(t("windowAdded"));
     } catch (error) {
-      toast.error(coverErrorText(tErrors, error, tCommon("error")));
+      toast.error(coverErrorText(tErrors, error, tCommon));
     }
   };
 
@@ -68,7 +68,7 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
     try {
       await remove.mutateAsync(id);
     } catch (error) {
-      toast.error(coverErrorText(tErrors, error, tCommon("error")));
+      toast.error(coverErrorText(tErrors, error, tCommon));
     }
   };
 

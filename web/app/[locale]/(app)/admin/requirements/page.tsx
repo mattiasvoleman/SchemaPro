@@ -238,6 +238,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiErrorText } from "@/lib/api-error-text";
 
 const NO_TEACHER = "__none__";
 /** Ämne's "Alla ämnen": no subject id is this. */
@@ -1246,7 +1247,7 @@ export default function RequirementsPage() {
         toast.error(t(placed.params.end ? "placements.changeFirst" : "placements.editRefused", { ...placed.params, reason }));
         return;
       }
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 
@@ -1261,7 +1262,7 @@ export default function RequirementsPage() {
     } catch (error) {
       // The confirmation closes and the cell dialog stays, as it was.
       setConfirmRemove(false);
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     }
   };
 

@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { ApiError } from "@/lib/api";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * How the page writes days. A day is a calendar day (yyyy-mm-dd), read at UTC
@@ -35,16 +36,16 @@ export function useFormats() {
 export function useErrorText(): (error: unknown) => string {
   const t = useTranslations("exams");
   const engine = useTranslations("engineMessages") as unknown as MessageLookup;
-  const fallback = useTranslations("common")("error");
+  const common = useTranslations("common");
   return (error) => {
     if (error instanceof ApiError) {
       if (error.status === 429) return t("errors.throttled");
       if (error.code !== undefined && engine.has(error.code)) {
         return engineMessage(engine, { code: error.code, message: error.message, params: error.params ?? null });
       }
-      return error.message;
+      return apiErrorText(error, common);
     }
-    return error instanceof Error ? error.message : fallback;
+    return apiErrorText(error, common);
   };
 }
 

@@ -19,6 +19,7 @@ import { CALENDAR_FEED_KEYS, useCalendarFeedCounts, type FeedAudience } from "@/
 import { usePublicationSettings, useUpdatePublicationSettings } from "@/lib/publication-queries";
 import { cn } from "@/lib/utils";
 import type { PublicationSettings } from "@/lib/publication-types";
+import { apiErrorText } from "@/lib/api-error-text";
 
 /**
  * Kalenderprenumeration for the school (20261112091000): whether teachers,
@@ -58,7 +59,7 @@ export default function CalendarFeedSettingsPage() {
       await update.mutateAsync({ [flag]: on });
       toast.success(t(`${on ? "turnedOn" : "turnedOff"}.${audience}`));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(apiErrorText(error, tCommon));
     } finally {
       setAsking(false);
       // The admin's own feed follows the switch too (an admin's is a teacher's).

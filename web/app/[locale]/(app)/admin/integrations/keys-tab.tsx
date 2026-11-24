@@ -166,7 +166,7 @@ export function KeysTab() {
                   setName("");
                   setScopes([...DEFAULT_SCOPES]);
                 },
-                onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+                onError: (error) => toast.error(errorText(tErrors, error, tCommon)),
               },
             )
           }
@@ -185,7 +185,7 @@ export function KeysTab() {
             <Skeleton className="h-16 w-full" />
           </div>
         ) : keys.isError ? (
-          <LoadError variant="inline" title={t("keysLoadFailed")} hint={errorText(tErrors, keys.error, tCommon("error"))} />
+          <LoadError variant="inline" title={t("keysLoadFailed")} hint={errorText(tErrors, keys.error, tCommon)} />
         ) : list.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("empty")}</p>
         ) : (
@@ -216,7 +216,7 @@ function KeyRow({ entry }: { entry: ProviderKey }) {
   const [revoking, setRevoking] = useState(false);
   const [now] = useState(() => Date.now());
   const live = entry.revokedAt === null;
-  const onError = (error: unknown) => toast.error(errorText(tErrors, error, tCommon("error")));
+  const onError = (error: unknown) => toast.error(errorText(tErrors, error, tCommon));
 
   return (
     <li className="space-y-3 p-3">
@@ -386,7 +386,7 @@ function Subscriptions({ keyId, subscriptions }: { keyId: string; subscriptions:
                 onClick={() =>
                   state.mutate(
                     { keyId, subscriptionId: subscription.id, action: paused ? "resume" : "pause" },
-                    { onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))) },
+                    { onError: (error) => toast.error(errorText(tErrors, error, tCommon)) },
                   )
                 }
               >
