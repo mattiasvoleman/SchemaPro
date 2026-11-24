@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
-import { GRADE_GAPS, KNOWN_GAP_CODES, ownerOf } from "@/lib/intake";
+import { GRADE_GAPS, KNOWN_GAP_CODES, ownerOf, type IntakeView } from "@/lib/intake";
 
 /*
  * Vad kom in's seam: the gateway decides what is a gap and how hard (src/intake/intake.ts), the web gives each its words and the
@@ -104,5 +104,70 @@ describe("the gaps that list årskurser as numbers", () => {
     // FRAME_TIMES_MISSING, TIMPLAN_MISSING and TIMPLAN_NOT_DECIDED are written with asItems (a number as a string) in intake.ts.
     const asItems = [...GATEWAY.matchAll(/^\s+([A-Z_]+): (?:yearBound\()?asItems\(/gm)].map((match) => match[1]!);
     expect([...GRADE_GAPS].sort()).toEqual(asItems.sort());
+  });
+});
+
+/*
+ * The stub's answers (e2e/stub/fixtures/gateway-intake.ts) held to the gateway's definitions (the review of #406, g406-L-7-2).
+ *
+ * The stub behind the browser gates answers GET /intake with three schools whose areas, gaps and levels are written by hand, and it cannot import
+ * src/intake/intake.ts. A level that changes on the gateway's side (g406-L-1 moved one) then showed in no test: the page's gates drew the old level for
+ * as long as nobody looked. The levels, the areas, the order and the found-counts of every answer are held to the list this file already reads.
+ */
+describe("the stub's answers to GET /intake", async () => {
+  const { intakeRoutes } = await import("../e2e/stub/fixtures/gateway-intake");
+  const handler = intakeRoutes.find((entry) => entry.method === "GET" && entry.pattern === "/api/v1/intake")!.handler;
+  const answer = (scenario: string | null) =>
+    handler({ person: null, params: {}, query: new URLSearchParams(), body: null, scenario, school: null }) as IntakeView;
+
+  const SCENARIOS: [string, string | null][] = [
+    ["the stub's own school (the default)", null],
+    ["intake-empty", "intake-empty"],
+    ["intake-demo", "intake-demo"],
+  ];
+
+  it("is found by the test (a route that was not found would fail the three below at once)", () => {
+    expect(intakeRoutes.filter((entry) => entry.pattern === "/api/v1/intake")).toHaveLength(1);
+  });
+
+  describe.each(SCENARIOS)("%s", (_name, scenario) => {
+    it("has the gateway's areas in the gateway's order, each with the counts the gateway gives it", () => {
+      const view = answer(scenario);
+      expect(view.areas.map((area) => area.area)).toEqual(gatewayAreas);
+      for (const area of view.areas) expect(Object.keys(area.found), area.area).toEqual(gatewayFound[area.area]);
+    });
+
+    it("has every gap the gateway has, in its own area and in its order, at the level the gateway gives it", () => {
+      const view = answer(scenario);
+      for (const area of view.areas) {
+        const defined = gatewayGaps.filter((entry) => entry.area === area.area);
+        expect(area.gaps.map((entry) => entry.code), area.area).toEqual(defined.map((entry) => entry.code));
+        for (const entry of area.gaps) {
+          const definition = defined.find((one) => one.code === entry.code)!;
+          // UNSTAFFED_POSTS is SOFT, and HARD for a school that has chosen Generering utan lärare: Vägra (src/intake/intake.ts `assess`).
+          const allowed = entry.code === "UNSTAFFED_POSTS" ? [definition.level, "HARD"] : [definition.level];
+          expect(allowed, `${area.area} ${entry.code} is ${entry.level} in the stub and ${definition.level} in the gateway`).toContain(entry.level);
+        }
+      }
+    });
+
+    it("waits for the year only in the areas the gateway says belong to a year, and only for a school with none", () => {
+      const view = answer(scenario);
+      for (const area of view.areas) {
+        if (!area.waitsForYear) continue;
+        expect(view.year, `${area.area} waits for a year the school has`).toBeNull();
+        expect(gatewayYearBound, area.area).toContain(area.area);
+      }
+    });
+
+    it("counts its own levels: hard, soft and info are the gaps that are there, by level", () => {
+      const view = answer(scenario);
+      const there = view.areas.flatMap((area) => area.gaps).filter((entry) => entry.count > 0);
+      expect({ hard: view.hard, soft: view.soft, info: view.info }).toEqual({
+        hard: there.filter((entry) => entry.level === "HARD").length,
+        soft: there.filter((entry) => entry.level === "SOFT").length,
+        info: there.filter((entry) => entry.level === "INFO").length,
+      });
+    });
   });
 });
