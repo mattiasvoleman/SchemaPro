@@ -56,6 +56,14 @@ export const FALLBACK_WAIT_MS = 120_000;
 export const LEGACY_TRANSFER_MARGIN_SECONDS = 5;
 /** The engine takes a deadline of at most an hour (OptimizeScheduleRequest.deadlineSeconds). */
 export const MAX_DEADLINE_SECONDS = 3600;
+/**
+ * What a wait held to the road's limit leaves before the road closes (omgång 15): the engine answers by
+ * the deadline less its transfer margin (5 s), the API's own wait ends at the cap, and the road closes
+ * after both. A request that sends nothing is closed by Railway's edge at 300 s, measured to the
+ * millisecond on 2026-11-23 (edge log: 499 after 300 008 ms), and the API counts its wait from before
+ * the connection was made, so the margin is not tight at ten seconds.
+ */
+export const PATH_MARGIN_SECONDS = 10;
 
 /** The route a path on the engine belongs to; null for a path the engine does not time. */
 export function routeOf(path: string): EngineRoute | null {
@@ -115,11 +123,36 @@ export function supportsDeadline(timing: EngineTiming | null): boolean {
  * and a margin: the engine answers first. An engine that has said nothing is
  * waited for as a gateway without this module waited, 120 s.
  */
-export function waitMsFor(route: EngineRoute | null, timing: EngineTiming | null, configuredMs?: number): number {
+export function waitMsFor(
+  route: EngineRoute | null,
+  timing: EngineTiming | null,
+  configuredMs?: number,
+  pathLimitSeconds?: number,
+): number {
+  return clampToPath(unclampedWaitMsFor(route, timing, configuredMs), pathLimitSeconds);
+}
+
+/** `waitMsFor` before the road's limit holds it: what the call would wait on a road with none. */
+export function unclampedWaitMsFor(route: EngineRoute | null, timing: EngineTiming | null, configuredMs?: number): number {
   if (configuredMs !== undefined) return configuredMs;
   const row = route === null ? undefined : timing?.routes[route];
   if (row === undefined) return FALLBACK_WAIT_MS;
   return (row.ceilingSeconds + WAIT_MARGIN_SECONDS) * 1000;
+}
+
+/**
+ * The longest a call may wait on a road that closes a request that sends nothing after `limitSeconds`, in
+ * milliseconds: the limit less PATH_MARGIN_SECONDS, so that the API's own wait (and the engine, which is told
+ * the same) ends before the road does. Undefined for a road with no limit.
+ */
+export function pathWaitCapMs(limitSeconds: number | undefined): number | undefined {
+  return limitSeconds === undefined ? undefined : Math.max(1, limitSeconds - PATH_MARGIN_SECONDS) * 1000;
+}
+
+/** A wait held to the road's limit: the wait itself on a road with none, or when it already ends before the road does. */
+export function clampToPath(waitMs: number, limitSeconds: number | undefined): number {
+  const cap = pathWaitCapMs(limitSeconds);
+  return cap === undefined ? waitMs : Math.min(waitMs, cap);
 }
 
 /**
@@ -199,6 +232,55 @@ export function waitShortfall(timing: EngineTiming | null, configuredMs: number 
     `${minimumMs / 1000} s. Set AI_ENGINE_TIMEOUT_MS to ${roundedUpMs} or more, or remove it so that the API waits as long ` +
     `as the engine says${lower}.`;
   return { sentence, minimumMs };
+}
+
+export interface PathShortfall {
+  /** The sentence for the log: what the road does to a long run, and which number to change. */
+  sentence: string;
+  /** The longest the API waits on this road, in milliseconds. */
+  capMs: number;
+  /**
+   * The SOLVER_MAX_TIME_SECONDS that would fit the road: what is left of the wait after the transfer, the probe
+   * and the headroom; undefined when nothing is left.
+   */
+  fitsBudgetSeconds: number | undefined;
+}
+
+/**
+ * Whether the road to the engine closes a request that sends nothing sooner than the engine can need, and the
+ * sentence that says what that does to a run and which number to change. Null when it holds (the engine's
+ * ceiling and its transfer margin fit under the road's limit less the margin), when there is no limit, and
+ * for an engine that has not said its generator's times: its own sentence is the caller's.
+ *
+ * "Holds" is what waitShortfall means by it: a run that needs the engine's whole ceiling is answered by the
+ * engine. When it does not, the engine is asked for a shorter answer (the deadline the request carries), and
+ * a run that needs more ends as a TIMEOUT, with its explanation, inside the road's limit; an engine that
+ * cannot be asked (older than `deadlineSeconds`) goes on searching for its whole budget and the run ends
+ * with the API's own wait, with nothing to show of it.
+ */
+export function pathShortfall(timing: EngineTiming | null, limitSeconds: number | undefined): PathShortfall | null {
+  const row = timing?.routes.optimize;
+  const capMs = pathWaitCapMs(limitSeconds);
+  if (timing === null || row === undefined || limitSeconds === undefined || capMs === undefined) return null;
+  if (capMs >= (row.ceilingSeconds + timing.transferMarginSeconds) * 1000) return null;
+  const fits = Math.floor(capMs / 1000 - timing.transferMarginSeconds - row.probeSeconds - row.headroomSeconds);
+  const fitsBudgetSeconds = fits >= 1 ? fits : undefined;
+  const road =
+    `The road to the engine closes a request that sends nothing after ${limitSeconds} s (AI_ENGINE_PATH_IDLE_LIMIT_SECONDS, ` +
+    `taken from the address: the edge of a public https address does), and the engine sends nothing while it solves. ` +
+    `It can need up to ${row.ceilingSeconds} s (SOLVER_MAX_TIME_SECONDS=${row.budgetSeconds} s, SOLVER_PROBE_SECONDS=${row.probeSeconds} s ` +
+    `and up to ${row.headroomSeconds} s to build), so the API waits ${capMs / 1000} s at most. `;
+  const consequence = supportsDeadline(timing)
+    ? `The engine is asked to answer inside that: its search is cut to about ${fitsBudgetSeconds ?? 0} s of its ${row.budgetSeconds} s, ` +
+      `and a run that needs more ends as a TIMEOUT with its explanation and suggestions, not as a closed connection. `
+    : `This engine is older than deadlineSeconds and cannot be asked to answer inside that: it goes on searching for its ` +
+      `${row.budgetSeconds} s, and a run that needs more than ${fitsBudgetSeconds ?? 0} s ends when the API's wait does, with nothing to show of it. `;
+  const lower = fitsBudgetSeconds !== undefined ? ` or set SOLVER_MAX_TIME_SECONDS on the engine to ${fitsBudgetSeconds} or less, so that the two agree` : '';
+  const remedy =
+    `To give a run all of its time, let the API reach the engine over the private network ` +
+    `(AI_ENGINE_URL=http://<the engine's service>.railway.internal:<its port>)${lower}. ` +
+    `If the road in front of this engine holds a silent request longer than ${limitSeconds} s, set AI_ENGINE_PATH_IDLE_LIMIT_SECONDS to that number (0: as long as it takes).`;
+  return { sentence: road + consequence + remedy, capMs, fitsBudgetSeconds };
 }
 
 /**

@@ -25,6 +25,7 @@ import { gradeSpanOf, loadRosters, roomNeedsOf, type RoomNeeds } from './room-el
 import { EngineTimingService } from './engine-timing.service';
 import {
   FALLBACK_WAIT_MS,
+  clampToPath,
   deadlineSecondsOf,
   engineCeilingParams,
   isEngineCeilingBody,
@@ -1455,11 +1456,16 @@ export class OptimizationProxyService {
   /**
    * The wait of one call to `route`, in milliseconds: AI_ENGINE_TIMEOUT_MS if it
    * is set, else the engine's own ceiling for the route and a margin (the engine
-   * answers first), else 120 s for an engine that has said nothing.
+   * answers first), else 120 s for an engine that has said nothing; and in every
+   * case no longer than the road to the engine holds a request that sends nothing,
+   * less a margin (AI_ENGINE_PATH_IDLE_LIMIT_SECONDS, engine-path.ts), so that the
+   * API and the engine answer before the road closes the call without a word.
    */
   private waitMsFor(route: EngineRoute | null): number {
     const configured = this.aiConfig.timeoutMs;
-    return this.timing !== undefined ? this.timing.waitMs(route) : (configured ?? FALLBACK_WAIT_MS);
+    return this.timing !== undefined
+      ? this.timing.waitMs(route)
+      : clampToPath(configured ?? FALLBACK_WAIT_MS, this.aiConfig.pathIdleLimitSeconds);
   }
 
   /**
@@ -4821,8 +4827,11 @@ export class OptimizationProxyService {
     // every half minute, before a call is waited for: the wait of an API with no AI_ENGINE_TIMEOUT_MS is
     // counted from what the engine says, and 120 s is not what a 180 s budget needs.
     await this.timing?.ensure();
-    const waitMs = options.timeoutMs ?? this.waitMsFor(route);
-    if (options.timeoutMs === undefined) this.timing?.noteWait(route, waitMs);
+    // A wait the caller stated is held to the road's limit too: the road closes a call that sends nothing
+    // whoever chose its length (a candidate's, a plan's), and the engine's answer must be inside it.
+    const waitMs =
+      options.timeoutMs !== undefined ? clampToPath(options.timeoutMs, this.aiConfig.pathIdleLimitSeconds) : this.waitMsFor(route);
+    if (options.timeoutMs === undefined) this.timing?.noteWait(route);
     // THE REQUEST CARRIES ITS DEADLINE, to an engine that said it can take it: the engine then answers
     // inside this wait (a shorter search if its settings need more) and not by a 503 this call has
     // stopped waiting for. Never to an engine that did not say: its models forbid fields they do not know.
@@ -4831,6 +4840,13 @@ export class OptimizationProxyService {
       this.timing?.supportsDeadline() === true &&
       (payload as { deadlineSeconds?: unknown }).deadlineSeconds === undefined
     ) {
+      payload = { ...payload, deadlineSeconds: deadlineSecondsOf(waitMs) };
+    }
+    // A deadline the caller stated for itself (the analysis of a refusal asks for 195 s of a wait of 200 s) is held to the
+    // wait too: a road that leaves less than that shortens the wait, and an engine told to answer after it has gone
+    // answers nobody. It is only ever made shorter.
+    const statedDeadline = (payload as { deadlineSeconds?: unknown }).deadlineSeconds;
+    if (typeof statedDeadline === 'number' && statedDeadline > deadlineSecondsOf(waitMs)) {
       payload = { ...payload, deadlineSeconds: deadlineSecondsOf(waitMs) };
     }
     const carriesDeadline = (payload as { deadlineSeconds?: unknown }).deadlineSeconds !== undefined;
@@ -4934,6 +4950,16 @@ export class OptimizationProxyService {
                     `AI engine at ${this.aiConfig.baseUrl} answered ${error.response.status}; a redirect is not followed`,
                   );
                   throw new HttpException({ message: ENGINE_ERROR }, HttpStatus.BAD_GATEWAY);
+                }
+                // What came back when it says nothing a school may read: the status alone tells an edge's 502 from the
+                // engine's own 500, and nothing logged it, so the run of 2026-11-23 left no number to read. The body's
+                // code is logged only as being a string (the engine's are) or not (an edge's is a number or none).
+                if (error.response.status >= 500) {
+                  const bodyCode = (error.response.data as { code?: unknown } | null | undefined)?.code;
+                  this.logger.warn(
+                    `AI engine at ${this.aiConfig.baseUrl} answered ${error.response.status}` +
+                      (typeof bodyCode === 'string' ? ` (${bodyCode})` : ', with no code of the engine in the body'),
+                  );
                 }
                 /*
                  * The engine's own sentence, not a generic one.
