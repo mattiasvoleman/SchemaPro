@@ -242,6 +242,52 @@ describe('HttpExceptionFilter', () => {
     });
   });
 
+  describe('a pool with no connection to give', () => {
+    const neverStarted = (): Prisma.PrismaClientKnownRequestError =>
+      new Prisma.PrismaClientKnownRequestError('Transaction API error: Unable to start a transaction in the given time.', {
+        code: 'P2028',
+        clientVersion: Prisma.prismaVersion.client,
+      });
+
+    it.each([
+      ['Prisma\'s wait for a transaction that never started (P2028)', neverStarted],
+      ['pg\'s own wait for a connection', () => new Error('timeout exceeded when trying to connect')],
+    ])('answers %s as a 503 DATABASE_BUSY, not a 500', (_name, error) => {
+      filter.catch(error(), host);
+
+      expect(response.status).toHaveBeenCalledWith(503);
+      expect(body()).toMatchObject({
+        status: 503,
+        title: 'Service Unavailable',
+        detail: 'The server is busy right now, and nothing was done. Try again in a moment.',
+        code: 'DATABASE_BUSY',
+      });
+      expect(JSON.stringify(body())).not.toContain('Transaction API error');
+    });
+
+    it('logs it as a warning without a stack: the await that gave up says nothing, and every request that meets it logs', () => {
+      filter.catch(neverStarted(), host);
+
+      expect(logger.error).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(logger.warn.mock.calls[0][0]).toContain('-> 503');
+    });
+
+    it('still answers a transaction that started and then ran out (any other P2028) as the 500 it is', () => {
+      filter.catch(
+        new Prisma.PrismaClientKnownRequestError('Transaction API error: Transaction already closed: A query cannot be executed on an expired transaction.', {
+          code: 'P2028',
+          clientVersion: Prisma.prismaVersion.client,
+        }),
+        host,
+      );
+
+      expect(response.status).toHaveBeenCalledWith(500);
+      expect(body()).not.toHaveProperty('code');
+      expect(logger.error).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('maps a Prisma validation error to a generic 400', () => {
     filter.catch(
       new Prisma.PrismaClientValidationError('bad query shape', {

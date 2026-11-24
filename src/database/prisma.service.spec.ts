@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PrismaClient } from '@prisma/client';
 import { testUser } from '../../test/utils/prisma-mock';
-import { PrismaService } from './prisma.service';
+import { CONNECTION_WAIT_MS, PrismaService } from './prisma.service';
 
 const AUTH_ID = '11111111-1111-4111-8111-111111111111';
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
@@ -117,6 +119,7 @@ describe('PrismaService', () => {
       await service.withRls(testUser(), () => Promise.resolve(null));
 
       expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+        maxWait: 10_000,
         timeout: 15_000,
       });
     });
@@ -127,6 +130,7 @@ describe('PrismaService', () => {
       });
 
       expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+        maxWait: 10_000,
         timeout: 120_000,
       });
     });
@@ -242,8 +246,8 @@ describe('PrismaService', () => {
       );
       // No interpolated values: nothing caller-controlled reaches the setting.
       expect(rawValues(call)).toEqual([]);
-      // And no timeout override — the plain $transaction default applies.
-      expect(transaction).toHaveBeenCalledWith(expect.any(Function));
+      // No timeout of its own — Prisma's default applies — but the wait for a connection is stated.
+      expect(transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 10_000 });
     });
   });
 
@@ -262,6 +266,7 @@ describe('PrismaService', () => {
     it('defaults the transaction timeout to 30s and honors an override', async () => {
       await service.withServicePrincipal(SCHOOL_ID, () => Promise.resolve(null));
       expect(transaction).toHaveBeenLastCalledWith(expect.any(Function), {
+        maxWait: 10_000,
         timeout: 30_000,
       });
 
@@ -271,6 +276,7 @@ describe('PrismaService', () => {
         { timeoutMs: 5_000 },
       );
       expect(transaction).toHaveBeenLastCalledWith(expect.any(Function), {
+        maxWait: 10_000,
         timeout: 5_000,
       });
     });
@@ -286,7 +292,7 @@ describe('PrismaService', () => {
 
       expect(fn).toHaveBeenCalledWith(tx);
       expect(executeRaw).not.toHaveBeenCalled();
-      expect(transaction).toHaveBeenCalledWith(expect.any(Function));
+      expect(transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 10_000 });
     });
   });
 
@@ -374,7 +380,60 @@ describe('PrismaService', () => {
       expect(fn).toHaveBeenCalledWith(tx);
       expect(executeRaw).toHaveBeenCalledTimes(1);
       expect(rawSql(executeRaw.mock.calls[0])).toBe("SET LOCAL statement_timeout = '5s'");
-      expect(transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 10_000 });
+      expect(transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 10_000, timeout: 10_000 });
+    });
+  });
+
+  /**
+   * A transaction that finds no free connection in `maxWait` is refused with P2028, and Prisma's
+   * default wait is 2 s. A Generera's or a Kontrollera veckan's fetch holds one connection for
+   * some forty round trips, so with a pool of one every other request and every job's tick that
+   * came in meanwhile was refused (2026-11-23). Every door states the wait, so that none is left
+   * with the default.
+   */
+  describe('the wait for a connection', () => {
+    const doors: Array<[string, (service: PrismaService) => Promise<unknown>, number | undefined, number]> = [
+      ['withRls', (s) => s.withRls(testUser(), () => Promise.resolve(null)), 15_000, 10_000],
+      ['withDeliveryService', (s) => s.withDeliveryService(() => Promise.resolve(null)), 10_000, 10_000],
+      ['withServiceKeyLookup', (s) => s.withServiceKeyLookup(() => Promise.resolve(null)), undefined, 10_000],
+      ['withServicePrincipal', (s) => s.withServicePrincipal(SCHOOL_ID, () => Promise.resolve(null)), 30_000, 10_000],
+      [
+        'withHuvudmanKeyPrincipal',
+        (s) => s.withHuvudmanKeyPrincipal(AUTH_ID, SCHOOL_ID, () => Promise.resolve(null)),
+        30_000,
+        10_000,
+      ],
+      ['withHuvudmanKey', (s) => s.withHuvudmanKey(AUTH_ID, () => Promise.resolve(null)), undefined, 10_000],
+      ['withSyncPrincipal', (s) => s.withSyncPrincipal(SCHOOL_ID, () => Promise.resolve(null)), 30_000, 10_000],
+      // The one door for callers nobody signed in for: it refuses sooner, as its own transaction does.
+      ['withPublicViewer', (s) => s.withPublicViewer(() => Promise.resolve(null)), 5_000, 5_000],
+      ['withSystemTransaction', (s) => s.withSystemTransaction(() => Promise.resolve(null)), undefined, 10_000],
+    ];
+
+    it.each(doors)('%s states how long it waits, and leaves its timeout as it was', async (_name, open, timeout, maxWait) => {
+      await open(service);
+
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expect(transaction.mock.calls[0][1]).toEqual({ maxWait, ...(timeout === undefined ? {} : { timeout }) });
+    });
+
+    it('is the same wait for the batch doors as for the interactive ones', async () => {
+      Object.assign(service, { $executeRaw: jest.fn().mockReturnValue('claims') });
+      transaction.mockImplementation(() => Promise.resolve([0, 'row']));
+      await service.queryWithRls(testUser(), () => 'statement' as never);
+
+      expect(transaction.mock.calls[0][1]).toMatchObject({ maxWait: CONNECTION_WAIT_MS });
+      expect(CONNECTION_WAIT_MS).toBe(10_000);
+    });
+
+    it('has no door that opens a transaction by itself and so is left with Prisma\'s 2 s', () => {
+      // Read from the source: a door added tomorrow with `this.$transaction(` of its own would pass every
+      // test above and meet the default in production. The two helpers below are the only ways in.
+      const source = readFileSync(join(__dirname, 'prisma.service.ts'), 'utf8');
+      const calls = source.split('\n').filter((line) => /this\.\$transaction\(/.test(line) && !/^\s*(\*|\/\/)/.test(line));
+      // The batch's (BATCH_TRANSACTION_OPTIONS, tested above) and `interactive`, which names maxWait on the line.
+      expect(calls).toHaveLength(2);
+      expect(calls.filter((line) => line.includes('maxWait'))).toHaveLength(1);
     });
   });
 

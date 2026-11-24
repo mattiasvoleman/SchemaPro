@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Request, Response } from 'express';
+import { DATABASE_BUSY, isPoolBusy } from '../../database/pool-wait';
 import type { ProblemDetails } from '../interfaces/problem-details.interface';
 import { areaRefusal } from '../utils/prisma-errors';
 import { viewerTokenOf } from '../../publication/public-token';
@@ -136,6 +137,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
         title: 'Forbidden',
         detail: area.message,
         code: area.code,
+      };
+    }
+
+    // No connection came free in time: a busy server, answered as one. Before
+    // the Prisma branch below, which would call it an unexpected database error.
+    if (isPoolBusy(exception)) {
+      return {
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        title: 'Service Unavailable',
+        detail: 'The server is busy right now, and nothing was done. Try again in a moment.',
+        code: DATABASE_BUSY,
       };
     }
 
@@ -293,7 +305,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
     // Log method + path + status only. Never log the request body (may contain PII).
     const context = `${request.method} ${redactShareToken(request.url)} -> ${normalized.status} [trace=${traceId}]`;
 
-    if (normalized.status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+    // A busy pool is a warning, and its stack says nothing: it is the await that
+    // gave up, not the code. While it lasts every request that meets it logs.
+    if (normalized.status >= HttpStatus.INTERNAL_SERVER_ERROR && normalized.code !== DATABASE_BUSY) {
       const stack = exception instanceof Error ? exception.stack : undefined;
       this.logger.error(context, stack);
     } else {
