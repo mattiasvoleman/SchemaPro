@@ -78,11 +78,12 @@ const WEB_WORDS: Record<string, readonly (readonly [string, string])[]> = {
   ],
   PLACEMENT_PLACES_FORCED: [[PLACES_TIP, ""]],
   PLACES_CANNOT_BE_KEPT: [[PLACES_TIP, ""]],
-  // The gateway writes these two figures as text with the Swedish decimal comma ("602,5"); lib/engine-message.ts makes them numbers, and the
-  // sentence says them as a number in its own language ("602.5 hours"). The engine's catalogue has them as plain arguments.
+  // The gateway writes these two figures as text with the Swedish decimal comma ("602,5"), which is how the Swedish says them and which the
+  // gateway's own Swedish sentence (a spec on its side) holds equal to the Swedish catalogue. lib/engine-message.ts gives each a numeric twin,
+  // and the English says that as a number in its own language ("602.5 hours"). The engine's catalogue has the plain arguments.
   STAFF_TEACHER_OVER_SCOPE: [
-    ["{hours, number}", "{hours}"],
-    ["{limit, number}", "{limit}"],
+    ["{hoursNumber, number}", "{hours}"],
+    ["{limitNumber, number}", "{limit}"],
   ],
 };
 /**
@@ -91,6 +92,13 @@ const WEB_WORDS: Record<string, readonly (readonly [string, string])[]> = {
  */
 const WEB_ARGUMENTS: Record<string, readonly string[]> = { PLACEMENT_CANNOT_STAND: ["block"] };
 const argumentsWithWeb = (code: string, engine: string[]): string[] => [...engine, ...(WEB_ARGUMENTS[code] ?? [])].sort();
+/** The engine's arguments the English reads under another name: the numeric twin lib/engine-message.ts adds (`hours` is read as `hoursNumber`). */
+const ENGLISH_TWINS: Record<string, readonly string[]> = { STAFF_TEACHER_OVER_SCOPE: ["hours", "limit"] };
+const argumentsInEnglish = (code: string, engine: string[]): string[] =>
+  argumentsWithWeb(
+    code,
+    engine.map((name) => (ENGLISH_TWINS[code]?.includes(name) ? `${name}Number` : name)),
+  );
 
 const undoneWebWords = (code: string, text: string): string =>
   (WEB_WORDS[code] ?? []).reduce((undone, [web, engine]) => undone.replace(web, engine), text);
@@ -115,7 +123,7 @@ describe("every sentence the engine can send", () => {
   it.each(codes)("%s substitutes exactly the values the engine sends", (code) => {
     const fixture = (engineMessages as Record<string, string>)[code];
     expect(argumentsOf(swedish[code])).toEqual(argumentsWithWeb(code, argumentsOf(fixture)));
-    expect(argumentsOf(english[code])).toEqual(argumentsWithWeb(code, argumentsOf(fixture)));
+    expect(argumentsOf(english[code])).toEqual(argumentsInEnglish(code, argumentsOf(fixture)));
   });
 
   it("keeps the English identical to the engine's own, but for what the web words further (WEB_WORDS)", () => {

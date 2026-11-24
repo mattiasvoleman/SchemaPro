@@ -39,25 +39,26 @@ const PARAM_DEFAULTS: Record<string, Record<string, string | number>> = {
 };
 
 /**
- * Figures the gateway writes as TEXT with the Swedish decimal comma ("602,5": src/staffing/staffing-checks.ts hoursText), by code. They are
- * made numbers here, where the sentence is built, so that its `{hours, number}` writes them the way the sentence's own language does ("602.5
- * hours", "602,5 timmars") and not as the gateway wrote them for one. The gateway sends what it always did, so an older web reads the text
- * as before. A figure that is no number is left out, and the sentence is then the engine's English (below), never "NaN".
+ * Figures the gateway writes as TEXT with the Swedish decimal comma ("602,5": src/staffing/staffing-checks.ts hoursText), by code. The text is
+ * how the Swedish says them, and stays as it came (the gateway's own Swedish sentence is held equal to the Swedish catalogue's, by a spec on its
+ * side that renders `{hours}` as a plain argument). Each also gets a numeric twin, `<name>Number`, which a sentence of another language writes
+ * with `{<name>Number, number}`: "602.5 hours" in English, "1,122.5" over a thousand. A figure that is no number gets no twin, and the sentence
+ * that asks for it is then the engine's English (below), never "NaN". The gateway sends what it always did, so an older web reads the text
+ * as before.
  */
 const SWEDISH_DECIMALS: Record<string, readonly string[]> = {
   STAFF_TEACHER_OVER_SCOPE: ["hours", "limit"],
 };
 
-function numbersOf(code: string, params: Record<string, string | number>): Record<string, string | number> {
+function withNumbers(code: string, params: Record<string, string | number>): Record<string, string | number> {
   const named = SWEDISH_DECIMALS[code];
   if (named === undefined) return params;
   const read = { ...params };
   for (const name of named) {
-    const value = read[name];
-    if (typeof value !== "string") continue;
-    const number = Number(value.replace(",", "."));
-    if (value.trim() !== "" && Number.isFinite(number)) read[name] = number;
-    else delete read[name];
+    const value = params[name];
+    // A figure already sent as a number (a gateway that one day does) is its own twin.
+    const number = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value.replace(",", ".")) : Number.NaN;
+    if (Number.isFinite(number)) read[`${name}Number`] = number;
   }
   return read;
 }
@@ -80,7 +81,7 @@ export function engineMessage(t: MessageLookup, sentence: EngineMessage): string
   const { code, message, params } = sentence;
   if (!code || !t.has(code)) return message;
   try {
-    const text = t(code, { ...(PARAM_DEFAULTS[code] ?? {}), ...numbersOf(code, params ?? {}) });
+    const text = t(code, { ...(PARAM_DEFAULTS[code] ?? {}), ...withNumbers(code, params ?? {}) });
     // The real translator does not throw on a missing argument: its default
     // onError only reports it and the answer is its fallback for the key,
     // "<namespace>.<CODE>". That is not a sentence. Same answer as an

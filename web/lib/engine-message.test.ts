@@ -186,9 +186,10 @@ describe("TEACHER_SHARED_BY_PARALLEL_GROUPS", () => {
 
 /**
  * The gateway writes the hours of STAFF_TEACHER_OVER_SCOPE as text with the Swedish decimal comma (src/staffing/staffing-checks.ts
- * hoursText: "602,5"), and an English sentence put them in as they came: "602,5 hours". The web turns the two figures into numbers
- * where the sentence is built, and the sentence writes them the way its own language does. Rendered through the real ICU of the
- * real catalogue, because that is where the comma was.
+ * hoursText: "602,5"), and an English sentence put them in as they came: "602,5 hours". The text is how the Swedish says them, and stays
+ * (the gateway's own Swedish sentence is held equal to the Swedish catalogue by a spec on its side, which renders `{hours}` as a plain
+ * argument); where the sentence is built the web adds a numeric twin of each figure, and the English writes that as a number. Rendered
+ * through the real ICU of the real catalogue, because that is where the comma was.
  */
 describe("STAFF_TEACHER_OVER_SCOPE: the hours a reader reads", () => {
   const CODE = "STAFF_TEACHER_OVER_SCOPE";
@@ -196,7 +197,6 @@ describe("STAFF_TEACHER_OVER_SCOPE: the hours a reader reads", () => {
   const english = createTranslator({ locale: "en", messages: en, namespace: "engineMessages" }) as unknown as MessageLookup;
   const ENGLISH = "The engine's English.";
   const render = (t: MessageLookup, params: Record<string, string | number>) => engineMessage(t, { code: CODE, message: ENGLISH, params });
-  const plainSpaces = (text: string) => text.replace(/[  ]/g, " ");
 
   it("says 602.5 in English and 602,5 in Swedish, from the gateway's 602,5", () => {
     const params = { role: "TEACHER", hours: "602,5", limit: "600" };
@@ -216,28 +216,38 @@ describe("STAFF_TEACHER_OVER_SCOPE: the hours a reader reads", () => {
     expect(render(swedish, params)).toContain("högsta nivå 477,5 timmar");
   });
 
-  it("groups thousands as the language does, which the text the gateway wrote did not", () => {
+  it("groups thousands in English as English does, and leaves the Swedish as the gateway wrote it (a four-digit number has no space in Swedish)", () => {
     const params = { role: "CO_TEACHER", hours: "1122,5", limit: "1100" };
     expect(render(english, params)).toContain("would get 1,122.5 hours");
-    expect(plainSpaces(render(swedish, params))).toContain("skulle få 1 122,5 timmars");
+    expect(render(english, params)).toContain("highest level of 1,100 hours");
+    expect(render(swedish, params)).toContain("skulle få 1122,5 timmars");
   });
 
-  it("reads a figure sent as a number as it reads one sent as text, so that a gateway that sends numbers needs no change here", () => {
+  it("reads a figure sent as a number in English as it reads one sent as text, so that a gateway that sends numbers needs no change there", () => {
+    // The Swedish sentence takes the figure as it comes (`{hours}`), so a gateway that sends numbers would need it as a number, in the
+    // catalogue and in the spec on the gateway's side that renders it; the gateway sends text.
     expect(render(english, { role: "TEACHER", hours: 602.5, limit: 600 })).toContain("would get 602.5 hours");
-    expect(render(swedish, { role: "TEACHER", hours: 602.5, limit: 600 })).toContain("skulle få 602,5 timmars");
+    expect(render(english, { role: "TEACHER", hours: "602,5", limit: 600 })).toContain("highest level of 600 hours");
   });
 
   it("shows the engine's English, not 'NaN', for a figure that is not a number", () => {
-    const quiet = (locale: string, messages: typeof sv) =>
-      createTranslator({ locale, messages, namespace: "engineMessages", onError: () => {} }) as unknown as MessageLookup;
+    const quiet = createTranslator({ locale: "en", messages: en, namespace: "engineMessages", onError: () => {} }) as unknown as MessageLookup;
     for (const hours of ["", "  ", "abc", "602,5,1"]) {
-      expect(render(quiet("en", en), { role: "TEACHER", hours, limit: "600" }), hours).toBe(ENGLISH);
-      expect(render(quiet("sv", sv), { role: "TEACHER", hours, limit: "600" }), hours).toBe(ENGLISH);
+      expect(render(quiet, { role: "TEACHER", hours, limit: "600" }), hours).toBe(ENGLISH);
     }
   });
 
-  it("changes no other sentence's text: a figure written with a comma elsewhere stays as the gateway wrote it", () => {
-    const t = lookup({ SOME_OTHER_CODE: (values) => `${values.hours} h` });
-    expect(engineMessage(t, { code: "SOME_OTHER_CODE", message: "m", params: { hours: "602,5" } })).toBe("602,5 h");
+  it("gives each figure a numeric twin and leaves the text as it came", () => {
+    const seen: Record<string, string | number>[] = [];
+    const t = lookup({ [CODE]: (values) => (seen.push(values), "x") });
+    engineMessage(t, { code: CODE, message: ENGLISH, params: { role: "TEACHER", hours: "602,5", limit: "600" } });
+    expect(seen[0]).toEqual({ role: "TEACHER", hours: "602,5", limit: "600", hoursNumber: 602.5, limitNumber: 600 });
+  });
+
+  it("changes no other sentence's values: a figure written with a comma elsewhere stays as the gateway wrote it, with no twin", () => {
+    const seen: Record<string, string | number>[] = [];
+    const t = lookup({ SOME_OTHER_CODE: (values) => (seen.push(values), `${values.hours} h`) });
+    expect(engineMessage(t, { code: "SOME_OTHER_CODE", message: "m", params: { hours: "602,5", limit: "600" } })).toBe("602,5 h");
+    expect(seen[0]).toEqual({ hours: "602,5", limit: "600" });
   });
 });

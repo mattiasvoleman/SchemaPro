@@ -67,13 +67,23 @@ describe("translation files", () => {
     expect(enKeys.filter((key) => !svKeys.includes(key))).toEqual([]);
   });
 
+  /**
+   * The English that reads a figure as a number takes the numeric twin lib/engine-message.ts adds beside the gateway's text ("602,5"), which
+   * the Swedish takes as it is: `hoursNumber` is `hours` in the other language. Said here, once, so that any other placeholder that
+   * differs is still found.
+   */
+  const TWINS: Record<string, Record<string, string>> = {
+    "engineMessages.STAFF_TEACHER_OVER_SCOPE": { hoursNumber: "hours", limitNumber: "limit" },
+  };
+  const asSwedish = (key: string, names: string[]): string[] => names.map((name) => TWINS[key]?.[name] ?? name).sort();
+
   it("carry the same placeholders in every message", () => {
     const mismatched = svKeys
       .filter((key) => enKeys.includes(key))
       .map((key) => ({
         key,
         sv: placeholders(String(lookup(sv as Messages, key))),
-        en: placeholders(String(lookup(en as Messages, key))),
+        en: asSwedish(key, placeholders(String(lookup(en as Messages, key)))),
       }))
       .filter(({ sv: a, en: b }) => a.join() !== b.join());
 
