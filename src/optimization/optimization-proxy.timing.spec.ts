@@ -627,6 +627,53 @@ describe('OptimizationProxyService: the road to the engine closes a request that
     expect(service.waitSeconds).toBe(240);
   });
 
+  it('holds the wait to the road also for a proxy built without the timing service (the room and staffing proposals build it by hand): 290 s of a 600000 ms setting', () => {
+    const config = {
+      getOrThrow: jest.fn(() => ({ baseUrl: 'http://solver.test', apiKey: 'k'.repeat(32), timeoutMs: 600_000, pathIdleLimitSeconds: 300 })),
+      get: jest.fn(() => undefined),
+    } as unknown as ConfigService;
+    const http = { post: jest.fn(), get: jest.fn() } as unknown as HttpService;
+
+    const service = new OptimizationProxyService({} as unknown as PrismaService, http, config);
+
+    expect(service.waitSeconds).toBe(290);
+  });
+
+  it('logs the status of a 5xx that says nothing a school may read, and whether the engine put a code in it: the next closed call leaves a number to read', async () => {
+    const warnings: string[] = [];
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation((message: unknown) => void warnings.push(String(message)));
+    const { call, post } = await build();
+    post.mockReturnValueOnce(throwError(() => refusedWith(502, { status: 'error', code: 502, message: 'Application failed to respond' })));
+    post.mockReturnValueOnce(throwError(() => refusedWith(500, { code: 'INTERNAL_ERROR', message: 'boom' })));
+
+    await expect(call('/v1/schedule')).rejects.toBeInstanceOf(HttpException);
+    await expect(call('/v1/schedule')).rejects.toBeInstanceOf(HttpException);
+
+    expect(warnings.filter((line) => line.includes('answered 502'))).toEqual([expect.stringContaining('no code of the engine')]);
+    expect(warnings.filter((line) => line.includes('answered 500'))).toEqual([expect.stringContaining('(INTERNAL_ERROR)')]);
+  });
+
+  it('holds a deadline the caller stated for itself to the wait the road leaves: the analysis of a refusal asks 195 s of a wait of 200 s, and a road that holds 120 s leaves 110', async () => {
+    const { call, post } = await build({ pathIdleLimitSeconds: 120 });
+    post.mockReturnValue(of({ data: {} }));
+
+    await call('/api/v1/suggest-changes', { requestId: 'r', deadlineSeconds: 195 }, { timeoutMs: 200_000 });
+
+    expect(post.mock.calls[0]![1]).toMatchObject({ deadlineSeconds: 110 });
+    expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 110_000 });
+  });
+
+  it('leaves a stated deadline that fits the wait as it was, on a road with a limit and on one with none', async () => {
+    for (const pathIdleLimitSeconds of [300, undefined]) {
+      const { call, post } = await build(pathIdleLimitSeconds === undefined ? {} : { pathIdleLimitSeconds });
+      post.mockReturnValue(of({ data: {} }));
+
+      await call('/api/v1/suggest-changes', { requestId: 'r', deadlineSeconds: 195 }, { timeoutMs: 200_000 });
+
+      expect(post.mock.calls[0]![1]).toMatchObject({ deadlineSeconds: 195 });
+    }
+  });
+
   it('is the road’s own number when the operator says it: AI_ENGINE_PATH_IDLE_LIMIT_SECONDS=120 holds a call to 110 s', async () => {
     const { call, post } = await build({ body: INCIDENT_BODY, pathIdleLimitSeconds: 120 });
     post.mockReturnValue(of({ data: {} }));

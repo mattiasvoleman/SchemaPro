@@ -4887,6 +4887,13 @@ export class OptimizationProxyService {
     ) {
       payload = { ...payload, deadlineSeconds: deadlineSecondsOf(waitMs) };
     }
+    // A deadline the caller stated for itself (the analysis of a refusal asks for 195 s of a wait of 200 s) is held to the
+    // wait too: a road that leaves less than that shortens the wait, and an engine told to answer after it has gone
+    // answers nobody. It is only ever made shorter.
+    const statedDeadline = (payload as { deadlineSeconds?: unknown }).deadlineSeconds;
+    if (typeof statedDeadline === 'number' && statedDeadline > deadlineSecondsOf(waitMs)) {
+      payload = { ...payload, deadlineSeconds: deadlineSecondsOf(waitMs) };
+    }
     const carriesDeadline = (payload as { deadlineSeconds?: unknown }).deadlineSeconds !== undefined;
     const carriesSearch = (payload as { search?: unknown }).search !== undefined;
     const carriesRelaxation = (payload as { relaxation?: unknown }).relaxation !== undefined;
@@ -5011,6 +5018,16 @@ export class OptimizationProxyService {
                     `AI engine at ${this.aiConfig.baseUrl} answered ${error.response.status}; a redirect is not followed`,
                   );
                   throw new HttpException({ message: ENGINE_ERROR }, HttpStatus.BAD_GATEWAY);
+                }
+                // What came back when it says nothing a school may read: the status alone tells an edge's 502 from the
+                // engine's own 500, and nothing logged it, so the run of 2026-11-23 left no number to read. The body's
+                // code is logged only as being a string (the engine's are) or not (an edge's is a number or none).
+                if (error.response.status >= 500) {
+                  const bodyCode = (error.response.data as { code?: unknown } | null | undefined)?.code;
+                  this.logger.warn(
+                    `AI engine at ${this.aiConfig.baseUrl} answered ${error.response.status}` +
+                      (typeof bodyCode === 'string' ? ` (${bodyCode})` : ', with no code of the engine in the body'),
+                  );
                 }
                 /*
                  * The engine's own sentence, not a generic one.

@@ -147,7 +147,12 @@ export class EnvironmentVariables {
    * 0, or at least 30 s: a limit under half a minute leaves no wait once the margin is taken. Set to nothing
    * is not set, as for AI_ENGINE_TIMEOUT_MS.
    */
-  @Transform(({ value, obj, key }) => (isBlank((obj as Record<string, unknown>)[key]) ? undefined : value))
+  // Blank includes a value of only spaces: implicit conversion makes that a 0, and here 0 is a setting (no limit),
+  // which a stray space in a host's dashboard must not be able to turn the clamp off with.
+  @Transform(({ value, obj, key }) => {
+    const raw = (obj as Record<string, unknown>)[key];
+    return isBlank(raw) || (typeof raw === 'string' && raw.trim() === '') ? undefined : value;
+  })
   @IsOptional()
   @ValidateIf((_object, value: unknown) => value !== 0)
   @IsInt()
