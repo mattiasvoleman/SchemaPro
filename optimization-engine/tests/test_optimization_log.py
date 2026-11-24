@@ -106,3 +106,73 @@ def test_the_two_doors_say_the_same_line(caplog: pytest.LogCaptureFixture) -> No
         seen[path] = {key: value for key, value in requested.items() if key not in {"request_id", "academic_year_id", "timestamp"}}
 
     assert seen["/api/v1/optimize"] == seen["/v1/schedule"]
+
+
+# What the review of omgång 15 (H1, del 3) added: three things the eleven cases above let through.
+
+
+@pytest.mark.parametrize("path", DOORS)
+def test_a_deadline_with_a_fraction_is_said_as_it_was_sent(path: str, caplog: pytest.LogCaptureFixture) -> None:
+    """`deadlineSeconds` is a float (gt=0, le=3600): a line that rounded it would say a wait the caller never named."""
+    _post(path, caplog, deadlineSeconds=289.5)
+
+    (requested,) = _events(caplog, "optimization_requested")
+    assert requested["deadline_seconds"] == 289.5
+
+
+@pytest.mark.parametrize("path", DOORS)
+def test_the_request_is_said_before_the_solve_starts_and_stays_when_the_solve_never_answers(
+    path: str, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The incident's own case: a search that ran 540 s for a caller that left at 300 s, and a solve that is
+    answered 503 at its ceiling. The line that says what the call was has to be in the log WHEN the solve starts,
+    not after it: moved behind `run_solver` it still passes every case above on a solve that answers, and leaves
+    the log as blind as it was on 2026-11-23 on the two endings this PR was written for."""
+    import app.api.v1.optimize as optimize_module
+    import app.main as main_module
+    from app.exceptions import SolverTimeoutError
+
+    said_when_the_solve_started: list[int] = []
+
+    async def never_answers(payload: object, settings: object) -> object:
+        said_when_the_solve_started.append(len(_events(caplog, "optimization_requested")))
+        raise SolverTimeoutError("Optimization timed out.", route="optimize", ceiling_seconds=230.0)
+
+    # Each door calls the `run_solver` its own module imported: both are replaced.
+    monkeypatch.setattr(optimize_module, "run_solver", never_answers)
+    monkeypatch.setattr(main_module, "run_solver", never_answers)
+
+    payload = {**to._sample_payload(), "deadlineSeconds": 290}
+    with caplog.at_level(logging.INFO):
+        with TestClient(create_app(to._settings())) as client:
+            response = client.post(path, json=payload, headers=HEADERS)
+
+    assert response.status_code == 503
+    assert said_when_the_solve_started == [1]
+    (requested,) = _events(caplog, "optimization_requested")
+    assert requested["request_id"] == payload["requestId"]
+    assert requested["deadline_seconds"] == 290
+    # A solve that never answered has nothing to say it completed, on either door.
+    assert _events(caplog, "optimization_completed") == []
+
+
+# Everything the line may carry, and nothing else: the engine is given anonymous ids and numbers, and its log is
+# read by whoever runs the deployment (docs/dataskydd-sakbeskrivning.md). A field added to the shared function
+# reaches BOTH doors and every Generera of every school, so it is added here on purpose or not at all.
+_ALLOWED_REQUESTED_KEYS = {
+    "event", "level", "logger", "timestamp",
+    "request_id", "academic_year_id", "requirement_count", "room_count", "constraint_count",
+    "search", "deadline_seconds",
+}
+_ALLOWED_SEARCH_KEYS = {"maxSeconds", "seed", "probes", "workers"}
+
+
+@pytest.mark.parametrize("path", DOORS)
+def test_the_line_carries_only_ids_and_counts_and_numbers(path: str, caplog: pytest.LogCaptureFixture) -> None:
+    _post(path, caplog, deadlineSeconds=120, search={"maxSeconds": 10, "seed": 3, "probes": False, "workers": 2})
+
+    (requested,) = _events(caplog, "optimization_requested")
+    assert set(requested) <= _ALLOWED_REQUESTED_KEYS, sorted(set(requested) - _ALLOWED_REQUESTED_KEYS)
+    assert set(requested["search"]) == _ALLOWED_SEARCH_KEYS
+    for key in ("requirement_count", "room_count", "constraint_count"):
+        assert isinstance(requested[key], int)
