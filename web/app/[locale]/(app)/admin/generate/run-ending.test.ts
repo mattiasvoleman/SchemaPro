@@ -83,6 +83,23 @@ describe("the API's own wait that ran out (ENGINE_WAIT_EXPIRED)", () => {
   });
 });
 
+describe("the road between the service and the engine closed the call (ENGINE_PATH_CLOSED)", () => {
+  it("says how long the call went on and what the road holds, where both are known", () => {
+    expect(runEnding("ENGINE_PATH_CLOSED", { elapsedSeconds: 303, pathLimitSeconds: 300, engineCeilingSeconds: 590 })).toEqual({
+      key: "ENGINE_PATH_CLOSED_AFTER",
+      values: { elapsedSeconds: 303, pathLimitSeconds: 300 },
+    });
+  });
+
+  it("says the plain sentence when either figure is missing or is not a number of seconds: the two go together or not at all", () => {
+    expect(runEnding("ENGINE_PATH_CLOSED", null)).toEqual({ key: "ENGINE_PATH_CLOSED" });
+    expect(runEnding("ENGINE_PATH_CLOSED", { elapsedSeconds: 303 })).toEqual({ key: "ENGINE_PATH_CLOSED" });
+    expect(runEnding("ENGINE_PATH_CLOSED", { pathLimitSeconds: 300 })).toEqual({ key: "ENGINE_PATH_CLOSED" });
+    expect(runEnding("ENGINE_PATH_CLOSED", { elapsedSeconds: "303", pathLimitSeconds: 300 })).toEqual({ key: "ENGINE_PATH_CLOSED" });
+    expect(runEnding("ENGINE_PATH_CLOSED", { elapsedSeconds: -1, pathLimitSeconds: 300 })).toEqual({ key: "ENGINE_PATH_CLOSED" });
+  });
+});
+
 describe("an engine that was not reached, and a run that was abandoned", () => {
   it("says the engine was not reached with no figure", () => {
     expect(runEnding("ENGINE_NOT_REACHED", null)).toEqual({ key: "ENGINE_NOT_REACHED" });

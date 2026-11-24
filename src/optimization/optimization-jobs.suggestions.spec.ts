@@ -63,6 +63,7 @@ describe('a run read with its analysis', () => {
       ['a TIMEOUT', { solverStatus: 'TIMEOUT' }, true],
       ['a cap the week cannot hold', { status: 'FAILED', solverStatus: null, errorCode: 'TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK' }, true],
       ['an engine that was never reached', { status: 'FAILED', solverStatus: null, errorCode: 'ENGINE_NOT_REACHED' }, false],
+      ['the road to the engine closing the call', { status: 'FAILED', solverStatus: null, errorCode: 'ENGINE_PATH_CLOSED' }, true],
     ])('offers the button for %s: %s', (_name, over, offered) => {
       expect(jobView(row(over), null, new Map(), NOW).view.suggestionsOffered).toBe(offered);
     });

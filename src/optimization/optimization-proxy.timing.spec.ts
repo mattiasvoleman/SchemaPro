@@ -4,7 +4,8 @@ import { HttpException, Logger } from '@nestjs/common';
 import type { HttpService } from '@nestjs/axios';
 import type { ConfigService } from '@nestjs/config';
 import { AxiosError } from 'axios';
-import { NEVER, of, throwError } from 'rxjs';
+import { NEVER, of, throwError, timer } from 'rxjs';
+import { mergeMap } from 'rxjs/operators';
 import { EngineTimingService } from './engine-timing.service';
 import { INCIDENT_BODY, INCIDENT_BODY_WITHOUT_DEADLINE, PRODUCTION_BODY } from './__fixtures__/engine-timing-body';
 import { engineMayStillBeSolving, OptimizationProxyService } from './optimization-proxy.service';
@@ -713,7 +714,7 @@ describe('OptimizationProxyService: the road to the engine closes a request that
     });
   });
 
-  it('ends a call that nothing answers at 290 s, by the API’s own wait and not by the road’s: ENGINE_WAIT_EXPIRED with the 290 s it waited', async () => {
+  it('ends a call that nothing answers at 290 s, by the API’s own wait and not by the road’s: ENGINE_PATH_CLOSED with the 290 s it waited', async () => {
     jest.useFakeTimers();
     try {
       const { call, post } = await build({ body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
@@ -729,9 +730,159 @@ describe('OptimizationProxyService: the road to the engine closes a request that
       const thrown = (await pending) as HttpException;
 
       expect(thrown.getStatus()).toBe(503);
-      expect(thrown.getResponse()).toMatchObject({ code: 'ENGINE_WAIT_EXPIRED', params: { waitSeconds: 290 } });
+      expect(thrown.getResponse()).toMatchObject({ code: 'ENGINE_PATH_CLOSED', params: { elapsedSeconds: 290, pathLimitSeconds: 300 } });
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe('OptimizationProxyService: a call the road to the engine closed is said as that (omgång 15)', () => {
+  /*
+   * The two Generera runs of 2026-11-23 stored "The AI engine returned an error." and nothing else: the edge answered a
+   * 502 after 300 s, and the generic branch for an engine 5xx kept no code. A call that ends when the road is known to
+   * close a silent one is now ENGINE_PATH_CLOSED, with how long it went on and what the road holds.
+   */
+  const errors: string[] = [];
+  beforeEach(() => {
+    errors.length = 0;
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation((message: unknown) => void errors.push(String(message)));
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  /** The call ends with `error` after `afterMs` of the (fake) clock. */
+  const endsAfter = async (
+    afterMs: number,
+    error: unknown,
+    over: Parameters<typeof build>[0],
+    path = '/v1/schedule',
+    options: { timeoutMs?: number } = {},
+  ) => {
+    jest.useFakeTimers();
+    const built = await build(over);
+    built.post.mockReturnValue(timer(afterMs).pipe(mergeMap(() => throwError(() => error))));
+    const pending = built.call(path, { requestId: 'r' }, options).catch((thrown: unknown) => thrown);
+    await jest.advanceTimersByTimeAsync(afterMs + 1);
+    return { thrown: (await pending) as HttpException, built };
+  };
+
+  const edge = (status: number, data: unknown = { status: 'error', code: status, message: 'Application failed to respond' }) => refusedWith(status, data);
+  const closedSocket = () => {
+    const error = new AxiosError('socket hang up');
+    error.code = 'ECONNRESET';
+    return error;
+  };
+
+  it('says an edge 502 after 285 s as ENGINE_PATH_CLOSED, with the time, the limit and what the engine can need', async () => {
+    const { thrown } = await endsAfter(285_000, edge(502), { body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
+
+    expect(thrown.getStatus()).toBe(503);
+    expect(thrown.getResponse()).toEqual({
+      message: 'The connection to the AI engine was closed on the way before the engine answered. The engine may still be working.',
+      code: 'ENGINE_PATH_CLOSED',
+      params: { elapsedSeconds: 285, pathLimitSeconds: 300, engineCeilingSeconds: 590 },
+    });
+    // It may still be solving: a schemaförslag run keeps its deadline on this, and the page says to wait.
+    expect(engineMayStillBeSolving(thrown)).toBe(true);
+    expect(errors.some((line) => line.includes('closed a call after 285 s') && line.includes('AI_ENGINE_PATH_IDLE_LIMIT_SECONDS'))).toBe(true);
+  });
+
+  it.each([
+    ['an edge 504', () => edge(504, undefined)],
+    ['an edge 502 with an HTML body', () => edge(502, '<html>Bad gateway</html>')],
+    ['a socket closed with no answer', () => closedSocket()],
+  ])('says %s near the limit as ENGINE_PATH_CLOSED', async (_name, make) => {
+    const { thrown } = await endsAfter(290_000, make(), { body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
+
+    expect(thrown.getResponse()).toMatchObject({ code: 'ENGINE_PATH_CLOSED', params: { elapsedSeconds: 290, pathLimitSeconds: 300 } });
+  });
+
+  it('leaves the engine’s ceiling out of the figures when the engine has not said it, and for a route that is not the generator’s', async () => {
+    // A wait long enough to be held to the road's 290 s: an engine that said nothing waits 120 s, a room proposal 50.
+    const silent = await endsAfter(285_000, edge(502), { body: null, timeoutMs: 600_000, pathIdleLimitSeconds: 300 });
+    const rooms = await endsAfter(285_000, edge(502), { body: INCIDENT_BODY, pathIdleLimitSeconds: 300 }, '/api/v1/optimize-rooms', {
+      timeoutMs: 500_000,
+    });
+
+    expect((silent.thrown.getResponse() as { params: object }).params).toEqual({ elapsedSeconds: 285, pathLimitSeconds: 300 });
+    expect((rooms.thrown.getResponse() as { params: object }).params).not.toHaveProperty('engineCeilingSeconds');
+  });
+
+  it('keeps every other ending as it was: an edge 502 after five seconds is an engine that broke, and a reset after five is an engine not reached', async () => {
+    const early502 = await endsAfter(5_000, edge(502), { body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
+    const earlyReset = await endsAfter(5_000, closedSocket(), { body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
+
+    expect(early502.thrown.getStatus()).toBe(502);
+    expect(early502.thrown.getResponse()).toEqual({ message: 'The AI engine returned an error.' });
+    expect(earlyReset.thrown.getResponse()).toEqual({ message: 'The AI engine could not be reached.', code: 'ENGINE_NOT_REACHED' });
+  });
+
+  it('keeps a 502 that carries the engine’s own code as the engine’s, at any time', async () => {
+    const { thrown } = await endsAfter(290_000, edge(502, { code: 'SOLVER_BUILD_FAILED', message: 'Model build failed.' }), {
+      body: INCIDENT_BODY,
+      pathIdleLimitSeconds: 300,
+    });
+
+    expect(thrown.getStatus()).toBe(502);
+    expect(thrown.getResponse()).toEqual({ message: 'The AI engine returned an error.' });
+  });
+
+  it('is never said on a road with no limit: the private network’s 502 at 300 s is the engine’s or the network’s', async () => {
+    const { thrown } = await endsAfter(300_000, edge(502), { body: INCIDENT_BODY, timeoutMs: 600_000 });
+
+    expect(thrown.getStatus()).toBe(502);
+    expect(thrown.getResponse()).toEqual({ message: 'The AI engine returned an error.' });
+  });
+
+  describe('the API’s own wait, when the road’s limit had shortened it', () => {
+    it('is ENGINE_PATH_CLOSED at 290 s with the engine’s ceiling, and not "the wait is a setting of the service"', async () => {
+      jest.useFakeTimers();
+      const { call, post } = await build({ body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
+      post.mockReturnValue(NEVER);
+
+      const pending = call('/v1/schedule').catch((error: unknown) => error);
+      await jest.advanceTimersByTimeAsync(290_000);
+      const thrown = (await pending) as HttpException;
+
+      expect(thrown.getStatus()).toBe(503);
+      expect(thrown.getResponse()).toEqual({
+        message: 'The connection to the AI engine was closed on the way before the engine answered. The engine may still be working.',
+        code: 'ENGINE_PATH_CLOSED',
+        params: { elapsedSeconds: 290, pathLimitSeconds: 300, engineCeilingSeconds: 590 },
+      });
+      expect(engineMayStillBeSolving(thrown)).toBe(true);
+    });
+
+    it('is the same for the HTTP client’s own timeout, which is what fires first against a real server', async () => {
+      const { call, post } = await build({ body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
+      const timedOut = new AxiosError('timeout of 290000ms exceeded');
+      timedOut.code = 'ECONNABORTED';
+      post.mockReturnValue(throwError(() => timedOut));
+
+      const thrown = (await call('/v1/schedule').catch((error: unknown) => error)) as HttpException;
+
+      expect(thrown.getResponse()).toMatchObject({ code: 'ENGINE_PATH_CLOSED', params: { pathLimitSeconds: 300 } });
+    });
+
+    it('is ENGINE_WAIT_EXPIRED as before when the road did not shorten it: a candidate’s own 95 s, the production 240 s', async () => {
+      const candidate = await build({ body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
+      const timedOut = new AxiosError('timeout of 95000ms exceeded');
+      timedOut.code = 'ECONNABORTED';
+      candidate.post.mockReturnValue(throwError(() => timedOut));
+      const production = await build({ pathIdleLimitSeconds: 300 });
+      const productionTimedOut = new AxiosError('timeout of 240000ms exceeded');
+      productionTimedOut.code = 'ECONNABORTED';
+      production.post.mockReturnValue(throwError(() => productionTimedOut));
+
+      const own = (await candidate.call('/v1/schedule', { requestId: 'r' }, { timeoutMs: 95_000 }).catch((error: unknown) => error)) as HttpException;
+      const plain = (await production.call('/v1/schedule').catch((error: unknown) => error)) as HttpException;
+
+      expect(own.getResponse()).toMatchObject({ code: 'ENGINE_WAIT_EXPIRED', params: { waitSeconds: 95 } });
+      expect(plain.getResponse()).toMatchObject({ code: 'ENGINE_WAIT_EXPIRED', params: { waitSeconds: 240, engineCeilingSeconds: 230 } });
+    });
   });
 });

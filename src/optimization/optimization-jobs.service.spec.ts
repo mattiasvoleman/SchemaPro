@@ -428,6 +428,33 @@ describe('OptimizationJobsService', () => {
       });
     });
 
+    it('keeps ENGINE_PATH_CLOSED and its figures when the road to the engine closed the call: the 2026-11-23 run stored "The AI engine returned an error." and nothing else', async () => {
+      proxy.triggerScheduling.mockRejectedValue(
+        new HttpException(
+          {
+            message: 'The connection to the AI engine was closed on the way before the engine answered. The engine may still be working.',
+            code: 'ENGINE_PATH_CLOSED',
+            params: { elapsedSeconds: 303, pathLimitSeconds: 300, engineCeilingSeconds: 590 },
+          },
+          503,
+        ),
+      );
+
+      await service.start(YEAR_ID, testUser());
+      await flushBackgroundRun();
+
+      expect(tx.optimizationJob.update).toHaveBeenLastCalledWith({
+        where: { id: JOB_ID },
+        data: {
+          status: 'FAILED',
+          error: expect.stringContaining('closed on the way'),
+          errorCode: 'ENGINE_PATH_CLOSED',
+          errorParams: { elapsedSeconds: 303, pathLimitSeconds: 300, engineCeilingSeconds: 590 },
+          finishedAt: expect.any(Date),
+        },
+      });
+    });
+
     it('keeps no code for a failure of ours rather than of the school\'s data', async () => {
       // A lost connection to the engine has nothing for a school to act on and
       // nothing to translate; a Swedish sentence over it would be a promise
