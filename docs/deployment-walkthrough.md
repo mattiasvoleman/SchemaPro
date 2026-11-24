@@ -328,7 +328,7 @@ log looks *fine* is the port problem described above, not a crash.
 | `JWT_AUDIENCE` | `authenticated` |
 | `SUPABASE_URL` | your `SUPABASE_URL` from Step 2 |
 | `SUPABASE_SERVICE_ROLE_KEY` | your `SUPABASE_SERVICE_KEY` from Step 2 |
-| `AI_ENGINE_URL` | your `SOLVER_URL` from Step 6a — including `https://`, e.g. `https://solver-prod-a1b2.up.railway.app` |
+| `AI_ENGINE_URL` | your `SOLVER_URL` from Step 6a — including `https://`, e.g. `https://solver-prod-a1b2.up.railway.app`. **A run that needs more than about 5 minutes cannot succeed through that public address:** Railway closes a request that sends nothing after 300 s, and the solver sends nothing while it solves. The API then holds its wait to 290 s and the solver stops its search early, with an explanation, instead of the run dying silently. To give a run its whole time, use the private address `http://<solver service name>.railway.internal:<port>` once the solver listens where the private network reaches it: `docs/DEPLOYMENT.md` §5.3 says how to check that and change it, step by step |
 | `AI_ENGINE_API_KEY` | your `SOLVER_SECRET` from Step 6a |
 | `AI_ENGINE_TIMEOUT_MS` | leave it out. The API then waits as long as the engine says it can take, and follows the engine if you raise `SOLVER_MAX_TIME_SECONDS` later. If you set it, `120000` at the defaults and at least the engine's budget + `SOLVER_PROBE_SECONDS` + 35 s (`240000` at a 180 s budget): a production start with a shorter one is refused and says which number to change |
 | `THROTTLE_TTL_SECONDS` | `60` |
