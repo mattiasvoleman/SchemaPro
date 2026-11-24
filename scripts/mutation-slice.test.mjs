@@ -1127,3 +1127,17 @@ test('an instrumenter that fails makes the night of a slice that holds a part of
     p.done();
   }
 });
+
+test("the sandbox whitelist holds every guide that a spec importing a mutated file reads", () => {
+  // src/database/deployment-pool-size.spec.ts imports pool-config.ts, which Stryker mutates, and reads the two
+  // deployment guides. Stryker copies only what ignorePatterns lets through, so without the guides the spec ends in
+  // ENOENT in the initial test run and the night's slice (10 and 12 hold the files it relates to) is over before a
+  // mutant has run. The guides are named from the spec itself, so a third one added to it is found here.
+  const spec = readFileSync(new URL('../src/database/deployment-pool-size.spec.ts', import.meta.url), 'utf8');
+  const config = JSON.parse(readFileSync(new URL('../stryker.conf.json', import.meta.url), 'utf8'));
+  const guides = [...new Set(spec.match(/docs\/[A-Za-z0-9_.-]+\.md/g) ?? [])];
+  assert.ok(guides.length >= 2, `the spec names its guides (${guides.join(', ')})`);
+  for (const guide of guides) {
+    assert.ok(config.ignorePatterns.includes(`!${guide}`), `${guide} is read by deployment-pool-size.spec.ts and is not in stryker.conf.json's ignorePatterns`);
+  }
+});

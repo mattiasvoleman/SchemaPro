@@ -252,15 +252,19 @@ school's whole week (`prepareSchedule`) in one transaction: about 40
 statements one after the other, each a round trip to the database, with the
 connection held and the database idle in between. That is 0.1 s on one
 machine and 4 s when the API and the database are 100 ms apart. On
-2026-11-23 the real school ran both at once on a pool of 1 and every other
-request answered 500 "Unable to start a transaction in the given time" for 26
-seconds, and ten background jobs' ticks failed with it.
+2026-11-23 the real school ran both at once and every other request answered
+500 "Unable to start a transaction in the given time" for 26 seconds, and ten
+background jobs' ticks failed with it. The pool size in use that day was not
+read when this was written (this guide then said 1, and the figures below are
+what a pool of 1 does to that load), so read the `connection_limit` of your own
+`DATABASE_URL` before taking the pool to be the cause.
 
 **What a pool of 1, 3 and 10 does** (measured 2026-11-24 on a development
 machine against Postgres 17, the round trip made 100 ms long; the school is a
 högstadium of 327 posts; Kontrollera veckan and Generera's fetch at once, a
 three page loads and a job tick a second beside them; the
-probe `scripts/test/probe-anslutningar.ts` runs the same at 50 ms in CI):
+probe `scripts/test/probe-anslutningar.ts` runs a lighter version at 50 ms in
+CI, with fewer calls at a pool of 1, so no call is refused there):
 
 | Pool | With Prisma's own 2 s wait (before) | With the API's 10 s wait (now) |
 | --- | --- | --- |
@@ -273,8 +277,10 @@ serve more than about one request a second, whatever else is going on: a
 request is some ten round trips, and the one connection does them one at a
 time.
 
-**Why 10.** It is what the API needs and no more: the worst case measured, two
-fetches and five other calls at once, used 7 connections. It is also pg's own
+**Why 10.** It is what the API needs and no more: in that measurement, two
+fetches and five other calls at once used 7 connections (a school's busiest
+minute can use more, which is why the pooler's Pool Size below is the other
+bound). It is also pg's own
 default, so a URL with no `connection_limit` gives the same pool. Supabase
 names a `connection_limit` far past the default as a common cause of server strain. A
 connection through the pooler in transaction mode (port 6543) is a *client*
