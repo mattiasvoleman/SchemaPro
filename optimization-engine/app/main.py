@@ -15,7 +15,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.exams import router as exams_router
 from app.api.v1.optimize import router as optimize_router
-from app.api.v1.optimize import run_solver, solve_ceiling_seconds
+from app.api.v1.optimize import (
+    log_optimization_completed,
+    log_optimization_requested,
+    run_solver,
+    solve_ceiling_seconds,
+)
 from app.api.v1.rooms import router as rooms_router
 from app.api.v1.staffing import router as staffing_router
 from app.api.v1.suggest_changes import router as suggest_changes_router
@@ -112,7 +117,11 @@ def create_legacy_schedule_router() -> APIRouter:
         payload: OptimizeScheduleRequest,
         settings: Settings = Depends(get_app_settings),
     ) -> OptimizeScheduleResponse:
-        return await run_solver(payload, settings)
+        # The same two lines /api/v1/optimize says: this is the door the gateway uses.
+        log_optimization_requested(payload)
+        response = await run_solver(payload, settings)
+        log_optimization_completed(response)
+        return response
 
     return legacy
 
