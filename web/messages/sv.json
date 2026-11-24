@@ -1902,7 +1902,8 @@
       },
       "tightYear": "{grades, select, any {Klasser med okänd årskurs} other {Åk {grades}}}: minst {percent, number} %",
       "tightYearsBound": "Siffrorna är minst-tal: en årskurs kan vara fullare än sin siffra säger, och två årskursers procent går inte att jämföra.",
-      "weekLoadCut": "Räkningen av årskursernas minsta vecka hann inte med alla årskurser. En årskurs utan siffra här är inte räknad, vilket inte är detsamma som att den ligger under 85 %.",
+      "weekLoadCut": "Räkningen av årskursernas minsta vecka hann inte med alla årskurser. En årskurs utan siffra här är inte räknad, vilket inte är detsamma som att den ligger under {percent, number} %.",
+      "weekLoadCutPlain": "Räkningen av årskursernas minsta vecka hann inte med alla årskurser. En årskurs utan siffra här är inte räknad, vilket inte är detsamma som att den ligger under tröskeln som räkningen jämför med.",
       "nextTitle": "Nästa steg",
       "next": {
         "RULES_MEASURED": "Lätta på regeln som raderna under Upptäckta konflikter pekar ut och kör igen.",

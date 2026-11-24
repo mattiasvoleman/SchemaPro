@@ -55,6 +55,20 @@ export const SLOW_SETUP_MIN_SECONDS = 10;
 // sum of the two steps it names (5 s and 10 s).
 const SETUP_STAGES: readonly string[] = ["PRECHECKS", "BUILD"];
 
+// The steps that are searches: the same three the list above the sentence names as searches. `search.phases` has a phase for the two
+// satisfaction searches only (the engine notes none for the walk's), so a sentence made of the phases says less than the list when
+// the walk's search ran: "En sökning pågick i sammanlagt 30 s" under 60 s and 30 s.
+const SEARCH_STAGES: readonly string[] = ["SITES", "SEARCH_CLEAN", "SEARCH_CLONE"];
+
+/** How many searches ran and for how long, counted from the same steps the list above the sentence shows. */
+export function searchesOf(report: TimeoutReport): { count: number; seconds: number } {
+  const searches = report.stages.filter((stage) => SEARCH_STAGES.includes(stage.stage));
+  return {
+    count: searches.length,
+    seconds: Math.round(searches.reduce((sum, stage) => sum + stage.seconds, 0) * 10) / 10,
+  };
+}
+
 const numberOf = (value: string | number | undefined): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
@@ -78,9 +92,27 @@ function tightYearsOf(conflicts: readonly ConflictDetail[]): TightYear[] {
     .sort((a, b) => order(a.grades) - order(b.grades));
 }
 
-/** The rules a probe found that, relaxed, let the week solve: the probe's findings, never its "could not measure" row. */
+/**
+ * The percent the week load counts against ("not the same as being under 85 %"), as the engine's own row says it, or null when
+ * there is no such row or it carries no figure: the text does not write a threshold the engine has not named.
+ */
+export function weekLoadThresholdOf(conflicts: readonly ConflictDetail[]): number | null {
+  for (const row of conflicts) {
+    if (row.code !== "WEEK_LOAD_NOT_COUNTED") continue;
+    const percent = numberOf(row.params?.percent);
+    if (percent !== null) return percent;
+  }
+  return null;
+}
+
+/**
+ * The rules a probe found that, relaxed, let the week solve: the probe's findings, never its "could not measure" row. A probe
+ * that is not a rule lifted is another thing: the engine says a rule by `PROBE_SOLVED_WITHOUT_…`, and the two it says by
+ * `PROBE_SOLVED_WITH_…` (a teacher of its own on each shared group with the groups run in one parallel block, and the placed lessons
+ * released) change the week and drop no rule, so "en regel gjorde att veckan gick att lösa" and "lätta på regeln" are not true of them.
+ */
 function measuredRulesOf(conflicts: readonly ConflictDetail[]): number {
-  return conflicts.filter((row) => row.category === "TIMEOUT_PROBE" && (row.code ?? "").startsWith("PROBE_SOLVED_")).length;
+  return conflicts.filter((row) => row.category === "TIMEOUT_PROBE" && (row.code ?? "").startsWith("PROBE_SOLVED_WITHOUT_")).length;
 }
 
 export function timeoutAccountOf(report: TimeoutReport, conflicts: readonly ConflictDetail[]): TimeoutAccount {

@@ -103,6 +103,22 @@ describe.each(["sv", "en"] as const)("the card in %s", (loc) => {
     expect(text).not.toMatch(/trång|tight week|The week is tight/i);
   });
 
+  it("names the threshold of a cut count from the engine's own row, and writes none when the row names none", () => {
+    const row = (percent: number): ConflictDetail => ({
+      category: "REQUIREMENT_DEMAND",
+      code: "WEEK_LOAD_NOT_COUNTED",
+      message: "…",
+      params: { seconds: 4, percent },
+      resourceNames: [],
+    });
+    const named = said(loc, report({ weekLoadCut: true }), [row(90)]);
+    expect(named).toMatch(/under 90 %/);
+    expect(named).not.toMatch(/85/);
+    const unnamed = said(loc, report({ weekLoadCut: true }), []);
+    expect(unnamed).not.toMatch(/\d+ %/);
+    expect(unnamed).toMatch(loc === "sv" ? /inte räknad/ : /not counted/);
+  });
+
   it("does not draw a refusal's rows as a tight week", () => {
     const refusal: ConflictDetail[] = [
       {

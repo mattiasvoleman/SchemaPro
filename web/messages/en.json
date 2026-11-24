@@ -1902,7 +1902,8 @@
       },
       "tightYear": "{grades, select, any {Classes with unknown years} other {Year {grades}}}: at least {percent, number} %",
       "tightYearsBound": "The figures are lower limits: a year can be fuller than its figure says, and two years' percentages cannot be compared.",
-      "weekLoadCut": "The count of each year's least week did not reach every year. A year with no figure here was not counted, which is not the same as being under 85 %.",
+      "weekLoadCut": "The count of each year's least week did not reach every year. A year with no figure here was not counted, which is not the same as being under {percent, number} %.",
+      "weekLoadCutPlain": "The count of each year's least week did not reach every year. A year with no figure here was not counted, which is not the same as being under the threshold the count compares with.",
       "nextTitle": "Next step",
       "next": {
         "RULES_MEASURED": "Relax the rule the rows under Detected conflicts point out, and run again.",

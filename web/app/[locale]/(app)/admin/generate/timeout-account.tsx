@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import type { ConflictDetail, TimeoutReport } from "@/lib/queries";
-import { timeoutAccountOf, type TimeoutCause } from "./timeout-cause";
+import { searchesOf, timeoutAccountOf, weekLoadThresholdOf, type TimeoutCause } from "./timeout-cause";
 
 /*
  * WHAT A RUN THAT RAN OUT OF TIME SAYS FOR ITSELF (omgång 13, M2 Förklaringen när tiden tar slut).
@@ -37,7 +37,9 @@ export function TimeoutAccount({ report, conflicts }: TimeoutAccountProps) {
   const t = useTranslations("generate.timeoutAccount");
   const account = timeoutAccountOf(report, conflicts);
   const spent = report.stages.reduce((sum, stage) => sum + stage.seconds, 0);
-  const searchSeconds = report.search.phases.reduce((sum, phase) => sum + phase.seconds, 0);
+  // Counted from the steps the list below shows (the walk's search among them), never from `search.phases`, which has no phase for it.
+  const searched = searchesOf(report);
+  const threshold = weekLoadThresholdOf(conflicts);
 
   return (
     <section aria-labelledby="timeout-account-title" className="space-y-4">
@@ -73,9 +75,7 @@ export function TimeoutAccount({ report, conflicts }: TimeoutAccountProps) {
       <div className="space-y-1">
         <h4 className="text-sm font-medium">{t("searchTitle")}</h4>
         <p className="max-w-prose text-sm">
-          {report.search.phases.length > 0
-            ? t("searchNone", { count: report.search.phases.length, seconds: Math.round(searchSeconds * 10) / 10 })
-            : t("searchNotRun")}
+          {searched.count > 0 ? t("searchNone", { count: searched.count, seconds: searched.seconds }) : t("searchNotRun")}
         </p>
         <p className="max-w-prose text-sm text-muted-foreground">
           {report.budgetSeconds < report.configuredBudgetSeconds
@@ -93,7 +93,12 @@ export function TimeoutAccount({ report, conflicts }: TimeoutAccountProps) {
             </li>
           ))}
         </ul>
-        {account.weekLoadCut ? <p className="max-w-prose text-sm text-muted-foreground">{t("weekLoadCut")}</p> : null}
+        {account.weekLoadCut ? (
+          <p className="max-w-prose text-sm text-muted-foreground">
+            {/* The threshold is the engine's own row's (WEEK_LOAD_NOT_COUNTED): with no row, a sentence that names none. */}
+            {threshold !== null ? t("weekLoadCut", { percent: threshold }) : t("weekLoadCutPlain")}
+          </p>
+        ) : null}
       </div>
 
       <div className="space-y-1">
@@ -114,7 +119,8 @@ export function TimeoutAccount({ report, conflicts }: TimeoutAccountProps) {
           <ul className="list-disc space-y-0.5 pl-5">
             {report.search.phases.map((phase) => (
               <li key={phase.phase}>
-                {phase.conflicts === null || phase.branches === null
+                {/* Loose on purpose: a count the gateway left out is undefined, and `{conflicts, number}` cannot be formatted without one. */}
+                {phase.conflicts == null || phase.branches == null
                   ? t("phaseNoFigures", { phase: phase.phase, seconds: phase.seconds })
                   : t("phase", {
                       phase: phase.phase,
