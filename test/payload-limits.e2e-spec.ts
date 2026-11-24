@@ -1,3 +1,4 @@
+import { gzipSync } from 'node:zlib';
 import request from 'supertest';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
@@ -123,6 +124,7 @@ describe('Import payload limits (e2e)', () => {
     expect(response.body).toMatchObject({
       status: 413,
       title: 'Payload Too Large',
+      code: 'REQUEST_BODY_TOO_LARGE',
     });
     expect(String(response.body.detail)).toMatch(/too large/i);
   });
@@ -135,6 +137,29 @@ describe('Import payload limits (e2e)', () => {
       .send('{"rows": [')
       .expect(400);
 
-    expect(response.body).toMatchObject({ status: 400 });
+    // Nest maps body-parser's SyntaxError to a BadRequestException with Node's own message ("Unexpected end of JSON input") before the
+    // filter sees it, which is why the 400 carries its code from http-defaults.ts and not from the filter's body-parser branch.
+    expect(response.body).toMatchObject({
+      status: 400,
+      code: 'REQUEST_BODY_NOT_JSON',
+      detail: 'The request body is not valid JSON.',
+    });
+    expect(JSON.stringify(response.body)).not.toContain('Unexpected');
+  });
+
+  it('answers 415 with its code when the body is compressed: it is never inflated', async () => {
+    const response = await request(harness.app.getHttpServer())
+      .post('/api/v1/import/room-types')
+      .set('x-test-user', asUser({}))
+      .set('Content-Type', 'application/json')
+      .set('Content-Encoding', 'gzip')
+      .send(gzipSync(Buffer.from(JSON.stringify({ rows: [] }))))
+      .expect(415);
+
+    expect(response.body).toMatchObject({
+      status: 415,
+      title: 'Unsupported Media Type',
+      code: 'REQUEST_ENCODING_UNSUPPORTED',
+    });
   });
 });

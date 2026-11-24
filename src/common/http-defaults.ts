@@ -1,4 +1,6 @@
+import { BadRequestException } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { REQUEST_BODY_NOT_JSON, REQUEST_BODY_NOT_JSON_DETAIL } from './filters/http-exception.filter';
 
 /**
  * The largest body the API accepts.
@@ -32,4 +34,24 @@ export const MAX_BODY_SIZE = '1mb';
 export function configureBodyParsers(app: NestExpressApplication): void {
   app.useBodyParser('json', { limit: MAX_BODY_SIZE, inflate: false });
   app.useBodyParser('urlencoded', { limit: MAX_BODY_SIZE, extended: true, inflate: false });
+  // Straight after the parsers, which the adapter registers as it is told: an error middleware sees only what is registered before it.
+  app.use(jsonParseRefusal);
+}
+
+/**
+ * A body that is not JSON, as the one answer a page can word: a 400 with the code REQUEST_BODY_NOT_JSON.
+ *
+ * body-parser throws a SyntaxError carrying `type: 'entity.parse.failed'`, and Nest maps every SyntaxError to
+ * `new BadRequestException(error.message)` before an exception filter is asked (routes-resolver.js, mapExternalException). What
+ * a client got was Node's own sentence ("Unexpected end of JSON input", worded by the engine's version of V8) and no code, so the
+ * filter's own branch for `entity.parse.failed` was never reached over HTTP (the review of #415, LÅG-1). This is an Express
+ * error middleware (four arguments, which is how Express knows), and it passes every other error on as it came.
+ */
+export function jsonParseRefusal(error: unknown, _request: unknown, _response: unknown, next: (error?: unknown) => void): void {
+  const type = typeof error === 'object' && error !== null ? (error as { type?: unknown }).type : undefined;
+  next(
+    type === 'entity.parse.failed'
+      ? new BadRequestException({ message: REQUEST_BODY_NOT_JSON_DETAIL, code: REQUEST_BODY_NOT_JSON })
+      : error,
+  );
 }

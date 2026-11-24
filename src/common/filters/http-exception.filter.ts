@@ -23,6 +23,17 @@ interface NormalizedError {
   params?: Record<string, string | number>;
 }
 
+/**
+ * The codes of what body-parser refuses before any route is reached (fromBodyParserError): a body past the limit (413), a body that is
+ * not JSON (400) and a body in a content encoding it will not decompress (415). They carry no params. A page has a sentence for each
+ * in its own language; the English `detail` is for whoever reads the JSON (the review of #415, LÅG-1).
+ */
+export const REQUEST_BODY_TOO_LARGE = 'REQUEST_BODY_TOO_LARGE';
+export const REQUEST_BODY_NOT_JSON = 'REQUEST_BODY_NOT_JSON';
+export const REQUEST_ENCODING_UNSUPPORTED = 'REQUEST_ENCODING_UNSUPPORTED';
+/** The English detail of a body that is not JSON, for the filter's branch and for the error middleware that gives the 400 its code (http-defaults.ts). */
+export const REQUEST_BODY_NOT_JSON_DETAIL = 'The request body is not valid JSON.';
+
 /** What a problem `code` may look like: a name, not a sentence. */
 const SAFE_CODE = /^[A-Za-z0-9_.:-]{1,64}$/;
 
@@ -198,18 +209,21 @@ export class HttpExceptionFilter implements ExceptionFilter {
           detail:
             'The request body is too large. Split the import into smaller ' +
             'files and upload them one at a time.',
+          code: REQUEST_BODY_TOO_LARGE,
         };
       case 'entity.parse.failed':
         return {
           status: HttpStatus.BAD_REQUEST,
           title: this.titleFor(HttpStatus.BAD_REQUEST),
-          detail: 'The request body is not valid JSON.',
+          detail: REQUEST_BODY_NOT_JSON_DETAIL,
+          code: REQUEST_BODY_NOT_JSON,
         };
       case 'encoding.unsupported':
         return {
           status: HttpStatus.UNSUPPORTED_MEDIA_TYPE,
           title: this.titleFor(HttpStatus.UNSUPPORTED_MEDIA_TYPE),
           detail: 'The request body uses an unsupported content encoding.',
+          code: REQUEST_ENCODING_UNSUPPORTED,
         };
       default:
         return null;

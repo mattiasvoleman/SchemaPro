@@ -332,21 +332,26 @@ describe('HttpExceptionFilter', () => {
         413,
         'Payload Too Large',
         'The request body is too large. Split the import into smaller files and upload them one at a time.',
+        'REQUEST_BODY_TOO_LARGE',
       ],
-      ['entity.parse.failed', 400, 'Bad Request', 'The request body is not valid JSON.'],
+      ['entity.parse.failed', 400, 'Bad Request', 'The request body is not valid JSON.', 'REQUEST_BODY_NOT_JSON'],
       [
         'encoding.unsupported',
         415,
         'Unsupported Media Type',
         'The request body uses an unsupported content encoding.',
+        'REQUEST_ENCODING_UNSUPPORTED',
       ],
-    ])('answers %s with %i and says what to do about it', (type, status, title, detail) => {
+    ])('answers %s with %i and says what to do about it, with a code the page words in its own language', (type, status, title, detail, code) => {
       // Not a 500: the CSV import one row too large used to come back as "an
       // unexpected error occurred", sending the caller after a server fault.
+      // And not a sentence of the gateway's English to a Swedish reader: the code is what the page
+      // has a sentence for (the review of #415, LÅG-1), the detail stays for whoever reads the JSON.
       filter.catch(bodyParserError(type, status), host);
 
       expect(response.status).toHaveBeenCalledWith(status);
-      expect(body()).toMatchObject({ status, title, detail });
+      expect(body()).toMatchObject({ status, title, detail, code });
+      expect(body()).not.toHaveProperty('params');
       expect(JSON.stringify(body())).not.toContain('raw body-parser message');
     });
 
