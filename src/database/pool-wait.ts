@@ -34,3 +34,30 @@ export function isPoolBusy(error: unknown): boolean {
   }
   return error instanceof Error && error.message === PG_CONNECT_TIMEOUT;
 }
+
+/**
+ * The seconds a 503 DATABASE_BUSY asks the caller to wait before it asks again (`Retry-After`). The refusal
+ * came after ten seconds of waiting for a connection, and what holds the pool is mostly a long transaction,
+ * a Generera's or a Kontrollera veckan's fetch of a school's week (a few seconds to tens of them): a caller that
+ * comes straight back meets the same full pool.
+ */
+export const DATABASE_BUSY_RETRY_AFTER_SECONDS = 5;
+
+/**
+ * Runs `attempt`, and runs it once more when the pool had no connection for it (isPoolBusy): the transaction
+ * never started, so nothing ran and the second try is as safe as the first. Any other failure, and a second
+ * refusal, is the caller's as it is.
+ *
+ * For a call whose whole effect is one transaction, and whose loss is dear: Generera's write after the engine
+ * (the review of #419, L-2), where "try again in a moment" would send the school back to the engine for minutes.
+ * Not for a call that does anything outside its transaction before it can be refused.
+ */
+export async function retryOnceIfPoolBusy<T>(attempt: () => Promise<T>, onRetry?: (error: unknown) => void): Promise<T> {
+  try {
+    return await attempt();
+  } catch (error) {
+    if (!isPoolBusy(error)) throw error;
+    onRetry?.(error);
+    return attempt();
+  }
+}

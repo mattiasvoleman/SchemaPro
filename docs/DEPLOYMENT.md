@@ -298,8 +298,18 @@ lowering `connection_limit` below 7.
 **What the API does when the pool is full anyway.** A transaction waits up to
 10 seconds for a connection (`CONNECTION_WAIT_MS`, src/database/prisma.service.ts;
 Prisma's own is 2), and one that still finds none is answered `503
-DATABASE_BUSY`, a busy server and not a bug, with nothing written. The public
-timetable viewer's door waits 5.
+DATABASE_BUSY`, a busy server and not a bug, with nothing written, and with a
+`Retry-After` of 5 seconds. The public timetable viewer's door waits 5. Generera
+writes its timetable in a transaction of its own after minutes in the engine:
+a pool with no connection for that write is asked a second time before the run
+is given up, so that "try again in a moment" does not send the school back to the
+engine. Leave `pool_timeout` out of `DATABASE_URL`, or keep it at 10 or less:
+it is how long pg itself waits for a connection (10 when it is not set, and 0
+means no limit), and when that is longer than the 10 above, a call Prisma has
+refused keeps its place in pg's queue and takes a connection round (BEGIN, one
+row, ROLLBACK) when one comes free, which keeps the errors going after the long
+transaction that caused them has ended. `src/database/prisma.service.spec.ts`
+holds the two waits to each other for a URL that sets none.
 
 **The round trip is the other lever.** Every statement is one. Run the API in
 the Railway region nearest the Supabase region (check Railway's region list
