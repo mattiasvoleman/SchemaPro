@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { PrismaClient } from '@prisma/client';
 import { testUser } from '../../test/utils/prisma-mock';
 import { CONNECTION_WAIT_MS, PrismaService } from './prisma.service';
@@ -426,14 +424,15 @@ describe('PrismaService', () => {
       expect(CONNECTION_WAIT_MS).toBe(10_000);
     });
 
-    it('has no door that opens a transaction by itself and so is left with Prisma\'s 2 s', () => {
-      // Read from the source: a door added tomorrow with `this.$transaction(` of its own would pass every
-      // test above and meet the default in production. The two helpers below are the only ways in.
-      const source = readFileSync(join(__dirname, 'prisma.service.ts'), 'utf8');
-      const calls = source.split('\n').filter((line) => /this\.\$transaction\(/.test(line) && !/^\s*(\*|\/\/)/.test(line));
-      // The batch's (BATCH_TRANSACTION_OPTIONS, tested above) and `interactive`, which names maxWait on the line.
-      expect(calls).toHaveLength(2);
-      expect(calls.filter((line) => line.includes('maxWait'))).toHaveLength(1);
+    it('has no door that is missing from the table above, and so is left with Prisma\'s 2 s', () => {
+      // Every `with…` method of the service is a door. One added tomorrow that the table does not name has not been
+      // shown to state its wait, and fails here. withVerifiedSubject is the batch door (BATCH_TRANSACTION_OPTIONS,
+      // the test above). Read from the class and not from the source text: Stryker's sandbox instruments
+      // prisma.service.ts and breaks the line the text was counted on, which ended the nightly run at its first test.
+      const named = Object.getOwnPropertyNames(PrismaService.prototype).filter((name) => /^with[A-Z]/.test(name)).sort();
+      const covered = [...doors.map(([name]) => name), 'withVerifiedSubject'].sort();
+
+      expect(named).toEqual(covered);
     });
   });
 
