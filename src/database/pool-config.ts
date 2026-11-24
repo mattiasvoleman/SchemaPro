@@ -12,9 +12,10 @@ import { PrismaPgWithEndedTransactionGuard } from './ended-transaction-guard';
  * the connection string. Under @prisma/adapter-pg the pool is pg's, and pg
  * reads none of them: left alone it opens up to 10 connections and lets a
  * request wait for one forever. That would shrink the latency stack's 25
- * (docker-compose.yml) and grow the documented production 1
- * (docs/DEPLOYMENT.md §3) without anyone deciding either. So the parameters
- * keep their Prisma 5 meaning here, and the URL goes to pg untouched:
+ * (docker-compose.yml) without anyone deciding it, and leave the production
+ * size (10, docs/DEPLOYMENT.md §3.1, which is pg's default too) to a default
+ * instead of to a decision. So the parameters keep their Prisma 5 meaning
+ * here, and the URL goes to pg untouched:
  *
  *   connection_limit → max                      absent: pg's default, 10
  *   pool_timeout     → connectionTimeoutMillis  seconds; absent: 10; 0: no limit

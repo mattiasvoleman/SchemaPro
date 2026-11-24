@@ -208,7 +208,7 @@ The runtime connection string for the API (step 4) uses this role through the
 **pooler** (port 6543):
 
 ```
-postgresql://app_authenticated.<ref>:<PASSWORD>@aws-0-<region>.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&sslmode=require&uselibpqcompat=true
+postgresql://app_authenticated.<ref>:<PASSWORD>@aws-0-<region>.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=10&sslmode=require&uselibpqcompat=true
 ```
 
 > **Keep `sslmode` in the string.** Since Prisma 7 the API connects through
@@ -223,8 +223,9 @@ postgresql://app_authenticated.<ref>:<PASSWORD>@aws-0-<region>.pooler.supabase.c
 > - To verify the certificate too, put Supabase's CA certificate in the image
 >   and use `sslmode=verify-full&sslrootcert=<path to it>` instead.
 >
-> `connection_limit` still sizes the API's pool. Do not add `query_timeout`:
-> the API refuses to start with it (src/database/pool-config.ts).
+> `connection_limit` sizes the API's pool: **10**, not 1 (§3.1 says why). Do not
+> add `query_timeout`: the API refuses to start with it
+> (src/database/pool-config.ts).
 
 > Sanity check: connect as `app_authenticated` and run
 > `select count(*) from "Schools";` — it must return **0 rows visible** (RLS
@@ -235,6 +236,71 @@ The API enforces this at boot: it reads its own privileges from `pg_roles` and
 either makes PostgreSQL skip every policy and returns other schools' rows
 instead of erroring. A misconfigured `DATABASE_URL` therefore fails loudly on
 deploy rather than silently disabling tenancy.
+
+### 3.1 The size of the API's pool: 10, not 1
+
+`connection_limit` is how many connections the API's one process holds to the
+pooler at the same time, and so how many database transactions it can have
+open at once. It used to say 1 here. Supabase's own advice to start with 1
+is for serverless functions, where thousands of short-lived instances each
+open a pool of their own; the API is one long-running process, and with 1 it
+is one lane: whatever holds the connection, every other request and every
+background job waits behind.
+
+**What holds it.** Kontrollera veckan and Generera both start by reading the
+school's whole week (`prepareSchedule`) in one transaction: about 40
+statements one after the other, each a round trip to the database, with the
+connection held and the database idle in between. That is 0.1 s on one
+machine and 4 s when the API and the database are 100 ms apart. On
+2026-11-23 the real school ran both at once on a pool of 1 and every other
+request answered 500 "Unable to start a transaction in the given time" for 26
+seconds, and ten background jobs' ticks failed with it.
+
+**What a pool of 1, 3 and 10 does** (measured 2026-11-24 on a development
+machine against Postgres 17, the round trip made 100 ms long; the school is a
+högstadium of 327 posts; Kontrollera veckan and Generera's fetch at once, a
+three page loads and a job tick a second beside them; the
+probe `scripts/test/probe-anslutningar.ts` runs the same at 50 ms in CI):
+
+| Pool | With Prisma's own 2 s wait (before) | With the API's 10 s wait (now) |
+| --- | --- | --- |
+| 1 | 20 of 20 calls refused, and one of the two fetches too | 19 of 36 calls refused: the queue is longer than the wait |
+| 3 | 3 of 20 refused | none refused; the slowest waited 5.4 s |
+| 10 | none refused | none refused; the slowest took 1.2 s, nothing waited for a fetch |
+
+At a 10 ms round trip every size got through. At 100 ms a pool of 1 cannot
+serve more than about one request a second, whatever else is going on: a
+request is some ten round trips, and the one connection does them one at a
+time.
+
+**Why 10.** It is what the API needs and no more: the worst case measured, two
+fetches and five other calls at once, used 7 connections. It is also pg's own
+default, so a URL with no `connection_limit` gives the same pool. Supabase
+names a `connection_limit` far past the default as a common cause of server strain. A
+connection through the pooler in transaction mode (port 6543) is a *client*
+connection to Supavisor; a *server* connection is taken only while a
+transaction is open, and those are bounded by the pooler's **Pool Size**
+(Database settings → Connection pooling; 15 by default on the smaller compute
+sizes, per database role, so `app_authenticated` has its own 15). One API instance at 10 fits; two at once
+while a deploy overlaps could ask for 20, which only happens if both have ten
+transactions open together. Supabase's docs do not say how the pooler queues
+the rest, so if you see "Max client connections reached" or timeouts at the
+pooler, raise Pool Size (it may be up to 80% of the database's
+`max_connections` if PostgREST is not used heavily, 40% if it is) before
+lowering `connection_limit` below 7.
+
+**What the API does when the pool is full anyway.** A transaction waits up to
+10 seconds for a connection (`CONNECTION_WAIT_MS`, src/database/prisma.service.ts;
+Prisma's own is 2), and one that still finds none is answered `503
+DATABASE_BUSY`, a busy server and not a bug, with nothing written. The public
+timetable viewer's door waits 5.
+
+**The round trip is the other lever.** Every statement is one. Run the API in
+the Railway region nearest the Supabase region (check Railway's region list
+against the region `<region>` in the URL above), and read the number from the
+API's own shell: `psql "$DATABASE_URL" -c '\timing' -c 'select 1'` prints
+the time of a round trip. 10 ms or less is fine; 100 ms means every page waits
+a second on the database.
 
 ---
 

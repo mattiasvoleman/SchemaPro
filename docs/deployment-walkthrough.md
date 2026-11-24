@@ -344,7 +344,7 @@ log looks *fine* is the port problem described above, not a crash.
 The database connection string is:
 
 ```
-postgresql://app_authenticated.<PROJECT_REF>:<APP_PASSWORD>@aws-0-<REGION>.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&sslmode=require&uselibpqcompat=true
+postgresql://app_authenticated.<PROJECT_REF>:<APP_PASSWORD>@aws-0-<REGION>.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=10&sslmode=require&uselibpqcompat=true
 ```
 
 Replace `<PROJECT_REF>` (the `abcdefgh` part of your Supabase URL),
@@ -352,6 +352,11 @@ Replace `<PROJECT_REF>` (the `abcdefgh` part of your Supabase URL),
 shows the exact string under **Settings → Database → Connection pooling** —
 copy it from there and swap in the `app_authenticated` username and password
 rather than typing it by hand.
+
+> Keep `connection_limit=10`, not 1. Supabase's advice to start at 1 is for
+> serverless functions; the API is one long-running process, and with a pool of
+> 1 a single Generera makes every other request and background job wait or
+> fail. `docs/DEPLOYMENT.md` §3.1 has the numbers.
 
 > Keep `&sslmode=require&uselibpqcompat=true` at the end, even if the string
 > you copy from Supabase does not have it. It is what encrypts the
