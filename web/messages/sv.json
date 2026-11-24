@@ -2073,7 +2073,7 @@
     "atLeast": "Procenttalen är lägst så höga: räkningen hann inte klart.",
     "tightBody": "En så trång vecka är svår att lägga, och mer tid kanske inte räcker. Raderna nedan säger vad som tar tid.",
     "impossibleBody": "Generera skulle neka veckan inom några sekunder. Rätta orsakerna nedan först.",
-    "yearTight": "{grades, select, any {Klasserna med okänd årskurs ligger} other {Åk {grades} ligger}} på {percent} % av ramtiden.",
+    "yearTight": "{grades, select, any {Klasserna med okänd årskurs ligger} other {Åk {grades} ligger}} på minst {percent} % av ramtiden.",
     "yearOver": "{grades, select, any {Klasserna med okänd årskurs behöver} other {Åk {grades} behöver}} mer än ramtiden ger: minst {demandMinutes} av {capacityMinutes} minuter.",
     "refusedTitle": "Veckan kan inte läggas som den är",
     "notRun": "Det här kördes inte",
@@ -2086,7 +2086,7 @@
     "unavailable": "Kontrollen kunde inte köras just nu. Du kan ändå generera schemat.",
     "unavailableOlder": "Schemamotorn uppdateras och kan inte kontrollera veckan ännu. Försök igen om några minuter. Du kan ändå generera schemat.",
     "ask": {
-      "titleTight": "{grades, select, any {Klasserna med okänd årskurs är} other {Åk {grades} är}} {percent} % full. Kör ändå?",
+      "titleTight": "{grades, select, any {Klasserna med okänd årskurs är} other {Åk {grades} är}} minst {percent} % full. Kör ändå?",
       "titleTightPlain": "Veckan är trång. Kör ändå?",
       "titleImpossible": "Veckan går inte att lägga. Kör ändå?",
       "titleRefused": "Veckan kan inte läggas som den är. Kör ändå?",

@@ -26,18 +26,32 @@ const english = createTranslator({ locale: "en", messages: en, namespace: "weekC
 
 describe("weekCheck", () => {
   it("asks the question the phase was written for, in both languages", () => {
-    expect(swedish("ask.titleTight", { grades: "7", percent: 94 })).toBe("Åk 7 är 94 % full. Kör ändå?");
-    expect(english("ask.titleTight", { grades: "7", percent: 94 })).toBe("Year 7 is 94 % full. Run anyway?");
-    expect(swedish("ask.titleTight", { grades: "any", percent: 90 })).toBe("Klasserna med okänd årskurs är 90 % full. Kör ändå?");
+    expect(swedish("ask.titleTight", { grades: "7", percent: 94 })).toBe("Åk 7 är minst 94 % full. Kör ändå?");
+    expect(english("ask.titleTight", { grades: "7", percent: 94 })).toBe("Year 7 is at least 94 % full. Run anyway?");
+    expect(swedish("ask.titleTight", { grades: "any", percent: 90 })).toBe("Klasserna med okänd årskurs är minst 90 % full. Kör ändå?");
+    expect(english("ask.titleTight", { grades: "any", percent: 90 })).toBe("The classes of unknown year are at least 90 % full. Run anyway?");
   });
 
   it("says a year's share of its frame time, and what a year over it needs", () => {
-    expect(swedish("yearTight", { grades: "9", percent: 97 })).toBe("Åk 9 ligger på 97 % av ramtiden.");
-    expect(swedish("yearTight", { grades: "any", percent: 88 })).toBe("Klasserna med okänd årskurs ligger på 88 % av ramtiden.");
+    expect(swedish("yearTight", { grades: "9", percent: 97 })).toBe("Åk 9 ligger på minst 97 % av ramtiden.");
+    expect(swedish("yearTight", { grades: "any", percent: 88 })).toBe("Klasserna med okänd årskurs ligger på minst 88 % av ramtiden.");
     expect(swedish("yearOver", { grades: "9", demandMinutes: 2365, capacityMinutes: 2275 })).toBe(
       "Åk 9 behöver mer än ramtiden ger: minst 2365 av 2275 minuter.",
     );
-    expect(english("yearTight", { grades: "9", percent: 97 })).toBe("Year 9 is at 97 % of the frame time.");
+    expect(english("yearTight", { grades: "9", percent: 97 })).toBe("Year 9 is at least 97 % of the frame time.");
+    expect(english("yearTight", { grades: "any", percent: 88 })).toBe("The classes of unknown year are at least 88 % of the frame time.");
+  });
+
+  it("never gives a year's percent without the word for what it is: the least its week needs, as the engine's own row says it", () => {
+    // The percentage is a lower bound whether or not the count finished (a year's least week is bounded from below, week_load.py),
+    // and the row under it says "at least". A line that said "94 %" beside a row that said "at least 94 %" read as two figures.
+    for (const [translate, word] of [[swedish, /minst/], [english, /at least/]] as const) {
+      for (const key of ["yearTight", "ask.titleTight"] as const) {
+        for (const grades of ["7", "any"]) {
+          expect(translate(key, { grades, percent: 91 }), `${key} ${grades}`).toMatch(word);
+        }
+      }
+    }
   });
 
   it("has a sentence for every verdict and everything a check can leave out", () => {

@@ -2073,7 +2073,7 @@
     "atLeast": "The figures are at least this high: the count did not finish.",
     "tightBody": "A week this tight is hard to lay, and more time may not be enough. The rows below say what takes the time.",
     "impossibleBody": "Generate would refuse the week within seconds. Fix the causes below first.",
-    "yearTight": "{grades, select, any {The classes of unknown year are} other {Year {grades} is}} at {percent} % of the frame time.",
+    "yearTight": "{grades, select, any {The classes of unknown year are} other {Year {grades} is}} at least {percent} % of the frame time.",
     "yearOver": "{grades, select, any {The classes of unknown year need} other {Year {grades} needs}} more than the frame time gives: at least {demandMinutes} of {capacityMinutes} minutes.",
     "refusedTitle": "The week cannot be laid as it is",
     "notRun": "What was not run",
@@ -2086,7 +2086,7 @@
     "unavailable": "The check could not run right now. You can still generate the timetable.",
     "unavailableOlder": "The scheduling engine is being updated and cannot check the week yet. Try again in a few minutes. You can still generate the timetable.",
     "ask": {
-      "titleTight": "{grades, select, any {The classes of unknown year are} other {Year {grades} is}} {percent} % full. Run anyway?",
+      "titleTight": "{grades, select, any {The classes of unknown year are} other {Year {grades} is}} at least {percent} % full. Run anyway?",
       "titleTightPlain": "The week is tight. Run anyway?",
       "titleImpossible": "The week cannot be laid. Run anyway?",
       "titleRefused": "The week cannot be laid as it is. Run anyway?",

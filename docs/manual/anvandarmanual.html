@@ -4179,7 +4179,7 @@
       <span class="ui">Generera schema</span>, frågar motorn om veckan som den
       ligger just nu, förläggningarna med, utan att lägga något schema, och
       svarar på några sekunder: inget hittades som stoppar veckan, veckan är
-      trång (”Åk 9 ligger på 97 % av ramtiden”) eller veckan går inte att
+      trång (”Åk 9 ligger på minst 97 % av ramtiden”) eller veckan går inte att
       lägga, med samma rader som en nekad körning ger. Svaret gäller veckan som
       den stod när du frågade, så en ändring du sparar tar bort det. Kontrollen
       kan visa att en vecka är omöjlig eller trång, aldrig att ett schema
@@ -6488,9 +6488,11 @@
     <span class="ui">Generera schema</span>. Knappen räknar på veckan med
     motorns snabba förkontroller, lägger inget schema och svarar på några
     sekunder. Svaret står under <span class="ui">Förutsättningar</span>: inget
-    hittades som stoppar veckan, veckan är trång (”Åk 9 ligger på 97 % av
+    hittades som stoppar veckan, veckan är trång (”Åk 9 ligger på minst 97 % av
     ramtiden”) eller veckan går inte att lägga, med samma rader som en nekad
-    körning ger. Kontrollen kan visa att en vecka är omöjlig eller trång, men
+    körning ger. Procenten är en nedre gräns: årskursens vecka behöver minst så
+    stor del av ramtiden, och kan behöva mer. Hann räkningen inte klart säger
+    svaret det. Kontrollen kan visa att en vecka är omöjlig eller trång, men
     aldrig att ett schema finns, så ”inget hittades” är ingen garanti. Det
     kontrollen inte körde står under svaret: lunchstegets egen räkning, och
     frågan om förläggningarna är orsaken, gör bara
@@ -6529,7 +6531,7 @@
   </p>
   <p>
     Samma kontroll görs när du klickar <span class="ui">Generera schema</span>.
-    Är veckan trång eller omöjlig frågar sidan (”Åk 7 är 94 % full. Kör
+    Är veckan trång eller omöjlig frågar sidan (”Åk 7 är minst 94 % full. Kör
     ändå?”) innan körningen startar, så att du slipper vänta flera minuter på
     en vecka som inte går. Kan kontrollen inte köras, till exempel medan
     schemamotorn uppdateras, startar körningen som vanligt.

@@ -34,6 +34,15 @@ import type { WeekCheckOutcome, WeekCheckResult, WeekCheckYear } from "@/lib/wee
 
 const grades = (year: number | null) => (year === null ? "any" : String(year));
 
+/** The week load's seconds ran out: a year with no row was not counted, and a year with one may be higher than its figure says. */
+const weekLoadCut = (result: WeekCheckResult): boolean => result.skipped.includes("WEEK_LOAD_DEADLINE");
+
+/** Said under the year lines wherever they are drawn (the answer, and the question before a run) when the count did not finish. */
+function AtLeastNote() {
+  const t = useTranslations("weekCheck");
+  return <p className="max-w-prose text-sm text-muted-foreground">{t("atLeast")}</p>;
+}
+
 export interface WeekCheckPanelProps {
   /** The last check's outcome; null before one has been asked for. */
   outcome: WeekCheckOutcome | null;
@@ -143,7 +152,7 @@ function Result({
   const ok = result.verdict === "OK";
   // The week load's seconds ran out: a year with no row was not counted, and a year with one may be higher than it
   // says. An OK is then "nothing found so far", and is not drawn as the green all-clear.
-  const cut = result.skipped.includes("WEEK_LOAD_DEADLINE");
+  const cut = weekLoadCut(result);
   const clear = ok && !cut;
   const summary = result.conflicts?.summaryCode || result.conflicts?.summary ? result.conflicts : null;
 
@@ -159,9 +168,7 @@ function Result({
           {ok && cut ? t("okCutTitle") : t(`verdict.${result.verdict}`)}
         </p>
         <YearLines years={result.years} />
-        {cut && result.years.length > 0 ? (
-          <p className="max-w-prose text-sm text-muted-foreground">{t("atLeast")}</p>
-        ) : null}
+        {cut && result.years.length > 0 ? <AtLeastNote /> : null}
         <p className="max-w-prose text-sm text-muted-foreground">
           {ok ? (cut ? t("okCutBody") : t("okBody")) : result.verdict === "TIGHT" ? t("tightBody") : t("impossibleBody")}
         </p>
@@ -234,6 +241,7 @@ function AskBeforeRun({
   let title: string;
   let body: string;
   let years: WeekCheckYear[] = [];
+  const cut = outcome.kind === "result" && weekLoadCut(outcome.result);
   if (outcome.kind === "result" && outcome.result.verdict === "TIGHT") {
     const heaviest = outcome.result.years[0];
     title = heaviest
@@ -258,6 +266,7 @@ function AskBeforeRun({
           <DialogDescription>{body}</DialogDescription>
         </DialogHeader>
         <YearLines years={years} />
+        {cut && years.length > 0 ? <AtLeastNote /> : null}
         <DialogFooter>
           <Button variant="outline" onClick={onCancel}>
             {tCommon("cancel")}
