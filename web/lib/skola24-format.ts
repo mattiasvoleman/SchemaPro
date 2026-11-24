@@ -310,7 +310,12 @@ export interface FormatFit {
   format: string;
   /** "header": the file's headers are the description's. "position": a file with no header row whose columns have the shape the description's fixed order says. */
   by: "header" | "position";
-  /** How many of the description's columns the file has, over how many it lists. */
+  /**
+   * How many columns of the description the fit was judged on, over how many it lists. On headers: the description's columns whose header the
+   * file has. By position there are no headers to count, so it is the description's identity (personnummer) columns, the ones the rows were
+   * checked on. Only the order of the fits uses the pair (`detectFormats` sorts on `matched / of`), so a six-column file with one identity
+   * column is the children's file (1 of 6) before the staff file (1 of 8).
+   */
   matched: number;
   of: number;
   /** On headers, every column found under the page's own label and nothing else: the only fit that is ever applied without asking. */
