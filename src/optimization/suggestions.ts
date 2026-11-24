@@ -455,7 +455,8 @@ const FIVE_RULE_REFUSALS =
   /^(TEACHER_LESSON_LONGER_THAN_DAILY_CAP|TEACHER_DAILY_CAP_|TEACHER_WORK_DAYS_|SUBJECT_DISTRIBUTION_|DISTRIBUTION_|ROOM_LOCK_)/;
 
 /** What a run that ended without an answer from the engine says, when the engine's own clock is what ran out. */
-const RAN_OUT_OF_TIME = new Set(['ENGINE_TIMED_OUT', 'ENGINE_WAIT_EXPIRED']);
+// The road between the API and the engine closing the call (ENGINE_PATH_CLOSED) is the run's time running out as well: the week was not answered in the time the road allows.
+const RAN_OUT_OF_TIME = new Set(['ENGINE_TIMED_OUT', 'ENGINE_WAIT_EXPIRED', 'ENGINE_PATH_CLOSED']);
 
 export interface RunOf {
   status: string;

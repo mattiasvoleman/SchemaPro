@@ -234,6 +234,52 @@ export function waitShortfall(timing: EngineTiming | null, configuredMs: number 
   return { sentence, minimumMs };
 }
 
+/**
+ * How near the road's limit a call must have ended for the road to be what ended it: from this many seconds before
+ * the limit (the edge's own count starts when it has the request, the API's before the connection was made; and a
+ * limit that is a few seconds off is still the road's), to PATH_CLOSE_AFTER_SECONDS after it. The edge closed the
+ * two calls of 2026-11-23 at 300 008 ms by its own log, and the jobs ended 303 s after they began.
+ */
+export const PATH_CLOSE_BEFORE_SECONDS = 20;
+/** How long after the road's limit a call can have ended and still be what the road closed (the upload, the queue, the answer). */
+export const PATH_CLOSE_AFTER_SECONDS = 30;
+
+/**
+ * The failures of a socket that was closed with no answer on it: what a proxy closing a silent call leaves in Node
+ * (`socket hang up` is ECONNRESET). A timeout (ECONNABORTED, ETIMEDOUT) is the API's own wait and not one of these, and a
+ * refused connection or an unknown name (ECONNREFUSED, ENOTFOUND) never reached anything.
+ */
+const SILENT_CLOSE_CODES: ReadonlySet<string> = new Set(['ECONNRESET', 'EPIPE', 'ERR_SOCKET_CLOSED', 'UND_ERR_SOCKET']);
+
+/** What a failed call showed of how it ended, for `closedByRoad`. */
+export interface CallEnding {
+  /** The HTTP status that came back, if any came. */
+  status: number | undefined;
+  /** The `code` of the body that came back, if it had one: the engine's own errors always do, a proxy's do not. */
+  bodyCode: unknown;
+  /** The client's own code (ECONNRESET and the like) when no answer came. */
+  errorCode: string | undefined;
+}
+
+/**
+ * Whether the road to the engine is what ended a call (omgång 15): it was a 502 or 504 that is not the engine's own
+ * (no string `code` in its body: the engine's are `{ code, message }`, and Railway's edge answers a closed call with a
+ * number there, or HTML), or a socket closed with nothing on it, and it came when the road's limit says the road closes
+ * a silent call. The engine's 503 at its ceiling and every answer it gave are not the road's, whenever they came.
+ *
+ * Tied to the limit on purpose: a call that dies at a time that is nothing the road is known to do is a fault of the
+ * engine or the network, and is said as one (ENGINE_NOT_REACHED, "returned an error"). So is every call on a road with
+ * no limit.
+ */
+export function closedByRoad(ending: CallEnding, elapsedMs: number, limitSeconds: number | undefined): boolean {
+  if (limitSeconds === undefined) return false;
+  const seconds = elapsedMs / 1000;
+  if (seconds < limitSeconds - PATH_CLOSE_BEFORE_SECONDS || seconds > limitSeconds + PATH_CLOSE_AFTER_SECONDS) return false;
+  if (ending.status === undefined) return ending.errorCode !== undefined && SILENT_CLOSE_CODES.has(ending.errorCode);
+  if (ending.status !== 502 && ending.status !== 504) return false;
+  return typeof ending.bodyCode !== 'string';
+}
+
 export interface PathShortfall {
   /** The sentence for the log: what the road does to a long run, and which number to change. */
   sentence: string;

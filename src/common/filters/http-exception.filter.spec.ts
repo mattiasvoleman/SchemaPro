@@ -131,6 +131,7 @@ describe('HttpExceptionFilter', () => {
       { ceilingSeconds: 230, stage: 'SEARCH_CLONE', stageSeconds: 160, elapsedSeconds: 230 },
     ],
     ['the API’s own wait that ran out', 'ENGINE_WAIT_EXPIRED', { waitSeconds: 240, engineCeilingSeconds: 230 }],
+    ['the road to the engine closing the call', 'ENGINE_PATH_CLOSED', { elapsedSeconds: 303, pathLimitSeconds: 300, engineCeilingSeconds: 590 }],
   ])('carries the figures of %s to the client whole (omgång 13, M2: only flat params reach it)', (_label, code, params) => {
     filter.catch(new ServiceUnavailableException({ message: 'The engine did not answer.', code, params }), host);
 

@@ -167,6 +167,7 @@ describe('SuggestionsService', () => {
       ['a TIMEOUT answer', { status: 'SUCCEEDED', solverStatus: 'TIMEOUT', errorCode: null }],
       ['the engine\'s own clock running out', { status: 'FAILED', solverStatus: null, errorCode: 'ENGINE_TIMED_OUT' }],
       ['the API\'s wait running out', { status: 'FAILED', solverStatus: null, errorCode: 'ENGINE_WAIT_EXPIRED' }],
+      ['the road to the engine closing the call', { status: 'FAILED', solverStatus: null, errorCode: 'ENGINE_PATH_CLOSED' }],
       ['a cap the week cannot hold', { status: 'FAILED', solverStatus: null, errorCode: 'TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK' }],
       ['a lesson longer than the cap', { status: 'FAILED', solverStatus: null, errorCode: 'TEACHER_LESSON_LONGER_THAN_DAILY_CAP' }],
       ['a post\'s days the week cannot hold', { status: 'FAILED', solverStatus: null, errorCode: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK' }],

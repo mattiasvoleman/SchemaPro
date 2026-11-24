@@ -1,6 +1,9 @@
 import {
+  PATH_CLOSE_AFTER_SECONDS,
+  PATH_CLOSE_BEFORE_SECONDS,
   PATH_MARGIN_SECONDS,
   clampToPath,
+  closedByRoad,
   parseEngineTiming,
   pathShortfall,
   pathWaitCapMs,
@@ -118,5 +121,62 @@ describe('pathShortfall', () => {
     expect(shortfall.fitsBudgetSeconds).toBeUndefined();
     expect(shortfall.sentence).not.toContain('SOLVER_MAX_TIME_SECONDS on the engine to');
     expect(shortfall.sentence).toContain('railway.internal');
+  });
+});
+
+describe('closedByRoad (omgång 15: a call the road to the engine closed)', () => {
+  /*
+   * The two calls of 2026-11-23 ended 303 s after they began, with the edge's own 499 at 300 008 ms: a call that is
+   * closed by the road is a 502 or 504 that is not the engine's, or a socket closed with nothing on it, near the limit the
+   * road is known to hold a silent call to. Anything else is the engine's or the network's, and keeps the name it has.
+   */
+  const edge502 = { status: 502, bodyCode: 502, errorCode: undefined };
+  const edge504 = { status: 504, bodyCode: undefined, errorCode: undefined };
+  const reset = { status: undefined, bodyCode: undefined, errorCode: 'ECONNRESET' };
+
+  it('is the edge’s 502 and 504 and a closed socket at the limit, as the incident’s calls were', () => {
+    expect(PATH_CLOSE_BEFORE_SECONDS).toBe(20);
+    expect(PATH_CLOSE_AFTER_SECONDS).toBe(30);
+    expect(closedByRoad(edge502, 303_000, 300)).toBe(true);
+    expect(closedByRoad(edge504, 300_008, 300)).toBe(true);
+    expect(closedByRoad(reset, 300_000, 300)).toBe(true);
+  });
+
+  it.each(['ECONNRESET', 'EPIPE', 'ERR_SOCKET_CLOSED', 'UND_ERR_SOCKET'])('is a socket closed with no answer (%s)', (errorCode) => {
+    expect(closedByRoad({ status: undefined, bodyCode: undefined, errorCode }, 301_000, 300)).toBe(true);
+  });
+
+  it('is not a refused connection, an unknown name, a timeout or an error with no code: they never reached anything, or are the API’s own wait', () => {
+    for (const errorCode of ['ECONNREFUSED', 'ENOTFOUND', 'ECONNABORTED', 'ETIMEDOUT', undefined]) {
+      expect(closedByRoad({ status: undefined, bodyCode: undefined, errorCode }, 300_000, 300)).toBe(false);
+    }
+  });
+
+  it('is only within the window around the limit: 20 s before it to 30 s after', () => {
+    expect(closedByRoad(edge502, 280_000, 300)).toBe(true);
+    expect(closedByRoad(edge502, 279_999, 300)).toBe(false);
+    expect(closedByRoad(edge502, 330_000, 300)).toBe(true);
+    expect(closedByRoad(edge502, 330_001, 300)).toBe(false);
+    // An engine that crashes after five seconds, or a call that dies at three minutes, is not the road's.
+    expect(closedByRoad(edge502, 5_000, 300)).toBe(false);
+    expect(closedByRoad(reset, 180_000, 300)).toBe(false);
+  });
+
+  it('follows the limit it is given, and is never on a road with none', () => {
+    expect(closedByRoad(edge502, 120_000, 120)).toBe(true);
+    expect(closedByRoad(edge502, 300_000, 120)).toBe(false);
+    expect(closedByRoad(edge502, 300_000, undefined)).toBe(false);
+    expect(closedByRoad(reset, 300_000, undefined)).toBe(false);
+  });
+
+  it('is not the engine’s own answer: a body with a string code is the engine speaking, whatever the status and the time', () => {
+    expect(closedByRoad({ status: 502, bodyCode: 'SOLVER_TIMEOUT', errorCode: undefined }, 300_000, 300)).toBe(false);
+    expect(closedByRoad({ status: 504, bodyCode: 'HTTP_ERROR', errorCode: undefined }, 300_000, 300)).toBe(false);
+  });
+
+  it('is not any other status: the engine’s 500, its 503 at its ceiling and a 4xx are its own', () => {
+    for (const status of [400, 404, 422, 429, 500, 501, 503]) {
+      expect(closedByRoad({ status, bodyCode: undefined, errorCode: undefined }, 300_000, 300)).toBe(false);
+    }
   });
 });

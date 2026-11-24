@@ -49,6 +49,7 @@ import {
   ENGINE_LACKS_BEST_EFFORT,
   ENGINE_LACKS_CANDIDATES,
   ENGINE_NOT_REACHED,
+  ENGINE_PATH_CLOSED,
   ENGINE_TIMED_OUT,
   ENGINE_WAIT_EXPIRED,
 } from './optimization-proxy.service';
@@ -2248,6 +2249,7 @@ describe('the pieces', () => {
       [ENGINE_TIMED_OUT, { ceilingSeconds: 75 }],
       [ENGINE_WAIT_EXPIRED, { waitSeconds: 95, engineCeilingSeconds: 75 }],
       [ENGINE_NOT_REACHED, undefined],
+      [ENGINE_PATH_CLOSED, { elapsedSeconds: 290, pathLimitSeconds: 300, engineCeilingSeconds: 590 }],
     ] as const) {
       expect(engineFailureOf(new HttpException({ message: 'the sentence', code, ...(params ? { params } : {}) }, 503))).toEqual({
         message: 'the sentence',

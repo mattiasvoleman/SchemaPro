@@ -26,6 +26,7 @@ import { EngineTimingService } from './engine-timing.service';
 import {
   FALLBACK_WAIT_MS,
   clampToPath,
+  closedByRoad,
   deadlineSecondsOf,
   engineCeilingParams,
   isEngineCeilingBody,
@@ -766,6 +767,19 @@ export const ENGINE_WAIT_EXPIRED = 'ENGINE_WAIT_EXPIRED';
  * since engineMayStillBeSolving reads it.
  */
 export const ENGINE_NOT_REACHED = 'ENGINE_NOT_REACHED';
+/**
+ * The road between the API and the engine closed the call before the engine answered (omgång 15, the 2026-11-23
+ * incident): Railway's edge closes a request that sends nothing after 300 s, and the engine sends nothing while it
+ * solves. Either the road closed it (a 502 or 504 that is not the engine's, or a socket closed with no answer, near
+ * the road's limit: closedByRoad), or the API's own wait ran out at the cap the road's limit puts on it. The run's
+ * own code, with how long the call went on and what the road holds, because the sentence a school read before was
+ * "The AI engine returned an error." with nothing to act on, and the fault is the service's road and not the
+ * timetable. The engine may still be solving (engineMayStillBeSolving: a 503 that is not "unreachable"), so the sentence
+ * is the one the message has never been: kept apart from ENGINE_UNREACHABLE and ENGINE_UNAVAILABLE.
+ */
+export const ENGINE_PATH_CLOSED = 'ENGINE_PATH_CLOSED';
+const ENGINE_PATH_CLOSED_MESSAGE =
+  'The connection to the AI engine was closed on the way before the engine answered. The engine may still be working.';
 
 /**
  * The HTTP client's own timeout, as opposed to a connection that failed: axios words it "timeout of Nms exceeded",
@@ -1466,6 +1480,34 @@ export class OptimizationProxyService {
     return this.timing !== undefined
       ? this.timing.waitMs(route)
       : clampToPath(configured ?? FALLBACK_WAIT_MS, this.aiConfig.pathIdleLimitSeconds);
+  }
+
+  /** `waitMsFor` before the road's limit holds it: what a call would wait on a road with none. */
+  private unclampedWaitMsFor(route: EngineRoute | null): number {
+    return this.timing !== undefined ? this.timing.unclampedWaitMs(route) : (this.aiConfig.timeoutMs ?? FALLBACK_WAIT_MS);
+  }
+
+  /**
+   * The run's error when the road ended the call (ENGINE_PATH_CLOSED), saying how long the call went on, what the
+   * road holds, and what the engine says it can need when it has said. Logged once, here, with the same figures: the
+   * log is where whoever runs the service reads which of the two ways out (DEPLOYMENT.md 5.3) is theirs.
+   */
+  private pathClosed(elapsedMs: number, pathLimitSeconds: number, engineCeilingSeconds: number | undefined): ServiceUnavailableException {
+    const elapsedSeconds = Math.round(elapsedMs / 1000);
+    this.logger.error(
+      `The road to the AI engine at ${this.aiConfig.baseUrl} closed a call after ${elapsedSeconds} s without an answer ` +
+        `(it holds a silent request for ${pathLimitSeconds} s: AI_ENGINE_PATH_IDLE_LIMIT_SECONDS). The engine may still be working. ` +
+        `Let the API reach it over the private network (docs/DEPLOYMENT.md 5.3), or lower SOLVER_MAX_TIME_SECONDS.`,
+    );
+    return new ServiceUnavailableException({
+      message: ENGINE_PATH_CLOSED_MESSAGE,
+      code: ENGINE_PATH_CLOSED,
+      params: {
+        elapsedSeconds,
+        pathLimitSeconds,
+        ...(engineCeilingSeconds !== undefined ? { engineCeilingSeconds: Math.round(engineCeilingSeconds) } : {}),
+      },
+    });
   }
 
   /**
@@ -4829,8 +4871,11 @@ export class OptimizationProxyService {
     await this.timing?.ensure();
     // A wait the caller stated is held to the road's limit too: the road closes a call that sends nothing
     // whoever chose its length (a candidate's, a plan's), and the engine's answer must be inside it.
-    const waitMs =
-      options.timeoutMs !== undefined ? clampToPath(options.timeoutMs, this.aiConfig.pathIdleLimitSeconds) : this.waitMsFor(route);
+    const pathLimitSeconds = this.aiConfig.pathIdleLimitSeconds;
+    const neededMs = options.timeoutMs ?? this.unclampedWaitMsFor(route);
+    const waitMs = clampToPath(neededMs, pathLimitSeconds);
+    // A wait the road's limit shortened: if it runs out, the road is why, and the run says so (ENGINE_PATH_CLOSED).
+    const heldByRoad = waitMs < neededMs;
     if (options.timeoutMs === undefined) this.timing?.noteWait(route);
     // THE REQUEST CARRIES ITS DEADLINE, to an engine that said it can take it: the engine then answers
     // inside this wait (a shorter search if its settings need more) and not by a 503 this call has
@@ -4866,6 +4911,8 @@ export class OptimizationProxyService {
         (limit) => limit.lockedWeekdayPeriods !== undefined,
       );
 
+    // When the call began, for how long it had gone on when it ended (closedByRoad, ENGINE_PATH_CLOSED's figures).
+    const startedAt = Date.now();
     try {
       const response = await firstValueFrom(
         this.http
@@ -4917,6 +4964,11 @@ export class OptimizationProxyService {
                 // How long this call waited, and how long the engine says a plain request can take when it has
                 // said (a wait shorter than that is the whole explanation).
                 const engineSays = route === 'optimize' ? this.engineCeilingSeconds : undefined;
+                // A wait the road's limit had shortened is the road's doing, whatever the engine was still doing:
+                // the run says what the road holds and not that "the wait is a setting of the service".
+                if (heldByRoad && pathLimitSeconds !== undefined) {
+                  throw this.pathClosed(Date.now() - startedAt, pathLimitSeconds, engineSays);
+                }
                 throw new ServiceUnavailableException({
                   message: 'The AI engine did not respond in time.',
                   code: ENGINE_WAIT_EXPIRED,
@@ -4927,6 +4979,22 @@ export class OptimizationProxyService {
                 });
               }
               if (error instanceof AxiosError) {
+                // THE ROAD CLOSED IT, near the limit it is known to close a silent call at: before "unreachable" and
+                // before "returned an error", which is what the school read on 2026-11-23 and could do nothing with.
+                if (
+                  closedByRoad(
+                    {
+                      status: error.response?.status,
+                      bodyCode: (error.response?.data as { code?: unknown } | null | undefined)?.code,
+                      errorCode: error.code,
+                    },
+                    Date.now() - startedAt,
+                    pathLimitSeconds,
+                  ) &&
+                  pathLimitSeconds !== undefined
+                ) {
+                  throw this.pathClosed(Date.now() - startedAt, pathLimitSeconds, route === 'optimize' ? this.engineCeilingSeconds : undefined);
+                }
                 if (error.response === undefined) {
                   this.logger.error(
                     `AI engine unreachable at ${this.aiConfig.baseUrl} [${error.code ?? 'no code'}]`,

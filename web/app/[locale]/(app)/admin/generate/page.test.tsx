@@ -1849,6 +1849,8 @@ describe("Schemaförslag beside Generera (design §6)", () => {
       ["a wait that was long enough", "ENGINE_WAIT_EXPIRED", { waitSeconds: 240, engineCeilingSeconds: 230 }, "ENGINE_WAIT_EXPIRED_AFTER(240)"],
       ["a wait with no figure", "ENGINE_WAIT_EXPIRED", null, "ENGINE_WAIT_EXPIRED"],
       ["an engine that was not reached", "ENGINE_NOT_REACHED", null, "ENGINE_NOT_REACHED"],
+      ["a call the road to the engine closed", "ENGINE_PATH_CLOSED", { elapsedSeconds: 303, pathLimitSeconds: 300, engineCeilingSeconds: 590 }, "ENGINE_PATH_CLOSED_AFTER(303|300)"],
+      ["a call the road closed, with no figures", "ENGINE_PATH_CLOSED", null, "ENGINE_PATH_CLOSED"],
       ["a run abandoned after it had gone on a while", "ENGINE_RUN_ABANDONED", { lastSeenSeconds: 150 }, "ENGINE_RUN_ABANDONED_AFTER(150)"],
     ])("says %s in its own words, never the English", (_name, code, params, shown) => {
       state.job = ended(code, params);

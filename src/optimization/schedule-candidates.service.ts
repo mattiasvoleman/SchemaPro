@@ -73,6 +73,7 @@ import {
   engineMayStillBeSolving,
   ENGINE_LACKS_BEST_EFFORT,
   ENGINE_NOT_REACHED,
+  ENGINE_PATH_CLOSED,
   ENGINE_TIMED_OUT,
   ENGINE_WAIT_EXPIRED,
   OptimizationProxyService,
@@ -597,7 +598,12 @@ export function engineFailureOf(error: unknown): RunFailure {
   // The engine's own ceiling, the API's own wait and a call that never arrived have a name of their own for Generera (and the
   // figures of where it was, omgång 13 M2); a candidate run says each as it said every engine 503 before, with no figures: the
   // schemaförslag page has one sentence for them (CANDIDATE_ENGINE_TIMEOUT), and a code it has no text for would show English.
-  if (failure.code === ENGINE_TIMED_OUT || failure.code === ENGINE_WAIT_EXPIRED || failure.code === ENGINE_NOT_REACHED) {
+  if (
+    failure.code === ENGINE_TIMED_OUT ||
+    failure.code === ENGINE_WAIT_EXPIRED ||
+    failure.code === ENGINE_NOT_REACHED ||
+    failure.code === ENGINE_PATH_CLOSED
+  ) {
     return { message: failure.message, code: CANDIDATE_ENGINE_TIMEOUT, params: null };
   }
   if (failure.code !== null || !(error instanceof HttpException)) return failure;

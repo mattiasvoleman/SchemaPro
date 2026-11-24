@@ -8,6 +8,7 @@
  *   ENGINE_TIMED_OUT     the engine's own ceiling fell: its longest wait, and the step its solve was in
  *   ENGINE_WAIT_EXPIRED  the API's own wait ran out: for how long, and what the engine says it can need
  *   ENGINE_NOT_REACHED   the call never arrived (the engine was down or restarted)
+ *   ENGINE_PATH_CLOSED   the road between the service and the engine closed the call: after how long, and what the road holds
  *   ENGINE_RUN_ABANDONED the process that held the run went away: how long it had gone on when last heard from
  *
  * A run stored before the figures existed, and an engine older than the field, carry none of them: the sentence is
@@ -28,6 +29,8 @@ export type RunEndingKey =
   | "ENGINE_WAIT_EXPIRED_AFTER"
   | "ENGINE_WAIT_EXPIRED_SHORT"
   | "ENGINE_NOT_REACHED"
+  | "ENGINE_PATH_CLOSED"
+  | "ENGINE_PATH_CLOSED_AFTER"
   | "ENGINE_RUN_ABANDONED"
   | "ENGINE_RUN_ABANDONED_AFTER";
 
@@ -77,6 +80,14 @@ export function runEnding(code: string | null, params: Params): RunEnding | null
     }
     case "ENGINE_NOT_REACHED":
       return { key: "ENGINE_NOT_REACHED" };
+    case "ENGINE_PATH_CLOSED": {
+      // The two figures go together or not at all: "closed after N s" with no limit, or a limit with no time, is not a sentence.
+      const elapsedSeconds = seconds(params, "elapsedSeconds");
+      const pathLimitSeconds = seconds(params, "pathLimitSeconds");
+      return elapsedSeconds !== null && pathLimitSeconds !== null
+        ? { key: "ENGINE_PATH_CLOSED_AFTER", values: { elapsedSeconds, pathLimitSeconds } }
+        : { key: "ENGINE_PATH_CLOSED" };
+    }
     case "ENGINE_RUN_ABANDONED": {
       const lastSeenSeconds = seconds(params, "lastSeenSeconds");
       return lastSeenSeconds === null
