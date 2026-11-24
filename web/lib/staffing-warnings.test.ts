@@ -2,6 +2,7 @@ import { createTranslator } from "next-intl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type { MessageLookup } from "@/lib/engine-message";
+import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import { STAFFING_CODES, refusalText, savedToast, staffingRefusal, warningText } from "./staffing-warnings";
 
@@ -129,6 +130,27 @@ describe("staffingRefusal", () => {
     expect(staffingRefusal(new ApiError(409, "Krock", "LESSON_CLASH"))).toBeNull();
     expect(staffingRefusal(new ApiError(403, "Nej", "STAFF_TEACHER_NOT_QUALIFIED"))).toBeNull();
     expect(staffingRefusal(new Error("network"))).toBeNull();
+  });
+});
+
+describe("the hours over the ordinance's highest level, in the reader's language", () => {
+  // The gateway writes `hours` and `limit` as text with the Swedish decimal comma ("602,5"); a warning (200) and a refusal (409) both
+  // carry them, and both are sentences built by engineMessage. Real ICU of the real catalogues: an English reader reads 602.5.
+  const english = createTranslator({ locale: "en", messages: en, namespace: "engineMessages" }) as unknown as MessageLookup;
+  const swedish = createTranslator({ locale: "sv", messages: sv, namespace: "engineMessages" }) as unknown as MessageLookup;
+  const params = { role: "TEACHER", hours: "602,5", limit: "600" };
+
+  it("says a warning's hours the way the language says them", () => {
+    expect(warningText(english, { code: "STAFF_TEACHER_OVER_SCOPE", params })).toContain("would get 602.5 hours");
+    expect(warningText(swedish, { code: "STAFF_TEACHER_OVER_SCOPE", params })).toContain("skulle få 602,5 timmars");
+  });
+
+  it("says a refusal's hours the way the language says them", () => {
+    const refusal = staffingRefusal(new ApiError(409, "Läraren skulle få 602,5 timmars undervisning", "STAFF_TEACHER_OVER_SCOPE", params))!;
+    expect(refusal.params).toEqual(params);
+    expect(refusalText(english, refusal)).toContain("would get 602.5 hours of teaching");
+    expect(refusalText(english, refusal)).toContain("highest level of 600 hours");
+    expect(refusalText(swedish, refusal)).toContain("skulle få 602,5 timmars undervisning");
   });
 });
 

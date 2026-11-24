@@ -38,6 +38,30 @@ const PARAM_DEFAULTS: Record<string, Record<string, string | number>> = {
   TEACHER_SHARED_BY_PARALLEL_GROUPS: { classOwn: "unknown", classes: 0 },
 };
 
+/**
+ * Figures the gateway writes as TEXT with the Swedish decimal comma ("602,5": src/staffing/staffing-checks.ts hoursText), by code. They are
+ * made numbers here, where the sentence is built, so that its `{hours, number}` writes them the way the sentence's own language does ("602.5
+ * hours", "602,5 timmars") and not as the gateway wrote them for one. The gateway sends what it always did, so an older web reads the text
+ * as before. A figure that is no number is left out, and the sentence is then the engine's English (below), never "NaN".
+ */
+const SWEDISH_DECIMALS: Record<string, readonly string[]> = {
+  STAFF_TEACHER_OVER_SCOPE: ["hours", "limit"],
+};
+
+function numbersOf(code: string, params: Record<string, string | number>): Record<string, string | number> {
+  const named = SWEDISH_DECIMALS[code];
+  if (named === undefined) return params;
+  const read = { ...params };
+  for (const name of named) {
+    const value = read[name];
+    if (typeof value !== "string") continue;
+    const number = Number(value.replace(",", "."));
+    if (value.trim() !== "" && Number.isFinite(number)) read[name] = number;
+    else delete read[name];
+  }
+  return read;
+}
+
 /** The half of next-intl's translator this needs, so a test can pass a stub. */
 export interface MessageLookup {
   (key: string, values?: Record<string, string | number>): string;
@@ -56,7 +80,7 @@ export function engineMessage(t: MessageLookup, sentence: EngineMessage): string
   const { code, message, params } = sentence;
   if (!code || !t.has(code)) return message;
   try {
-    const text = t(code, { ...(PARAM_DEFAULTS[code] ?? {}), ...(params ?? {}) });
+    const text = t(code, { ...(PARAM_DEFAULTS[code] ?? {}), ...numbersOf(code, params ?? {}) });
     // The real translator does not throw on a missing argument: its default
     // onError only reports it and the answer is its fallback for the key,
     // "<namespace>.<CODE>". That is not a sentence. Same answer as an

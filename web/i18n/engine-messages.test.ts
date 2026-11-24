@@ -78,6 +78,12 @@ const WEB_WORDS: Record<string, readonly (readonly [string, string])[]> = {
   ],
   PLACEMENT_PLACES_FORCED: [[PLACES_TIP, ""]],
   PLACES_CANNOT_BE_KEPT: [[PLACES_TIP, ""]],
+  // The gateway writes these two figures as text with the Swedish decimal comma ("602,5"); lib/engine-message.ts makes them numbers, and the
+  // sentence says them as a number in its own language ("602.5 hours"). The engine's catalogue has them as plain arguments.
+  STAFF_TEACHER_OVER_SCOPE: [
+    ["{hours, number}", "{hours}"],
+    ["{limit, number}", "{limit}"],
+  ],
 };
 /**
  * The arguments the web's sentence takes beyond the engine's own, which the gateway sends on the same line (Förlägg blocket: the

@@ -183,3 +183,61 @@ describe("TEACHER_SHARED_BY_PARALLEL_GROUPS", () => {
     expect(render(english, { ...base, classes: 5, classMinutes: 0, classOwn: "none" })).not.toContain("fewer classes");
   });
 });
+
+/**
+ * The gateway writes the hours of STAFF_TEACHER_OVER_SCOPE as text with the Swedish decimal comma (src/staffing/staffing-checks.ts
+ * hoursText: "602,5"), and an English sentence put them in as they came: "602,5 hours". The web turns the two figures into numbers
+ * where the sentence is built, and the sentence writes them the way its own language does. Rendered through the real ICU of the
+ * real catalogue, because that is where the comma was.
+ */
+describe("STAFF_TEACHER_OVER_SCOPE: the hours a reader reads", () => {
+  const CODE = "STAFF_TEACHER_OVER_SCOPE";
+  const swedish = createTranslator({ locale: "sv", messages: sv, namespace: "engineMessages" }) as unknown as MessageLookup;
+  const english = createTranslator({ locale: "en", messages: en, namespace: "engineMessages" }) as unknown as MessageLookup;
+  const ENGLISH = "The engine's English.";
+  const render = (t: MessageLookup, params: Record<string, string | number>) => engineMessage(t, { code: CODE, message: ENGLISH, params });
+  const plainSpaces = (text: string) => text.replace(/[  ]/g, " ");
+
+  it("says 602.5 in English and 602,5 in Swedish, from the gateway's 602,5", () => {
+    const params = { role: "TEACHER", hours: "602,5", limit: "600" };
+    expect(render(english, params)).toBe(
+      "The teacher would get 602.5 hours of teaching over the school year against the ordinance's highest level of 600 hours (SFS 2026:1487 section 3).",
+    );
+    expect(render(swedish, params)).toBe(
+      "Läraren skulle få 602,5 timmars undervisning under läsåret mot förordningens högsta nivå 600 timmar (SFS 2026:1487 3 §).",
+    );
+  });
+
+  it("says the limit with its decimal as well as the hours", () => {
+    const params = { role: "SUBSTITUTE", hours: "478,1", limit: "477,5" };
+    expect(render(english, params)).toContain("would get 478.1 hours");
+    expect(render(english, params)).toContain("highest level of 477.5 hours");
+    expect(render(swedish, params)).toContain("skulle få 478,1 timmars");
+    expect(render(swedish, params)).toContain("högsta nivå 477,5 timmar");
+  });
+
+  it("groups thousands as the language does, which the text the gateway wrote did not", () => {
+    const params = { role: "CO_TEACHER", hours: "1122,5", limit: "1100" };
+    expect(render(english, params)).toContain("would get 1,122.5 hours");
+    expect(plainSpaces(render(swedish, params))).toContain("skulle få 1 122,5 timmars");
+  });
+
+  it("reads a figure sent as a number as it reads one sent as text, so that a gateway that sends numbers needs no change here", () => {
+    expect(render(english, { role: "TEACHER", hours: 602.5, limit: 600 })).toContain("would get 602.5 hours");
+    expect(render(swedish, { role: "TEACHER", hours: 602.5, limit: 600 })).toContain("skulle få 602,5 timmars");
+  });
+
+  it("shows the engine's English, not 'NaN', for a figure that is not a number", () => {
+    const quiet = (locale: string, messages: typeof sv) =>
+      createTranslator({ locale, messages, namespace: "engineMessages", onError: () => {} }) as unknown as MessageLookup;
+    for (const hours of ["", "  ", "abc", "602,5,1"]) {
+      expect(render(quiet("en", en), { role: "TEACHER", hours, limit: "600" }), hours).toBe(ENGLISH);
+      expect(render(quiet("sv", sv), { role: "TEACHER", hours, limit: "600" }), hours).toBe(ENGLISH);
+    }
+  });
+
+  it("changes no other sentence's text: a figure written with a comma elsewhere stays as the gateway wrote it", () => {
+    const t = lookup({ SOME_OTHER_CODE: (values) => `${values.hours} h` });
+    expect(engineMessage(t, { code: "SOME_OTHER_CODE", message: "m", params: { hours: "602,5" } })).toBe("602,5 h");
+  });
+});
