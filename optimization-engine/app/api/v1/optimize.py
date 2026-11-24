@@ -120,6 +120,50 @@ async def run_solver(
         ) from None
 
 
+def log_optimization_requested(payload: OptimizeScheduleRequest) -> None:
+    """The line a generation request leaves in the log, for BOTH of the engine's doors.
+
+    `POST /api/v1/optimize` said it and `POST /v1/schedule`, the older door the gateway actually
+    uses, did not (omgång 15, the 2026-11-23 incident): the engine's log of two Generera runs that a
+    proxy closed at 300 s showed a 540 s search and a TIMEOUT, and no line that said what the request
+    was or how long its caller waited. Whether the call carried a `deadlineSeconds` decides whether the
+    engine's own clock cuts the search before the road closes the call, and nothing in the log said it.
+    One function, so that a field added for one door cannot be missing from the other.
+    """
+    logger.info(
+        "optimization_requested",
+        request_id=str(payload.request_id),
+        academic_year_id=str(payload.academic_year_id),
+        requirement_count=len(payload.requirements),
+        room_count=len(payload.rooms),
+        constraint_count=len(payload.constraints),
+        # Both only when sent, so a Generera's log line reads as it always has.
+        **(
+            {"search": payload.search.model_dump(exclude_none=True)}
+            if payload.search is not None
+            else {}
+        ),
+        **(
+            {"deadline_seconds": payload.deadline_seconds}
+            if payload.deadline_seconds is not None
+            else {}
+        ),
+    )
+
+
+def log_optimization_completed(response: OptimizeScheduleResponse) -> None:
+    """What the engine answered, for both doors: the status, and what it carried."""
+    log_fields: dict[str, Any] = {
+        "request_id": str(response.request_id),
+        "status": response.status,
+        "lesson_count": len(response.lessons),
+    }
+    if response.conflicts is not None:
+        log_fields["conflict_count"] = len(response.conflicts.conflicts)
+
+    logger.info("optimization_completed", **log_fields)
+
+
 @router.post(
     "/optimize",
     response_model=OptimizeScheduleResponse,
@@ -132,30 +176,9 @@ async def optimize_schedule(
     settings: Settings = Depends(get_app_settings),
 ) -> OptimizeScheduleResponse:
     """Accept anonymized scheduling demand and return a weekly master timetable."""
-    logger.info(
-        "optimization_requested",
-        request_id=str(payload.request_id),
-        academic_year_id=str(payload.academic_year_id),
-        requirement_count=len(payload.requirements),
-        room_count=len(payload.rooms),
-        constraint_count=len(payload.constraints),
-        # Only when sent, so a Generera's log line reads as it always has.
-        **(
-            {"search": payload.search.model_dump(exclude_none=True)}
-            if payload.search is not None
-            else {}
-        ),
-    )
+    log_optimization_requested(payload)
 
     response = await run_solver(payload, settings)
 
-    log_fields: dict[str, Any] = {
-        "request_id": str(response.request_id),
-        "status": response.status,
-        "lesson_count": len(response.lessons),
-    }
-    if response.conflicts is not None:
-        log_fields["conflict_count"] = len(response.conflicts.conflicts)
-
-    logger.info("optimization_completed", **log_fields)
+    log_optimization_completed(response)
     return response
