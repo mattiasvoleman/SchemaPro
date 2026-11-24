@@ -34,7 +34,9 @@
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_ROOM_TYPES } from '../src/resources/default-room-types';
 import { createPgAdapter } from '../src/database/pool-config';
+import { refusalText, type DemoSpec } from '../src/demo-school/demo-guard';
 import { PrismaClient } from '@prisma/client';
+import { deleteSeedSchool } from './demo-reset';
 
 const databaseUrl = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -46,6 +48,8 @@ const prisma = new PrismaClient({ adapter: createPgAdapter(databaseUrl) });
 
 const SCHOOL_SLUG = 'hogstadieskolan';
 const DOMAIN = 'hogstadieskolan.example.com';
+/** What `--reset` must find before it deletes: the slug, the name and every person at the seed's own reserved domain (demo-reset.ts). */
+const HOGSTADIUM: DemoSpec = { slug: SCHOOL_SLUG, name: 'Högstadieskolan', domain: DOMAIN };
 
 const YEARS = [7, 8, 9] as const;
 const CLASSES_PER_YEAR = 6;
@@ -131,12 +135,18 @@ async function main(): Promise<void> {
       console.log(`The högstadium school already exists (${existing.id}). Use --reset to recreate it.`);
       return;
     }
-    console.log('Deleting the högstadium school…');
-    await prisma.school.delete({ where: { id: existing.id } });
+    // Judged by its people, as the demo school is: a school that holds a person at a real address is not this seed's and is not deleted.
+    const deleted = await deleteSeedSchool(prisma, HOGSTADIUM);
+    if (deleted.kind === 'REFUSED') {
+      console.log(`NOT RESET. ${refusalText(deleted.refusal, HOGSTADIUM)}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log('Deleted the högstadium school.');
   }
 
   const school = await prisma.school.create({
-    data: { name: 'Högstadieskolan', slug: SCHOOL_SLUG, timezone: 'Europe/Stockholm' },
+    data: { name: HOGSTADIUM.name, slug: SCHOOL_SLUG, timezone: 'Europe/Stockholm' },
   });
   const schoolId = school.id;
   // Nioårig by name: the school's 7–9 is that numbering's (seed.ts says why).
