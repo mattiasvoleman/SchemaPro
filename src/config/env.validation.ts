@@ -134,6 +134,32 @@ export class EnvironmentVariables {
   @Min(1000)
   AI_ENGINE_TIMEOUT_MS?: number;
 
+  /**
+   * OPTIONAL (omgång 15, the 2026-11-23 incident): how long the ROAD to the engine holds a request that sends
+   * nothing, in seconds. The engine says nothing while it solves, and Railway's edge closes such a request
+   * after five minutes: a run that needed more ended at 300 s with "The AI engine returned an error" and no
+   * report, whatever the engine's budget said. Unset, the API takes the limit from the address: 300 for a public
+   * https address (the edge), none for Railway's private network (`<service>.railway.internal`), localhost and
+   * private addresses (src/config/engine-path.ts). Set, it is the limit; 0 says the road holds a silent request
+   * as long as it takes. The API holds every wait, and the deadline it sends the engine, to this less 10 s, so
+   * that the engine answers (a TIMEOUT with its explanation) before the road closes.
+   *
+   * 0, or at least 30 s: a limit under half a minute leaves no wait once the margin is taken. Set to nothing
+   * is not set, as for AI_ENGINE_TIMEOUT_MS.
+   */
+  // Blank includes a value of only spaces: implicit conversion makes that a 0, and here 0 is a setting (no limit),
+  // which a stray space in a host's dashboard must not be able to turn the clamp off with.
+  @Transform(({ value, obj, key }) => {
+    const raw = (obj as Record<string, unknown>)[key];
+    return isBlank(raw) || (typeof raw === 'string' && raw.trim() === '') ? undefined : value;
+  })
+  @IsOptional()
+  @ValidateIf((_object, value: unknown) => value !== 0)
+  @IsInt()
+  @Min(30)
+  @Max(86_400)
+  AI_ENGINE_PATH_IDLE_LIMIT_SECONDS?: number;
+
   @IsInt()
   @Min(1)
   THROTTLE_TTL_SECONDS: number = 60;
