@@ -40,7 +40,12 @@ export interface TimeoutSearchPhase {
 
 /** What a school's page reads of a run that ran out of time. */
 export interface TimeoutReportView {
-  /** From the route's entry to the answer, builds and the probe included. */
+  /**
+   * From the solver's entry (`solve()`, after the request is parsed and the thread has started) to the
+   * answer, builds and the probe included. Not the route's entry: the wall time of the call can be a
+   * few tenths longer, and more for a large body. The total and each step are rounded to a tenth on
+   * their own, so the steps may not add up to it exactly (by up to 0.05 s a step).
+   */
   totalSeconds: number;
   /** What the search was given, in whole seconds. */
   budgetSeconds: number;
