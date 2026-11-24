@@ -105,6 +105,83 @@ describe("ScopeCard", () => {
     expect(rows()).toContain("stage(7|9)=hours(215)");
   });
 
+  describe("the sentence that the span is weighted", () => {
+    // Mutants of scope-card.tsx that survived the review of #387 (L-7): `blended` said without `judged`, and the link without its target and
+    // its words for a screen reader.
+    const twoStages = [
+      { gradeFrom: 1, gradeTo: 6, hours: 645, teachingHoursLow: 550, teachingHoursHigh: 650, planningFloorPercent: 100 },
+      { gradeFrom: 7, gradeTo: 9, hours: 215, teachingHoursLow: 500, teachingHoursHigh: 600, planningFloorPercent: 110 },
+    ];
+
+    it("is said of a teacher the card judges, in the teacher's own words on their own page", () => {
+      render(<ScopeCard data={data({ teachingHours: 860, stages: twoStages })} />);
+      expect(screen.getByText("blended")).toBeInTheDocument();
+      expect(screen.queryByText("own.blended")).not.toBeInTheDocument();
+      cleanup();
+      render(<ScopeCard data={data({ teachingHours: 860, stages: twoStages })} own />);
+      expect(screen.getByText("own.blended")).toBeInTheDocument();
+      expect(screen.queryByText("blended")).not.toBeInTheDocument();
+    });
+
+    it("is not said of a teacher the card does not judge: there is no span to weigh, however many stages their hours lie in", () => {
+      // No post: the span cannot be scaled, so the card judges nothing and a sentence about how a span is weighted explains a span that is not there.
+      render(<ScopeCard data={data({ verdict: "NOT_JUDGED", notJudged: "NO_POST", teachingHours: 860, stages: twoStages, remainingHours: null, planningFits: null })} />);
+      expect(screen.getByText("verdictNoPost")).toBeInTheDocument();
+      expect(screen.queryByText("blended")).not.toBeInTheDocument();
+      cleanup();
+      // A läsår the ordinance has no figures for (the ten-year grundskola): judged by nothing either.
+      render(<ScopeCard data={data({ teachingHours: 860, stages: twoStages }, { yearReason: "NUMBERING_NOT_COVERED" })} />);
+      expect(screen.getByText("verdictNumbering")).toBeInTheDocument();
+      expect(screen.queryByText("blended")).not.toBeInTheDocument();
+      cleanup();
+      render(<ScopeCard data={data({ verdict: "NOT_JUDGED", notJudged: "NO_POST", teachingHours: 860, stages: twoStages, remainingHours: null, planningFits: null })} own />);
+      expect(screen.queryByText("own.blended")).not.toBeInTheDocument();
+    });
+
+    it("is not said of a teacher with hours in one stage", () => {
+      render(<ScopeCard data={data()} />);
+      expect(screen.queryByText("blended")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("the level of its heading", () => {
+    // A page of its own gives the card an h2 under the page's h1; inside the drawer's cards it is an h3 under the drawer's h2. Wrong either way,
+    // and the outline a screen reader's user jumps by has a hole or a card that is not under anything.
+    it("is an h3 inside the drawer's cards, unless the page says otherwise", () => {
+      render(<ScopeCard data={data()} />);
+      expect(screen.getByRole("heading", { name: "title" })).toHaveProperty("tagName", "H3");
+      expect(screen.queryByRole("heading", { level: 2 })).not.toBeInTheDocument();
+    });
+
+    it("is an h2 on a page of its own", () => {
+      render(<ScopeCard data={data()} headingLevel="h2" own />);
+      expect(screen.getByRole("heading", { name: "title" })).toHaveProperty("tagName", "H2");
+      expect(screen.queryByRole("heading", { level: 3 })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("the link to the ordinance", () => {
+    it("opens in a new tab without sending the page on, and says so in words for a reader who cannot see it", () => {
+      render(<ScopeCard data={data()} />);
+      const link = screen.getByRole("link", { name: /source/ });
+      expect(link).toHaveAttribute("href", "https://example.invalid/sfs");
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noreferrer");
+      // The words are part of the link's name, and visible to nobody: a link that opens a tab without saying so moves a screen reader's user.
+      expect(link).toHaveAccessibleName(/^source\s*opensInNewTab$/);
+      const said = screen.getByText("opensInNewTab");
+      expect(said).toHaveClass("sr-only");
+      expect(link).toContainElement(said);
+    });
+
+    it("is the same on the teacher's own page", () => {
+      render(<ScopeCard data={data()} own />);
+      const link = screen.getByRole("link", { name: /source/ });
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAccessibleName(/^source\s*opensInNewTab$/);
+    });
+  });
+
   it("counts förskoleklass and groups with no årskurs, and says what that means", () => {
     render(<ScopeCard data={data({ unregulatedHours: 215, unknownGradeHours: 43 })} />);
     expect(rows()).toContain("unregulated=hours(215)");
