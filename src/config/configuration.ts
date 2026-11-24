@@ -1,3 +1,4 @@
+import { pathIdleLimitSecondsOf } from './engine-path';
 import { EnvironmentVariables, NodeEnv, PushMode } from './env.validation';
 
 export interface AppConfig {
@@ -27,6 +28,14 @@ export interface AiEngineConfig {
    * that says nothing.
    */
   timeoutMs?: number;
+  /**
+   * How long the road to the engine holds a request that sends nothing, in seconds, or undefined when it holds
+   * it as long as it takes (omgång 15, src/config/engine-path.ts): AI_ENGINE_PATH_IDLE_LIMIT_SECONDS when it
+   * was set (0 is none), else what the address says: 300 for a public https address, none for the private
+   * network, localhost and private addresses. The API holds every wait, and the deadline it sends the engine,
+   * to this less a margin (engine-timing.ts clampToPath).
+   */
+  pathIdleLimitSeconds?: number;
 }
 
 export interface ThrottleConfig {
@@ -209,6 +218,7 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
       baseUrl: env.AI_ENGINE_URL,
       apiKey: env.AI_ENGINE_API_KEY,
       timeoutMs: env.AI_ENGINE_TIMEOUT_MS,
+      pathIdleLimitSeconds: pathIdleLimitSecondsOf(env.AI_ENGINE_URL, env.AI_ENGINE_PATH_IDLE_LIMIT_SECONDS),
     },
     throttle: {
       ttlSeconds: env.THROTTLE_TTL_SECONDS,

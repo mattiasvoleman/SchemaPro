@@ -25,6 +25,7 @@ import { gradeSpanOf, loadRosters, roomNeedsOf, type RoomNeeds } from './room-el
 import { EngineTimingService } from './engine-timing.service';
 import {
   FALLBACK_WAIT_MS,
+  clampToPath,
   deadlineSecondsOf,
   engineCeilingParams,
   isEngineCeilingBody,
@@ -1455,11 +1456,16 @@ export class OptimizationProxyService {
   /**
    * The wait of one call to `route`, in milliseconds: AI_ENGINE_TIMEOUT_MS if it
    * is set, else the engine's own ceiling for the route and a margin (the engine
-   * answers first), else 120 s for an engine that has said nothing.
+   * answers first), else 120 s for an engine that has said nothing; and in every
+   * case no longer than the road to the engine holds a request that sends nothing,
+   * less a margin (AI_ENGINE_PATH_IDLE_LIMIT_SECONDS, engine-path.ts), so that the
+   * API and the engine answer before the road closes the call without a word.
    */
   private waitMsFor(route: EngineRoute | null): number {
     const configured = this.aiConfig.timeoutMs;
-    return this.timing !== undefined ? this.timing.waitMs(route) : (configured ?? FALLBACK_WAIT_MS);
+    return this.timing !== undefined
+      ? this.timing.waitMs(route)
+      : clampToPath(configured ?? FALLBACK_WAIT_MS, this.aiConfig.pathIdleLimitSeconds);
   }
 
   /**
@@ -4821,8 +4827,11 @@ export class OptimizationProxyService {
     // every half minute, before a call is waited for: the wait of an API with no AI_ENGINE_TIMEOUT_MS is
     // counted from what the engine says, and 120 s is not what a 180 s budget needs.
     await this.timing?.ensure();
-    const waitMs = options.timeoutMs ?? this.waitMsFor(route);
-    if (options.timeoutMs === undefined) this.timing?.noteWait(route, waitMs);
+    // A wait the caller stated is held to the road's limit too: the road closes a call that sends nothing
+    // whoever chose its length (a candidate's, a plan's), and the engine's answer must be inside it.
+    const waitMs =
+      options.timeoutMs !== undefined ? clampToPath(options.timeoutMs, this.aiConfig.pathIdleLimitSeconds) : this.waitMsFor(route);
+    if (options.timeoutMs === undefined) this.timing?.noteWait(route);
     // THE REQUEST CARRIES ITS DEADLINE, to an engine that said it can take it: the engine then answers
     // inside this wait (a shorter search if its settings need more) and not by a 503 this call has
     // stopped waiting for. Never to an engine that did not say: its models forbid fields they do not know.

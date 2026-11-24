@@ -96,6 +96,26 @@ describe('loadConfiguration', () => {
     });
   });
 
+  describe('how long the road to the engine holds a silent request (omgång 15, the 2026-11-23 incident)', () => {
+    const limitOf = (overrides: Partial<EnvironmentVariables>) => loadConfiguration(env(overrides)).aiEngine.pathIdleLimitSeconds;
+
+    it('is the edge’s five minutes for a public https address: the one the API reached the engine by on 2026-11-23', () => {
+      expect(limitOf({ AI_ENGINE_URL: 'https://schemapro-production.up.railway.app' })).toBe(300);
+    });
+
+    it('is none for Railway’s private network, localhost and a compose service: no edge sits on the road', () => {
+      expect(limitOf({ AI_ENGINE_URL: 'http://schemapro-engine.railway.internal:8080' })).toBeUndefined();
+      expect(limitOf({ AI_ENGINE_URL: 'http://localhost:8000' })).toBeUndefined();
+      expect(limitOf({ AI_ENGINE_URL: 'http://solver:8000' })).toBeUndefined();
+    });
+
+    it('is AI_ENGINE_PATH_IDLE_LIMIT_SECONDS when it is set, and none for 0, whatever the address says', () => {
+      expect(limitOf({ AI_ENGINE_URL: 'https://engine.example', AI_ENGINE_PATH_IDLE_LIMIT_SECONDS: 120 })).toBe(120);
+      expect(limitOf({ AI_ENGINE_URL: 'https://engine.example', AI_ENGINE_PATH_IDLE_LIMIT_SECONDS: 0 })).toBeUndefined();
+      expect(limitOf({ AI_ENGINE_URL: 'http://solver:8000', AI_ENGINE_PATH_IDLE_LIMIT_SECONDS: 120 })).toBe(120);
+    });
+  });
+
   it('decodes the SS12000 secrets keys, turns the tick off only for off, and allows loopback only under NODE_ENV=test', () => {
     const key = Buffer.alloc(32, 9).toString('base64');
     const previous = Buffer.alloc(32, 8).toString('base64');

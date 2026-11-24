@@ -6,7 +6,7 @@ import type { ConfigService } from '@nestjs/config';
 import { AxiosError } from 'axios';
 import { NEVER, of, throwError } from 'rxjs';
 import { EngineTimingService } from './engine-timing.service';
-import { PRODUCTION_BODY } from './__fixtures__/engine-timing-body';
+import { INCIDENT_BODY, INCIDENT_BODY_WITHOUT_DEADLINE, PRODUCTION_BODY } from './__fixtures__/engine-timing-body';
 import { engineMayStillBeSolving, OptimizationProxyService } from './optimization-proxy.service';
 import type { PrismaService } from '../database/prisma.service';
 
@@ -45,13 +45,20 @@ interface Built {
 }
 
 /** The proxy with the engine's times read (or not), and the wait AI_ENGINE_TIMEOUT_MS gives (or not). */
-const build = async (over: { timeoutMs?: number; body?: unknown | null } = {}): Promise<Built> => {
+const build = async (
+  over: { timeoutMs?: number; body?: unknown | null; pathIdleLimitSeconds?: number } = {},
+): Promise<Built> => {
   const post = jest.fn();
   const get = jest.fn();
   const config = {
     getOrThrow: jest.fn((key: string) => {
       if (key !== 'aiEngine') throw new TypeError(`Configuration key "${key}" does not exist`);
-      return { baseUrl: 'http://solver.test', apiKey: 'k'.repeat(32), ...(over.timeoutMs === undefined ? {} : { timeoutMs: over.timeoutMs }) };
+      return {
+        baseUrl: 'http://solver.test',
+        apiKey: 'k'.repeat(32),
+        ...(over.timeoutMs === undefined ? {} : { timeoutMs: over.timeoutMs }),
+        ...(over.pathIdleLimitSeconds === undefined ? {} : { pathIdleLimitSeconds: over.pathIdleLimitSeconds }),
+      };
     }),
     get: jest.fn((key: string) => (key === 'app' ? { nodeEnv: 'production' } : undefined)),
   } as unknown as ConfigService;
@@ -527,6 +534,204 @@ describe('OptimizationProxyService: the HTTP client’s own timeout is the wait 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const thrown = (await call('/v1/schedule').catch((error: unknown) => error)) as HttpException;
       expect(thrown.getResponse()).toEqual({ message: 'The AI engine could not be reached.', code: 'ENGINE_NOT_REACHED' });
+    }
+  });
+});
+
+describe('OptimizationProxyService: the road to the engine closes a request that sends nothing (omgång 15)', () => {
+  /*
+   * The 2026-11-23 incident. The engine ran with a 540 s budget, a ceiling of 590 s, and the API waited 600 s and
+   * sent `deadlineSeconds: 600`, so the engine's clock never shortened the search; Railway's edge closed the
+   * request at 300 s, and both runs of the only real school ended "The AI engine returned an error." with nothing
+   * to show. With the road's limit known (300 s for a public https address) the API waits 290 s and says 290.
+   */
+  const warnings: string[] = [];
+
+  beforeEach(() => {
+    warnings.length = 0;
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation((message: unknown) => void warnings.push(String(message)));
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('is where the incident was: a road with no known limit waits 600 s and tells the engine 600', async () => {
+    const { call, post, service } = await build({ body: INCIDENT_BODY });
+    post.mockReturnValue(of({ data: { status: 'OPTIMAL' } }));
+
+    await call('/v1/schedule');
+
+    expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 600_000 });
+    expect(post.mock.calls[0]![1]).toMatchObject({ deadlineSeconds: 600 });
+    expect(service.waitSeconds).toBe(600);
+  });
+
+  it('waits 290 s and tells the engine 290 when the road closes a silent request at 300 s: the engine’s own clock then cuts the search', async () => {
+    const { call, post, service } = await build({ body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
+    post.mockReturnValue(of({ data: { status: 'OPTIMAL' } }));
+
+    await call('/v1/schedule');
+
+    // For the module's client AND for rxjs, from one number; and in the request, for the engine's Deadline.
+    expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 290_000 });
+    expect(post.mock.calls[0]![1]).toMatchObject({ deadlineSeconds: 290 });
+    // What a run's lease and the page's "up to N minutes" are counted from.
+    expect(service.waitSeconds).toBe(290);
+  });
+
+  it('holds a wait the operator set (AI_ENGINE_TIMEOUT_MS=600000) to the same cap, and says nothing is wrong with the setting', async () => {
+    const errors: string[] = [];
+    jest.spyOn(Logger.prototype, 'error').mockImplementation((message: unknown) => void errors.push(String(message)));
+    const { call, post, service } = await build({ body: INCIDENT_BODY, timeoutMs: 600_000, pathIdleLimitSeconds: 300 });
+    post.mockReturnValue(of({ data: {} }));
+
+    await call('/v1/schedule');
+
+    expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 290_000 });
+    expect(post.mock.calls[0]![1]).toMatchObject({ deadlineSeconds: 290 });
+    expect(service.waitSeconds).toBe(290);
+    // 600000 is not shorter than the engine can need: it is the road that cuts it, and that is said as the road's.
+    expect(errors).toEqual([]);
+  });
+
+  it('holds a wait a caller stated for itself (a candidate, a plan) to the cap as well: the road closes a silent call whoever chose its length', async () => {
+    const { call, post } = await build({ body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
+    post.mockReturnValue(of({ data: {} }));
+
+    await call('/v1/schedule', { requestId: 'r' }, { timeoutMs: 400_000 });
+    await call('/v1/schedule', { requestId: 'r' }, { timeoutMs: 95_000 });
+    await call('/api/v1/plan-exams', { requestId: 'r' }, { timeoutMs: 500_000 });
+
+    expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 290_000 });
+    expect(post.mock.calls[1]![2]).toMatchObject({ timeout: 95_000 });
+    expect(post.mock.calls[2]![2]).toMatchObject({ timeout: 290_000 });
+  });
+
+  it('leaves the engine’s other routes as they were when they fit: a room proposal waits its 50 s', async () => {
+    const { call, post } = await build({ body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
+    post.mockReturnValue(of({ data: {} }));
+
+    await call('/api/v1/optimize-rooms');
+
+    expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 50_000 });
+  });
+
+  it('changes nothing for the production settings of before: a 240 s wait is under the cap', async () => {
+    const { call, post, service } = await build({ pathIdleLimitSeconds: 300 });
+    post.mockReturnValue(of({ data: {} }));
+
+    await call('/v1/schedule');
+
+    expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 240_000 });
+    expect(post.mock.calls[0]![1]).toMatchObject({ deadlineSeconds: 240 });
+    expect(service.waitSeconds).toBe(240);
+  });
+
+  it('is the road’s own number when the operator says it: AI_ENGINE_PATH_IDLE_LIMIT_SECONDS=120 holds a call to 110 s', async () => {
+    const { call, post } = await build({ body: INCIDENT_BODY, pathIdleLimitSeconds: 120 });
+    post.mockReturnValue(of({ data: {} }));
+
+    await call('/v1/schedule');
+
+    expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 110_000 });
+    expect(post.mock.calls[0]![1]).toMatchObject({ deadlineSeconds: 110 });
+  });
+
+  describe('an engine older than deadlineSeconds', () => {
+    it('is waited for 290 s and sent no deadline: the field is never sent to an engine that did not say it can take it', async () => {
+      const { call, post, service } = await build({ body: INCIDENT_BODY_WITHOUT_DEADLINE, pathIdleLimitSeconds: 300 });
+      post.mockReturnValue(of({ data: {} }));
+
+      await call('/v1/schedule');
+
+      expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 290_000 });
+      expect(post.mock.calls[0]![1]).not.toHaveProperty('deadlineSeconds');
+      expect(service.waitSeconds).toBe(290);
+    });
+
+    it('is waited for 290 s, and its first Generera says in the log that it cannot be asked to answer inside that and which number to change', async () => {
+      const { call, post } = await build({ body: INCIDENT_BODY_WITHOUT_DEADLINE, pathIdleLimitSeconds: 300 });
+      post.mockReturnValue(of({ data: {} }));
+
+      await call('/v1/schedule');
+      await call('/v1/schedule');
+
+      const said = warnings.filter((line) => line.includes('closes a request that sends nothing'));
+      expect(said).toHaveLength(1);
+      expect(said[0]).toContain('older than deadlineSeconds and cannot be asked to answer inside that');
+      expect(said[0]).toContain('SOLVER_MAX_TIME_SECONDS on the engine to 235 or less');
+    });
+
+    it('is not a silent exception when the engine that said it can take a deadline refuses it: the call is sent again without it, still held to 290 s', async () => {
+      const { call, post, get } = await build({ body: INCIDENT_BODY, timeoutMs: 600_000, pathIdleLimitSeconds: 300 });
+      post.mockReturnValueOnce(
+        throwError(() =>
+          refusedWith(422, {
+            code: 'HTTP_ERROR',
+            message: 'Validation failed',
+            details: { errors: [{ loc: ['body', 'deadlineSeconds'], msg: 'Extra inputs are not permitted', type: 'extra_forbidden' }] },
+          }),
+        ),
+      );
+      post.mockReturnValueOnce(of({ data: { status: 'OPTIMAL' } }));
+      // The engine is slow to answer the new read, as a real one is: what it said before is not believed meanwhile.
+      jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+      get.mockReturnValue(NEVER);
+
+      await expect(call('/v1/schedule')).resolves.toEqual({ status: 'OPTIMAL' });
+      jest.useRealTimers();
+
+      expect(post.mock.calls[0]![1]).toMatchObject({ deadlineSeconds: 290 });
+      expect(post.mock.calls[1]![1]).not.toHaveProperty('deadlineSeconds');
+      expect(post.mock.calls[1]![2]).toMatchObject({ timeout: 290_000 });
+    });
+  });
+
+  describe('what a run is told, once', () => {
+    it('says in the log, with the first call, that the road holds the wait to 290 s and the search to what the engine can fit, once however many calls follow', async () => {
+      const { call, post } = await build({ body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
+      post.mockReturnValue(of({ data: {} }));
+
+      await call('/v1/schedule');
+      await call('/v1/schedule');
+      await call('/v1/schedule');
+
+      const said = warnings.filter((line) => line.includes('closes a request that sends nothing'));
+      expect(said).toHaveLength(1);
+      expect(said[0]).toContain('the API waits 290 s at most');
+      expect(said[0]).toContain('its search is cut to about 235 s of its 540 s');
+    });
+
+    it('says nothing for a road that holds what the engine needs, or has no limit', async () => {
+      for (const over of [{ pathIdleLimitSeconds: 300 }, { body: INCIDENT_BODY }]) {
+        const { call, post } = await build(over);
+        post.mockReturnValue(of({ data: {} }));
+
+        await call('/v1/schedule');
+      }
+
+      expect(warnings.filter((line) => line.includes('closes a request that sends nothing'))).toEqual([]);
+    });
+  });
+
+  it('ends a call that nothing answers at 290 s, by the API’s own wait and not by the road’s: ENGINE_WAIT_EXPIRED with the 290 s it waited', async () => {
+    jest.useFakeTimers();
+    try {
+      const { call, post } = await build({ body: INCIDENT_BODY, pathIdleLimitSeconds: 300 });
+      post.mockReturnValue(NEVER);
+
+      const pending = call('/v1/schedule').catch((error: unknown) => error);
+      await jest.advanceTimersByTimeAsync(289_000);
+      let settled = false;
+      void pending.then(() => (settled = true));
+      await jest.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      await jest.advanceTimersByTimeAsync(1_000);
+      const thrown = (await pending) as HttpException;
+
+      expect(thrown.getStatus()).toBe(503);
+      expect(thrown.getResponse()).toMatchObject({ code: 'ENGINE_WAIT_EXPIRED', params: { waitSeconds: 290 } });
+    } finally {
+      jest.useRealTimers();
     }
   });
 });

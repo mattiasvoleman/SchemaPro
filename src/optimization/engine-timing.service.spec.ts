@@ -6,7 +6,7 @@ import { of, throwError, timer } from 'rxjs';
 import { mergeMap } from 'rxjs/operators';
 import { NodeEnv } from '../config/env.validation';
 import { EngineTimingService, TIMING_READ_MS, TIMING_REFRESH_MS, TIMING_RETRY_MS } from './engine-timing.service';
-import { PRODUCTION_BODY } from './__fixtures__/engine-timing-body';
+import { INCIDENT_BODY, INCIDENT_BODY_WITHOUT_DEADLINE, PRODUCTION_BODY } from './__fixtures__/engine-timing-body';
 
 /*
  * THE ENGINE'S TIMES, READ FROM THE ENGINE, and the start that refuses a wait
@@ -24,13 +24,18 @@ interface Harness {
 }
 
 const harness = (
-  over: { timeoutMs?: number; nodeEnv?: NodeEnv; candidatesMax?: number } = {},
+  over: { timeoutMs?: number; nodeEnv?: NodeEnv; candidatesMax?: number; pathIdleLimitSeconds?: number } = {},
 ): Harness => {
   const get = jest.fn();
   const config = {
     getOrThrow: jest.fn((key: string) => {
       if (key !== 'aiEngine') throw new TypeError(`Configuration key "${key}" does not exist`);
-      return { baseUrl: 'http://solver.test', apiKey: 'k'.repeat(32), ...('timeoutMs' in over ? { timeoutMs: over.timeoutMs } : {}) };
+      return {
+        baseUrl: 'http://solver.test',
+        apiKey: 'k'.repeat(32),
+        ...('timeoutMs' in over ? { timeoutMs: over.timeoutMs } : {}),
+        ...('pathIdleLimitSeconds' in over ? { pathIdleLimitSeconds: over.pathIdleLimitSeconds } : {}),
+      };
     }),
     get: jest.fn((key: string) => {
       if (key === 'app') return { nodeEnv: over.nodeEnv ?? NodeEnv.Production };
@@ -215,9 +220,9 @@ describe('EngineTimingService', () => {
       get.mockReturnValue(of({ data: PRODUCTION_BODY }));
       await service.refresh();
 
-      service.noteWait('optimize', 120_000);
-      service.noteWait('optimize', 120_000);
-      service.noteWait('optimize', 120_000);
+      service.noteWait('optimize');
+      service.noteWait('optimize');
+      service.noteWait('optimize');
 
       expect(logged.error).toHaveLength(1);
       expect(logged.error[0]).toContain('AI_ENGINE_TIMEOUT_MS=120000 is shorter than the engine can need');
@@ -227,16 +232,16 @@ describe('EngineTimingService', () => {
       const holds = harness({ timeoutMs: 240_000 });
       holds.get.mockReturnValue(of({ data: PRODUCTION_BODY }));
       await holds.service.refresh();
-      holds.service.noteWait('optimize', 240_000);
-      holds.service.noteWait('optimize-rooms', 1_000);
+      holds.service.noteWait('optimize');
+      holds.service.noteWait('optimize-rooms');
 
       const derived = harness();
       derived.get.mockReturnValue(of({ data: PRODUCTION_BODY }));
       await derived.service.refresh();
-      derived.service.noteWait('optimize', derived.service.waitMs('optimize'));
+      derived.service.noteWait('optimize');
 
       const silent = harness({ timeoutMs: 120_000 });
-      silent.service.noteWait('optimize', 120_000);
+      silent.service.noteWait('optimize');
 
       expect(logged.error).toEqual([]);
     });
@@ -330,6 +335,110 @@ describe('EngineTimingService', () => {
       service.onModuleDestroy();
       await jest.advanceTimersByTimeAsync(TIMING_REFRESH_MS * 3);
       expect(get).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('the road to the engine (omgång 15, the 2026-11-23 incident)', () => {
+    it('holds the wait it derives from the engine’s ceiling to what the road holds: 290 s, not the 600 s the incident’s engine makes of 590 + 10', async () => {
+      const { service, get } = harness({ pathIdleLimitSeconds: 300 });
+      get.mockReturnValue(of({ data: INCIDENT_BODY }));
+      await service.refresh();
+
+      expect(service.unclampedWaitMs('optimize')).toBe(600_000);
+      expect(service.waitMs('optimize')).toBe(290_000);
+      // The engine's other routes fit and are not touched.
+      expect(service.waitMs('optimize-rooms')).toBe(50_000);
+    });
+
+    it('is the wait it always was on a road with no limit', async () => {
+      const { service, get } = harness();
+      get.mockReturnValue(of({ data: INCIDENT_BODY }));
+      await service.refresh();
+
+      expect(service.waitMs('optimize')).toBe(600_000);
+    });
+
+    it('says at the start, in the log and as a warning, what the road does and which numbers to change, and starts: the deployment it is said about is serving', async () => {
+      const { service, get } = harness({ pathIdleLimitSeconds: 300, nodeEnv: NodeEnv.Production });
+      get.mockReturnValue(of({ data: INCIDENT_BODY }));
+
+      await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
+      service.onModuleDestroy();
+
+      const said = logged.warn.filter((line) => line.includes('closes a request that sends nothing after 300 s'));
+      expect(said).toHaveLength(1);
+      expect(said[0]).toContain('SOLVER_MAX_TIME_SECONDS on the engine to 235 or less');
+      expect(said[0]).toContain('AI_ENGINE_URL=http://<the engine\'s service>.railway.internal:<its port>');
+      expect(logged.error).toEqual([]);
+      expect(logged.log.join('\n')).toContain(
+        'the API waits 290 s (counted from that), held to what the road to the engine holds (300 s, AI_ENGINE_PATH_IDLE_LIMIT_SECONDS).',
+      );
+    });
+
+    it('does not refuse a production start for it, whatever the engine can need: the API must go on serving while the deployment is read', async () => {
+      const { service, get } = harness({ pathIdleLimitSeconds: 30, nodeEnv: NodeEnv.Production });
+      get.mockReturnValue(of({ data: INCIDENT_BODY }));
+
+      await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
+      service.onModuleDestroy();
+    });
+
+    it('says it once whether the start or the first Generera says it first', async () => {
+      const { service, get } = harness({ pathIdleLimitSeconds: 300 });
+      get.mockReturnValue(of({ data: INCIDENT_BODY }));
+      await service.onApplicationBootstrap();
+      service.onModuleDestroy();
+
+      service.noteWait('optimize');
+      service.noteWait('optimize');
+
+      expect(logged.warn.filter((line) => line.includes('closes a request that sends nothing'))).toHaveLength(1);
+    });
+
+    it('says for an engine older than deadlineSeconds that it cannot be asked to answer inside the wait', async () => {
+      const { service, get } = harness({ pathIdleLimitSeconds: 300 });
+      get.mockReturnValue(of({ data: INCIDENT_BODY_WITHOUT_DEADLINE }));
+      await service.onApplicationBootstrap();
+      service.onModuleDestroy();
+
+      expect(logged.warn.join('\n')).toContain('older than deadlineSeconds and cannot be asked to answer inside that');
+    });
+
+    it('says nothing of the road when the engine’s ceiling fits it, or the road has no limit', async () => {
+      for (const over of [{ pathIdleLimitSeconds: 300 }, {}]) {
+        const { service, get } = harness(over);
+        get.mockReturnValue(of({ data: over.pathIdleLimitSeconds === undefined ? INCIDENT_BODY : PRODUCTION_BODY }));
+        await service.onApplicationBootstrap();
+        service.onModuleDestroy();
+      }
+
+      expect(logged.warn.filter((line) => line.includes('closes a request that sends nothing'))).toEqual([]);
+      expect(logged.log.some((line) => line.includes('held to what the road'))).toBe(false);
+    });
+
+    it('does not call a wait that was set to 600000 "shorter than the engine can need" because the road cuts it', async () => {
+      const { service, get } = harness({ timeoutMs: 600_000, pathIdleLimitSeconds: 300, nodeEnv: NodeEnv.Production });
+      get.mockReturnValue(of({ data: INCIDENT_BODY }));
+
+      await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
+      service.noteWait('optimize');
+      service.onModuleDestroy();
+
+      expect(logged.error).toEqual([]);
+      expect(service.waitMs('optimize')).toBe(290_000);
+    });
+
+    it('says, when the engine does not state its times, that a wait that was set long is held to what the road holds', async () => {
+      const { service, get } = harness({ timeoutMs: 600_000, pathIdleLimitSeconds: 300, nodeEnv: NodeEnv.Production });
+      get.mockReturnValue(throwError(() => notFound()));
+
+      await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
+      service.onModuleDestroy();
+
+      expect(logged.warn).toHaveLength(1);
+      expect(logged.warn[0]).toContain('does not state its times');
+      expect(logged.warn[0]).toContain('waits 290000 ms for a call, held to what the road to the engine holds');
+      expect(logged.warn[0]).toContain('300 s (AI_ENGINE_PATH_IDLE_LIMIT_SECONDS)');
     });
   });
 });

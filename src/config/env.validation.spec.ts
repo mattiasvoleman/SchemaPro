@@ -91,6 +91,37 @@ describe('validateEnv', () => {
     });
   });
 
+  describe('AI_ENGINE_PATH_IDLE_LIMIT_SECONDS (omgång 15: how long the road holds a silent request)', () => {
+    it('may be left out: the limit then comes from the address (engine-path.ts)', () => {
+      expect(validateEnv(valid()).AI_ENGINE_PATH_IDLE_LIMIT_SECONDS).toBeUndefined();
+    });
+
+    it('may be set to nothing, which is what clearing the field in a host leaves and is not a setting either', () => {
+      for (const blank of ['', null, undefined]) {
+        expect(validateEnv({ ...valid(), AI_ENGINE_PATH_IDLE_LIMIT_SECONDS: blank }).AI_ENGINE_PATH_IDLE_LIMIT_SECONDS).toBeUndefined();
+      }
+    });
+
+    it.each([
+      ['the edge’s five minutes', '300', 300],
+      ['half a minute, the least', '30', 30],
+      ['0, which says the road holds a silent request as long as it takes', '0', 0],
+      ['a day, the most', '86400', 86_400],
+    ])('accepts %s', (_label, value, expected) => {
+      expect(validateEnv({ ...valid(), AI_ENGINE_PATH_IDLE_LIMIT_SECONDS: value }).AI_ENGINE_PATH_IDLE_LIMIT_SECONDS).toBe(expected);
+    });
+
+    it.each([
+      ['under half a minute, which leaves no wait once the margin is taken', '29'],
+      ['negative', '-1'],
+      ['more than a day', '86401'],
+      ['not a number', 'soon'],
+      ['not a whole number of seconds', '300.5'],
+    ])('refuses %s', (_label, value) => {
+      expect(() => validateEnv({ ...valid(), AI_ENGINE_PATH_IDLE_LIMIT_SECONDS: value })).toThrow(/AI_ENGINE_PATH_IDLE_LIMIT_SECONDS/);
+    });
+  });
+
   it('names the offending variable and never echoes its value', () => {
     // The message goes to a log an operator reads, and half of these variables
     // are secrets.

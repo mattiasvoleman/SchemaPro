@@ -9,7 +9,9 @@ import {
   candidateBudgetNote,
   candidateTimesOf,
   parseEngineTiming,
+  pathShortfall,
   supportsDeadline,
+  unclampedWaitMsFor,
   waitMsFor,
   waitShortfall,
   type CandidateTimes,
@@ -82,9 +84,17 @@ export class EngineTimingService implements OnApplicationBootstrap, OnModuleDest
     return candidateTimesOf(this.timing);
   }
 
-  /** How long the API waits for a call to `route`, in milliseconds. */
+  /**
+   * How long the API waits for a call to `route`, in milliseconds: what the engine says the route needs (or
+   * AI_ENGINE_TIMEOUT_MS), held to what the road to the engine holds (pathLimitSeconds).
+   */
   waitMs(route: EngineRoute | null): number {
-    return waitMsFor(route, this.timing, this.ai.timeoutMs);
+    return waitMsFor(route, this.timing, this.ai.timeoutMs, this.ai.pathIdleLimitSeconds);
+  }
+
+  /** `waitMs` as it would be on a road with no limit: what the call needs, before the road holds it. */
+  unclampedWaitMs(route: EngineRoute | null): number {
+    return unclampedWaitMsFor(route, this.timing, this.ai.timeoutMs);
   }
 
   /**
@@ -145,13 +155,32 @@ export class EngineTimingService implements OnApplicationBootstrap, OnModuleDest
    * the configured number: a schemaförslag call has a wait of its own, for a request of its own. The request carries its deadline, so the
    * call is answered inside the wait, with a shorter search than the engine's budget;
    * this is where an operator can read why a TIMEOUT says 94 s of a budget of 180.
+   *
+   * The configured number is what is judged, not the wait the call ends up with: the road to the engine may hold that
+   * shorter (notePath), and a setting of 600000 is not "shorter than the engine can need" because the road cuts it.
    */
-  noteWait(route: EngineRoute | null, waitMs: number): void {
+  noteWait(route: EngineRoute | null): void {
     if (route !== 'optimize') return;
-    const shortfall = waitShortfall(this.timing, this.ai.timeoutMs === undefined ? undefined : waitMs);
+    const shortfall = waitShortfall(this.timing, this.ai.timeoutMs);
+    if (shortfall !== null && !this.said.has(shortfall.sentence)) {
+      this.said.add(shortfall.sentence);
+      this.logger.error(shortfall.sentence);
+    }
+    this.notePath();
+  }
+
+  /**
+   * Said once per distinct sentence, where the first Generera meets it and again at the start: the road to
+   * the engine closes a request that sends nothing sooner than the engine can need, so the API holds the wait
+   * and the deadline to what the road holds. The start's line was lost to Railway's log cap on 2026-11-23
+   * ("Messages dropped: 229"), and a note nobody read is the silent death this exists to end: the first run
+   * says it too. Never an error that stops the start: the deployment this is said about is serving.
+   */
+  private notePath(): void {
+    const shortfall = pathShortfall(this.timing, this.ai.pathIdleLimitSeconds);
     if (shortfall === null || this.said.has(shortfall.sentence)) return;
     this.said.add(shortfall.sentence);
-    this.logger.error(shortfall.sentence);
+    this.logger.warn(shortfall.sentence);
   }
 
   /**
@@ -176,9 +205,14 @@ export class EngineTimingService implements OnApplicationBootstrap, OnModuleDest
     }, TIMING_REFRESH_MS);
     this.timer.unref();
     if (timing === null) {
+      const held = this.waitMs('optimize') < this.unclampedWaitMs('optimize');
       this.logger.warn(
         `The engine at ${this.ai.baseUrl} does not state its times (older than GET ${TIMING_PATH}, or not reachable yet): ` +
-          `the API waits ${this.ai.timeoutMs ?? 'its 120000 ms fallback'} ms for a call, as it always has.`,
+          (held
+            ? `the API waits ${this.waitMs('optimize')} ms for a call, held to what the road to the engine holds: it closes a ` +
+              `request that sends nothing after ${this.ai.pathIdleLimitSeconds} s (AI_ENGINE_PATH_IDLE_LIMIT_SECONDS), and this ` +
+              `engine cannot be told so. A run that needs longer ends with the API's wait, with nothing to show of it.`
+            : `the API waits ${this.ai.timeoutMs ?? 'its 120000 ms fallback'} ms for a call, as it always has.`),
       );
       return;
     }
@@ -188,14 +222,20 @@ export class EngineTimingService implements OnApplicationBootstrap, OnModuleDest
       if (nodeEnv === NodeEnv.Production) throw new Error(shortfall.sentence);
       this.logger.error(shortfall.sentence);
     }
+    // The road's limit is said here too, and never refused: it is a property of the address the deployment
+    // already serves by, and a start that refused it would take the API down for the engine's own settings.
+    this.notePath();
     const candidates = this.configService.get<{ maxSeconds?: number }>('candidates');
     const note = candidateBudgetNote(timing, candidates?.maxSeconds);
     if (note !== null) this.logger.warn(note);
     const ceiling = timing.routes.optimize?.ceilingSeconds;
+    const held = this.waitMs('optimize') < this.unclampedWaitMs('optimize');
     this.logger.log(
       `The engine says its generator waits up to ${ceiling ?? '?'} s for a solve; the API waits ${
         this.waitMs('optimize') / 1000
-      } s${this.ai.timeoutMs === undefined ? ' (counted from that)' : ' (AI_ENGINE_TIMEOUT_MS)'}.`,
+      } s${this.ai.timeoutMs === undefined ? ' (counted from that)' : ' (AI_ENGINE_TIMEOUT_MS)'}${
+        held ? `, held to what the road to the engine holds (${this.ai.pathIdleLimitSeconds} s, AI_ENGINE_PATH_IDLE_LIMIT_SECONDS)` : ''
+      }.`,
     );
   }
 
