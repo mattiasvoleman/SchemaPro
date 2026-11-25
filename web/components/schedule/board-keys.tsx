@@ -199,6 +199,23 @@ export function BoardKeys(props: BoardKeysProps) {
       p.onLessonChange?.(lesson.id, square);
     };
 
+    /**
+     * A lesson that is parked or removed leaves the week, and the focus it has leaves the page with it (to <body>, where the next
+     * key goes to nothing and Tab starts from the top of the page). So the focus is handed on first: to the next lesson of its day,
+     * else the one before, else the nearest of another day. Where the write is refused the lesson stays and keeps its focus.
+     */
+    const focusPassesOn = (id: string) => {
+      const { props: p } = live.current;
+      const others = p.lessons.filter((candidate) => !candidate.duty);
+      const heir =
+        focusAfter(others, id, "ArrowDown") ?? focusAfter(others, id, "ArrowUp") ?? focusAfter(others, id, "ArrowRight") ?? focusAfter(others, id, "ArrowLeft");
+      if (!heir) return;
+      const target = others.find((candidate) => candidate.id === heir);
+      if (p.shownDay !== null && target && target.dayOfWeek !== p.shownDay) p.showDay(target.dayOfWeek);
+      p.setRoving(heir);
+      p.followFocus(heir);
+    };
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.ctrlKey || event.metaKey) return;
       const card = cardOf(event);
@@ -310,10 +327,12 @@ export function BoardKeys(props: BoardKeysProps) {
         } else if (key === "p" || key === "P") {
           consume();
           say("parked", { lesson: nameOf(lesson) });
+          focusPassesOn(id);
           p.onLessonCommand(id, "park");
         } else if (key === "Delete" || key === "Backspace") {
           consume();
           say("removed", { lesson: nameOf(lesson) });
+          focusPassesOn(id);
           p.onLessonCommand(id, "remove");
         }
       }
