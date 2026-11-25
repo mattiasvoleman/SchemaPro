@@ -6178,8 +6178,8 @@ class SchedulerSolver:
         held = staged.held_places(request, on_grid=self._on_the_weeks_grid(request))
         free = staged.with_blocks(request, staged.clashes(request, held)) if held.places else set()
         logger.info(
-            "start_schedule held=%d clashing=%d dropped=%s [requestId=%s]",
-            len(held.places), len(free), held.dropped or "none", request.request_id,
+            "start_schedule held=%d clashing=%d dropped=%s read_seconds=%.1f [requestId=%s]",
+            len(held.places), len(free), held.dropped or "none", time.monotonic() - entered, request.request_id,
         )
         rounds = 0
         while True:
@@ -6199,12 +6199,16 @@ class SchedulerSolver:
                 # Nothing is held: the ordinary solve, with the schedule as the hint it also is.
                 self._enter_stage("PRECHECKS")
                 logger.info("start_schedule rounds=%d held=0 [requestId=%s]", rounds, request.request_id)
-                return self._solve_strict(staged.attempt(request, held, set(held.places)), began)
+                try:
+                    return self._solve_strict(staged.attempt(request, held, set(held.places)), began)
+                finally:
+                    self._log_attempt(request, rounds + 1, began, entered)
             rounds += 1
             self._enter_stage("PRECHECKS")
             try:
                 response = self._solve_strict(staged.attempt(request, held, free), began)
             except InvalidScheduleInputError as refusal:
+                self._log_attempt(request, rounds, began, entered)
                 named = staged.named_by_refusal(refusal.params, candidates)
                 if not named:
                     raise
@@ -6215,6 +6219,7 @@ class SchedulerSolver:
                     rounds, refusal.code, len(named), request.request_id,
                 )
                 continue
+            self._log_attempt(request, rounds, began, entered)
             if response.status != "INFEASIBLE":
                 logger.info(
                     "start_schedule rounds=%d held=%d let_go=%d status=%s [requestId=%s]",
@@ -6235,6 +6240,18 @@ class SchedulerSolver:
             logger.info(
                 "start_schedule round=%d infeasible let_go=%d [requestId=%s]", rounds, len(free), request.request_id,
             )
+
+    def _log_attempt(self, request: OptimizeScheduleRequest, attempt: int, began: float, entered: float) -> None:
+        """One line per attempt: how long it ran and what its builds cost, so that a run of rounds can be read afterwards.
+
+        The engine logs no start-up and no build time of its own; a school's TIMEOUT after many rounds could not be told
+        from one whose builds were slow (the logs of 2026-11-23 had only the stage where it ended). `build_seconds` is
+        the attempt's own estimate (`_build_seconds`: half of its checks and its two builds), and is the last attempt's
+        where this one was refused before its builds."""
+        logger.info(
+            "start_schedule attempt=%d seconds=%.1f build_seconds=%.1f since_arrival=%.1f [requestId=%s]",
+            attempt, time.monotonic() - began, self._build_seconds, time.monotonic() - entered, request.request_id,
+        )
 
     def _clock_holds_an_attempt(self) -> bool:
         """Whether the request's clock has room for another attempt's checks and builds, and a search after them.

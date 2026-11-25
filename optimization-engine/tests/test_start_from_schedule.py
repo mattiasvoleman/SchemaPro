@@ -578,3 +578,20 @@ def test_a_driver_at_its_most_attempts_fits_what_the_gateway_keeps_of_a_report()
     ]
     assert len(report.stages) <= 12 and len(report.search.phases) <= 6
     assert round(sum(s.seconds for s in report.stages), 1) == report.total_seconds
+
+
+def test_each_attempt_logs_how_long_it_took_and_what_its_builds_cost(
+    schedule_of_the_first_week: list, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The engine logs no start-up and no build time of its own: a run of rounds could not be read afterwards (g460)."""
+    request = build_week(OTHER).request.model_copy(update={"start_lessons": _started_from(schedule_of_the_first_week)})
+
+    with caplog.at_level("INFO", logger="app.solver.scheduler_solver"):
+        SchedulerSolver(_settings(30.0)).solve(request)
+
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("start_schedule")]
+    assert any("read_seconds=" in line for line in lines), lines
+    attempts = [line for line in lines if " attempt=" in line]
+    assert attempts, lines
+    for line in attempts:
+        assert " seconds=" in line and " build_seconds=" in line and " since_arrival=" in line, line
