@@ -111,10 +111,13 @@ class Recording:
 
 
 class _RecordingCpSolver(cp_model.CpSolver):
-    def __init__(self, recording: Recording, stage_of) -> None:
+    def __init__(self, recording: Recording, stage_of, *, whole_week: bool = True) -> None:
         super().__init__()
         self._recording = recording
         self._stage_of = stage_of
+        #: False for a search that lays a part of the week (one year's step, M8 PR 5): it is recorded, counts in the
+        #: work to the first timetable, and its solution is not that timetable.
+        self._whole_week = whole_week
 
     def Solve(self, model, solution_callback=None):  # noqa: N802 (the library's name)
         started = time.monotonic()
@@ -135,7 +138,7 @@ class _RecordingCpSolver(cp_model.CpSolver):
                 first_only=bool(self.parameters.stop_after_first_solution),
             ),
         )
-        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE) and rec.first_at is None:
+        if self._whole_week and status in (cp_model.OPTIMAL, cp_model.FEASIBLE) and rec.first_at is None:
             rec.first_at = now - rec.entered
             rec.first_deterministic = sum(s.deterministic for s in rec.searches)
             rec.stages = self._stage_of(now)
@@ -185,6 +188,18 @@ class MeasuringSolver(SchedulerSolver):
             solver.parameters.max_time_in_seconds = self._deterministic_budget * COUNT_WALL_MULTIPLE
         return solver
 
+    def _years_solver(self, request, seconds):  # type: ignore[override]
+        """One year's step: searched like any generation search and recorded, but its solution is not the week's first timetable."""
+        base = SchedulerSolver._generation_solver(request, seconds)
+        solver = _RecordingCpSolver(self.recording, self._stage_seconds, whole_week=False)
+        solver.parameters.copy_from(base.parameters)
+        if self._mode == "count":
+            solver.parameters.num_workers = 1
+            solver.parameters.random_seed = self._seed
+            solver.parameters.max_deterministic_time = self._deterministic_budget
+            solver.parameters.max_time_in_seconds = self._deterministic_budget * COUNT_WALL_MULTIPLE
+        return solver
+
     def measure(self, request: OptimizeScheduleRequest) -> dict[str, object]:
         load_before = os.getloadavg()[0]
         self.recording.entered = time.monotonic()
@@ -215,7 +230,12 @@ class MeasuringSolver(SchedulerSolver):
         total = time.monotonic() - rec.entered
         found = rec.first_at is not None
         if status == "TIMEOUT" and self._mode == "count" and not found:
-            cut = [s for s in rec.searches if s.deterministic < BUDGET_REACHED * self._deterministic_budget]
+            # Only a search that GAVE UP can have been cut short: a year's step that was solved in a fraction of its budget
+            # (M8 PR 5) is a search that finished.
+            cut = [
+                s for s in rec.searches
+                if s.status == "UNKNOWN" and s.deterministic < BUDGET_REACHED * self._deterministic_budget
+            ]
             if cut:
                 status = "ERROR"
                 codes = ["WALL_LIMIT_BEFORE_BUDGET",

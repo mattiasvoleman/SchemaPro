@@ -255,4 +255,76 @@ def test_a_measurement_runs_with_the_probe_off(monkeypatch) -> None:
 
     assert seen == [0]
     assert result["status"] == "TIMEOUT"
-    assert len(result["searches"]) == 2, "phase 1a and phase 1b, and no probe's searches after them"
+    # Phase 1a, the first step of the years' road between the two (the week has three years; a step that gives up ends the
+    # road, M8 PR 5), and phase 1b: and no probe's searches after them.
+    assert len(result["searches"]) == 3
+
+
+# ---- M8 PR 5: a year's step is a search of the solve and is not the week's first timetable -----------------------
+
+
+def _gives_up_in_phase_1a():
+    """A MeasuringSolver whose phase 1a gives up (as it does on a week it cannot lay), every other search the engine's own."""
+
+    class GivesUpFirst(measure.MeasuringSolver):
+        asked = 0
+
+        def _generation_solver(self, request, seconds):  # type: ignore[override]
+            type(self).asked += 1
+            solver = super()._generation_solver(request, seconds)
+            if type(self).asked > 1:
+                return solver
+
+            class Ended(measure._RecordingCpSolver):  # noqa: SLF001
+                def Solve(self, model, solution_callback=None):  # noqa: N802
+                    self._recording.searches.append(measure.Search("UNKNOWN", 1.0, 4.0, 0, False))
+                    return measure.cp_model.UNKNOWN
+
+            ended = Ended(self.recording, self._stage_seconds)
+            ended.parameters.copy_from(solver.parameters)
+            return ended
+
+    return GivesUpFirst
+
+
+def test_the_first_timetable_is_the_weeks_and_not_a_years_step() -> None:
+    from app.config import Settings
+
+    solver = _gives_up_in_phase_1a()(
+        Settings(SOLVER_MAX_TIME_SECONDS=30, SOLVER_PROBE_SECONDS=0),  # type: ignore[call-arg]
+        mode="count", deterministic_budget=5, seed=1,
+    )
+
+    result = solver.measure(build_week(TINY).request)
+
+    assert result["status"] == "FIRST_SCHEDULE"
+    searches = result["searches"]
+    assert [s["status"] for s in searches][0] == "UNKNOWN", "phase 1a gave up"
+    assert len(searches) >= 4, "phase 1a, the years' steps (three, one each) and the search that found the week"
+    steps = searches[1:-1]
+    assert steps and all(s["status"] == "OPTIMAL" for s in steps), "each step solved its part and the measurement went on"
+    assert result["firstScheduleDeterministic"] >= sum(s["deterministic"] for s in searches) - 1e-9, (
+        "the work to the first timetable is the work of everything before it, the steps included"
+    )
+    assert "YEARS" in result["stages"]
+
+
+def test_a_search_that_finished_inside_its_budget_is_not_a_search_the_wall_clock_cut(monkeypatch) -> None:
+    """A year's step that was solved in a fraction of its budget finished; only a search that gave up can have been cut."""
+
+    class Mixed(measure._RecordingCpSolver):  # noqa: SLF001
+        calls = 0
+
+        def Solve(self, model, solution_callback=None):  # noqa: N802
+            type(self).calls += 1
+            if type(self).calls % 2:
+                self._recording.searches.append(measure.Search("OPTIMAL", 1.0, 0.1, 0, False))
+            else:
+                self._recording.searches.append(measure.Search("UNKNOWN", 1.0, 5.0, 0, False))
+            return measure.cp_model.UNKNOWN
+
+    monkeypatch.setattr(measure, "_RecordingCpSolver", Mixed)
+
+    result = measure.measure_request(build_week(TINY).request, mode="count", deterministic_budget=5)
+
+    assert result["status"] == "TIMEOUT", result["conflictCodes"]
