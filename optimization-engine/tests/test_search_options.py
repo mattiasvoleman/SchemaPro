@@ -1236,6 +1236,37 @@ def test_the_probe_of_a_search_the_clock_cut_at_the_schools_own_setup_on_the_pub
     assert clock.now - entered <= 285.0, "the route's ceiling for a caller that waits 290 s"
 
 
+@pytest.mark.parametrize(
+    ("overrun", "probed"),
+    [
+        (0.0, {"budget": 253, "rules": 2, "slice": 4}),
+        (10.0, {"budget": 253, "rules": 1, "slice": 5}),
+    ],
+)
+def test_a_best_effort_search_the_clock_cut_is_given_the_probes_floor_with_the_build_in_it(
+    monkeypatch: pytest.MonkeyPatch, overrun: float, probed: dict[str, int],
+) -> None:
+    """g458: the same week as the strict test above, in Bästa möjliga schema, which counts its search from the request's arrival.
+
+    The budget it is given holds the setup of 8 s (the strict one's 245 s begin after it): 272 less the floor of 9
+    and the overrun of 10 is 253. The floor is a rule's slice AND its build only if the build's estimate is set BEFORE
+    the budget is asked for (the two lines `_solve_best_effort` swapped in g454, M-2): set after, the floor is the 5 s
+    alone, the budget 257 and the probe after a late search has the 1 s it had before.
+    """
+    clock = _Clock(monkeypatch, build=4.0, overrun=overrun)
+    entered = clock.now
+    _rules_to_probe(monkeypatch, 3)
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=540, SOLVER_PROBE_SECONDS=20)).solve(
+        _with_deadline(_best_effort_payload(), 290),
+    )
+
+    assert response.status == "TIMEOUT"
+    assert response.conflicts is not None
+    assert response.conflicts.summary_params == probed
+    assert clock.now - entered <= 285.0, "the route's ceiling for a caller that waits 290 s"
+
+
 def test_a_deadline_the_settings_fit_inside_changes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Whole budget, whole probe: the same solve as a request that carried none."""
     with_deadline = _Clock(monkeypatch)

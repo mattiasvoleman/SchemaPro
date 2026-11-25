@@ -252,6 +252,29 @@ def test_production_holds_its_540_seconds_for_a_setup_of_14_seconds_and_a_little
     assert clock.search_budget(started=22.0, budget=540.0, probe_seconds=20.0, build_seconds=11.0) == pytest.approx(529.0)
 
 
+def test_a_build_estimate_that_is_negative_or_not_a_number_is_no_estimate() -> None:
+    """g458: the estimate is the solve's own and cannot be either, but a floor that fell below the 5 s would give the search seconds the probe needs."""
+    clock = Deadline(entered=0.0, ceiling=230.0)
+    none = clock.search_budget(started=60.0, budget=180.0, probe_seconds=20.0)
+
+    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=20.0, build_seconds=-3.0) == pytest.approx(none)
+    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=20.0, build_seconds=float("nan")) == pytest.approx(none)
+    # An estimate past the probe's own seconds is the probe's seconds: the floor is never more than the probe has.
+    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=20.0, build_seconds=1e9) == pytest.approx(127.0)
+
+
+def test_the_schemaforslag_candidates_keep_their_thirty_seconds_as_far_as_the_clock_lets_them() -> None:
+    """g458: the lead (a probe of 15 s, a ceiling of 75, the answer due at 62) holds its 30 s to a setup of 11 s; the others (no probe, a ceiling of 60) to 17 s."""
+    lead = Deadline(entered=0.0, ceiling=30.0 + 15.0 + BUILD_HEADROOM_SECONDS)
+    others = Deadline(entered=0.0, ceiling=30.0 + BUILD_HEADROOM_SECONDS)
+
+    assert lead.search_budget(started=11.0, budget=30.0, probe_seconds=15.0, build_seconds=5.5) == 30.0
+    assert lead.search_budget(started=12.0, budget=30.0, probe_seconds=15.0, build_seconds=6.0) == pytest.approx(29.0)
+    assert lead.search_budget(started=22.0, budget=30.0, probe_seconds=15.0, build_seconds=11.0) == pytest.approx(15.0)
+    assert others.search_budget(started=17.0, budget=30.0, probe_seconds=0.0, build_seconds=8.5) == 30.0
+    assert others.search_budget(started=22.0, budget=30.0, probe_seconds=0.0, build_seconds=11.0) == pytest.approx(25.0)
+
+
 @pytest.mark.parametrize("started", [0.0, 8.0, 14.0, 30.0, 100.0])
 def test_a_search_that_stops_the_whole_overrun_late_leaves_the_probe_a_rules_build_and_slice(started: float) -> None:
     clock = Deadline(entered=0.0, ceiling=230.0)

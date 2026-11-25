@@ -167,7 +167,8 @@ class Deadline:
         The price is the same overrun off a search the clock cuts, and off the
         budget's own hold: a week whose setup took more than `answer_by` less
         the floor, the overrun and the budget is cut instead of held. At
-        production's 540 s that is a setup of 22 s where it was 32 s.
+        production's 540 s that was a setup of 22 s where it had been 32 s (14.7 s
+        now, with the build in the floor: see below).
 
         ONLY WHERE A PROBE FOLLOWS. A search with no probe after it (a request
         that turned its probes off, or a deployment with SOLVER_PROBE_SECONDS
@@ -176,9 +177,10 @@ class Deadline:
         answers three seconds before the route stops waiting. Holding the
         overrun back there is ten seconds of search paid for nothing, and it is
         paid by the schemaförslag candidates after the first (30 s each, no
-        probes), where the lead keeps its 30 s up to a setup of 22 s and the
-        others lose a second for every second of setup over 7, so the
-        emphases are no longer compared at one budget.
+        probes), which lost a second for every second of setup over 7, so the
+        emphases were no longer compared at one budget. They keep their 30 s
+        to a setup of 17 s; the lead, which keeps a probe of 15 s and its
+        floor, to 11 s (test_timing.py, g458).
 
         NEVER MORE THAN HALF OF WHAT IS LEFT. A caller that waits so little
         that ten seconds is most of what the clock has (`answer_by` itself
