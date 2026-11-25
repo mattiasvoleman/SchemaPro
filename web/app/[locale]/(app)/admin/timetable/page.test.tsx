@@ -1522,6 +1522,51 @@ describe("a lesson that stands outside the ramtid on purpose (Undantag med flit)
   });
 });
 
+describe("Justera lektion for a lesson that has an exemption (Undantag med flit)", () => {
+  // The ramtid runs 07:00-09:00 and the lesson stands at 10:00-11:00 with an exemption for it.
+  const frame = { id: "f-1", minGradeLevel: 0, maxGradeLevel: 99, dayOfWeek: null, startTime: "07:00:00", endTime: "09:00:00" };
+  const openSlojd = async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+    return user;
+  };
+  afterEach(() => {
+    noMutation.mutateAsync.mockReset().mockResolvedValue({ id: "x" });
+  });
+
+  it("opens with the exemption said, and a save after Ta tillbaka Lägg ändå says exempt: [] so that the gateway takes it back, the lock as the lesson had it", async () => {
+    state.frameTimes = [frame];
+    state.lessons = [{ ...lesson("l-late", "s-sl", "g-51", "10:00"), isLocked: true, exemptFrom: ["FRAME"] }];
+    const user = await openSlojd();
+
+    expect(await screen.findByText(/timetable\.exemptHas/)).toBeTruthy();
+    await user.click(await screen.findByRole("button", { name: "timetable.exemptTakeBack" }));
+    await user.click(await screen.findByRole("button", { name: "common.save" }));
+
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-late", exempt: [], isLocked: true }));
+  });
+
+  it("says the exemption it has when a lesson is saved as it stands: the answer is kept", async () => {
+    state.frameTimes = [frame];
+    state.lessons = [{ ...lesson("l-late", "s-sl", "g-51", "10:00"), isLocked: true, exemptFrom: ["FRAME"] }];
+    const user = await openSlojd();
+    await user.click(await screen.findByRole("button", { name: "common.save" }));
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-late", exempt: ["FRAME"], isLocked: true }));
+  });
+
+  it("says no word of an exemption for a lesson that has none: the save is the request it always was", async () => {
+    state.lessons = [lesson("l-late", "s-sl", "g-51", "10:00")];
+    const user = await openSlojd();
+    await user.click(await screen.findByRole("button", { name: "common.save" }));
+    const sent = noMutation.mutateAsync.mock.calls[0]![0] as Record<string, unknown>;
+    expect(sent).toMatchObject({ id: "l-late" });
+    expect("exempt" in sent).toBe(false);
+  });
+});
+
 describe("the krocklista for a reader (Läsbehörighet)", () => {
   /*
    * The page gives a profile that changes nothing no editor: a click on a card opens none ("gives a reader the grid to read"). The list

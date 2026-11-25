@@ -93,6 +93,32 @@ describe("an undoable update", () => {
   });
 });
 
+describe("an undoable update of a lesson that has an exemption (Undantag med flit)", () => {
+  const given = { ...lesson, isLocked: true, exemptFrom: ["FRAME" as const] } as MasterLesson;
+
+  it("puts the exemption back with the time: the snapshot says it, undo sends it, and redo sends it again", async () => {
+    const { view, updateLesson } = setup();
+    await act(async () => void (await view.result.current.edits.undoableUpdate(given, { dayOfWeek: 3 })));
+    // The patch itself is what the page said: no word of the exemption.
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith({ id: "l-1", dayOfWeek: 3 });
+
+    await act(async () => void (await view.result.current.history.undo()));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ id: "l-1", dayOfWeek: 1, isLocked: true, exempt: ["FRAME"] }));
+
+    await act(async () => void (await view.result.current.history.redo()));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ id: "l-1", dayOfWeek: 3, exempt: ["FRAME"] }));
+  });
+
+  it("says nothing of an exemption for a lesson that has none, or has had it taken back", async () => {
+    const { view, updateLesson } = setup();
+    for (const plain of [lesson, { ...lesson, exemptFrom: [] } as unknown as MasterLesson]) {
+      await act(async () => void (await view.result.current.edits.undoableUpdate(plain, { dayOfWeek: 3 })));
+      await act(async () => void (await view.result.current.history.undo()));
+      expect("exempt" in (updateLesson.mutateAsync.mock.calls.at(-1)![0] as object)).toBe(false);
+    }
+  });
+});
+
 describe("an undoable create", () => {
   it("is undone by deleting what it made, and redone by making it again under the id undo then deletes", async () => {
     const { view, createLesson, deleteLesson } = setup();
