@@ -1894,6 +1894,7 @@
       "causeTitle": "Sannolik orsak",
       "cause": {
         "RULES_MEASURED": "{count, plural, one {En regel} other {# regler}} gjorde att veckan gick att lösa när den lättades i en kort körning (raderna under Upptäckta konflikter). Det är en mätning och inget bevis.",
+        "PROBE_CHANGED_WEEK": "{count, plural, one {Ett prov} other {# prov}} som ändrar veckan i stället för att lätta en regel gjorde att den gick att lösa i en kort körning (raderna under Upptäckta konflikter säger vad som ändrades). Det är en mätning och inget bevis.",
         "TIGHT_WEEK": "Veckan är trång. Årskursens lektioner, växlingstiden mellan dem och lunchen behöver åtminstone så här stor del av ramtiderna:",
         "SHORT_CLOCK": "Sökningen fick {budget, number} s av de {configured, number} s som motorn är inställd på, för att förberedelserna tog tid.",
         "SHORT_CLOCK_WAIT": "Sökningen fick {budget, number} s av de {configured, number} s som motorn är inställd på. Tjänsten väntade {wait, number} s på svaret.",
@@ -1902,10 +1903,12 @@
       },
       "tightYear": "{grades, select, any {Klasser med okänd årskurs} other {Åk {grades}}}: minst {percent, number} %",
       "tightYearsBound": "Siffrorna är minst-tal: en årskurs kan vara fullare än sin siffra säger, och två årskursers procent går inte att jämföra.",
-      "weekLoadCut": "Räkningen av årskursernas minsta vecka hann inte med alla årskurser. En årskurs utan siffra här är inte räknad, vilket inte är detsamma som att den ligger under 85 %.",
+      "weekLoadCut": "Räkningen av årskursernas minsta vecka hann inte med alla årskurser. En årskurs utan siffra här är inte räknad, vilket inte är detsamma som att den ligger under {percent, number} %.",
+      "weekLoadCutPlain": "Räkningen av årskursernas minsta vecka hann inte med alla årskurser. En årskurs utan siffra här är inte räknad, vilket inte är detsamma som att den ligger under tröskeln som räkningen jämför med.",
       "nextTitle": "Nästa steg",
       "next": {
         "RULES_MEASURED": "Lätta på regeln som raderna under Upptäckta konflikter pekar ut och kör igen.",
+        "PROBE_CHANGED_WEEK": "Läs raderna under Upptäckta konflikter: de säger vad provet ändrade i veckan. Det är ingen regel att lätta, utan en ändring av underlaget.",
         "TIGHT_WEEK": "Frigör tid i de årskurserna: egen lärare per parallell grupp och block, eller vidga ramtiderna. En körning till på samma underlag ger samma besked.",
         "SHORT_CLOCK": "Kör igen: den här körningen fick kortare tid än motorn brukar ha. Upprepas det, hör av dig till den som driver tjänsten.",
         "SLOW_SETUP": "Har ni ett tidigare schema: höj Schemastabilitet, så utgår motorn från det. Annars kan Bästa möjliga schema ge ett schema med avsteg.",
