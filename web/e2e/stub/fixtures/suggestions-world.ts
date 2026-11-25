@@ -13,19 +13,24 @@ import { addDays, stockholmInstant, TODAY } from "./calendar";
  *   suggestions-timeout   the newest run TIMED OUT, with the account of where the time went and what the probe measured. The analysis finds
  *                         ONE change and the engine has solved the week with it: a timeout gets a proof from a second run
  *   suggestions-nothing   the newest run TIMED OUT and the analysis finds nothing in its time: the card says that, and that it is no proof
+ *   suggestions-saved     the newest run was REFUSED and ALREADY CARRIES its analysis (the column the gateway keeps it in): the run answers with it
+ *                         from the first read, and nobody has pressed anything
  *
  * The first read of the run after a press is RUNNING (the analysis counting), and every read after it is the answer.
  */
 export const SUGGESTIONS_SCENARIO = "suggestions";
 
-export type SuggestionsCase = "refusal" | "timeout" | "nothing";
+export type SuggestionsCase = "refusal" | "timeout" | "nothing" | "saved";
 
 export const suggestionsCaseOf = (scenario: string | null): SuggestionsCase | null => {
   if (scenario === null || !scenario.startsWith(SUGGESTIONS_SCENARIO)) return null;
   const rest = scenario.slice(SUGGESTIONS_SCENARIO.length).replace(/^-/, "");
-  for (const name of ["refusal", "timeout", "nothing"] as const) if (rest.startsWith(name)) return name;
+  for (const name of ["refusal", "timeout", "nothing", "saved"] as const) if (rest.startsWith(name)) return name;
   return null;
 };
+
+/** The refused run holds the analyses of two cases; the timed-out run those of the other two. */
+const jobOf = (asked: SuggestionsCase): OptimizationJob => (asked === "refusal" || asked === "saved" ? REFUSED : TIMED_OUT);
 
 /** `days` days before the stub's today at `time`, Stockholm time: as misc-school.ts writes it. */
 const ago = (days: number, time: string) => stockholmInstant(addDays(TODAY, -days), time);
@@ -133,15 +138,18 @@ const done = (over: Partial<Suggestions>): Suggestions => ({
   ...over,
 });
 
+const REFUSAL_ANSWER = done({
+  total: 4,
+  changes: [
+    change({ rule: "SUBJECT_PER_DAY", cost: 20, current: 1, needed: 2, weekdays: [2], requirementIds: [POST], requirementNames: ["Idrott och hälsa för 8A"] }),
+    change({ rule: "ROOM_LOCK", cost: 80, roomIds: [uid(KIND.misc, 9204)], roomNames: ["Gymnastiksalen"], requirementIds: [POST], requirementNames: ["Idrott och hälsa för 8A"], resourceIds: [ROOM_RULE] }),
+    change({ rule: "TEACHER_DAILY_CAP", cost: 168, current: 300, needed: 360, weekdays: [2, 3], resourceIds: [WORK_RULE], teacherNames: ["Anna Andersson"] }),
+  ],
+});
+
 const ANSWER: Record<SuggestionsCase, Suggestions> = {
-  refusal: done({
-    total: 4,
-    changes: [
-      change({ rule: "SUBJECT_PER_DAY", cost: 20, current: 1, needed: 2, weekdays: [2], requirementIds: [POST], requirementNames: ["Idrott och hälsa för 8A"] }),
-      change({ rule: "ROOM_LOCK", cost: 80, roomIds: [uid(KIND.misc, 9204)], roomNames: ["Gymnastiksalen"], requirementIds: [POST], requirementNames: ["Idrott och hälsa för 8A"], resourceIds: [ROOM_RULE] }),
-      change({ rule: "TEACHER_DAILY_CAP", cost: 168, current: 300, needed: 360, weekdays: [2, 3], resourceIds: [WORK_RULE], teacherNames: ["Anna Andersson"] }),
-    ],
-  }),
+  refusal: REFUSAL_ANSWER,
+  saved: REFUSAL_ANSWER,
   timeout: done({
     total: 1,
     changes: [change({ rule: "TEACHER_DAILY_CAP", proof: "SOLVED", cost: 168, current: 300, needed: 330, weekdays: [3], resourceIds: [WORK_RULE], teacherNames: ["Anna Andersson"] })],
@@ -161,10 +169,11 @@ const progress = new Map<string, number>();
 export function suggestionsJobFor(id: string, scenario: string | null): OptimizationJob | null {
   const asked = suggestionsCaseOf(scenario);
   if (asked === null) return null;
-  const job = asked === "refusal" ? REFUSED : TIMED_OUT;
+  const job = jobOf(asked);
   if (id !== job.id) return null;
   const step = progress.get(scenario ?? "") ?? 0;
-  if (step === 0) return job;
+  // A run that already holds its analysis has it from the first read, and a press on "Räkna om" starts a new one.
+  if (step === 0) return asked === "saved" ? { ...job, suggestions: ANSWER.saved } : job;
   // The first read after the press is the analysis counting; every read after it is the answer.
   progress.set(scenario ?? "", step + 1);
   return { ...job, suggestions: step === 1 ? RUNNING : ANSWER[asked] };
@@ -173,21 +182,24 @@ export function suggestionsJobFor(id: string, scenario: string | null): Optimiza
 /** The run a Generera started from the page gets, for a scenario that holds one. */
 export const suggestionsStartedJob = (scenario: string | null): string | null => {
   const asked = suggestionsCaseOf(scenario);
-  return asked === null ? null : asked === "refusal" ? REFUSED_ID : TIMEOUT_ID;
+  return asked === null ? null : jobOf(asked).id;
 };
 
 /** The press: the analysis is asked for and answers RUNNING. */
 export function pressForSuggestions(id: string, scenario: string | null): Suggestions | null {
   const asked = suggestionsCaseOf(scenario);
   if (asked === null) return null;
-  const job = asked === "refusal" ? REFUSED : TIMED_OUT;
+  const job = jobOf(asked);
   if (id !== job.id) return null;
   progress.set(scenario ?? "", 1);
   return RUNNING;
 }
 
-/** The runs a scenario lists first in the history: the one it holds. */
+/**
+ * The runs a scenario lists first in the history: the one it holds. The row carries no analysis, saved or not: the page takes the run up from
+ * the history and reads it by its id (useOptimizationJob), which is where the answer is.
+ */
 export const suggestionsHistoryFor = (scenario: string | null): OptimizationJob[] => {
   const asked = suggestionsCaseOf(scenario);
-  return asked === null ? [] : [asked === "refusal" ? REFUSED : TIMED_OUT];
+  return asked === null ? [] : [jobOf(asked)];
 };
