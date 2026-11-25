@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { DEMO, isDemoAddress, isReservedDomain, judgeDatabase, judgeDemoSchool, refusalText, type SchoolFacts } from './demo-guard';
 
 /** The demo school as the seed makes it, as far as the guard looks: its name, its people at the demo's domain, and nothing tied to it. */
@@ -161,6 +163,24 @@ describe('judgeDatabase', () => {
   it('counts a look-alike as real', () => {
     expect(judgeDatabase([{ domains: ['example.com.evil.org'] }])).toEqual({ code: 'DATABASE_HAS_A_REAL_SCHOOL', count: 1 });
     expect(judgeDatabase([{ domains: [''] }])).toEqual({ code: 'DATABASE_HAS_A_REAL_SCHOOL', count: 1 });
+  });
+
+  it('does not count a school whose people are all pseudonymised: the domain gallring writes is one of the reserved names (DEPLOYMENT §37)', () => {
+    // §37 says a demo school can be seeded beside a school of pseudonymised people, because the address gallring gives a person
+    // ('pseudonym-<id>@<domain>', in the SQL functions of the migrations) is on a name the guard does not count. Each half is held
+    // elsewhere (probe-gallring writes the address, the tests above hold the reserved names); this holds that the two are the same
+    // name: a migration that moved the domain off the reserved names would make the guard refuse such a school as a real one.
+    const migrations = join(__dirname, '..', '..', 'prisma', 'migrations');
+    const domains = new Set<string>();
+    for (const name of readdirSync(migrations)) {
+      const file = join(migrations, name, 'migration.sql');
+      if (!existsSync(file)) continue;
+      for (const found of readFileSync(file, 'utf8').matchAll(/'pseudonym-'\s*\|\|[^\n]*?\|\|\s*'@([^']+)'/g)) domains.add(found[1]!);
+    }
+    expect([...domains]).not.toHaveLength(0);
+    for (const domain of domains) expect(isReservedDomain(domain)).toBe(true);
+    expect(judgeDatabase([{ domains: [...domains] }])).toBeNull();
+    expect(judgeDatabase([{ domains: [...domains] }, { domains: ['kommun.se'] }])).toEqual({ code: 'DATABASE_HAS_A_REAL_SCHOOL', count: 1 });
   });
 });
 

@@ -452,21 +452,24 @@ to be created by hand, and everyone after that is invited from inside the app.
 insert into "Schools" (name, slug, timezone, "updatedAt")
 values ('<SCHOOL NAME>', '<short-name-no-spaces>', 'Europe/Stockholm', now());
 
-insert into "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
+insert into "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "invitedAt", "updatedAt")
 values (
   (select id from "Schools" where slug = '<short-name-no-spaces>'),
   '<THE UUID YOU COPIED>',
   'SCHOOL_ADMIN',
   '<FIRST NAME>', '<LAST NAME>', '<THE SAME EMAIL AS ABOVE>',
-  now()
+  now(), now()
 );
 ```
 
 Replace every `<...>` placeholder, including the short name — leaving one in
 literally is a common slip and the error message does not make it obvious.
 
-Three things that will bite you if you retype this by hand:
+Four things that will bite you if you retype this by hand:
 
+- **`"invitedAt"` says the person has a login.** Without it the row reads as a
+  catalogue entry nobody invited: when the school's retention job later
+  pseudonymises the person it would leave their login behind (docs/DEPLOYMENT.md §7).
 - **`"updatedAt"` is required and has no database default.** It is maintained
   by Prisma at the application level, so a hand-written `insert` has to supply
   it. Omitting it fails with

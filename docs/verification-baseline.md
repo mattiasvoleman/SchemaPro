@@ -334,8 +334,12 @@ Two concrete leads from the per-chunk breakdown:
    polyfill (5.9KB). `web/next.config.mjs` now aliases `@supabase/storage-js`
    to `web/utils/supabase/storage-stub.ts` for the **browser build only** (the
    server render keeps the package). Measured on the same tree: −12 657B on
-   every one of the 53 admin and 24 student/teacher/guardian routes, nothing
-   else moved, the shared runtime (100 % Next/React) unchanged.
+   every one of the 79 routes that carry the SDK: the 53 admin and the 24
+   student/teacher/guardian routes, and `/calendar-feed` and `/notifications`
+   (level `other`), which shrank by the same amount. The shared runtime
+   (100 % Next/React) is unchanged. (The first version of this note, and the
+   pull request, said 53 and 24 and "nothing else moved"; the review of #374
+   counted the two more.)
    `storage-stub.test.ts` holds the stub to what the installed supabase-js
    imports, and fails if app code ever calls `supabase.storage`.
 
