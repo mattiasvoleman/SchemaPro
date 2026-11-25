@@ -1274,6 +1274,16 @@ describe('AI engine wire contract', () => {
         expect(JSON.stringify(payload)).not.toMatch(/exemptFrom"|FRAME|LUNCH|exemption/);
       });
 
+      it('asks the database for the column a lock’s exemption is read from (the mock hands rows back whole, so only the query shows it)', async () => {
+        await buildPayload({}, [lock({ id: 'ml-meal', roomId: 'rm-plain', exemptFrom: ['LUNCH'] })], [], configure({}, { rooms: [gym, room('rm-plain')] }));
+
+        const kept = (lastTx['masterLesson']!['findMany']!.mock.calls as [{ select?: Record<string, unknown> }][])
+          .map(([args]) => args.select)
+          .find((select) => select?.['participants'] !== undefined && select['extraGroups'] !== undefined);
+
+        expect(kept).toMatchObject({ exemptFrom: true });
+      });
+
       it('sends a lock elsewhere, or anywhere with the rule off, the fields it always had', async () => {
         const elsewhere = await buildPayload({}, [lock({ roomId: 'rm-plain' })], [], configure(shared(), { rooms: [gym, room('rm-plain')], pupils: true }));
         expect(Object.keys((elsewhere['fixedLessons'] as Array<Record<string, unknown>>)[0]!).sort()).toEqual(FIXED_LESSON_FIELDS);
