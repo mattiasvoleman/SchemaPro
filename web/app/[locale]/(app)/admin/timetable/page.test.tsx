@@ -4390,3 +4390,109 @@ describe("two lessons that meet only in the weeks of a lov (lib/closed-weeks.ts)
     expect(ringed("Slöjd")).toBe(true);
   });
 });
+
+/*
+ * The keys of the board that WRITE (L, P, Delete), and the tab stop, through the page: board-keys.test.tsx says that the layer asks for
+ * a command, and the page's handler is what does it. A mutant of that handler that never unlocks, removes nothing, or is not wired to
+ * the grids of Per lärare, Per sal and Per klass passed every other test of the page (the one browser spec locks once and parks once).
+ */
+describe("the board's keys that write, through the page (E2)", () => {
+  const cardOf = (id: string) => document.querySelector<HTMLElement>(`[data-lesson-id="${id}"]`)!;
+
+  beforeEach(() => {
+    toasts.success.mockClear();
+    toasts.error.mockClear();
+  });
+
+  it("L locks a lesson and L on a locked one unlocks it, and each is a step that Ångra takes back", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await screen.findAllByRole("button", { name: /Matematik/ });
+    await boardKeysCame();
+
+    fireEvent.keyDown(cardOf("l-ma1"), { key: "l" });
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-ma1", isLocked: true })));
+    noMutation.mutateAsync.mockClear();
+    await user.click(screen.getByRole("button", { name: "timetable.undo" }));
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-ma1", isLocked: false })));
+    cleanup();
+
+    // A lesson that is locked is unlocked by the same key.
+    state.lessons = LESSONS.map((entry) => (entry.id === "l-ma1" ? { ...entry, isLocked: true } : entry));
+    noMutation.mutateAsync.mockClear();
+    render(<TimetablePage />);
+    await screen.findAllByRole("button", { name: /Matematik/ });
+    await boardKeysCame();
+    fireEvent.keyDown(cardOf("l-ma1"), { key: "L" });
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-ma1", isLocked: false })));
+  });
+
+  it("P parks the lesson, and says it did", async () => {
+    render(<TimetablePage />);
+    await screen.findAllByRole("button", { name: /Matematik/ });
+    await boardKeysCame();
+    fireEvent.keyDown(cardOf("l-ma1"), { key: "p" });
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-ma1", isParked: true })));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith(expect.stringContaining("timetable.parked")));
+  });
+
+  it("Delete and Backspace remove the lesson, say it, and Ångra makes it again", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await screen.findAllByRole("button", { name: /Matematik/ });
+    await boardKeysCame();
+
+    fireEvent.keyDown(cardOf("l-ma1"), { key: "Delete" });
+    // The delete mutation is given the id and nothing else; every other write of the page is given an object.
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith("l-ma1"));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith(expect.stringContaining("timetable.deleted")));
+    noMutation.mutateAsync.mockClear();
+    await user.click(screen.getByRole("button", { name: "timetable.undo" }));
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ subjectId: "s-ma", studentGroupId: "g-ma1" })),
+    );
+
+    noMutation.mutateAsync.mockClear();
+    fireEvent.keyDown(cardOf("l-ma2"), { key: "Backspace" });
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith("l-ma2"));
+  });
+
+  it("gives the week one tab stop, and the arrows carry it with the focus", async () => {
+    render(<TimetablePage />);
+    await screen.findAllByRole("button", { name: /Matematik/ });
+    await boardKeysCame();
+    const stops = () => [...document.querySelectorAll<HTMLElement>("[data-lesson-id]")].filter((card) => card.tabIndex >= 0);
+    expect(stops()).toHaveLength(1);
+
+    const first = stops()[0]!;
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(stops()).toHaveLength(1);
+    expect(document.activeElement).toBe(stops()[0]);
+    expect(stops()[0]).not.toBe(first);
+  });
+
+  it("is a board in Per lärare as well: a line for each board, and a key on a card in one board writes and speaks in that board alone", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await screen.findAllByRole("button", { name: /Matematik/ });
+    await user.click(screen.getByRole("combobox", { name: "timetable.viewLabel" }));
+    await user.click(await screen.findByRole("option", { name: "timetable.viewByTeacher" }));
+    const boards = () => document.querySelectorAll("section[aria-labelledby^='board-']");
+    await waitFor(() => expect(boards().length).toBeGreaterThan(1));
+    await waitFor(() => expect(document.querySelectorAll("[data-board-status]")).toHaveLength(boards().length));
+    await act(async () => {});
+
+    // Anna (t-2) has the one lesson l-ma2: her board's line speaks when it is taken up, and the others' stay silent.
+    const mine = cardOf("l-ma2");
+    const lineOf = (inside: HTMLElement) => inside.closest("section")!.querySelector("[data-board-status]")!.textContent;
+    fireEvent.keyDown(mine, { key: " " });
+    expect(lineOf(mine)).toMatch(/^boardKeys\.pickedUp\(/);
+    const others = [...document.querySelectorAll("[data-board-status]")].filter((line) => line !== mine.closest("section")!.querySelector("[data-board-status]"));
+    expect(others.map((line) => line.textContent)).toEqual(others.map(() => ""));
+    fireEvent.keyDown(mine, { key: "Escape" });
+
+    fireEvent.keyDown(mine, { key: "l" });
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-ma2", isLocked: true })));
+  });
+});
