@@ -34,9 +34,11 @@ import { createPgAdapter } from './pool-config';
 export const CONNECTION_WAIT_MS = 10_000;
 
 /**
- * The public viewer's door is for anonymous callers, and the one door whose
- * load nobody signed in for: under a full pool it refuses after 5 s, as its
- * transaction does, where a school's own requests wait 10.
+ * The public viewer's door is for anonymous callers: under a full pool it
+ * refuses after 5 s, as its transaction does, where a school's own requests
+ * wait 10. It is not the only door that opens for someone nobody has signed
+ * in: `withServiceKeyLookup` looks a key up before it is verified, and waits
+ * the 10 s like the rest (the review of #419, L-4).
  */
 const PUBLIC_VIEWER_WAIT_MS = 5_000;
 

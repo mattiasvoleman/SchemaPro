@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { testUser } from '../../test/utils/prisma-mock';
+import { pgAdapterSettings } from './pool-config';
 import { CONNECTION_WAIT_MS, PrismaService } from './prisma.service';
 
 const AUTH_ID = '11111111-1111-4111-8111-111111111111';
@@ -422,6 +423,17 @@ describe('PrismaService', () => {
 
       expect(transaction.mock.calls[0][1]).toMatchObject({ maxWait: CONNECTION_WAIT_MS });
       expect(CONNECTION_WAIT_MS).toBe(10_000);
+    });
+
+    it('gives up before pg does for a URL that sets no pool_timeout: the two waits are held to each other (the review of #419, L-3)', () => {
+      // Prisma's timer is the one that ends first, so the refusal is its P2028 and the refused call leaves no place in
+      // pg's queue. When pg's wait is the longer (`pool_timeout=30`, or 0 for no limit) the call keeps its place, and
+      // takes a connection round (BEGIN, one row, ROLLBACK) when one comes free, which keeps the errors going after the
+      // long transaction that caused them has ended. DEPLOYMENT.md says to leave pool_timeout out or keep it at 10 or less.
+      const pgWait = pgAdapterSettings('postgresql://app:secret@db.example.com:5432/postgres').pool.connectionTimeoutMillis;
+
+      expect(pgWait).toBe(10_000);
+      expect(CONNECTION_WAIT_MS).toBeLessThanOrEqual(pgWait as number);
     });
 
     it('has no door that is missing from the table above, and so is left with Prisma\'s 2 s', () => {

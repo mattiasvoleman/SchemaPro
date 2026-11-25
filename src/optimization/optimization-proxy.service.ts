@@ -16,6 +16,7 @@ import type { AiEngineConfig } from '../config/configuration';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { RecurrenceWindow } from '../calendar/lesson-recurrence';
 import type { ScheduleVersionsService } from '../calendar/schedule-versions.service';
+import { retryOnceIfPoolBusy } from '../database/pool-wait';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { isWriteConflict } from '../common/utils/prisma-errors';
@@ -1630,26 +1631,35 @@ export class OptimizationProxyService {
     // persistMasterLessons.
     let written: TimedLesson[] | null;
     try {
-      written = await this.prisma.withRls(user, (tx) =>
-        this.persistMasterLessons(
-          tx,
-          academicYearId,
-          user,
-          response,
-          prepared.demand,
-          prepared.mirrors,
-          anonMaps.requirementAnonMap,
-          anonMaps.roomAnonMap,
-          realisedLunches,
-          prepared.headcountByGroup,
-          prepared.draftIds,
-          prepared.basisParts,
-          prepared.splitLessons,
-          prepared.placedRows,
-          prepared.lockWeeks,
-          prepared.periodStretches,
-          prepared.blockPlacementsKey,
-        ),
+      // The write is one transaction, and the engine's answer, minutes of it, is lost if the pool has no connection
+      // for that transaction within its wait: a refusal that never started it is tried once more (pool-wait.ts).
+      written = await retryOnceIfPoolBusy(
+        () =>
+          this.prisma.withRls(user, (tx) =>
+            this.persistMasterLessons(
+              tx,
+              academicYearId,
+              user,
+              response,
+              prepared.demand,
+              prepared.mirrors,
+              anonMaps.requirementAnonMap,
+              anonMaps.roomAnonMap,
+              realisedLunches,
+              prepared.headcountByGroup,
+              prepared.draftIds,
+              prepared.basisParts,
+              prepared.splitLessons,
+              prepared.placedRows,
+              prepared.lockWeeks,
+              prepared.periodStretches,
+              prepared.blockPlacementsKey,
+            ),
+          ),
+        () =>
+          this.logger.warn(
+            `The write after the engine found no database connection in time; trying it once more [requestId=${requestId}, academicYearId=${academicYearId}]`,
+          ),
       );
     } catch (error) {
       // The write's own read of the school read a post's days (HR data) and

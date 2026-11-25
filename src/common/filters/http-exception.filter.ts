@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Request, Response } from 'express';
-import { DATABASE_BUSY, isPoolBusy } from '../../database/pool-wait';
+import { DATABASE_BUSY, DATABASE_BUSY_DETAIL, DATABASE_BUSY_RETRY_AFTER_SECONDS, isPoolBusy } from '../../database/pool-wait';
 import type { ProblemDetails } from '../interfaces/problem-details.interface';
 import { areaRefusal } from '../utils/prisma-errors';
 import { viewerTokenOf } from '../../publication/public-token';
@@ -21,6 +21,8 @@ interface NormalizedError {
   errors?: Record<string, string[]>;
   code?: string;
   params?: Record<string, string | number>;
+  /** When to ask again, in whole seconds: sent as `Retry-After`. Only for a refusal that a moment can mend. */
+  retryAfterSeconds?: number;
 }
 
 /** What a problem `code` may look like: a name, not a sentence. */
@@ -117,6 +119,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     this.logError(exception, normalized, traceId, request);
 
+    if (normalized.retryAfterSeconds !== undefined) {
+      response.setHeader('Retry-After', String(normalized.retryAfterSeconds));
+    }
     response
       .status(normalized.status)
       .setHeader('Content-Type', 'application/problem+json')
@@ -146,8 +151,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
       return {
         status: HttpStatus.SERVICE_UNAVAILABLE,
         title: 'Service Unavailable',
-        detail: 'The server is busy right now, and nothing was done. Try again in a moment.',
+        detail: DATABASE_BUSY_DETAIL,
         code: DATABASE_BUSY,
+        retryAfterSeconds: DATABASE_BUSY_RETRY_AFTER_SECONDS,
       };
     }
 

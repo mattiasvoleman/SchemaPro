@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { DEFAULT_CANDIDATES_CONFIG, type CandidatesConfig } from '../config/configuration';
+import { DATABASE_BUSY, DATABASE_BUSY_DETAIL, isPoolBusy } from '../database/pool-wait';
 import { PrismaService } from '../database/prisma.service';
 import { errorName, JobRunner } from '../jobs/job-runner';
 import { recordRead } from '../access-log/access-log';
@@ -102,6 +103,11 @@ function refusalOf(error: unknown): {
     }
     return { message: typeof body === 'string' ? body : error.message, code: null, params: null, subjectIds };
   }
+  // The pool had no connection for one of the run's own transactions, twice for the write after the engine (the retry in
+  // triggerScheduling): a busy server, which the exception filter answers as 503 DATABASE_BUSY. A run has no response to
+  // answer in; it stores what the filter would have said, and not the driver's "Transaction API error: Unable to start a
+  // transaction in the given time." with no code for the page to name it by.
+  if (isPoolBusy(error)) return { message: DATABASE_BUSY_DETAIL, code: DATABASE_BUSY, params: null, subjectIds: [] };
   return {
     message: error instanceof Error ? error.message : fallback,
     code: null,

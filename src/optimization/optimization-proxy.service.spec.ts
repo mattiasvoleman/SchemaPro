@@ -3890,6 +3890,63 @@ describe('OptimizationProxyService', () => {
       expect(prisma.withRls.mock.calls[1][0]).toBe(user);
     });
 
+    /**
+     * THE WRITE AFTER THE ENGINE (the review of #419, L-2). Generera reads in one transaction, waits minutes for the
+     * engine and writes in another. A pool that has no connection for that second one in ten seconds refused it, and
+     * the answer ("nothing was done, try again") sent the school back to the engine for minutes, in the middle of the
+     * overload that refused it. The transaction never started, so one more try at the write is as safe as the first.
+     */
+    describe('a write that found no connection', () => {
+      const neverStarted = (): Prisma.PrismaClientKnownRequestError =>
+        new Prisma.PrismaClientKnownRequestError('Transaction API error: Unable to start a transaction in the given time.', {
+          code: 'P2028',
+          clientVersion: Prisma.prismaVersion.client,
+        });
+
+      /** The fetch goes through; the write's transactions refuse with these errors in turn, and the next one goes through. */
+      const refuseTheWrite = (...errors: unknown[]) => {
+        const open = prisma.withRls.getMockImplementation()!;
+        prisma.withRls.mockImplementationOnce(open);
+        for (const error of errors) prisma.withRls.mockImplementationOnce(() => Promise.reject(error));
+      };
+
+      it('tries it once more, and the engine is asked once', async () => {
+        arrange();
+        echoEngine();
+        refuseTheWrite(neverStarted());
+
+        const answer = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(answer.status).toBe('OPTIMAL');
+        expect(prisma.withRls).toHaveBeenCalledTimes(3);
+        expect(http.post).toHaveBeenCalledTimes(1);
+        expect(tx.masterLesson.createMany).toHaveBeenCalledTimes(1);
+      });
+
+      it('lets a second refusal through as it is, so the page can say the server is busy', async () => {
+        arrange();
+        echoEngine();
+        refuseTheWrite(neverStarted(), neverStarted());
+
+        await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+          code: 'P2028',
+        });
+
+        expect(prisma.withRls).toHaveBeenCalledTimes(3);
+        expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+      });
+
+      it('does not try again after a failure that is not the pool’s: that transaction started', async () => {
+        arrange();
+        echoEngine();
+        refuseTheWrite(new Error('deadlock detected'));
+
+        await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toThrow('deadlock detected');
+
+        expect(prisma.withRls).toHaveBeenCalledTimes(2);
+      });
+    });
+
     it('defaults an empty group to size 1 rather than zero', async () => {
       arrange({ homeMembers: [], teachingMembers: [] });
       echoEngine();

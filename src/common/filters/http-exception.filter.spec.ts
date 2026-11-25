@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { ProblemDetails } from '../interfaces/problem-details.interface';
+import { DATABASE_BUSY_RETRY_AFTER_SECONDS } from '../../database/pool-wait';
 import { HttpExceptionFilter, redactShareToken } from './http-exception.filter';
 
 const UUID_V4 =
@@ -264,6 +265,25 @@ describe('HttpExceptionFilter', () => {
         code: 'DATABASE_BUSY',
       });
       expect(JSON.stringify(body())).not.toContain('Transaction API error');
+    });
+
+    it.each([
+      ['Prisma\'s wait', neverStarted],
+      ['pg\'s own wait', () => new Error('timeout exceeded when trying to connect')],
+    ])('after %s, says when to ask again: Retry-After in whole seconds, as the throttlers send it', (_name, error) => {
+      // The review of #419, L-1: a 503 with no Retry-After sends a client back at once, into the pool that refused it.
+      filter.catch(error(), host);
+
+      expect(response.setHeader).toHaveBeenCalledWith('Retry-After', String(DATABASE_BUSY_RETRY_AFTER_SECONDS));
+      expect(DATABASE_BUSY_RETRY_AFTER_SECONDS).toBe(5);
+    });
+
+    it('sends no Retry-After with any other problem: a 500 is not a promise that a moment will help', () => {
+      filter.catch(prismaError('P2010'), host);
+      filter.catch(new NotFoundException('Booking not found.'), host);
+
+      const named = response.setHeader.mock.calls.map(([header]: [string]) => header);
+      expect(named).not.toContain('Retry-After');
     });
 
     it('logs it as a warning without a stack: the await that gave up says nothing, and every request that meets it logs', () => {
