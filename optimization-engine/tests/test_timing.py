@@ -145,20 +145,61 @@ def test_the_search_has_its_whole_budget_while_the_clock_holds_it() -> None:
     assert clock.search_budget(started=123456.789012345 + 8.0, budget=180.0, probe_seconds=20.0) == 180.0
 
 
-def test_the_search_ends_where_the_clock_leaves_the_probes_floor() -> None:
-    """A slow build, or a caller that waits less than the settings need."""
+def test_the_search_ends_where_the_clock_leaves_the_probes_floor_and_the_overrun() -> None:
+    """A slow build, or a caller that waits less than the settings need.
+
+    The edge for the search is `answer_by` less the probe's floor less the overrun a solve may stop
+    past its limit: a search that ends there and then runs SOLVE_OVERRUN_SECONDS over still leaves
+    the probe its floor (g416-M-1). Before, the edge was `answer_by` less the floor alone, and a
+    search that stopped five seconds late left the probe nothing.
+    """
     clock = Deadline(entered=0.0, ceiling=230.0)
 
-    # Builds took 30 s: 217 (the answer) less the probe's floor (5) less 30 is 182 ... of 180: held.
-    assert clock.search_budget(started=30.0, budget=180.0, probe_seconds=20.0) == 180.0
-    # Builds took 60 s: 217 - 5 - 60 = 152, so the search ends there.
-    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=20.0) == pytest.approx(152.0)
+    # answer_by is 217. Builds took 20 s: 217 - 5 - 10 - 20 = 182, so the 180 is held.
+    assert clock.search_budget(started=20.0, budget=180.0, probe_seconds=20.0) == 180.0
+    # Builds took 30 s: 217 - 5 - 10 - 30 = 172. It was held at 180 before.
+    assert clock.search_budget(started=30.0, budget=180.0, probe_seconds=20.0) == pytest.approx(172.0)
+    # Builds took 60 s: 217 - 5 - 10 - 60 = 142.
+    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=20.0) == pytest.approx(142.0)
     # The floor is the probe's own seconds when they are fewer than five.
-    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=2.0) == pytest.approx(155.0)
-    # No probe: the search keeps everything up to the answer.
-    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=0.0) == pytest.approx(157.0)
+    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=2.0) == pytest.approx(145.0)
+    # No probe: nothing to keep a floor for, but the overrun still has to fit before the answer.
+    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=0.0) == pytest.approx(147.0)
     # The builds ate it all: no search, and not a negative one.
     assert clock.search_budget(started=500.0, budget=180.0, probe_seconds=20.0) == 0.0
+
+
+def test_production_holds_its_540_seconds_for_a_setup_of_22_seconds() -> None:
+    """The price of the overrun at production's settings: 540 + 20 + 30 = 590, the answer due at 577."""
+    clock = Deadline(entered=0.0, ceiling=590.0)
+
+    assert clock.search_budget(started=22.0, budget=540.0, probe_seconds=20.0) == 540.0
+    assert clock.search_budget(started=23.0, budget=540.0, probe_seconds=20.0) == pytest.approx(539.0)
+
+
+@pytest.mark.parametrize("started", [0.0, 8.0, 22.0, 23.0, 60.0, 150.0])
+def test_a_search_that_stops_the_whole_overrun_late_still_leaves_the_probe_its_floor(started: float) -> None:
+    """The reason for the formula: the search may end SOLVE_OVERRUN_SECONDS after the limit it was given."""
+    clock = Deadline(entered=0.0, ceiling=230.0)
+
+    given = clock.search_budget(started=started, budget=180.0, probe_seconds=20.0)
+    ended = started + given + SOLVE_OVERRUN_SECONDS
+
+    assert given > 0
+    assert clock.probe_end(now=ended, probe_seconds=20.0) - ended >= PROBE_FLOOR_SECONDS - 1e-9
+
+
+@pytest.mark.parametrize("ceiling", [15.0, 30.0])
+def test_a_clock_too_short_for_the_overrun_holds_back_half_of_what_is_left_and_no_more(ceiling: float) -> None:
+    """Else a caller that waits 20 s would be given no search where the clock leaves it some.
+
+    answer_by gives up half of a ceiling shorter than its margins for the same reason. The probe's floor
+    is not promised here: ten seconds of overrun is most of the clock.
+    """
+    clock = Deadline(entered=0.0, ceiling=ceiling)
+    left = clock.answer_by - PROBE_FLOOR_SECONDS
+
+    assert clock.search_budget(started=0.0, budget=20.0, probe_seconds=6.0) == pytest.approx(left / 2)
 
 
 def test_the_probe_counts_from_where_the_search_ended_and_never_past_the_edge() -> None:

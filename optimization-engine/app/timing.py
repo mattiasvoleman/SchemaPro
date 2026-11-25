@@ -149,11 +149,34 @@ class Deadline:
         builds are fast is solved for the number of seconds it set, not for that
         number less the rounding of two clock readings. When the clock does not
         (slow builds, or a caller that waits less than the settings need) the
-        search ends where `answer_by` leaves the probe's floor, and the
-        TIMEOUT that follows says so, with the seconds it had.
+        search ends where `answer_by` leaves the probe's floor AND the overrun
+        a CP-SAT solve may stop past its limit, and the TIMEOUT that follows
+        says so, with the seconds it had.
+
+        THE OVERRUN IS IN THE SUM, because a search cut by the clock ends at
+        its limit plus whatever CP-SAT runs over (SOLVE_OVERRUN_SECONDS: ten
+        seconds on the 809-lesson week). Without it the limit lay at
+        `answer_by` less the floor, and a search that stopped five seconds
+        late ate the floor and the probe got nothing: a TIMEOUT that said the
+        search found no timetable and could not say which rule stood in the
+        way (g416-M-1, the review of #416). With it the probe has its floor
+        however late the search stops, up to the overrun.
+
+        The price is the same overrun off a search the clock cuts, and off the
+        budget's own hold: a week whose setup took more than `answer_by` less
+        the floor, the overrun and the budget is cut instead of held. At
+        production's 540 s that is a setup of 22 s where it was 32 s.
+
+        NEVER MORE THAN HALF OF WHAT IS LEFT. A caller that waits so little
+        that ten seconds is most of what the clock has (`answer_by` itself
+        gives up half of a ceiling shorter than its margins, for the same
+        reason) would otherwise be given no search at all, where the clock
+        leaves it some; its overrun is then not held for, and the floor is not
+        promised.
         """
         floor = min(max(0.0, probe_seconds), PROBE_FLOOR_SECONDS)
-        room = self.answer_by - floor - started
+        left = self.answer_by - floor - started
+        room = left - min(SOLVE_OVERRUN_SECONDS, max(0.0, left) / 2)
         return budget if room >= budget else max(0.0, room)
 
     def probe_end(self, now: float, probe_seconds: float) -> float:

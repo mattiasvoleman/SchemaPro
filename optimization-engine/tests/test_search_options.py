@@ -953,12 +953,13 @@ def test_a_probe_the_clock_cut_short_is_said_for_what_ran(monkeypatch: pytest.Mo
 
     The caller waits 40 s, so the answer is due at 22 s (ceiling 35 less the
     three seconds the answer takes to build and the ten a solve may overrun).
-    The search stops 11 s late, at 21 s, so 1 of the probe's 6 s is left, where
-    a rule's slice is 1.5. It said
+    The search is given 8.5 s (22 less the probe's floor of 5 is 17, and half
+    of that is held back for the overrun), and stops 12.5 s late, at 21 s, so
+    1 of the probe's 6 s is left, where a rule's slice is 1.5. It said
     "none of the 4 rules probed made a timetable appear inside 2 s each" of
     three searches that never began and a fourth that had a second.
     """
-    clock = _Clock(monkeypatch, late=11.0)
+    clock = _Clock(monkeypatch, late=12.5)
     _rules_to_probe(monkeypatch, 4)
     payload = _payload(changeover=5)
     payload["deadlineSeconds"] = 40
@@ -972,15 +973,17 @@ def test_a_probe_the_clock_cut_short_is_said_for_what_ran(monkeypatch: pytest.Mo
     assert response.conflicts.summary_code == "PROBE_NOTHING_HELPED"
     # Phase 1a, then the one probe the clock allowed.
     assert len(clock.solves) == 2
+    assert clock.solves[0] == pytest.approx(8.5)
     assert clock.solves[1] == pytest.approx(1.0)
-    assert response.conflicts.summary_params == {"budget": 10, "rules": 1, "slice": 1}
+    assert response.conflicts.summary_params == {"budget": 8, "rules": 1, "slice": 1}
 
 def test_a_search_that_used_the_probes_time_leaves_the_timeout_bare(monkeypatch: pytest.MonkeyPatch) -> None:
     """No probe ran, so no sentence says one did.
 
-    The search stops 13 s late, at 23 s, after the answer was due (22 s).
+    The search is given 8.5 s and stops 14 s late, at 22.5 s, after the answer
+    was due (22 s).
     """
-    clock = _Clock(monkeypatch, late=13.0)
+    clock = _Clock(monkeypatch, late=14.0)
     _rules_to_probe(monkeypatch, 4)
     payload = _payload(changeover=5)
     payload["deadlineSeconds"] = 40
@@ -1097,11 +1100,13 @@ def test_a_caller_that_waits_less_than_the_settings_need_is_answered_inside_its_
 ) -> None:
     """The settings say 20 s of search and 6 of probe; the caller waits 35 s.
 
-    Its ceiling is 30 s and the answer is due at 17, so the search ends at 12
-    (17 less the probe's floor of 5) and the TIMEOUT says it searched for 12 s,
-    not 20: the number on the page is the number the search had. The probe has
-    the 5 s that are left. Before, this was a 503 the caller had already stopped
-    waiting for, and the school read "did not respond in time".
+    Its ceiling is 30 s and the answer is due at 17. The search ends at 6: 17
+    less the probe's floor of 5 is 12, and half of that is held back for what a
+    solve may run over its limit (a clock this short cannot hold the whole ten
+    seconds back, g416-M-1). The TIMEOUT says it searched for 6 s, not 20: the
+    number on the page is the number the search had. The probe has its 6 s.
+    Before, this was a 503 the caller had already stopped waiting for, and the
+    school read "did not respond in time".
     """
     clock = _Clock(monkeypatch)
     entered = clock.now
@@ -1111,11 +1116,11 @@ def test_a_caller_that_waits_less_than_the_settings_need_is_answered_inside_its_
     )
 
     assert response.status == "TIMEOUT"
-    assert clock.solves == [pytest.approx(12.0), pytest.approx(5.0)]
+    assert clock.solves == [pytest.approx(6.0), pytest.approx(6.0)]
     assert response.conflicts is not None
-    assert response.conflicts.summary_params == {"budget": 12, "rules": 1, "slice": 5}
-    # And the answer was in time: due at 17 s.
-    assert clock.now - entered == pytest.approx(17.0)
+    assert response.conflicts.summary_params == {"budget": 6, "rules": 1, "slice": 6}
+    # And the answer was in time: due at 17 s, answered at 12 (the held-back overrun did not happen).
+    assert clock.now - entered == pytest.approx(12.0)
 
 
 def test_a_squeezed_search_that_stops_as_late_as_the_incidents_did_still_answers_inside_the_wait(
@@ -1148,9 +1153,12 @@ def test_a_slow_setup_leaves_the_late_search_inside_the_ceiling_at_the_productio
     """180 s of search, 20 of probe, a ceiling of 230: builds of 25 s each and a search that runs ten over.
 
     The two builds take 50 s, so the search is given what the clock leaves
-    (217 less the probe's floor less 50: 162 s, not 180) and ends at 222 s with
-    its overrun. With the edge at 227 it was given 172 s and ended at 232, after
-    the route had answered 503 at 230.
+    (217 less the probe's floor less the ten seconds of overrun less 50: 152 s,
+    not 180) and ends at 212 s with its overrun, which leaves the probe its
+    floor. With the edge at 227 it was given 172 s and ended at 232, after the
+    route had answered 503 at 230; with the floor and not the overrun in the
+    sum it was given 162 and ended at 222, five seconds before the edge and
+    with no probe.
     """
     clock = _Clock(monkeypatch, build=25.0, overrun=10.0)
     entered = clock.now
@@ -1161,6 +1169,34 @@ def test_a_slow_setup_leaves_the_late_search_inside_the_ceiling_at_the_productio
 
     assert response.status == "TIMEOUT"
     assert clock.now - entered <= 230.0, "180 + 20 + 30, the route's ceiling"
+
+
+def test_a_search_the_clock_cut_that_stops_ten_seconds_late_still_leaves_the_probe_its_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """g416-M-1, the review of #416: the probe got 0 s when the search stopped five seconds or more late.
+
+    The settings say 180 s of search and 20 of probe; the caller waits 120 s, so the ceiling is 115 and
+    the answer is due at 102. The search is given 87 s (102 less the probe's floor of 5 less the ten
+    seconds of overrun): phase 1a takes its 60 and stops ten seconds late, phase 1b is given the 17 that
+    are left and stops ten seconds late too, at 97. The probe has the floor, and the TIMEOUT names what
+    it found. With the floor alone in the sum the search was given 97 s and ended at 107, five seconds
+    after the answer was due, and the TIMEOUT came with no rule: "no timetable" and nothing to change.
+    """
+    clock = _Clock(monkeypatch, overrun=10.0)
+    entered = clock.now
+    _rules_to_probe(monkeypatch, 3)
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=180, SOLVER_PROBE_SECONDS=20)).solve(
+        _with_deadline(_payload(changeover=5), 120),
+    )
+
+    assert response.status == "TIMEOUT"
+    assert clock.solves[:3] == [pytest.approx(60.0), pytest.approx(17.0), pytest.approx(5.0)]
+    assert response.conflicts is not None
+    assert response.conflicts.summary_code == "PROBE_NOTHING_HELPED"
+    assert response.conflicts.summary_params == {"budget": 87, "rules": 1, "slice": 5}
+    assert clock.now - entered <= 115.0, "the route's ceiling for this request, the probe's own overrun included"
 
 
 def test_a_deadline_the_settings_fit_inside_changes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1184,11 +1220,12 @@ def test_an_infeasible_proof_that_comes_late_is_explained_only_as_far_as_the_clo
 ) -> None:
     """The review of #344, LÅG-2: the explanation had a cap of its own and no clock.
 
-    The caller waits 50 s (ceiling 45, the answer due at 32). The proof comes
-    at 20 s, and the explanation's cap is 15 s, which would have ended at 35:
-    past the edge. It is given the 12 s the clock has left.
+    The caller waits 50 s (ceiling 45, the answer due at 32). The search is
+    given 17 s (32 less the probe's floor less the overrun), and the proof comes
+    4 s late, at 21 s. The explanation's cap is 15 s, which would have ended at
+    36: past the edge. It is given the 11 s the clock has left.
     """
-    clock = _Clock(monkeypatch, first=cp_model.INFEASIBLE)
+    clock = _Clock(monkeypatch, late=4.0, first=cp_model.INFEASIBLE)
     entered = clock.now
 
     response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20, SOLVER_PROBE_SECONDS=6)).solve(
@@ -1196,8 +1233,8 @@ def test_an_infeasible_proof_that_comes_late_is_explained_only_as_far_as_the_clo
     )
 
     assert response.status == "INFEASIBLE"
-    assert clock.solves[0] == pytest.approx(20.0)
-    assert clock.solves[1] == pytest.approx(12.0)
+    assert clock.solves[0] == pytest.approx(17.0)
+    assert clock.solves[1] == pytest.approx(11.0)
     assert clock.now - entered <= 32.0 + 1e-9
 
 
@@ -1206,11 +1243,12 @@ def test_an_infeasible_proof_that_comes_too_late_stands_unexplained(
 ) -> None:
     """The verdict was proved; an explanation that cannot have half a second is left out.
 
-    The proof comes at 31.7 s of an answer due at 32: nothing is built, nothing
-    is solved, and the school reads INFEASIBLE without the names (as it already
-    does when the explanation gives UNKNOWN).
+    The search is given 17 s and the proof comes 14.7 s late, at 31.7 s of an
+    answer due at 32: nothing is built, nothing is solved, and the school reads
+    INFEASIBLE without the names (as it already does when the explanation gives
+    UNKNOWN).
     """
-    clock = _Clock(monkeypatch, late=11.7, first=cp_model.INFEASIBLE)
+    clock = _Clock(monkeypatch, late=14.7, first=cp_model.INFEASIBLE)
     builds: list[bool] = []
     original = SchedulerSolver._build_model
 
@@ -1301,7 +1339,8 @@ def test_a_best_effort_week_whose_caller_waits_less_is_answered_inside_the_wait(
     )
 
     assert response.status == "TIMEOUT"
-    assert clock.solves[0] == pytest.approx(12.0)
+    # 17 s to the answer less the probe's floor is 12, and half of that is held back for the overrun.
+    assert clock.solves[0] == pytest.approx(6.0)
     assert clock.now - entered <= 17.0 + 1e-9
 
 
