@@ -12,6 +12,7 @@ import { RealtimeGateway } from './realtime.gateway';
 import {
   COVER_BOARD_UPDATED_EVENT,
   LESSON_UPDATED_EVENT,
+  MASTER_TIMETABLE_IDS_MAX,
   MASTER_TIMETABLE_UPDATED_EVENT,
   TIMETABLE_PRESENCE_EVENT,
   type CalendarLessonUpdatedPayload,
@@ -595,6 +596,36 @@ describe('RealtimeGateway', () => {
       gateway.emitMasterTimetableUpdated(SCHOOL_ID, 'admin');
       expect(server.to).toHaveBeenCalledWith(`admin:${SCHOOL_ID}`);
       expect(server.to).not.toHaveBeenCalledWith(`staff:${SCHOOL_ID}`);
+    });
+
+    describe('which lessons changed (lessonIds)', () => {
+      const payload = () => emit.mock.calls.at(-1)![1] as { changedAt: string; lessonIds?: string[] };
+
+      it('names them, once each, when a few changed', () => {
+        gateway.emitMasterTimetableUpdated(SCHOOL_ID, 'staff', ['a', 'b', 'a']);
+        expect(payload().lessonIds).toEqual(['a', 'b']);
+        expect(typeof payload().changedAt).toBe('string');
+      });
+
+      it('names none when the caller does not know, so that a client reads the year', () => {
+        gateway.emitMasterTimetableUpdated(SCHOOL_ID);
+        expect(payload()).not.toHaveProperty('lessonIds');
+        gateway.emitMasterTimetableUpdated(SCHOOL_ID, 'staff', []);
+        expect(payload()).not.toHaveProperty('lessonIds');
+      });
+
+      it('names none when there are more than a client is better off reading one by one than the year', () => {
+        const many = Array.from({ length: MASTER_TIMETABLE_IDS_MAX + 1 }, (_, index) => `lesson-${index}`);
+        gateway.emitMasterTimetableUpdated(SCHOOL_ID, 'staff', many);
+        expect(payload()).not.toHaveProperty('lessonIds');
+        gateway.emitMasterTimetableUpdated(SCHOOL_ID, 'staff', many.slice(0, MASTER_TIMETABLE_IDS_MAX));
+        expect(payload().lessonIds).toHaveLength(MASTER_TIMETABLE_IDS_MAX);
+      });
+
+      it('carries nothing but opaque ids and the instant: no lesson, no teacher, no room', () => {
+        gateway.emitMasterTimetableUpdated(SCHOOL_ID, 'admin', ['00000000-0000-4000-8000-000000000001']);
+        expect(Object.keys(payload()).sort()).toEqual(['changedAt', 'lessonIds']);
+      });
     });
   });
 
