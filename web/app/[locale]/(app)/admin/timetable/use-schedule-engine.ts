@@ -309,6 +309,9 @@ export function useScheduleEngine(inputs: Pick<TimetableReads, "groups" | "shown
         const own = toPlacement(lesson);
         return change.dayOfWeek === own.dayOfWeek && change.startMinutes === own.startMinutes && change.endMinutes === own.endMinutes;
       }
+      // The school day (SCHOOL_DAY, the gateway's judge of a hand edit): a lesson is not dropped on a Saturday or a Sunday. One that already
+      // stands on one may stay and be dropped within it (låt stå), but not on another weekend day, and one back from the tray stands nowhere.
+      if (change.dayOfWeek > 5 && (change.dayOfWeek !== lesson.dayOfWeek || lesson.isParked)) return false;
       return (
         validatePlacement(
           {

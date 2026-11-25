@@ -246,9 +246,23 @@ describe('MasterLessonsService', () => {
     startTime: t('10:30'),
     endTime: t('11:30'),
     subject: { name: 'Math' },
+    // What the judge calls the other lesson by when a clash names it (lesson-judge.ts).
+    studentGroup: { name: '8B' },
     extraGroups: [] as Array<{ studentGroupId: string }>,
     participants: [] as Array<{ studentId: string }>,
     ...overrides,
+  });
+
+  /**
+   * A refusal of the one judge (lesson-judge.ts): the problem's code, and the reason in its flat params. The
+   * sentence a clash used to be told in ('Teacher already teaches Math in this slot.') is now the refusal's `detail`,
+   * said in Swedish and pinned in master-lessons.judge.spec.ts.
+   */
+  const refusedAs = (reason: string, params: Record<string, unknown> = {}) => ({
+    response: expect.objectContaining({
+      code: 'MASTER_LESSON_REFUSED',
+      params: expect.objectContaining({ reason, ...params }),
+    }),
   });
 
   /** The year's lessons on the candidate's weekday, as the clash scan reads them. */
@@ -683,9 +697,7 @@ describe('MasterLessonsService', () => {
         ],
       });
 
-      await expect(service.create(createDto(), testUser())).rejects.toThrow(
-        /Students of this group/,
-      );
+      await expect(service.create(createDto(), testUser())).rejects.toMatchObject(refusedAs('PUPILS'));
       expect(tx.masterLesson.create).not.toHaveBeenCalled();
     });
 
@@ -709,7 +721,7 @@ describe('MasterLessonsService', () => {
           createDto({ studentGroupId: TEACHING_GROUP_ID }),
           testUser(),
         ),
-      ).rejects.toThrow(/Students of this group/);
+      ).rejects.toMatchObject(refusedAs('PUPILS'));
     });
 
     it('allows two groups that merely sit at the same hour', async () => {
@@ -744,9 +756,7 @@ describe('MasterLessonsService', () => {
 
       await expect(
         service.create(createDto(), testUser()),
-      ).rejects.toMatchObject({
-        message: 'The group already has Math in this slot.',
-      });
+      ).rejects.toMatchObject(refusedAs('GROUP'));
     });
 
     it('asks the database nothing about pupils when no lesson overlaps', async () => {
@@ -759,7 +769,10 @@ describe('MasterLessonsService', () => {
       ]);
 
       await service.create(createDto(), testUser());
-      expect(tx.studentGroupMember.findMany).not.toHaveBeenCalled();
+      // The clash rule asked nothing of the pupils. The one read left is the judge's own, of the candidate's class,
+      // for the years its ramtid and the rules on årskurser are asked in (lesson-judge.ts).
+      expect(tx.studentGroupMember.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.studentGroupMember.findMany.mock.calls[0]![0].where.studentGroupId.in).toEqual([GROUP_ID]);
     });
 
     // Regeneration deletes what it owns. If this path ever left the column to
@@ -779,9 +792,7 @@ describe('MasterLessonsService', () => {
         [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
       );
 
-      await expect(service.create(createDto(), testUser())).rejects.toThrow(
-        new ConflictException('Students of this group already have Math in this slot.'),
-      );
+      await expect(service.create(createDto(), testUser())).rejects.toMatchObject(refusedAs('PUPILS'));
     });
 
     it('finds the shared pupil wherever she sits in the class list', async () => {
@@ -796,9 +807,7 @@ describe('MasterLessonsService', () => {
         [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
       );
 
-      await expect(service.create(createDto(), testUser())).rejects.toThrow(
-        new ConflictException('Students of this group already have Math in this slot.'),
-      );
+      await expect(service.create(createDto(), testUser())).rejects.toMatchObject(refusedAs('PUPILS'));
     });
 
     describe('Ersättande grupper: a replacing group’s members are not on its subject’s other lessons', () => {
@@ -841,9 +850,7 @@ describe('MasterLessonsService', () => {
           [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
         );
 
-        await expect(service.create(createDto(), testUser())).rejects.toThrow(
-          new ConflictException('Students of this group already have Math in this slot.'),
-        );
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject(refusedAs('PUPILS'));
       });
 
       it('refuses what the board refuses: a group whose shared pupils are all in SvA7 still keeps off 7A’s svenska', async () => {
@@ -890,9 +897,7 @@ describe('MasterLessonsService', () => {
           [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
         );
 
-        await expect(service.create(createDto(), testUser())).rejects.toThrow(
-          new ConflictException('Students of this group already have Math in this slot.'),
-        );
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject(refusedAs('PUPILS'));
       });
 
       it('keeps a teaching group’s own svenska apart from SvA7 when they share a pupil: placed in it, she goes there', async () => {
@@ -980,7 +985,7 @@ describe('MasterLessonsService', () => {
       };
       const inRoom = (id: string, studentGroupId: string, overrides: Record<string, unknown> = {}) =>
         otherLesson({ id, studentGroupId, roomId: ROOM_ID, ...overrides });
-      const ROOM_REFUSED = new ConflictException('Room is already booked for Math in this slot.');
+      const ROOM_REFUSED = refusedAs('ROOM');
 
       it('lets two classes share the room when their pupils fit its capacity', async () => {
         arrangeCreate();
@@ -1015,7 +1020,7 @@ describe('MasterLessonsService', () => {
         arrangeShared('HARD', { canBeShared: true, capacity: 3 });
         sameDay([inRoom('b', CLASS_B)]);
 
-        await expect(service.create(createDto(), testUser())).rejects.toThrow(ROOM_REFUSED);
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject(ROOM_REFUSED);
         expect(tx.masterLesson.create).not.toHaveBeenCalled();
       });
 
@@ -1027,7 +1032,7 @@ describe('MasterLessonsService', () => {
         arrangeShared('HARD', { canBeShared: true, capacity: 5 });
         await expect(service.create(createDto({ studentIds: ['c1'] }), testUser())).resolves.toMatchObject({ id: LESSON_ID });
         arrangeShared('HARD', { canBeShared: true, capacity: 4 });
-        await expect(service.create(createDto({ studentIds: ['c1'] }), testUser())).rejects.toThrow(ROOM_REFUSED);
+        await expect(service.create(createDto({ studentIds: ['c1'] }), testUser())).rejects.toMatchObject(ROOM_REFUSED);
       });
 
       it('refuses a room that is not marked shared, as before', async () => {
@@ -1036,7 +1041,7 @@ describe('MasterLessonsService', () => {
         arrangeShared('HARD', null);
         sameDay([inRoom('b', CLASS_B)]);
 
-        await expect(service.create(createDto(), testUser())).rejects.toThrow(ROOM_REFUSED);
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject(ROOM_REFUSED);
       });
 
       it('refuses a marked room without a capacity: there is no limit to share under', async () => {
@@ -1045,7 +1050,7 @@ describe('MasterLessonsService', () => {
         arrangeShared('HARD', { canBeShared: true, capacity: null });
         sameDay([inRoom('b', CLASS_B)]);
 
-        await expect(service.create(createDto(), testUser())).rejects.toThrow(ROOM_REFUSED);
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject(ROOM_REFUSED);
       });
 
       it('refuses with the rule off or never written, and then reads no room at all', async () => {
@@ -1056,7 +1061,7 @@ describe('MasterLessonsService', () => {
           arrangeShared(mode);
           sameDay([inRoom('b', CLASS_B)]);
 
-          await expect(service.create(createDto(), testUser())).rejects.toThrow(ROOM_REFUSED);
+          await expect(service.create(createDto(), testUser())).rejects.toMatchObject(ROOM_REFUSED);
           expect(tx.room.findMany).not.toHaveBeenCalledWith(
             expect.objectContaining({ where: expect.objectContaining({ canBeShared: true }) }),
           );
@@ -1087,7 +1092,7 @@ describe('MasterLessonsService', () => {
         sameDay([inRoom('c', CLASS_C)]);
         await expect(service.create(createDto(), testUser())).resolves.toMatchObject({ id: LESSON_ID });
         sameDay([inRoom('b', CLASS_B), inRoom('c', CLASS_C)]);
-        await expect(service.create(createDto(), testUser())).rejects.toThrow(ROOM_REFUSED);
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject(ROOM_REFUSED);
       });
 
       it('does not count lessons that follow each other as being in the room together', async () => {
@@ -1123,13 +1128,9 @@ describe('MasterLessonsService', () => {
         roster();
         arrangeShared('HARD', { canBeShared: true, capacity: 1000 });
         sameDay([inRoom('t', CLASS_B, { teacherId: TEACHER_ID })]);
-        await expect(service.create(createDto(), testUser())).rejects.toThrow(
-          new ConflictException('Teacher already teaches Math in this slot.'),
-        );
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject(refusedAs('TEACHER'));
         sameDay([inRoom('g', GROUP_ID)]);
-        await expect(service.create(createDto(), testUser())).rejects.toThrow(
-          new ConflictException('The group already has Math in this slot.'),
-        );
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject(refusedAs('GROUP'));
       });
 
       it('keeps a lesson whose class has no known pupils exclusive in the room', async () => {
@@ -1138,7 +1139,7 @@ describe('MasterLessonsService', () => {
         arrangeShared('HARD', { canBeShared: true, capacity: 1000 });
         sameDay([inRoom('x', '00000000-aaaa-4aaa-8aaa-0000000000d1')]);
 
-        await expect(service.create(createDto(), testUser())).rejects.toThrow(ROOM_REFUSED);
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject(ROOM_REFUSED);
       });
     });
 
@@ -1163,9 +1164,7 @@ describe('MasterLessonsService', () => {
 
       await expect(
         service.create(createDto({ studentIds: [STUDENT_ID] }), testUser()),
-      ).rejects.toThrow(
-        new ConflictException('A participating student already has Math in this slot.'),
-      );
+      ).rejects.toMatchObject(refusedAs('PUPILS'));
     });
 
     it('lets the other lesson keep participants from another class', async () => {
@@ -1392,18 +1391,14 @@ describe('MasterLessonsService', () => {
       it('still refuses one that meets in a week with school', async () => {
         arrangeYearWithJullov();
         sameDay([autumnLesson('2027-01-17')]);
-        await expect(service.create(createDto({ startDate: '2027-01-04' }), testUser())).rejects.toThrow(
-          new ConflictException('Teacher already teaches Math in this slot.'),
-        );
+        await expect(service.create(createDto({ startDate: '2027-01-04' }), testUser())).rejects.toMatchObject(refusedAs('TEACHER'));
         expect(tx.masterLesson.create).not.toHaveBeenCalled();
       });
 
       it('refuses the pair where the school has no lov, and asks nothing more of a year with none', async () => {
         arrangeCreate();
         sameDay([autumnLesson('2027-01-10')]);
-        await expect(service.create(createDto({ startDate: '2027-01-04' }), testUser())).rejects.toThrow(
-          new ConflictException('Teacher already teaches Math in this slot.'),
-        );
+        await expect(service.create(createDto({ startDate: '2027-01-04' }), testUser())).rejects.toMatchObject(refusedAs('TEACHER'));
         // The year has no break: one query, and the läsår's days are never read for it.
         expect(tx.schoolBreak.findMany).toHaveBeenCalledTimes(1);
         const yearReads = tx.academicYear.findUnique.mock.calls as Array<[{ select?: Record<string, unknown> }]>;
@@ -1417,9 +1412,8 @@ describe('MasterLessonsService', () => {
           { startDate: day('2026-10-26'), endDate: day('2026-10-30'), minGradeLevel: null, maxGradeLevel: null },
         ]);
         sameDay([autumnLesson('2026-11-01')]);
-        await expect(service.create(createDto({ dayOfWeek: 6, startDate: '2026-10-26' }), testUser())).rejects.toThrow(
-          new ConflictException('Teacher already teaches Math in this slot.'),
-        );
+        // The Saturday is no school day (SCHOOL_DAY, the first reason), and the teacher's clash is found all the same: the weekend is written.
+        await expect(service.create(createDto({ dayOfWeek: 6, startDate: '2026-10-26' }), testUser())).rejects.toMatchObject(refusedAs('SCHOOL_DAY', { reasons: 'SCHOOL_DAY,TEACHER' }));
         // The same pair on a Wednesday is no clash: nobody sits that week.
         sameDay([autumnLesson('2026-11-01')]);
         await expect(service.create(createDto({ dayOfWeek: 3, startDate: '2026-10-26' }), testUser())).resolves.toMatchObject({
@@ -1443,9 +1437,7 @@ describe('MasterLessonsService', () => {
 
       const promise = service.create(createDto(), testUser());
       await expect(promise).rejects.toBeInstanceOf(ConflictException);
-      await expect(promise).rejects.toMatchObject({
-        message: 'Teacher already teaches Math in this slot.',
-      });
+      await expect(promise).rejects.toMatchObject(refusedAs('TEACHER'));
       expect(tx.masterLesson.create).not.toHaveBeenCalled();
       expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
     });
@@ -1459,9 +1451,8 @@ describe('MasterLessonsService', () => {
       await expect(
         service.create(createDto(), testUser()),
       ).rejects.toMatchObject({
-        message:
-          'Teacher already teaches Math in this slot. ' +
-          'Room is already booked for Math in this slot.',
+        ...refusedAs('TEACHER', { reasons: 'TEACHER,ROOM' }),
+        message: expect.stringMatching(/^Läraren har redan Math 8B.*Salen är redan upptagen av Math 8B/),
       });
     });
 
@@ -1477,9 +1468,7 @@ describe('MasterLessonsService', () => {
 
       await expect(
         service.create(createDto(), testUser()),
-      ).rejects.toMatchObject({
-        message: 'Teacher already teaches Math in this slot.',
-      });
+      ).rejects.toMatchObject(refusedAs('TEACHER'));
     });
 
     it('409s when the primary group already has a lesson in the slot', async () => {
@@ -1490,9 +1479,7 @@ describe('MasterLessonsService', () => {
 
       await expect(
         service.create(createDto(), testUser()),
-      ).rejects.toMatchObject({
-        message: 'The group already has Math in this slot.',
-      });
+      ).rejects.toMatchObject(refusedAs('GROUP'));
     });
 
     it('409s when a candidate extra group clashes with the other lesson', async () => {
@@ -1531,9 +1518,7 @@ describe('MasterLessonsService', () => {
 
       await expect(
         service.create(createDto(), testUser()),
-      ).rejects.toMatchObject({
-        message: 'The group already has Math in this slot.',
-      });
+      ).rejects.toMatchObject(refusedAs('GROUP'));
     });
 
     it('treats back-to-back lessons as non-overlapping', async () => {
@@ -2146,9 +2131,8 @@ describe('MasterLessonsService', () => {
         const promise = service.create(createDto(), testUser());
         await expect(promise).rejects.toBeInstanceOf(ConflictException);
         await expect(promise).rejects.toMatchObject({
-          message:
-            'Teacher already teaches Math in this slot. ' +
-            'Room is already booked for Math in this slot.',
+          ...refusedAs('TEACHER', { reasons: 'TEACHER,ROOM' }),
+          message: expect.stringMatching(/^Läraren har redan Math 8B.*Salen är redan upptagen av Math 8B/),
         });
       });
 
@@ -2342,6 +2326,7 @@ describe('MasterLessonsService', () => {
       });
     });
 
+    const RESOURCE_OF: Record<string, string> = { TEACHER: 'TEACHER', ROOM: 'ROOM', STUDENT_GROUP: 'GROUP' };
     it.each([
       ['TEACHER', 'The teacher is unavailable in this slot.'],
       ['ROOM', 'The room is unavailable in this slot.'],
@@ -2356,7 +2341,7 @@ describe('MasterLessonsService', () => {
 
         const promise = service.create(createDto(), testUser());
         await expect(promise).rejects.toBeInstanceOf(ConflictException);
-        await expect(promise).rejects.toMatchObject({ message: label });
+        await expect(promise).rejects.toMatchObject(refusedAs('AVAILABILITY', { resource: RESOURCE_OF[resourceType] }));
       },
     );
 
@@ -2383,9 +2368,7 @@ describe('MasterLessonsService', () => {
 
       await expect(
         service.create(createDto({ studentIds: [STUDENT_ID] }), testUser()),
-      ).rejects.toMatchObject({
-        message: 'A participating student already has Math in this slot.',
-      });
+      ).rejects.toMatchObject(refusedAs('PUPILS'));
       // Home groups were resolved for exactly the candidate students.
       expect(tx.user.findMany).toHaveBeenCalledWith({
         where: { id: { in: [STUDENT_ID] } },
@@ -2404,9 +2387,7 @@ describe('MasterLessonsService', () => {
 
       await expect(
         service.create(createDto({ studentIds: [STUDENT_ID] }), testUser()),
-      ).rejects.toMatchObject({
-        message: 'A participating student already has Math in this slot.',
-      });
+      ).rejects.toMatchObject(refusedAs('PUPILS'));
     });
 
     it("409s when the other lesson's individual participants belong to this class", async () => {
@@ -2419,9 +2400,7 @@ describe('MasterLessonsService', () => {
 
       await expect(
         service.create(createDto(), testUser()),
-      ).rejects.toMatchObject({
-        message: 'A student of this class attends Math in this slot.',
-      });
+      ).rejects.toMatchObject(refusedAs('PUPILS'));
       expect(tx.user.count).toHaveBeenCalledWith({
         where: {
           id: { in: [foreignStudent] },
@@ -2456,9 +2435,7 @@ describe('MasterLessonsService', () => {
       arrangeCreate();
       sameDay([otherLesson({ coTeacherId: TEACHER_ID })]);
 
-      await expect(service.create(createDto(), testUser())).rejects.toThrow(
-        new ConflictException('Teacher already teaches Math in this slot.'),
-      );
+      await expect(service.create(createDto(), testUser())).rejects.toMatchObject(refusedAs('TEACHER'));
     });
 
     it('lets an odd-week lesson share its slot with an even-week one', async () => {
@@ -4105,7 +4082,8 @@ describe('MasterLessonsService', () => {
           // The limit is the post's, HR data: told, so read, so recorded.
           expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] }]);
           // The school's switch for the generator (Skolregler) is not read.
-          expect(Object.keys(tx).filter((model) => /lunch/i.test(model))).toEqual([]);
+          // (The meal's own table, LunchSitting, is read by the judge for the class's lunch; the switch is a LunchSetting.)
+          expect(Object.keys(tx).filter((model) => /lunchSetting/i.test(model))).toEqual([]);
         });
 
         it('a schemaläggare without HR-läs is told the verdict and not one figure, in no part of the response, and the read is recorded all the same', async () => {
@@ -4832,12 +4810,10 @@ describe('MasterLessonsService', () => {
       arrangeUpdate();
       sameDay([otherLesson({ teacherId: TEACHER_ID, roomId: ROOM_ID })]);
 
-      await expect(service.update(LESSON_ID, { dayOfWeek: 1 }, testUser())).rejects.toThrow(
-        new ConflictException(
-          'Teacher already teaches Math in this slot. ' +
-            'Room is already booked for Math in this slot.',
-        ),
-      );
+      await expect(service.update(LESSON_ID, { dayOfWeek: 1 }, testUser())).rejects.toMatchObject({
+        ...refusedAs('TEACHER', { reasons: 'TEACHER,ROOM' }),
+        message: expect.stringMatching(/^Läraren har redan Math 8B.*Salen är redan upptagen av Math 8B/),
+      });
     });
 
     /*
@@ -4852,9 +4828,7 @@ describe('MasterLessonsService', () => {
       arrangeUpdate();
       sameDay([otherLesson({ teacherId: busy })]);
 
-      await expect(service.update(LESSON_ID, patch, testUser())).rejects.toThrow(
-        new ConflictException('Teacher already teaches Math in this slot.'),
-      );
+      await expect(service.update(LESSON_ID, patch, testUser())).rejects.toMatchObject(refusedAs('TEACHER'));
       expect(tx.masterLesson.update).not.toHaveBeenCalled();
     });
 
@@ -4865,18 +4839,14 @@ describe('MasterLessonsService', () => {
       arrangeUpdate();
       sameDay([otherLesson({ roomId: bookedRoom })]);
 
-      await expect(service.update(LESSON_ID, patch, testUser())).rejects.toThrow(
-        new ConflictException('Room is already booked for Math in this slot.'),
-      );
+      await expect(service.update(LESSON_ID, patch, testUser())).rejects.toMatchObject(refusedAs('ROOM'));
     });
 
     it('checks the extra groups a lesson already brings along', async () => {
       arrangeUpdate({ extraGroups: [{ studentGroupId: EXTRA_GROUP_ID }] });
       sameDay([otherLesson({ studentGroupId: EXTRA_GROUP_ID })]);
 
-      await expect(service.update(LESSON_ID, { dayOfWeek: 1 }, testUser())).rejects.toThrow(
-        new ConflictException('The group already has Math in this slot.'),
-      );
+      await expect(service.update(LESSON_ID, { dayOfWeek: 1 }, testUser())).rejects.toMatchObject(refusedAs('GROUP'));
     });
 
     it.each([
@@ -5375,6 +5345,52 @@ describe('MasterLessonsService', () => {
         expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
       });
 
+      describe('the board’s rules (En domare med ord)', () => {
+        const ramtid = [{ minGradeLevel: 7, maxGradeLevel: 9, dayOfWeek: null, startTime: t('08:00'), endTime: t('10:30') }];
+        const classes = () => [
+          { id: GROUP_ID, gradeLevel: 7, halfOfId: null },
+          { id: FR_GROUP, gradeLevel: 7, halfOfId: null },
+        ];
+
+        it('holds a card to the stage’s ramtid at the day and clock it lands on, and writes nothing', async () => {
+          tx.frameTime.findMany.mockResolvedValue(ramtid);
+          tx.studentGroup.findMany.mockResolvedValue(classes());
+          arrangeCard([tyska(), franskaLesson()]);
+
+          // Inside the day: moved.
+          await expect(move({ dayOfWeek: 2, startTime: '09:00', endTime: '10:00' })).resolves.toBeDefined();
+          tx.masterLesson.updateMany.mockClear();
+          // Past 10:30: every member is outside the frame, and the card is refused as one.
+          await expect(move({ dayOfWeek: 2, startTime: '10:00', endTime: '11:00' })).rejects.toMatchObject(refusedAs('FRAME'));
+          expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+        });
+
+        it('holds a card dropped on the same clock of another day to the rules of that day', async () => {
+          // The week's rows on whole årskurser: Tuesday 10:00-11:00 is closed to the seventh.
+          tx.studentGroup.findMany.mockResolvedValue(classes());
+          tx.availabilityConstraint.findMany.mockImplementation((query: Query = {}) =>
+            Promise.resolve(
+              query.where?.resourceType === 'GRADE_LEVEL'
+                ? [{ resourceType: 'GRADE_LEVEL', userId: null, roomId: null, studentGroupId: null, minGradeLevel: 7, maxGradeLevel: 7, dayOfWeek: 2, date: null, startTime: t('10:00'), endTime: t('11:00') }]
+                : [],
+            ),
+          );
+          arrangeCard([tyska(), franskaLesson()]);
+
+          await expect(move({ dayOfWeek: 2, startTime: '10:00', endTime: '11:00' })).rejects.toMatchObject(refusedAs('GRADE_RULE'));
+          expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+        });
+
+        it('asks nothing of the board for a card dropped where it stood (låt stå)', async () => {
+          // The card stands at Monday 10:00-11:00, past the ramtid, and is dropped there: it moves nothing.
+          tx.frameTime.findMany.mockResolvedValue(ramtid);
+          tx.studentGroup.findMany.mockResolvedValue(classes());
+          arrangeCard([tyska(), franskaLesson()]);
+
+          await expect(move({ dayOfWeek: 1, startTime: '10:00', endTime: '11:00' })).resolves.toBeDefined();
+        });
+      });
+
       it('holds the card against the rest of the day with its own lessons left out of where they stood', async () => {
         // Franska's teacher already teaches matematik on Tuesday at 09:00; the
         // card's own lessons, still on Monday, are not in the way.
@@ -5386,7 +5402,7 @@ describe('MasterLessonsService', () => {
           ],
         );
 
-        await expect(move()).rejects.toThrow('Franska för Fr7: Teacher already teaches Math in this slot.');
+        await expect(move()).rejects.toMatchObject(refusedAs('TEACHER'));
         const scan = (tx.masterLesson.findMany.mock.calls as Array<[Query]>).find(
           ([query]) => query.where && 'dayOfWeek' in query.where,
         )![0];
@@ -5401,7 +5417,7 @@ describe('MasterLessonsService', () => {
 
         expect(refusal).toBeInstanceOf(ConflictException);
         expect((refusal as ConflictException).message).toBe(
-          'Tyska för Ty7: Room is already booked for Franska in this slot.',
+          'Tyska för Ty7: Salen är redan upptagen av Franska Fr7 tisdag 09:00–10:00.',
         );
       });
 
@@ -5672,7 +5688,7 @@ describe('MasterLessonsService', () => {
               : day(query),
           );
 
-          await expect(move()).rejects.toThrow(/Tyska för Fr7: Room is already booked/);
+          await expect(move()).rejects.toMatchObject(refusedAs('ROOM'));
           expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
         });
 

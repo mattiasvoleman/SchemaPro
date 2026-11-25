@@ -5,7 +5,8 @@ import type { PlacementParams, PlacementRefusalReason, PlacementVerdict } from '
 /** The problem `code` of a förläggning that stands where the week does not hold it. */
 export const REQUIREMENT_PLACEMENT_REFUSED = 'REQUIREMENT_PLACEMENT_REFUSED';
 
-const DAYS: Readonly<Record<number, string>> = { 1: 'måndag', 2: 'tisdag', 3: 'onsdag', 4: 'torsdag', 5: 'fredag' };
+// Saturday and Sunday are no school day, but a lesson a file brought in may stand there, and a clash with it is told by its day.
+const DAYS: Readonly<Record<number, string>> = { 1: 'måndag', 2: 'tisdag', 3: 'onsdag', 4: 'torsdag', 5: 'fredag', 6: 'lördag', 7: 'söndag' };
 
 /** The other lesson of a clash as a phrase: "Idrott och hälsa 7B tisdag 10:00–11:00". Never a person. */
 function otherText(params: PlacementParams | undefined): string {

@@ -9,6 +9,7 @@ import {
   type MasterLessonResult,
 } from '../calendar/master-lessons.service';
 import { propagateTemplateChange } from '../calendar/propagate-template';
+import { clashRefusedConflict } from '../calendar/clash-refusal';
 import { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
@@ -32,6 +33,7 @@ import type {
   SoftCost,
   SwapMove,
   SwapProposal,
+  SwapSlot,
 } from './swap-types';
 
 export const SWAP_STALE = 'SWAP_STALE';
@@ -111,6 +113,9 @@ export interface SwapApplyResult {
 }
 
 const WEEKDAY_MAX = 7;
+
+/** A clash `clashesOf` found: the rule's own hit, and what the refusal needs of the lesson it was found for. */
+type ClashOf = MasterLessonConflict & { requirement: string; groupIds: string[]; slot: SwapSlot };
 
 /**
  * Byten och flyttar (G1): swap suggestions and chains of three on the
@@ -300,7 +305,7 @@ export class SwapsService {
     context: SwapContext,
     moves: readonly SwapMove[],
     reads?: SwapReads,
-  ): Promise<MasterLessonConflict[]> {
+  ): Promise<ClashOf[]> {
     const movingIds = moves.map((move) => move.lessonId);
     // The movers as they will stand. The rule reads `alongside` as lessons of
     // the candidate's own day (a block's card moves to one day), and these go
@@ -338,7 +343,14 @@ export class SwapsService {
       );
       if (conflicts.length > 0) {
         const name = requirementName(lesson.subjectName, lesson.groupName);
-        return conflicts.map((conflict) => ({ ...conflict, message: `${name}: ${conflict.message}` }));
+        return conflicts.map((conflict) => ({
+          ...conflict,
+          message: `${name}: ${conflict.message}`,
+          // What the refusal names the lesson and its place by (lesson-refusal.ts clashRefusedConflict).
+          requirement: name,
+          groupIds: [lesson.studentGroupId, ...lesson.extraGroupIds],
+          slot: move.to,
+        }));
       }
     }
     return [];
@@ -451,7 +463,21 @@ export class SwapsService {
       // search's, and this is the write.
       const conflicts = await this.clashesOf(tx, data, context, moves);
       if (conflicts.length > 0) {
-        throw new ConflictException([...new Set(conflicts.map((conflict) => conflict.message))].join(' '));
+        // The hand edit's refusal, said by the same code: the clash and the other lesson by class, subject, day and clock.
+        throw clashRefusedConflict(conflicts, (lessonId) => {
+          const other = context.lessonById.get(lessonId);
+          if (!other) return undefined;
+          // A lesson that moves with this one stands where it lands.
+          const at = moves.find((move) => move.lessonId === lessonId)?.to ?? other;
+          return {
+            groupIds: new Set([other.studentGroupId, ...other.extraGroupIds]),
+            className: other.groupName,
+            subjectName: other.subjectName,
+            day: 'dayOfWeek' in at ? at.dayOfWeek : other.dayOfWeek,
+            start: at.startMinutes,
+            end: at.endMinutes,
+          };
+        });
       }
 
       // Before the first write, in THIS transaction: a refused apply leaves no

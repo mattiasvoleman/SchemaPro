@@ -112,6 +112,7 @@ const lazyLessonDialogs = () => ({
   SuggestPlacementsDialog: lazy(() =>
     loadLessonDialogs().then((module) => ({ default: module.SuggestPlacementsDialog })),
   ),
+  ConflictList: lazy(() => loadLessonDialogs().then((module) => ({ default: module.ConflictList }))),
 });
 export let lessonDialogs = lazyLessonDialogs();
 /** A fresh set after a dialog failed to load or draw; the page reads `lessonDialogs` again. */
