@@ -507,6 +507,27 @@ describe("TimetableGrid overlap lanes", () => {
     expect(algebra.style.width).toBe("calc(100% - 6px)");
   });
 
+  it("has a place for a mark in the card's corner, as words, and draws nothing where there is none", () => {
+    render(
+      <TimetableGrid
+        lessons={[
+          makeLesson({ id: "a", title: "Algebra" }),
+          makeLesson({ id: "b", title: "Biologi", startMinutes: 660, endMinutes: 720, mark: "Undantag", markLabel: "ramtiden" }),
+        ]}
+      />,
+    );
+    const algebra = screen.getByRole("button", { name: /Algebra/ });
+    const biologi = screen.getByRole("button", { name: /Biologi/ });
+    expect(algebra.querySelector("[data-lesson-mark]")).toBeNull();
+    const mark = biologi.querySelector("[data-lesson-mark]");
+    expect(mark).toHaveTextContent("Undantag");
+    // Not by colour alone, and a screen reader is told what for.
+    expect(mark).toHaveAttribute("title", "ramtiden");
+    expect(biologi.textContent).toContain("Undantag ramtiden");
+    // The mark is among the badges: it takes no lane and no width.
+    expect(biologi.style.width).toBe(algebra.style.width);
+  });
+
   it("lets back-to-back lessons share a full-width lane", () => {
     render(
       <TimetableGrid
