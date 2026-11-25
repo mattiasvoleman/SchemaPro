@@ -300,7 +300,8 @@
  *     to the parsed tree, before any table is read (quarantine()), so that no
  *     later read of an attribute, now or added in a year, can get at one.
  *     a. A field NAMED like one (personnummer, personnr, pnr, ssn, civic number,
- *        samordningsnummer, national id), attribute or element, is deleted from
+ *        samordningsnummer, national id, tf-nummer: Skola24's number for a pupil
+ *        who has none), attribute or element, is deleted from
  *        the tree unread; its value taints nothing and is never echoed. One
  *        note names the fields (at most ten; a name that itself has the shape
  *        is not listed but counted as "ett fält vars namn liknar ett

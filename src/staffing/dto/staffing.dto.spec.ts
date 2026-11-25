@@ -195,6 +195,18 @@ describe('UpsertTeacherEmploymentDto mirrors the table CHECKs, bound for bound',
     ).resolves.toEqual([]);
   });
 
+  it('refuses a NUL in the note and in the signature: PostgreSQL text cannot hold one (22021), and it reached the caller as a 500 (the review of #410, U-1)', async () => {
+    const base = { employmentPercent: 100 };
+    await expect(failing(UpsertTeacherEmploymentDto, { ...base, note: 'a\u0000b' })).resolves.toEqual(['note']);
+    await expect(failing(UpsertTeacherEmploymentDto, { ...base, signature: 'A\u0000B' })).resolves.toEqual(['signature']);
+    // A note's own line breaks and tabs are not the refusal's business, and a signature of the same length without the NUL passes.
+    await expect(failing(UpsertTeacherEmploymentDto, { ...base, note: 'rad ett\nrad två\tsist' })).resolves.toEqual([]);
+    await expect(failing(UpsertTeacherEmploymentDto, { ...base, signature: 'AB' })).resolves.toEqual([]);
+    // The field's own sentence, the way the scope assessment's note says it.
+    expect(await messagesOf(UpsertTeacherEmploymentDto, { ...base, note: 'a\u0000b' })).toContain('Anteckningen kan inte innehålla nolltecken (U+0000).');
+    expect(await messagesOf(UpsertTeacherEmploymentDto, { ...base, signature: 'A\u0000B' })).toContain('Signaturen kan inte innehålla nolltecken (U+0000).');
+  });
+
   it('caps the note at 500 characters and refuses an unknown contract kind', async () => {
     const base = { employmentPercent: 100 };
     await expect(

@@ -404,6 +404,13 @@ describe('ImportTeacherRowDto with the post columns', () => {
     await expect(failingTeacher({ ...teacher, signature: '  ' })).resolves.toEqual(['signature']);
   });
 
+  it('refuses a NUL in the signature, as the PUT of a post does: the table cannot hold one (22021)', async () => {
+    await expect(failingTeacher({ ...teacher, signature: 'A\u0000B' })).resolves.toEqual(['signature']);
+    const errors = await validate(plainToInstance(ImportTeacherRowDto, { ...teacher, signature: 'A\u0000B' }));
+    expect(Object.values(errors[0]?.constraints ?? {})).toContain('Signaturen kan inte innehålla nolltecken (U+0000).');
+    await expect(failingTeacher({ ...teacher, signature: 'AB' })).resolves.toEqual([]);
+  });
+
   it('reads an empty cell posted as null as absence', async () => {
     await expect(
       failingTeacher({

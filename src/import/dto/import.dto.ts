@@ -223,6 +223,9 @@ export class ImportTeacherRowDto {
   @MinLength(1, { message: 'Signaturen måste vara minst ett tecken.' })
   @MaxLength(8, { message: 'Signaturen kan vara högst åtta tecken.' })
   @Matches(/\S/, { message: 'Signaturen kan inte bestå av bara mellanslag.' })
+  // As UpsertTeacherEmploymentDto's: PostgreSQL's text cannot hold a NUL (22021), and the file's cell reached the table as the
+  // driver's own sentence in the report, with a source path and a code frame in it, where the field's sentence belongs.
+  @Matches(/^[^\u0000]*$/, { message: 'Signaturen kan inte innehålla nolltecken (U+0000).' })
   signature?: string | null;
 }
 
