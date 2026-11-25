@@ -13,6 +13,7 @@ import { sortByName, sortByPersonName } from "@/lib/sorting";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { GUARDIAN_KEYS } from "@/lib/guardian-keys";
 import type { Suggestions } from "@/lib/suggestion-types";
+import type { StartedFrom, StartFrom } from "@/lib/start-from";
 import type {
   SingleCancelCause,
   LessonRecurrence,
@@ -953,6 +954,11 @@ export interface OptimizationJob {
   waitSeconds?: number;
   conflicts: ConflictDetail[];
   /**
+   * The schedule the run was asked to start from and what became of its lessons (Ett schema som start): how many were held where they
+   * were, moved and laid new. Null for a run that started from nothing; absent from a gateway before M9.
+   */
+  startedFrom?: StartedFrom | null;
+  /**
    * What a FINISHED run could not keep of the soft wishes (Lärarens dag:
    * TEACHER_FREE_DAY_WISH_NOT_KEPT; Sammanhängande undervisning:
    * TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT), in the conflicts' shape so the
@@ -1025,6 +1031,8 @@ export function useStartOptimization() {
       academicYearId: string;
       weights?: ObjectiveWeights;
       rules?: ScheduleRules;
+      /** Ett schema som start: absent starts from nothing, as before. */
+      startFrom?: StartFrom;
     }) => api.post<{ jobId: string }>("/api/v1/optimization/jobs", body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });

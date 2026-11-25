@@ -64,6 +64,7 @@ import { RefusalLink } from "./refusal-link";
 import { placementLinkOfRefusal } from "@/lib/placement-link";
 import { useScheduleCandidates } from "./use-schedule-candidates";
 import { apiErrorText } from "@/lib/api-error-text";
+import type { StartFrom } from "@/lib/start-from";
 
 /**
  * The row before a run ("N lektioner ligger fast") reads the week's board, which nothing on this page needs to draw: fetched
@@ -92,6 +93,13 @@ const TimeoutAccount = lazy(() => import("./timeout-account").then((module) => (
  * reason as the account above. It changes nothing itself.
  */
 const SuggestionsCard = lazy(() => import("./suggestions-card").then((module) => ({ default: module.SuggestionsCard })));
+
+/**
+ * Utgå från ett schema (M9): the choice of where a run starts, and the sentence about what a finished run did with it. Both drawn
+ * from one lazy chunk, so that a route near its bundle budget carries a state and a request field and not the cards.
+ */
+const StartFromCard = lazy(() => import("./start-from").then((module) => ({ default: module.StartFromCard })));
+const StartedFromNote = lazy(() => import("./start-from").then((module) => ({ default: module.StartedFromNote })));
 
 /**
  * How long the gateway counts a PENDING or RUNNING job as running when it
@@ -267,6 +275,8 @@ export default function GeneratePage() {
   }, [requirements, groups, memberships, people]);
 
   const startOptimization = useStartOptimization();
+  /** Where the run starts: null from nothing, as Generera always did (start-from.tsx). Chosen for one year and cleared with it. */
+  const [startFrom, setStartFrom] = useState<StartFrom | null>(null);
   /*
    * Kontrollera veckan: the engine's quick checks on the week, in seconds. Asked for by its own button, and before every
    * run (`run` below): a week they find tight or impossible is asked about first ("Åk 7 är 94 % full. Kör ändå?").
@@ -570,6 +580,7 @@ export default function GeneratePage() {
       const { jobId: newJobId } = await startOptimization.mutateAsync({
         academicYearId: year.id,
         weights,
+        ...(startFrom ? { startFrom } : {}),
       });
       setJobId(newJobId);
     } catch (error) {
@@ -589,7 +600,9 @@ export default function GeneratePage() {
         void refetchHistory();
         return;
       }
-      toast.error(apiErrorText(error, tCommon));
+      // A schedule to start from that cannot be one (a version that is not the year's, a year with none before it): said by its code.
+      const refusal = error instanceof ApiError ? endingText(error.code ?? null, error.params) : null;
+      toast.error(refusal ?? apiErrorText(error, tCommon));
     }
   };
 
@@ -764,8 +777,9 @@ export default function GeneratePage() {
             onChoose={(yearId) => {
               // The last run's card is that year's; it must not stand under the other.
               setJobId(null);
-              // The check's answer is that year's too.
+              // The check's answer is that year's too, and so is the schedule chosen to start from.
               setAskingBeforeRun(false);
+              setStartFrom(null);
               weekCheck.reset();
               planning.choose(yearId);
             }}
@@ -960,6 +974,15 @@ export default function GeneratePage() {
           </ul>
         )}
       </SectionCard>
+
+      {/* Where the run starts. A chunk that does not arrive leaves the card out; the run is then what it always was. */}
+      {year ? (
+        <DialogLoadBoundary onError={() => undefined}>
+          <Suspense fallback={null}>
+            <StartFromCard year={year} value={startFrom} onChange={setStartFrom} disabled={generating} />
+          </Suspense>
+        </DialogLoadBoundary>
+      ) : null}
 
       {/* items-start: Skolregler is three lines; stretched to the profile's
           height it was a card of empty space. */}
@@ -1191,6 +1214,15 @@ export default function GeneratePage() {
                 </Link>
               </Button>
             </div>
+          ) : null}
+
+          {/* What the run did with the schedule it was asked to start from: how many lessons stayed, moved and were laid. */}
+          {job.status === "SUCCEEDED" && job.startedFrom ? (
+            <DialogLoadBoundary onError={() => undefined}>
+              <Suspense fallback={null}>
+                <StartedFromNote startedFrom={job.startedFrom} />
+              </Suspense>
+            </DialogLoadBoundary>
           ) : null}
 
           {refusedUnstaffed ? (

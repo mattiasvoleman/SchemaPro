@@ -6543,6 +6543,49 @@
     klasslistorna (8.2).
   </p>
   <p>
+    Under <span class="ui">Utgå från ett schema</span> väljer du var körningen
+    börjar. Som förval lägger motorn hela veckan från början
+    (<span class="ui">Från början</span>), och schemat som finns används bara
+    som ledtråd, så att så mycket som möjligt hamnar där det låg. De andra
+    valen låter motorn börja <em>från</em> ett schema som finns: den lägger
+    tillbaka varje lektion där den låg, flyttar bara det som krockar med veckan
+    som den är nu och lägger det som saknas. Det är inget lås. En lektion
+    stannar tills veckan visar att den inte kan stå kvar, och låsta och
+    handlagda lektioner är kvar som de är vilket val du än gör.
+  </p>
+  <ul>
+    <li><span class="ui">Årets grundschema som det är</span>: lektionerna som
+      Generera annars ersätter hålls där de ligger. Det passar efter att en
+      lärare, en sal eller en klass har ändrats, och en oförändrad vecka ger
+      samma schema tillbaka. Har läsåret inget schema än finns inget att utgå
+      från, och körningen nekas innan motorn startar.</li>
+    <li><span class="ui">Förra läsårets schema</span>: bara för ett läsår som
+      är skapat ur ett tidigare (8.1). Varje klass får förra årets lektioner
+      under sin efterträdare, så 7A:s lektioner blir 8A:s. Klasser som inte har
+      någon föregångare, som en ny årskurs 7, och ämnen som inte fanns förra
+      året läggs från början. Lektioner som gick i vissa veckor eller delar av
+      året följer med posten som rullades.</li>
+    <li><span class="ui">En sparad version</span>: en version av samma läsår
+      (5.5), som när du vill gå tillbaka till hur schemat såg ut före en
+      ändring. Bara versionens egna lektioner används: det som var låst eller
+      lagt för hand i versionen är med i veckan som det står nu, inte som start.</li>
+  </ul>
+  <p>
+    När körningen är klar står under <span class="ui">Senaste körning</span>
+    hur det gick: till exempel ”Av 180 lektioner hölls 171 där de låg, 9
+    flyttades och 0 lades nya”. <em>Hölls</em> är lektioner som står på samma
+    dag och tid som i schemat du utgick från, <em>flyttades</em> är lektioner
+    som schemat hade men som nu ligger på en annan tid, och <em>lades nya</em>
+    är lektioner som schemat inte hade något för. Raden säger också hur många
+    av schemats lektioner som inte gick att använda och varför, till exempel
+    för att klassen inte har någon efterträdare. Är schemamotorn äldre än resten
+    av tjänsten kan den inte utgå från ett schema: veckan läggs då från början
+    som vanligt, och raden säger det i stället för att låta det se ut som om
+    schemat hölls. Det går ofta mycket fortare att utgå från ett schema, men
+    det är motorn som bestämmer vad som flyttas: ett schema som liknar veckan
+    ger få flyttar, ett som inte gör det ger många.
+  </p>
+  <p>
     Under <span class="ui">Förutsättningar</span> står också
     <span class="ui">Alla timplansposter har lärare</span>, med hur många som
     saknar en. Raden länkar till <span class="ui">Obemannade rader</span> på
@@ -7281,6 +7324,12 @@
     Innan du gör större ändringar: gå till <span class="ui">Versioner</span> och
     spara en version med ett beskrivande namn, till exempel <em>Före
     vårjusteringar</em>. En sparad version kan återställas i sin helhet.
+  </p>
+  <p>
+    En sparad version kan också vara utgångspunkt för en ny körning: välj den
+    under <span class="ui">Utgå från ett schema</span> på Generera-sidan (5.2).
+    Då läggs veckan om från versionen i stället för från början, och det som
+    inte längre går att hålla flyttas.
   </p>
   <div class="check">
     <span class="label">Vana som lönar sig</span>
