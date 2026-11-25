@@ -1,5 +1,5 @@
 import { STUDENT_BELOW, STUDENT_KEYS } from '../common/removal-inventory';
-import { ACCOUNT_KINDS, NOT_A_USER, SUBJECT_ACCESS, WITHOUT_KEY, WITHOUT_SCHOOL_COLUMN, cellOf, emptyPupilPart, excludedTables, inventoriedTables, readTable, tableFiles, type CellRules } from './person-tables';
+import { ACCOUNT_KINDS, NOT_A_USER, SUBJECT_ACCESS, WITHOUT_KEY, WITHOUT_SCHOOL_COLUMN, cellOf, emptyPupilPart, excludedTables, inventoriedTables, narrowToPersons, readTable, tableFiles, type CellRules } from './person-tables';
 
 /**
  * "All your data" is only true while the extract knows every table that holds
@@ -144,6 +144,78 @@ describe('the json columns of a table that name a person (the review of #385, L-
 
   it('keeps reading the search\'s own json, as before', async () => {
     expect(await statementFor('StaffingSearchRuns')).toContain('t."checkpoint"::text LIKE');
+  });
+});
+
+describe('the json of a run names a whole school, and the extract of one teacher carries only that teacher (GDPR art. 15.4)', () => {
+  const TEACHER = '22222222-2222-4222-8222-222222222222';
+  const COLLEAGUE = '44444444-4444-4444-8444-444444444444';
+  const OTHER = '55555555-5555-4555-8555-555555555555';
+  const SCHOOL = '33333333-3333-4333-8333-333333333333';
+  const RULE = '66666666-6666-4666-8666-666666666666';
+  const strangers = new Set([COLLEAGUE, OTHER]);
+
+  /** A note as OptimizationJobs."notes" keeps it (stored-conflicts.ts): the teacher's Users id in subjectIds, server-side. */
+  const note = (code: string, who: string[], params: Record<string, number> = { day: 3 }) => ({
+    category: 'AVAILABILITY', code, params, message: 'a sentence', resourceNames: [], subjectIds: who,
+  });
+
+  it('keeps the entries of a list that name the person asked for, and no other person\'s', () => {
+    const notes = [
+      note('TEACHER_FREE_DAY_WISH_NOT_KEPT', [TEACHER]),
+      note('TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT', [COLLEAGUE], { day: 4, minutes: 180 }),
+      note('TEACHER_TRAVEL_CANNOT_BE_KEPT', [COLLEAGUE, TEACHER]),
+    ];
+
+    const kept = narrowToPersons(notes, new Set([TEACHER]), strangers) as Array<{ code: string; subjectIds: string[] }>;
+
+    // The colleague's limit (HR data, shown by the page to a reader with HR-läs only) is not in the teacher's extract; the walk that names
+    // both is, and names only the teacher.
+    expect(kept.map((entry) => entry.code)).toEqual(['TEACHER_FREE_DAY_WISH_NOT_KEPT', 'TEACHER_TRAVEL_CANNOT_BE_KEPT']);
+    expect(kept.map((entry) => entry.subjectIds)).toEqual([[TEACHER], [TEACHER]]);
+    expect(JSON.stringify(kept)).not.toContain(COLLEAGUE);
+  });
+
+  it('narrows the analysis of a run to the caps of the person, and a params object to the person\'s id', () => {
+    const cap = (teacher: string) => ({ rule: 'TEACHER_DAILY_CAP', proof: 'SOLVED', cost: 1, teacherIds: [teacher], resourceIds: [RULE] });
+    const analysis = { version: 1, state: 'DONE', verified: true, changes: [cap(COLLEAGUE), cap(TEACHER)] };
+    const params = { day: 2, subjectIds: [COLLEAGUE, TEACHER, OTHER] };
+
+    const narrowed = narrowToPersons(analysis, new Set([TEACHER]), strangers) as typeof analysis;
+    expect(narrowed.changes).toEqual([cap(TEACHER)]);
+    expect(narrowed.state).toBe('DONE');
+    // A rule's id is no user: it stays.
+    expect(narrowed.changes[0]!.resourceIds).toEqual([RULE]);
+    expect(narrowToPersons(params, new Set([TEACHER]), strangers)).toEqual({ day: 2, subjectIds: [TEACHER] });
+  });
+
+  it('writes a stranger\'s id that stands on its own, and leaves what is not an id of a user of the school', () => {
+    expect(narrowToPersons({ about: COLLEAGUE, rule: RULE, minutes: 5, names: ['Sal 4'] }, new Set([TEACHER]), strangers)).toEqual({
+      about: '(annan person)', rule: RULE, minutes: 5, names: ['Sal 4'],
+    });
+    expect(narrowToPersons(null, new Set([TEACHER]), strangers)).toBeNull();
+  });
+
+  it('reads a run through it: a teacher named only in the notes gets her entries and none of the colleague\'s, through readTable', async () => {
+    const file = tableFiles().find((candidate) => candidate.table === 'OptimizationJobs')!;
+    const row = {
+      id: '77777777-7777-4777-8777-777777777777', actorId: OTHER, status: 'SUCCEEDED',
+      notes: [note('TEACHER_FREE_DAY_WISH_NOT_KEPT', [TEACHER]), note('TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT', [COLLEAGUE], { day: 4, minutes: 180 })],
+      conflicts: [note('TEACHER_TRAVEL_CANNOT_BE_KEPT', [COLLEAGUE, OTHER])],
+      conflictSummaryParams: { subjectIds: [COLLEAGUE] },
+      errorParams: null,
+      suggestions: null,
+    };
+    const tx = { $queryRaw: async () => [{ j: JSON.stringify(row) }] } as unknown as Parameters<typeof readTable>[0];
+
+    const [read] = await readTable(tx, SCHOOL, file, [TEACHER], strangers);
+
+    expect(read!['notes']).toEqual([note('TEACHER_FREE_DAY_WISH_NOT_KEPT', [TEACHER])]);
+    expect(read!['conflicts']).toEqual([]);
+    expect(read!['conflictSummaryParams']).toEqual({ subjectIds: [] });
+    // The columns that are not json about people are as the table has them.
+    expect(read!['status']).toBe('SUCCEEDED');
+    expect(JSON.stringify(read!['notes'])).not.toContain(COLLEAGUE);
   });
 });
 

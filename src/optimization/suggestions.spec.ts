@@ -331,6 +331,17 @@ describe('the whitelist', () => {
     expect(suggestionsOf({ ...verified, changes: [{ ...verified.changes[0]!, proof: 'MAY_HELP' }] })).not.toBeNull();
   });
 
+  it.each([['true'], [1], ['false']])('stores what the engine did not check as MAY_HELP, also when `verified` is %p and not the boolean (the review of #431)', (verified) => {
+    // The write and the read must agree: a list stored with `verified: false` and a SOLVED proof is one the read refuses, and the analysis
+    // that took a minute and a half would end as ENGINE_FAILED at the write.
+    const response = answer([cap(), lock()], { verified: verified as never });
+    const made = stored(response);
+
+    expect(made.verified).toBe(false);
+    expect(made.changes.map((change) => change.proof)).toEqual(['MAY_HELP', 'MAY_HELP']);
+    expect(suggestionsOf(made)).toEqual(made);
+  });
+
   it('refuses a part-timer\'s days in any form but the hidden one, and a hidden change that says more', () => {
     const visible = { ...good().changes.find((change) => change.hidden)!, hidden: false };
     expect(suggestionsOf({ ...good(), changes: [visible] })).toBeNull();

@@ -13,7 +13,9 @@
  *         the year gives) is 409 with its code, and wakes nothing; another school's administrator sees no such run (404);
  *   ag-e  the whitelist holds across the database: a column a hand edited (a part-timer's days in the open) is shown as nothing;
  *   ag-f  the engine's cores are one stream at a time (D2): Generera's start is refused 409 SUGGESTIONS_RUNNING while an analysis of the year
- *         is alive, and an analysis is refused 409 SUGGESTIONS_YEAR_BUSY while a schemaförslag run of the year is alive.
+ *         is alive, and an analysis is refused 409 SUGGESTIONS_YEAR_BUSY while a schemaförslag run of the year is alive;
+ *   ag-g  and 409 SUGGESTIONS_YEAR_BUSY for a press that queued behind a Generera's start for the year's lock: it read its run as the newest
+ *         before the start inserted its job, and counts the job after it.
  */
 import { strict as assert } from 'node:assert';
 import { HttpException } from '@nestjs/common';
@@ -232,6 +234,55 @@ export async function suggestionsChecks(owner: Client, api: PrismaService, marke
       await assert.rejects(service.start(refusedAgain, a.admin), (error: unknown) => codeOf(error) === 'SUGGESTIONS_YEAR_BUSY');
       assert.equal((await column(refusedAgain)).state, null, 'nothing was claimed');
       await owner.query(`DELETE FROM "ScheduleCandidateRuns" WHERE "academicYearId" = $1`, [a.year]);
+    });
+
+    await check('(ag-g) a Generera that starts while a press waits for the year\'s start lock is the press\'s refusal: 409 SUGGESTIONS_YEAR_BUSY, through the real lock', async () => {
+      // The one way a Generera going in the year reaches the count of the year's runs: the press has read its run as the year's newest (it is:
+      // a Generera that has not committed is no run yet) and waits for the year's solve-start lock, and the Generera's start, which queued
+      // first, takes it, inserts its job and commits. The press then counts that job. YEAR_BUSY is a live schemaförslag run's (ag-f) and
+      // it is this; without this row nothing against a database holds the count of the year's jobs (the review of #431).
+      calls.length = 0;
+      // The year's runs from the checks above are gone, so that the refused run is the newest there is until the Generera's job is made.
+      await owner.query(`DELETE FROM "OptimizationJobs" WHERE "academicYearId" = $1`, [a.year]);
+      const refused = await plantRun(a, { createdAt: new Date(Date.now() - 600_000).toISOString() });
+      const waiting = async (): Promise<number> =>
+        Number((await one<{ n: string }>(`SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 2 AND NOT granted`)).n);
+      // The Generera that is going asks the engine and is never answered, so that it is alive when the press counts.
+      const engine = proxy as unknown as { triggerScheduling?: () => Promise<never> };
+      engine.triggerScheduling = () => new Promise<never>(() => undefined);
+      let held = false;
+      try {
+        // The year's solve-start lock, held on the owner's connection until both have queued.
+        await owner.query('BEGIN');
+        held = true;
+        await owner.query(`SELECT pg_advisory_xact_lock(hashtext('grundschema-solve-start'), hashtext($1::uuid::text))`, [a.year]);
+        const generera = jobs.start(a.year, a.admin);
+        // Awaited only after the commit; a check that fails before it must not end the process with an unhandled rejection.
+        generera.catch(() => undefined);
+        await until('the Generera start waits for the lock', async () => (await waiting()) === 1);
+        const press = service.start(refused, a.admin).then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        await until('the press waits for the lock behind it', async () => (await waiting()) === 2);
+        await owner.query('COMMIT');
+        held = false;
+        const started = await generera;
+        assert.equal(codeOf(await press), 'SUGGESTIONS_YEAR_BUSY');
+        assert.equal((await column(refused)).state, null, 'nothing was claimed');
+        assert.equal(calls.length, 0, 'the press woke nothing');
+        // And once the Generera's job is there it is the year's newest run, which is the press's answer from then on (ag-d).
+        await assert.rejects(service.start(refused, a.admin), (error: unknown) => codeOf(error) === 'SUGGESTIONS_RUN_IS_OLD');
+        assert.equal(
+          (await one<{ n: string }>(`SELECT count(*) AS n FROM "OptimizationJobs" WHERE id = $1 AND status IN ('PENDING', 'RUNNING')`, [started.jobId])).n,
+          '1',
+          'the Generera is the run that is going',
+        );
+      } finally {
+        delete engine.triggerScheduling;
+        if (held) await owner.query('ROLLBACK');
+        await owner.query(`UPDATE "OptimizationJobs" SET status = 'FAILED', "finishedAt" = now() WHERE "academicYearId" = $1 AND status IN ('PENDING', 'RUNNING')`, [a.year]);
+      }
     });
 
     await check('(ag-e) a column a hand edited into showing a part-timer\'s days in the open is shown as nothing', async () => {
