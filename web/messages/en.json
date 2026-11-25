@@ -2295,6 +2295,74 @@
     "limits": "The figures are lower bounds the engine can prove for the year's tightest part of the school year. A week over the frame time is counted only up to the first period the engine refuses, so that figure may be lower than the tightest period's and is not compared with others. They do not say a timetable exists. Qualifications count as they hold today.",
     "notRun": "{count, plural, one {# subject} other {# subjects}} could not be counted again in time."
   },
+  "boardKeys": {
+    "dayPicker": "Show a day",
+    "dayTab": "{day}: {count, plural, =0 {no lessons} one {# lesson} other {# lessons}}",
+    "pickedUp": "Picked up {lesson}, {day} {from}–{to}. The arrow keys move the marker, Enter puts it down, Esc lets go.",
+    "markerFree": "{day} {from}–{to}: free. Enter puts it down.",
+    "markerTaken": "{day} {from}–{to}: cannot go here. Enter shows the nearest free times.",
+    "placed": "Moving {lesson} to {day} {from}–{to}.",
+    "refused": "{lesson} cannot go on {day} {from}–{to}. The nearest free times are shown.",
+    "letGo": "Let go of {lesson}. Nothing changed.",
+    "length": "{lesson} is {minutes} minutes and ends at {to}.",
+    "lengthLimit": "{lesson}: the length cannot be changed that way.",
+    "lengthRefused": "{lesson} cannot be {minutes} minutes. The nearest free times are shown.",
+    "locked": "{lesson} is locked. Generate will not rearrange it.",
+    "unlocked": "{lesson} is no longer locked.",
+    "parked": "Parking {lesson}.",
+    "removed": "Removing {lesson}. Ctrl+Z undoes it.",
+    "keysTitle": "Keys on the timetable",
+    "keys": {
+      "arrows": {
+        "keys": "Arrow keys",
+        "does": "Move focus to another lesson: up and down in the day, left and right between the days. Home and End go to the first and last of the day."
+      },
+      "take": {
+        "keys": "Space or M",
+        "does": "Picks the lesson up, so that the arrow keys move a marker instead of focus."
+      },
+      "marker": {
+        "keys": "Arrow keys, with a lesson picked up",
+        "does": "Move the marker a quarter of an hour up or down (five minutes with Shift) or a day sideways."
+      },
+      "put": {
+        "keys": "Enter or Space, with a lesson picked up",
+        "does": "Puts the lesson down where the marker is. If it cannot go there, the nearest free times are shown."
+      },
+      "letGoKey": {
+        "keys": "Esc, with a lesson picked up",
+        "does": "Lets go of the lesson without changing anything."
+      },
+      "length": {
+        "keys": "Alt+Up, Alt+Down",
+        "does": "Make the lesson five minutes shorter or longer."
+      },
+      "lock": {
+        "keys": "L",
+        "does": "Locks the lesson so that Generate leaves it where it is, or unlocks it."
+      },
+      "park": {
+        "keys": "P",
+        "does": "Parks the lesson: it takes no time until it is put back."
+      },
+      "remove": {
+        "keys": "Delete",
+        "does": "Removes the lesson."
+      },
+      "open": {
+        "keys": "Enter",
+        "does": "Opens the lesson."
+      },
+      "select": {
+        "keys": "Shift+Enter or Shift+Space",
+        "does": "Adds the lesson to the selection, or takes it out."
+      },
+      "undo": {
+        "keys": "Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z",
+        "does": "Undo and redo."
+      }
+    }
+  },
   "timetable": {
     "title": "Master timetable",
     "subtitle": "The recurring weekly template produced by the AI engine",

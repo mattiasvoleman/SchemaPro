@@ -2295,6 +2295,74 @@
     "limits": "Siffrorna är nedre gränser som motorn kan bevisa för årskursens trängsta del av läsåret. En vecka över ramtiden räknas bara till den första period motorn nekar, så den siffran kan vara lägre än den trängsta periodens och jämförs inte med andra. De säger inte att ett schema finns. Behörigheter räknas som de gäller i dag.",
     "notRun": "{count, plural, one {# ämne} other {# ämnen}} hann inte räknas om inom tiden."
   },
+  "boardKeys": {
+    "dayPicker": "Visa en dag",
+    "dayTab": "{day}: {count, plural, =0 {inga lektioner} one {# lektion} other {# lektioner}}",
+    "pickedUp": "Tog upp {lesson}, {day} {from}–{to}. Pilarna flyttar markören, Enter lägger, Esc släpper.",
+    "markerFree": "{day} {from}–{to}: går att lägga. Enter lägger.",
+    "markerTaken": "{day} {from}–{to}: går inte att lägga här. Enter visar de närmaste lediga tiderna.",
+    "placed": "Flyttar {lesson} till {day} {from}–{to}.",
+    "refused": "{lesson} går inte att lägga {day} {from}–{to}. De närmaste lediga tiderna visas.",
+    "letGo": "Släppte {lesson}. Ingenting ändrades.",
+    "length": "{lesson} är {minutes} minuter och slutar {to}.",
+    "lengthLimit": "{lesson}: längden går inte att ändra åt det hållet.",
+    "lengthRefused": "{lesson} går inte att göra {minutes} minuter. De närmaste lediga tiderna visas.",
+    "locked": "{lesson} är låst. Generera lägger inte om den.",
+    "unlocked": "{lesson} är inte låst längre.",
+    "parked": "Parkerar {lesson}.",
+    "removed": "Tar bort {lesson}. Ctrl+Z ångrar.",
+    "keysTitle": "Tangenter på schemat",
+    "keys": {
+      "arrows": {
+        "keys": "Pilar",
+        "does": "Flyttar fokus till en annan lektion: upp och ned i dagen, vänster och höger mellan dagarna. Home och End går till dagens första och sista."
+      },
+      "take": {
+        "keys": "Mellanslag eller M",
+        "does": "Tar upp lektionen, så att pilarna flyttar en markör i stället för fokus."
+      },
+      "marker": {
+        "keys": "Pilar, med en lektion uppe",
+        "does": "Flyttar markören ett kvarter upp eller ned (med Skift fem minuter) eller en dag åt sidan."
+      },
+      "put": {
+        "keys": "Enter eller mellanslag, med en lektion uppe",
+        "does": "Lägger lektionen där markören står. Går det inte visas de närmaste lediga tiderna."
+      },
+      "letGoKey": {
+        "keys": "Esc, med en lektion uppe",
+        "does": "Släpper lektionen utan att ändra något."
+      },
+      "length": {
+        "keys": "Alt+upp, Alt+ned",
+        "does": "Gör lektionen fem minuter kortare eller längre."
+      },
+      "lock": {
+        "keys": "L",
+        "does": "Låser lektionen så att Generera låter den ligga, eller låser upp den."
+      },
+      "park": {
+        "keys": "P",
+        "does": "Parkerar lektionen: den tar ingen tid tills den läggs tillbaka."
+      },
+      "remove": {
+        "keys": "Delete",
+        "does": "Tar bort lektionen."
+      },
+      "open": {
+        "keys": "Enter",
+        "does": "Öppnar lektionen."
+      },
+      "select": {
+        "keys": "Skift+Enter eller Skift+mellanslag",
+        "does": "Lägger lektionen till de markerade, eller tar bort den därifrån."
+      },
+      "undo": {
+        "keys": "Ctrl/Cmd+Z, Ctrl/Cmd+Skift+Z",
+        "does": "Ångrar och gör om."
+      }
+    }
+  },
   "timetable": {
     "title": "Grundschema",
     "subtitle": "Den återkommande veckomallen som AI-motorn tagit fram",
