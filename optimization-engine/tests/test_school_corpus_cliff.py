@@ -15,6 +15,7 @@ says where every lesson went. What is held here:
 
 from __future__ import annotations
 
+import copy
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -99,3 +100,71 @@ def test_the_room_check_says_no_to_a_double_booking_a_wrong_type_and_a_room_too_
     nowhere = [_lesson(plain.id, None, 1, 480, 540)]
     assert any("no room" in fault for fault in cliff.room_faults(request, nowhere))
     assert laboratory.id != classroom.id
+
+
+# ---- verify() itself: each check it makes has a test that can see it go (g455, mutants M1, M3, M2, M4) -----------------
+
+_REAL_SOLVER = cliff.SchedulerSolver
+_NAME = "n9-g6-m0-s1"
+
+
+def _tamper(monkeypatch: pytest.MonkeyPatch, change) -> None:  # noqa: ANN001
+    """`verify` against the engine's own answer with `change` done to its lessons afterwards: what does it say to a wrong one?"""
+
+    class Tampering:
+        def __init__(self, settings) -> None:  # noqa: ANN001
+            self._solver = _REAL_SOLVER(settings)
+
+        def solve(self, request):  # noqa: ANN001, ANN202
+            response = self._solver.solve(request)
+            return response.model_copy(update={"lessons": change(list(response.lessons))})
+
+    monkeypatch.setattr(cliff, "SchedulerSolver", Tampering)
+
+
+def test_verify_says_no_to_an_answer_that_books_one_room_twice(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The room check of the PR is a function with its own test; this holds that `verify` CALLS it on the engine's answer."""
+
+    def double_book(lessons):  # noqa: ANN001, ANN202
+        for first in lessons:
+            for other in lessons:
+                if (
+                    other is not first and other.day_of_week == first.day_of_week and other.room_id != first.room_id
+                    and other.start_time < first.end_time and first.start_time < other.end_time
+                ):
+                    return [lesson.model_copy(update={"room_id": first.room_id}) if lesson is other else lesson for lesson in lessons]
+        msg = "no two lessons of the answer overlap in time"
+        raise AssertionError(msg)
+
+    _tamper(monkeypatch, double_book)
+    faults = cliff.verify(_NAME, WITNESSES[_NAME])
+    assert any("overlap" in fault for fault in faults), faults
+
+
+def test_verify_says_no_to_an_answer_that_moved_a_pinned_lesson(monkeypatch: pytest.MonkeyPatch) -> None:
+    def move_one(lessons):  # noqa: ANN001, ANN202
+        first = lessons[0]
+        return [first.model_copy(update={"day_of_week": first.day_of_week % 5 + 1}), *lessons[1:]]
+
+    _tamper(monkeypatch, move_one)
+    faults = cliff.verify(_NAME, WITNESSES[_NAME])
+    assert any("moved a pinned lesson" in fault for fault in faults), faults
+
+
+def test_verify_says_no_to_a_witness_found_for_another_week() -> None:
+    stale = {**WITNESSES[_NAME], "requestDigest": "0" * 64}
+    assert cliff.verify(_NAME, stale) == ["the week is not the one the witness was found for (requestDigest)"]
+
+
+def test_verify_says_no_when_the_pinned_week_is_one_the_engine_refuses() -> None:
+    """Two posts of one teacher at one time: the engine must say no with every lesson pinned, and `verify` must say that."""
+    week = cliff.week_of(_NAME)
+    witness = copy.deepcopy(WITNESSES[_NAME])
+    posts_of: dict[object, list[int]] = {}
+    for index, requirement in enumerate(week.request.requirements):
+        if requirement.teacher_id is not None:
+            posts_of.setdefault(requirement.teacher_id, []).append(index)
+    first, second = next(posts[:2] for posts in posts_of.values() if len(posts) >= 2)
+    witness["lessons"][second][0] = list(witness["lessons"][first][0])
+    faults = cliff.verify(_NAME, witness)
+    assert any("with every lesson pinned" in fault for fault in faults), faults
