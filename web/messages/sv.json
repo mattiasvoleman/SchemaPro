@@ -2070,7 +2070,7 @@
     "okBody": "Det är ingen garanti för att ett schema finns. Kontrollen kan visa att en vecka är omöjlig eller trång, men inte att den går att lägga.",
     "okCutTitle": "Förkontrollen hann inte räkna klart veckan",
     "okCutBody": "Ingen årskurs hittades över gränsen, men veckolasten hann inte räknas för alla årskurser, så en årskurs utan rad är inte räknad. Det är ingen garanti för att ett schema finns.",
-    "atLeast": "Procenttalen är lägst så höga: räkningen hann inte klart.",
+    "atLeast": "Siffrorna är lägst så höga: räkningen hann inte klart.",
     "tightBody": "En så trång vecka är svår att lägga, och mer tid kanske inte räcker. Raderna nedan säger vad som tar tid.",
     "impossibleBody": "Generera skulle neka veckan inom några sekunder. Rätta orsakerna nedan först.",
     "yearTight": "{grades, select, any {Klasserna med okänd årskurs ligger} other {Åk {grades} ligger}} på minst {percent} % av ramtiden.",

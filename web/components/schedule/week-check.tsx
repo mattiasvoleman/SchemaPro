@@ -22,7 +22,7 @@ import type { WeekCheckOutcome, WeekCheckResult, WeekCheckYear } from "@/lib/wee
 
 /*
  * Kontrollera veckan, drawn: the answer under the prerequisites, and the
- * question before a run ("Åk 7 är 94 % full. Kör ändå?"). Behind a lazy import
+ * question before a run ("Åk 7 är minst 94 % full. Kör ändå?"). Behind a lazy import
  * on the pages that carry it — a route near its bundle budget pays for the
  * button and its state, and for this (and, on Förlägg i veckan, for the request
  * in lib/week-check.ts) only when somebody asks.
@@ -84,7 +84,7 @@ export function WeekCheckPanel({ outcome, pending, asking = false, onRunAnyway, 
   );
 }
 
-/** The year lines: "Åk 9 ligger på 97 % av ramtiden." and, for a year the bound puts above it, what it needs. */
+/** The year lines: "Åk 9 ligger på minst 97 % av ramtiden." and, for a year the bound puts above it, what it needs. */
 function YearLines({ years }: { years: WeekCheckYear[] }) {
   const t = useTranslations("weekCheck");
   if (years.length === 0) return null;
@@ -222,7 +222,7 @@ function Result({
   );
 }
 
-/** "Åk 7 är 94 % full. Kör ändå?": asked when Generera is pressed on a week the check warned about. */
+/** "Åk 7 är minst 94 % full. Kör ändå?": asked when Generera is pressed on a week the check warned about. */
 function AskBeforeRun({
   open,
   outcome,

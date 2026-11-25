@@ -79,6 +79,9 @@ describe("weekCheck", () => {
     expect(sv.weekCheck.okCutBody).toContain("ingen garanti");
     expect(en.weekCheck.okCutBody).toContain("no guarantee");
     expect(swedish("atLeast")).toContain("lägst så höga");
+    // It stands under a year over its frame time as well, whose line says minutes and no percent ("minst 2365 av 2275 minuter"), as the
+    // English says "figures": a note about "Procenttalen" under a list with none is a note about nothing.
+    expect(swedish("atLeast")).not.toMatch(/procent/i);
     expect(english("atLeast")).toContain("at least");
   });
 
