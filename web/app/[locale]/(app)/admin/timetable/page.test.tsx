@@ -3558,6 +3558,21 @@ describe("a parallel block (Block i schemat)", () => {
   };
   const focusedId = () => document.activeElement?.getAttribute("data-lesson-id");
 
+  it("says in words what a clashing member of the block clashes with, on the block's card, also when it is not the first member", async () => {
+    // Nils (the block's Musik, its second lesson) is also teaching 5.1 at the same hour on Monday: the second member clashes, the first does not.
+    state.lessons = [...LESSONS, ...BLOCK_LESSONS, lesson("l-nils", "s-ma", "g-51", "13:00", { teacherId: "t-2" })];
+    showPage();
+    const drawn = await card();
+    await waitFor(() => expect(drawn.textContent).toMatch(/boardKeys\.clash: common\.codes\.MASTER_LESSON_REFUSED\(TEACHER/));
+    expect(drawn).toHaveAttribute("title", expect.stringMatching(/boardKeys\.clash: common\.codes\.MASTER_LESSON_REFUSED\(TEACHER/));
+  });
+
+  it("says nothing of a clash on the card of a block that does not clash", async () => {
+    showPage();
+    const drawn = await card();
+    expect(drawn.textContent).not.toContain("boardKeys.clash");
+  });
+
   it("draws the block as one card naming the block and its members", async () => {
     showPage();
 

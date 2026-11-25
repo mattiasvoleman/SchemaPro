@@ -421,6 +421,9 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
               room: [...new Set(parts.map((part) => part.room).filter(Boolean))].join(", ") || undefined,
               locked: parts.every((part) => part.locked),
               conflicted: parts.some((part) => part.conflicted),
+              // What each member that clashes clashes with, in words: the spread above would give the first member's note alone, which is
+              // none for a block whose second lesson is the one that clashes, and the card then says "Krock" and no more.
+              conflictNote: [...new Set(parts.filter((part) => part.conflicted).map((part) => part.conflictNote).filter(Boolean))].join(" ") || undefined,
               remoteEditor: parts.find((part) => part.remoteEditor)?.remoteEditor,
               recurrenceNote: [parts[0]!.recurrenceNote, card.complete ? null : say.current.t("split")]
                 .filter(Boolean)
