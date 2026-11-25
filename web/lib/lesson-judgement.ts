@@ -118,7 +118,8 @@ export function useLessonJudgement(
     const timer = setTimeout(() => {
       api.post<LessonJudgement>("/api/v1/master-lessons/judge", { moves: [move] }, asking.signal).then(
         (judged) => {
-          if (!asking.signal.aborted) setAnswer({ key, judgement: judged.moves[0] ?? null });
+          // A 200 with no body, or none of the moves, is no answer (the gateway always sends both): `failed`, and no throw in a promise nobody holds.
+          if (!asking.signal.aborted) setAnswer({ key, judgement: judged?.moves?.[0] ?? null });
         },
         () => {
           if (!asking.signal.aborted) setAnswer({ key, judgement: null });

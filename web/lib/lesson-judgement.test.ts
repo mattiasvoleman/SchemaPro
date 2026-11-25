@@ -176,6 +176,25 @@ describe("the question asked while the dialog is filled in", () => {
     expect(view.result.current).toEqual({ status: "failed" });
   });
 
+  it("says `failed` for a 200 with no body or no moves, and throws nothing, instead of staying on `checking` for ever (granskaren g462, L-6)", async () => {
+    // The api client answers `undefined` for a 200 with no body (lib/api.ts); the gateway always sends one, so this is defence in depth.
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      for (const nothing of [undefined, null, {}, { ok: true }, { ok: true, moves: [] }]) {
+        post.mockResolvedValueOnce(nothing);
+        const view = run({ ...standing, dayOfWeek: "2" });
+        await act(async () => void (await vi.advanceTimersByTimeAsync(JUDGE_DELAY_MS)));
+        expect(view.result.current, JSON.stringify(nothing)).toEqual({ status: "failed" });
+        view.unmount();
+      }
+      await vi.advanceTimersByTimeAsync(10);
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
+  });
+
   it("asks nothing and says nothing for a dialog with no lesson", async () => {
     const view = renderHook(() => useLessonJudgement(null, { ...standing, dayOfWeek: "2" }, NONE));
     await act(async () => void (await vi.advanceTimersByTimeAsync(JUDGE_DELAY_MS * 2)));
