@@ -11789,6 +11789,7 @@
         "skola24-elever-klass": "Importera elever till klasser (pupils per class, pasted from Excel)"
       },
       "recognised": "The file is recognised as Skola24's “{name}”, and the columns are placed as Skola24 describes it.",
+      "recognisedByTemplate": "The file is recognised as Skola24's “{name}”, but the columns are placed by the school's template and not by Skola24's description.",
       "read": "The file is read as Skola24's “{name}”, as you chose, and the columns are placed as Skola24 describes it.",
       "offered": "The file looks like Skola24's “{name}”.",
       "skipped": "{count, plural, one {# column is not read} other {# columns are not read}}: {names}.",

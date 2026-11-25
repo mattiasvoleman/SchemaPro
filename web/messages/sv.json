@@ -11789,6 +11789,7 @@
         "skola24-elever-klass": "Importera elever till klasser"
       },
       "recognised": "Filen känns igen som Skola24:s ”{name}”, och kolumnerna är placerade som Skola24 beskriver den.",
+      "recognisedByTemplate": "Filen känns igen som Skola24:s ”{name}”, men kolumnerna är placerade efter skolans mall och inte efter Skola24:s beskrivning.",
       "read": "Filen läses som Skola24:s ”{name}”, som du valde, och kolumnerna är placerade som Skola24 beskriver den.",
       "offered": "Filen ser ut att vara Skola24:s ”{name}”.",
       "skipped": "{count, plural, one {# kolumn läses inte} other {# kolumner läses inte}}: {names}.",

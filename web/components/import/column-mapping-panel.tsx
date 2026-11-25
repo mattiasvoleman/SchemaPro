@@ -264,7 +264,7 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
     return (
       <div className="space-y-3">
         {showTemplates ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
-        <FormatNotices kind={kind} inUse={inUse} chosen={formatChoice !== null} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
+        <FormatNotices kind={kind} inUse={inUse} chosen={formatChoice !== null} byTemplate={applied !== null && formatChoice === null} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
         <details
           open={userOpen ?? (latched || needsSay)}
           onToggle={(event) => setUserOpen(event.currentTarget.open)}
@@ -285,7 +285,7 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">{t("intro")}</p>
       {showTemplates ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
-      <FormatNotices kind={kind} inUse={inUse} chosen={formatChoice !== null} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
+      <FormatNotices kind={kind} inUse={inUse} chosen={formatChoice !== null} byTemplate={applied !== null && formatChoice === null} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
       {columnsView}
       {result ? <Summary result={result} label={label} columnName={columnName} heldRows={heldRows} fromFormat={inUse !== null} /> : null}
     </div>
@@ -304,7 +304,8 @@ function TemplateNotices({
   onUse: (template: MappingTemplate) => void;
 }) {
   const t = useTranslations("columnMapping");
-  if (!recognition && !applied) return null;
+  // Nothing to say is no box: an empty one still takes the parent's gap above and below it, beside every description the panel applies by itself.
+  if (applied === null && (recognition === null || (recognition.ambiguous.length <= 1 && recognition.offered.length === 0))) return null;
   return (
     <div className="space-y-2">
       {applied ? (

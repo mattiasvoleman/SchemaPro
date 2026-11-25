@@ -35,6 +35,15 @@ describe("a file the panel recognised, and a file the user chose to read as Skol
     expect(english).not.toMatch(/recognised/);
   });
 
+  it("says a file whose columns the user has given to the school's template as recognised, with the columns the template's", () => {
+    expect(say(sv, "sv", ["format", "recognisedByTemplate"], { name: NAME })).toBe(
+      "Filen känns igen som Skola24:s ”Importera elever till klasser”, men kolumnerna är placerade efter skolans mall och inte efter Skola24:s beskrivning.",
+    );
+    expect(say(en, "en", ["format", "recognisedByTemplate"], { name: NAME })).toBe(
+      "The file is recognised as Skola24's “Importera elever till klasser”, but the columns are placed by the school's template and not by Skola24's description.",
+    );
+  });
+
   it("says the same about where the columns stand in both, which is the description's and not the user's", () => {
     expect(say(sv, "sv", ["format", "read"], { name: NAME })).toMatch(/kolumnerna är placerade som Skola24 beskriver den\.$/);
     expect(say(en, "en", ["format", "read"], { name: NAME })).toMatch(/the columns are placed as Skola24 describes it\.$/);

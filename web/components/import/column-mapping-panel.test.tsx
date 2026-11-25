@@ -80,6 +80,17 @@ describe("a Skola24 description in the column panel", () => {
     expect(link).toHaveAttribute("rel", "noreferrer");
   });
 
+  it.each([false, true])("leaves no empty box where a school has no template to say (compact: %s)", (compact) => {
+    // A box with nothing in it still has the gap the panel puts between its parts, so the description's notice stood further down than it should.
+    const { container } = render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ColumnMappingPanel kind="students" table={readTable(PUPILS)} templates={[]} onChange={() => undefined} compact={compact} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText(/^format\.recognised\(/)).toBeInTheDocument();
+    expect(container.querySelectorAll("div:empty")).toHaveLength(0);
+  });
+
   it("is not applied by itself when a school's own template fits: the template is what the school said", async () => {
     const user = userEvent.setup();
     const { state } = renderPanel("students", PUPILS, [pupilsTemplate()]);
@@ -169,6 +180,24 @@ describe("a Skola24 description in the column panel", () => {
       expect(screen.getByText("template.ambiguous")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Skolans egen" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Skolans andra" })).toBeInTheDocument();
+    });
+
+    // A school's template that places the columns otherwise than the description does: it skips the class column that Skola24 places.
+    const otherwise = (): MappingTemplate => ({
+      ...almost(),
+      placements: almost().placements.map((post) => (post.key === "klass" ? { ...post, field: null } : post)),
+    });
+
+    it.each([false, true])("does not say the columns are placed as Skola24 describes once the user has taken the school's template (compact: %s)", async (compact) => {
+      const user = userEvent.setup();
+      const { state } = renderPanel("students", PUPILS, [otherwise()], compact);
+      expect(state().assignment).toEqual([null, "lastName", "firstName", "className"]);
+      await user.click(screen.getByRole("button", { name: "template.useAnyway" }));
+      expect(screen.getByText("template.applied(Skolans egen)")).toBeInTheDocument();
+      // The columns are the template's now, and the panel does not say two things about where they come from.
+      expect(state().assignment).toEqual([null, "lastName", "firstName", null]);
+      expect(screen.queryByText(/^format\.recognised\(/)).not.toBeInTheDocument();
+      expect(screen.getByText(/^format\.recognisedByTemplate\(/)).toBeInTheDocument();
     });
   });
 

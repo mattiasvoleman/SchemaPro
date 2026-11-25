@@ -83,6 +83,7 @@ export function FormatNotices({
   kind,
   inUse,
   chosen,
+  byTemplate,
   offered,
   formats,
   placed,
@@ -95,6 +96,8 @@ export function FormatNotices({
    * that. False when the panel applied it by itself, on the exact documented headers, which is what "känns igen" is.
    */
   chosen: boolean;
+  /** The user has taken a school's template beside the description: the file is still what the description says it is, the columns are the template's. */
+  byTemplate: boolean;
   offered: readonly FormatFit[];
   formats: readonly FormatDescriptor[];
   /** The fields a column is placed on now: a field the user has given a column is no longer a gap. */
@@ -125,7 +128,7 @@ export function FormatNotices({
   return (
     <div className="space-y-2">
       <Notice tone="success">
-        {t(chosen ? "format.read" : "format.recognised", { name: t(`format.names.${descriptor.id}`) })}
+        {t(byTemplate ? "format.recognisedByTemplate" : chosen ? "format.read" : "format.recognised", { name: t(`format.names.${descriptor.id}`) })}
         {reading.by === "position" ? ` ${t("format.byPosition")}` : ""}
       </Notice>
       <Notice tone="neutral">
