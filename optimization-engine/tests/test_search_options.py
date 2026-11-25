@@ -887,11 +887,14 @@ class _Clock:
 def test_a_rule_is_probed_only_if_the_clock_has_its_build_and_a_slice_after_it(monkeypatch: pytest.MonkeyPatch) -> None:
     """A rule's model is built before its slice starts, and a build with no slice after it is time for nothing.
 
-    Builds of 4 s: the two of the search take 8, the search 10 (to 18), and the
-    probe's 6 s end at 24. The first rule has the 4 s of its build and 1.5 of
-    its slice (to 23.5). The second would have 0.5 s left, which is its slice's
+    Builds of 4 s: the two of the search take 8, and the search is given 9.5 s
+    (33 s to the answer, less the probe's 6 s floor and the 8 s of setup is 19, of
+    which half is held back for the overrun; the floor itself is a rule's slice AND
+    its build, 5 + 4, and the probe's own 6 s are the less of the two), so it ends at
+    17.5 and the probe's 6 s end at 23.5. The first rule has the 4 s of its build and
+    1.5 of its slice (to 23.0). The second would have 0.5 s left, which is its slice's
     least and nothing for the build that comes first: it is not begun, and the
-    solve answers at 23.5 and not at 27.5 after a build whose slice never ran.
+    solve answers at 23.0 and not at 27.0 after a build whose slice never ran.
     """
     clock = _Clock(monkeypatch, build=4.0)
     _rules_to_probe(monkeypatch, 4)
@@ -903,7 +906,7 @@ def test_a_rule_is_probed_only_if_the_clock_has_its_build_and_a_slice_after_it(m
 
     assert response.status == "TIMEOUT"
     assert len(clock.solves) == 2, "phase 1a and the one probe"
-    assert clock.now - entered == pytest.approx(23.5)
+    assert clock.now - entered == pytest.approx(23.0)
 
 
 def test_a_best_effort_rule_is_probed_only_if_the_clock_has_its_build_and_a_slice_after_it(
@@ -1203,8 +1206,8 @@ def test_a_search_the_clock_cut_that_stops_ten_seconds_late_still_leaves_the_pro
 @pytest.mark.parametrize(
     ("overrun", "probed"),
     [
-        (0.0, {"budget": 249, "rules": 1, "slice": 7}),
-        (10.0, {"budget": 249, "rules": 1, "slice": 1}),
+        (0.0, {"budget": 245, "rules": 2, "slice": 4}),
+        (10.0, {"budget": 245, "rules": 1, "slice": 5}),
     ],
 )
 def test_the_probe_of_a_search_the_clock_cut_at_the_schools_own_setup_on_the_public_road(
@@ -1212,11 +1215,12 @@ def test_the_probe_of_a_search_the_clock_cut_at_the_schools_own_setup_on_the_pub
 ) -> None:
     """Production's 540/20/30 on the 290 s road (the answer due at 272), builds of 4 s: the setup of the 809-lesson week.
 
-    The search is given 249 s (272 less the floor, the overrun and the setup of 8). A rule's probe pays its rebuild
-    first, and the engine counts that at half the setup, 4 s: of the floor's 5 s one is left for the slice after a
-    search that stopped the whole ten seconds late, and seven of fifteen after one that stopped on time. The test
-    above builds in no time, so there the floor is a whole slice. Before the floor held the overrun the late search
-    left a bare TIMEOUT (g416-M-1); from a setup of 10 s the floor is gone to the rebuild again, and is not asked for here.
+    The search is given 245 s: 272 less the floor of 9, the overrun of 10 and the setup of 8. The floor is a rule's slice
+    AND the rebuild a rule's probe pays first, which the engine counts at half the setup, 4 s (g454, M-2): 5 + 4. After a
+    search that stopped the whole ten seconds late the probe has those nine seconds, the rebuild and a slice of 5, and
+    names a rule; it was a slice of 1 when the floor was the 5 s alone, and none from a setup of 10 s (g416-M-1, g454).
+    After a search that stopped on time two rules are probed, with 4 s each. The test above builds in no time, so there
+    the floor is a whole slice.
     """
     clock = _Clock(monkeypatch, build=4.0, overrun=overrun)
     entered = clock.now

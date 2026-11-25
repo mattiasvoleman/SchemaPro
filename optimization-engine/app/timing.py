@@ -142,7 +142,9 @@ class Deadline:
         """An instant of the solver's own, never later than `answer_by`."""
         return min(instant, self.answer_by)
 
-    def search_budget(self, started: float, budget: float, probe_seconds: float) -> float:
+    def search_budget(
+        self, started: float, budget: float, probe_seconds: float, build_seconds: float = 0.0,
+    ) -> float:
         """The seconds the search may have from `started`.
 
         `budget` itself, EXACTLY, while the clock holds it: a deployment whose
@@ -184,8 +186,19 @@ class Deadline:
         reason) would otherwise be given no search at all, where the clock
         leaves it some; its overrun is then not held for, and the floor is not
         promised.
+
+        THE FLOOR IS A RULE'S SLICE AND THE BUILD THAT COMES BEFORE IT (g454, M-2). A
+        rule is probed on a model of its own, built before its slice starts, and the
+        probe does not begin a rule that cannot have its build and half a second
+        (`_probe_timeout`). A floor of PROBE_FLOOR_SECONDS alone was a clock's floor
+        and not a probe's: a week whose setup took 9 s or more left the probe the
+        five seconds and no rule, a bare TIMEOUT all the same. `build_seconds` is the
+        solve's own estimate of one build (half its setup, the dearest a build can
+        have been), so that the floor leaves a rule a slice of the five.
+        The price is paid in the budget's hold: a setup of 14.7 s keeps production's
+        540 s where 22 s did (s + 5 + s/2 + 10 <= 37).
         """
-        floor = min(max(0.0, probe_seconds), PROBE_FLOOR_SECONDS)
+        floor = min(max(0.0, probe_seconds), PROBE_FLOOR_SECONDS + max(0.0, build_seconds))
         left = self.answer_by - floor - started
         held = min(SOLVE_OVERRUN_SECONDS, max(0.0, left) / 2) if floor > 0 else 0.0
         room = left - held

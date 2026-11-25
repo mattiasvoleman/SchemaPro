@@ -229,6 +229,41 @@ def test_a_search_with_no_probe_after_it_is_not_cut_for_an_overrun_that_has_noth
 
 
 
+def test_the_floor_is_a_rules_slice_and_the_build_that_comes_before_it() -> None:
+    """g454, M-2: a rule is probed on a model built first, and the probe does not begin a rule it cannot build and slice."""
+    clock = Deadline(entered=0.0, ceiling=230.0)
+
+    # answer_by is 217. A setup of 8 s (a build estimate of 4): floor 5 + 4 = 9, 217 - 9 - 10 - 8 = 190, so the 180 is held.
+    assert clock.search_budget(started=8.0, budget=180.0, probe_seconds=20.0, build_seconds=4.0) == 180.0
+    # A setup of 30 s (15): floor 20, 217 - 20 - 10 - 30 = 157.
+    assert clock.search_budget(started=30.0, budget=180.0, probe_seconds=20.0, build_seconds=15.0) == pytest.approx(157.0)
+    # Never more than the probe's own seconds: a probe of 6 s with a build of 20 keeps 6.
+    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=6.0, build_seconds=20.0) == pytest.approx(141.0)
+    # No build estimate is the floor of five it was.
+    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=20.0) == pytest.approx(142.0)
+
+
+def test_production_holds_its_540_seconds_for_a_setup_of_14_seconds_and_a_little_over() -> None:
+    """The price of the build in the floor at production's settings: 590 s, the answer due at 577, setup s and build s/2."""
+    clock = Deadline(entered=0.0, ceiling=590.0)
+
+    assert clock.search_budget(started=14.0, budget=540.0, probe_seconds=20.0, build_seconds=7.0) == 540.0
+    assert clock.search_budget(started=15.0, budget=540.0, probe_seconds=20.0, build_seconds=7.5) == pytest.approx(539.5)
+    assert clock.search_budget(started=22.0, budget=540.0, probe_seconds=20.0, build_seconds=11.0) == pytest.approx(529.0)
+
+
+@pytest.mark.parametrize("started", [0.0, 8.0, 14.0, 30.0, 100.0])
+def test_a_search_that_stops_the_whole_overrun_late_leaves_the_probe_a_rules_build_and_slice(started: float) -> None:
+    clock = Deadline(entered=0.0, ceiling=230.0)
+    build = started / 2
+
+    given = clock.search_budget(started=started, budget=180.0, probe_seconds=20.0, build_seconds=build)
+    ended = started + given + SOLVE_OVERRUN_SECONDS
+
+    assert given > 0
+    assert clock.probe_end(now=ended, probe_seconds=20.0) - ended >= min(20.0, PROBE_FLOOR_SECONDS + build) - 1e-9
+
+
 def test_the_probe_counts_from_where_the_search_ended_and_never_past_the_edge() -> None:
     clock = Deadline(entered=0.0, ceiling=230.0)
 
