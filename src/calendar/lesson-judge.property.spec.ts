@@ -57,7 +57,7 @@ function agree<T>(actual: T, expected: T, label: string, what: string): void {
 
 describe('the three judges hold a lesson to the other schools’ holds, and to the board’s rules, alike', () => {
   const base = makeWorld({ seed: 7 });
-  const CASES = 400;
+  const CASES = 600;
 
   it.each([20261125, 7, 99])('seed %i: the same drag gets the same verdict from all three', async (seed) => {
     const next = random(seed);
@@ -102,7 +102,8 @@ describe('the three judges hold a lesson to the other schools’ holds, and to t
       (readOtherSchoolHolds as jest.Mock).mockResolvedValue({ holds });
 
       const minutes = pick([40, 45, 60]);
-      const day = between(1, 5);
+      // A Saturday or a Sunday now and then: the school day is the förläggning's first question and now the hand edit's.
+      const day = next() < 0.12 ? between(6, 7) : between(1, 5);
       const start = 8 * 60 + 5 * between(0, 100);
       const teacherId = pick(teachers);
       const coTeacherId = next() < 0.2 ? pick(teachers.filter((id) => id !== teacherId)) : null;
@@ -182,7 +183,9 @@ describe('the three judges hold a lesson to the other schools’ holds, and to t
       });
 
       // The three agree: ok or not, and which of the board's rules is the first (FRAME, LUNCH, GRADE_RULE, then OTHER_SCHOOL).
-      agree(swapped === null, mine!.ok, label, 'a swap’s judge says ok');
+      // A swap moves a lesson only to where another stands: it has no question about the school day, and is asked of the rest.
+      const weekend = day > 5;
+      if (!weekend) agree(swapped === null, mine!.ok, label, 'a swap’s judge says ok');
       agree(placed!.ok, mine!.ok, label, 'the förläggning’s judge says ok');
       if (mine!.ok) {
         stood += 1;
@@ -190,7 +193,7 @@ describe('the three judges hold a lesson to the other schools’ holds, and to t
       }
       refused += 1;
       const first = mine!.refusals[0]!.reason;
-      agree(swapped, first, label, 'a swap’s judge says');
+      if (!weekend) agree(swapped, first, label, 'a swap’s judge says');
       agree(placed!.reason, first, label, 'the förläggning’s judge says');
       seen.add(first);
       if (first === 'OTHER_SCHOOL') {
@@ -199,7 +202,7 @@ describe('the three judges hold a lesson to the other schools’ holds, and to t
       }
     }
     // Not vacuous: every rule is the first one found in some case, and many drags stand.
-    expect([...seen].sort()).toEqual(['FRAME', 'GRADE_RULE', 'LUNCH', 'OTHER_SCHOOL']);
+    expect([...seen].sort()).toEqual(['FRAME', 'GRADE_RULE', 'LUNCH', 'OTHER_SCHOOL', 'SCHOOL_DAY']);
     expect(stood).toBeGreaterThan(20);
     expect(refused).toBeGreaterThan(20);
   });

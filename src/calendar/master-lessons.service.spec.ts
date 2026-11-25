@@ -1412,7 +1412,8 @@ describe('MasterLessonsService', () => {
           { startDate: day('2026-10-26'), endDate: day('2026-10-30'), minGradeLevel: null, maxGradeLevel: null },
         ]);
         sameDay([autumnLesson('2026-11-01')]);
-        await expect(service.create(createDto({ dayOfWeek: 6, startDate: '2026-10-26' }), testUser())).rejects.toMatchObject(refusedAs('TEACHER'));
+        // The Saturday is no school day (SCHOOL_DAY, the first reason), and the teacher's clash is found all the same: the weekend is written.
+        await expect(service.create(createDto({ dayOfWeek: 6, startDate: '2026-10-26' }), testUser())).rejects.toMatchObject(refusedAs('SCHOOL_DAY', { reasons: 'SCHOOL_DAY,TEACHER' }));
         // The same pair on a Wednesday is no clash: nobody sits that week.
         sameDay([autumnLesson('2026-11-01')]);
         await expect(service.create(createDto({ dayOfWeek: 3, startDate: '2026-10-26' }), testUser())).resolves.toMatchObject({
@@ -5342,6 +5343,52 @@ describe('MasterLessonsService', () => {
         ]);
         expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(2);
         expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+      });
+
+      describe('the board’s rules (En domare med ord)', () => {
+        const ramtid = [{ minGradeLevel: 7, maxGradeLevel: 9, dayOfWeek: null, startTime: t('08:00'), endTime: t('10:30') }];
+        const classes = () => [
+          { id: GROUP_ID, gradeLevel: 7, halfOfId: null },
+          { id: FR_GROUP, gradeLevel: 7, halfOfId: null },
+        ];
+
+        it('holds a card to the stage’s ramtid at the day and clock it lands on, and writes nothing', async () => {
+          tx.frameTime.findMany.mockResolvedValue(ramtid);
+          tx.studentGroup.findMany.mockResolvedValue(classes());
+          arrangeCard([tyska(), franskaLesson()]);
+
+          // Inside the day: moved.
+          await expect(move({ dayOfWeek: 2, startTime: '09:00', endTime: '10:00' })).resolves.toBeDefined();
+          tx.masterLesson.updateMany.mockClear();
+          // Past 10:30: every member is outside the frame, and the card is refused as one.
+          await expect(move({ dayOfWeek: 2, startTime: '10:00', endTime: '11:00' })).rejects.toMatchObject(refusedAs('FRAME'));
+          expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+        });
+
+        it('holds a card dropped on the same clock of another day to the rules of that day', async () => {
+          // The week's rows on whole årskurser: Tuesday 10:00-11:00 is closed to the seventh.
+          tx.studentGroup.findMany.mockResolvedValue(classes());
+          tx.availabilityConstraint.findMany.mockImplementation((query: Query = {}) =>
+            Promise.resolve(
+              query.where?.resourceType === 'GRADE_LEVEL'
+                ? [{ resourceType: 'GRADE_LEVEL', userId: null, roomId: null, studentGroupId: null, minGradeLevel: 7, maxGradeLevel: 7, dayOfWeek: 2, date: null, startTime: t('10:00'), endTime: t('11:00') }]
+                : [],
+            ),
+          );
+          arrangeCard([tyska(), franskaLesson()]);
+
+          await expect(move({ dayOfWeek: 2, startTime: '10:00', endTime: '11:00' })).rejects.toMatchObject(refusedAs('GRADE_RULE'));
+          expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+        });
+
+        it('asks nothing of the board for a card dropped where it stood (låt stå)', async () => {
+          // The card stands at Monday 10:00-11:00, past the ramtid, and is dropped there: it moves nothing.
+          tx.frameTime.findMany.mockResolvedValue(ramtid);
+          tx.studentGroup.findMany.mockResolvedValue(classes());
+          arrangeCard([tyska(), franskaLesson()]);
+
+          await expect(move({ dayOfWeek: 1, startTime: '10:00', endTime: '11:00' })).resolves.toBeDefined();
+        });
       });
 
       it('holds the card against the rest of the day with its own lessons left out of where they stood', async () => {

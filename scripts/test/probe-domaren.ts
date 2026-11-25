@@ -300,6 +300,18 @@ export async function domarenChecks(owner: Client, api: PrismaService, check: (l
     fixture.cases = worlds.flatMap((world, index) =>
       drags[index]!.map((drag, at) => ({ name: `w${index}-d${at}: ${drag.lesson} to day ${drag.day} at ${drag.start}`, world: index, drag, verdict: { ok: true, reasons: [] } })),
     );
+    // After them, so that the cases above are the ones written before: each world's first lesson dragged onto a Saturday and a Sunday, which is
+    // the school day's no (SCHOOL_DAY, granskaren g461 L-4).
+    fixture.cases.push(
+      ...worlds.flatMap((world, index) =>
+        [6, 7].map((day) => ({
+          name: `w${index}-weekend: ${world.lessons[0]!.key} to day ${day} at ${world.lessons[0]!.start}`,
+          world: index,
+          drag: { lesson: world.lessons[0]!.key, day, start: world.lessons[0]!.start },
+          verdict: { ok: true, reasons: [] },
+        })),
+      ),
+    );
   }
 
   const realtime = { notifyMasterTimetableChanged: () => undefined };
@@ -307,7 +319,8 @@ export async function domarenChecks(owner: Client, api: PrismaService, check: (l
   const masters = new MasterLessonsService(api, realtime as never, notifications as never);
   const swaps = new SwapsService(api, masters, new ScheduleVersionsService(api), realtime as never, notifications as never);
 
-  const real: Verdict[] = [];
+  /** The real verdict of each case, by the case: the weekend cases come last in the file and not last in their world. */
+  const real = new Map<Case, Verdict>();
   const differing: string[] = [];
   const seen = new Map<string, { refused: number; stood: number }>();
   const note = (reason: string, refused: boolean) => {
@@ -404,16 +417,21 @@ export async function domarenChecks(owner: Client, api: PrismaService, check: (l
 
           // The three agree.
           assert.equal(placement.ok, verdict.ok, `${label}: the förläggning's judge says ${placement.ok ? 'ok' : placement.reason}, the läsande frågan ${verdict.ok ? 'ok' : verdict.reasons.join(',')}`);
-          assert.equal(swapReasons.size === 0, verdict.ok, `${label}: a swap's judge says ${[...swapReasons].join(',') || 'ok'}, the läsande frågan ${verdict.ok ? 'ok' : verdict.reasons.join(',')}`);
+          // A swap moves a lesson only to where another lesson stands, so it has no question about the school day: for a Saturday or a Sunday
+          // the hand edit and the förläggning say SCHOOL_DAY first, and the swap's judge is asked of the rest.
+          const weekend = day > 5;
+          if (weekend) assert.equal(verdict.reasons[0], 'SCHOOL_DAY', `${label}: a weekend day is the school day's no, first`);
+          const swapSays = weekend ? new Set(verdict.reasons.filter((reason) => reason !== 'SCHOOL_DAY').map(unify)) : swapReasons;
+          assert.equal(swapSays.size === 0, weekend ? swapReasons.size === 0 : verdict.ok, `${label}: a swap's judge says ${[...swapReasons].join(',') || 'ok'}, the läsande frågan ${verdict.ok ? 'ok' : verdict.reasons.join(',')}`);
           if (!verdict.ok) {
             assert.equal(placement.reason, verdict.reasons[0], `${label}: the heaviest reason is ${placement.reason} for the förläggning's judge and ${verdict.reasons[0]} for the läsande frågan`);
-            assert.deepEqual([...swapReasons].sort(), [...new Set(verdict.reasons.map(unify))].sort(), `${label}: the reasons are not a swap's`);
+            assert.deepEqual([...swapReasons].sort(), [...new Set(verdict.reasons.filter((reason) => reason !== 'SCHOOL_DAY').map(unify))].sort(), `${label}: the reasons are not a swap's`);
           }
           for (const reason of verdict.ok ? [] : [...new Set(verdict.reasons.map(unify))]) note(reason, true);
           if (verdict.ok) stood += 1;
 
           // The fixture holds the verdict.
-          real.push(verdict);
+          real.set(one_case, verdict);
           if (!write && JSON.stringify(verdict) !== JSON.stringify(one_case.verdict)) {
             differing.push(`  ${label}\n       fixture ${JSON.stringify(one_case.verdict)}  real ${JSON.stringify(verdict)}`);
           }
@@ -442,7 +460,7 @@ export async function domarenChecks(owner: Client, api: PrismaService, check: (l
         await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [`${SLUG}-${index}`]);
       }
       if (write) {
-        fixture.cases = fixture.cases.map((one_case, at) => ({ ...one_case, verdict: real[at]! }));
+        fixture.cases = fixture.cases.map((one_case) => ({ ...one_case, verdict: real.get(one_case)! }));
         fixture.readme = [
           'The cases of the judge of a hand edit (src/calendar/lesson-judge.ts): each is a small world (worlds[n]), one lesson of it dragged to a new day and clock (drag, the lesson keeps its length), and the verdict the real judge gives it.',
           'WRITTEN BY scripts/test/probe-domaren.ts (DOMAREN_WRITE=1 npx ts-node --transpile-only scripts/test/probe-domaren.ts), which asks the läsande frågan, a swap\'s judge and the förläggning\'s judge of every case over real Postgres and requires them to agree before it writes. Do not edit by hand.',
@@ -457,7 +475,7 @@ export async function domarenChecks(owner: Client, api: PrismaService, check: (l
     });
 
     await check('(dj-c) the cases are not vacuous: every rule the three share is refused in some case, and many drags stand', async () => {
-      for (const reason of ['TEACHER', 'ROOM', 'GROUP', 'AVAILABILITY', 'FRAME', 'LUNCH', 'GRADE_RULE']) {
+      for (const reason of ['TEACHER', 'ROOM', 'GROUP', 'AVAILABILITY', 'FRAME', 'LUNCH', 'GRADE_RULE', 'SCHOOL_DAY']) {
         assert.ok((seen.get(reason)?.refused ?? 0) >= 3, `${reason} is refused in ${seen.get(reason)?.refused ?? 0} cases`);
       }
       assert.ok(stood >= 20, `${stood} drags stand`);

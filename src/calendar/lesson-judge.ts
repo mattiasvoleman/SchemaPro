@@ -58,6 +58,8 @@ import type { DayLesson, MasterLessonConflict, MasterLessonsService } from './ma
  */
 
 export type LessonRefusalReason =
+  /** The day is not a school day (Monday to Friday): the förläggning's own first question, asked here of the day alone. */
+  | 'SCHOOL_DAY'
   | 'TEACHER'
   | 'ROOM'
   | 'GROUP'
@@ -157,8 +159,9 @@ function availabilityResourceOf(message: string): 'TEACHER' | 'ROOM' | 'GROUP' {
   return 'GROUP';
 }
 
+// The dates a lesson runs in, and not which weeks of them (`recurrence`): a meal is read by dates (lunch-window.ts windowOf) and an
+// other school's hold has no weeks, so every week, the odd ones and the even ones stand in the same place as far as a rule can see.
 const sameWindow = (a: JudgedCandidate, b: JudgedCandidate): boolean =>
-  (a.recurrence ?? 'ALL_WEEKS') === (b.recurrence ?? 'ALL_WEEKS') &&
   (a.startDate?.getTime() ?? null) === (b.startDate?.getTime() ?? null) &&
   (a.endDate?.getTime() ?? null) === (b.endDate?.getTime() ?? null);
 const sameGroups = (a: JudgedCandidate, b: JudgedCandidate): boolean => {
@@ -166,6 +169,14 @@ const sameGroups = (a: JudgedCandidate, b: JudgedCandidate): boolean => {
   const right = [...new Set(b.extraGroupIds ?? [])].sort().join(',');
   return left === right;
 };
+
+const LAST_SCHOOL_DAY = 5;
+
+/** Whether an edit puts a lesson on a day that is no school day: asked of an edit that changes the day (låt stå). */
+function outsideSchoolDay(item: JudgeItem): boolean {
+  const day = item.candidate.dayOfWeek;
+  return (day < 1 || day > LAST_SCHOOL_DAY) && (!item.stands || item.stands.dayOfWeek !== day);
+}
 
 /** What the board's three rules read of a candidate: where it stands, in which weeks, for which classes. */
 export function placementChanged(now: JudgedCandidate, was: JudgedCandidate): boolean {
@@ -186,6 +197,24 @@ function holdsChanged(now: JudgedCandidate, was: JudgedCandidate): boolean {
     (now.coTeacherId ?? null) !== (was.coTeacherId ?? null) ||
     now.roomId !== was.roomId
   );
+}
+
+/**
+ * What the other schools' holds are asked of. A lesson that moved, or stands nowhere yet, is asked of all its teachers and its room.
+ * One that stays where it stands is asked only of what the edit CHANGED (låt stå): a lesson whose teacher is held at another school
+ * may be given another room, and one whose room is lent out may be given another teacher, without the hold it already stands in
+ * being said again. A teacher or a room that is itself held in that hour is refused as before.
+ */
+function heldOf({ candidate, stands }: Pick<JudgeItem, 'candidate' | 'stands'>): JudgedCandidate {
+  if (!stands || placementChanged(candidate, stands)) return candidate;
+  const taught = new Set([stands.teacherId, stands.coTeacherId ?? null]);
+  const kept = (id: string | null | undefined): boolean => id !== null && id !== undefined && taught.has(id);
+  return {
+    ...candidate,
+    teacherId: kept(candidate.teacherId) ? null : candidate.teacherId,
+    coTeacherId: kept(candidate.coTeacherId) ? null : (candidate.coTeacherId ?? null),
+    roomId: candidate.roomId === stands.roomId ? null : candidate.roomId,
+  };
 }
 
 /** What a lesson that a clash names is called: its class, its subject, and where it stands. */
@@ -257,7 +286,10 @@ export async function judgeLessons(
   items: readonly JudgeItem[],
   options: { reads?: ConflictReads } = {},
 ): Promise<LessonVerdict[]> {
-  const refusals: LessonRefusal[][] = items.map(() => []);
+  // 0. The school day, a question about the day alone and the heaviest there is, as the förläggning asks it first. The engine reads
+  // SCHEDULE_DAYS, Monday to Friday, so a lesson on a Saturday or a Sunday is one a file brought in: it may stand (låt stå) and be changed
+  // on anything but its day, and no edit puts one there.
+  const refusals: LessonRefusal[][] = items.map((item) => (outsideSchoolDay(item) ? [{ reason: 'SCHOOL_DAY', params: {} }] : []));
 
   // 1. The clash rule.
   const hits: MasterLessonConflict[][] = [];
@@ -338,7 +370,7 @@ export async function judgeLessons(
     const holds = (await readOtherSchoolHolds(tx, world.academicYearId, world.schoolId)).holds;
     if (holds.length > 0) {
       for (const index of holdItems) {
-        const schools = holdSchools(holds, items[index]!.candidate);
+        const schools = holdSchools(holds, heldOf(items[index]!));
         if (schools.length > 0) refusals[index]!.push({ reason: 'OTHER_SCHOOL', params: { schools: shortened(schools.join(', '), 200) } });
       }
     }

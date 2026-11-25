@@ -21,19 +21,25 @@ A lesson of the grundschema is held to the same rules whichever road it is writt
 card, a swap's apply and a förläggning. `src/calendar/lesson-judge.ts` is the hand edit's: the clash rule
 (`findConflicts`: teacher, room, class, shared pupils, weekly closures), the stage's ramtid, the class's meal, the weekly rules
 on whole årskurser, and the other schools' holds on a shared teacher or a room (`FRAME`, `LUNCH`, `GRADE_RULE` and
-`OTHER_SCHOOL`, the board's rules of `src/swaps/board-rules.ts`).
+`OTHER_SCHOOL`, the board's rules of `src/swaps/board-rules.ts`), and the school day: a lesson is not put on a Saturday or
+a Sunday (`SCHOOL_DAY`, the förläggning's own first question, in its words).
 
 - **A no has a code and the other lesson.** 409 `MASTER_LESSON_REFUSED`, with flat `params`: `reason` (the heaviest),
   `reasons` (all, comma-joined), and the reason's own figures: the other lesson's `className`, `subjectName`, `day`, `start` and
   `end` for a clash (never a person), `resource` for a weekly closure, `schools` for another school's hold, `requirement` for the
   member of a block's card it is about. `detail` is a Swedish sentence for the clients that read nothing else. No write path of
   the grundschema's lessons answers 409 without a code (`lesson-write-refusals.inventory.spec.ts`).
-- **Låt stå.** A lesson that already stands against a frame, a meal, a rule on årskurser or another school's hold may be
-  changed on anything but where it stands: the rule is asked of an edit that moves its day, clock, weeks or classes (the holds
-  also of one that changes its teacher or room), as a förläggning that has stopped holding may be saved beside its rows. The clash
+- **Låt stå.** A lesson that already stands against a frame, a meal, a rule on årskurser, another school's hold or the school
+  day may be changed on anything but where it stands: the board's rules are asked of an edit that moves its day, clock, dated
+  window or classes (a change of weeks from every week to odd ones moves none of them), another school's holds of what the edit
+  CHANGES (a teacher or room it did not already have: a lesson whose teacher is held elsewhere may be given another room), the
+  school day of an edit that changes the day, as a förläggning that has stopped holding may be saved beside its rows. The clash
   rule is not eased.
 - **The läsande frågan.** `POST /api/v1/master-lessons/judge` asks one or more tänkta drag, judged together as one move, with the
-  PATCH's own verdict and nothing written: `{ ok, moves: [{ lessonId, ok, placed?, refusals: [{ reason, params, text }] }] }`.
+  PATCH's verdict on the rules above and nothing written: `{ ok, moves: [{ lessonId, ok, placed?, refusals: [{ reason, params, text }] }] }`.
+  It does not answer for the whole PATCH: the staffing policy's REFUSE (a teacher without behörighet in the subject) is asked
+  only when the edit is saved, after the judge, and answers 409 with its own code (`STAFF_TEACHER_NOT_QUALIFIED`); the
+  question says ok where the save then says that.
 - **Held in place by** `scripts/test/probe-domaren.ts` (the same drag through the hand edit's, a swap's and a förläggning's judge
   over real Postgres, with the cases in `src/calendar/__fixtures__/lesson-judge-cases.json` that the web's mirror is held to) and
   `src/calendar/lesson-judge.property.spec.ts` (the other schools' holds and the board's rules over random facts).
