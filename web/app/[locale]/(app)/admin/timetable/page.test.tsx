@@ -1873,6 +1873,41 @@ describe("the dialogs the page lifts out", () => {
     ).not.toHaveLength(0);
   });
 
+  it("offers no time from Lägg till on the class's own meal: the create would refuse it (E1)", async () => {
+    // The slot finder knew the clash rule and the class's own hours and none of the board's, and offered the class's lunch.
+    state.requirements = [{ id: "r-sl51", studentGroupId: "g-51", subjectId: "s-sl", teacherId: "t-1", coTeacherId: null, blockId: null }];
+    const search = async () => {
+      const user = userEvent.setup();
+      render(<TimetablePage />);
+      const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+      fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+      await user.click(await screen.findByRole("button", { name: "timetable.duplicateLesson" }));
+      await user.click(await screen.findByRole("button", { name: "timetable.slotFinderSearch" }));
+      await screen.findAllByText(/timetable\.slotFinder(Assigned|Fallback|None)/);
+      return screen
+        .getAllByRole("button")
+        .filter((button) => /\d{2}:\d{2}–\d{2}:\d{2}/.test(button.textContent ?? "") && /slotFinder/.test(button.textContent ?? ""))
+        .map((button) => button.textContent!);
+    };
+    const before = await search();
+    expect(before.length).toBeGreaterThan(0);
+    const [from, to] = before[0]!.match(/\d{2}:\d{2}/g)!;
+    const day = Number(/days\.(\d)/.exec(before[0]!)?.[1] ?? "NaN");
+    expect(Number.isNaN(day)).toBe(false);
+    cleanup();
+    toasts.error.mockClear();
+    // The class eats in the first time offered.
+    state.sittings = [
+      { id: "s-g-51", studentGroupId: "g-51", dayOfWeek: day, startTime: `${from}:00`, endTime: `${to}:00`, headcount: 24, isGenerated: false, startDate: null, endDate: null },
+    ];
+
+    const after = await search();
+
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.some((text) => text.includes(`${from}–${to}`) && text.includes(`days.${day}`))).toBe(false);
+  });
+
   it("publishes the year on screen from the review dialog, from the school's today, with the dry run's digest", async () => {
     publication.publish.mutateAsync.mockReset().mockResolvedValue({ result: { created: 120 } });
     const user = userEvent.setup();

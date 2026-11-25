@@ -211,6 +211,12 @@ function teacherFreeAt(
  * Assigned-teacher matches always rank before fallback matches.
  */
 export function findOpenSlots(options: {
+  /**
+   * Whether the lesson may stand in the slot at all: the caller's own judge, asked of every slot the classes are free in. The slot
+   * finder knew the clash rule's weekly rows and the classes' own hours and none of the board's, and offered a time the class eats in or
+   * its stage's ramtid closes, which the create refuses (E1: the same judge as a drag's).
+   */
+  allows?: (slot: { dayOfWeek: number; startMinutes: number; endMinutes: number }) => boolean;
   studentGroupIds: string[];
   /** Individual students who must also be free (their class + electives). */
   participantStudentIds?: string[];
@@ -262,6 +268,7 @@ export function findOpenSlots(options: {
         groupFreeAt(groupId, day, start, end, options.placements, options.constraints),
       );
       if (!allGroupsFree) continue;
+      if (options.allows && !options.allows({ dayOfWeek: day, startMinutes: start, endMinutes: end })) continue;
 
       // Electives: a participant may also be individually booked elsewhere.
       const participantBusy =
@@ -331,6 +338,8 @@ export function openSlotsFor(
     studentGroupOf: Map<string, string | null>;
     placements: Placement[];
     constraints: AvailabilityConstraint[];
+    /** See findOpenSlots: the page hands the drag control's own judge, for a lesson that is not stored yet. */
+    allows?: (slot: { dayOfWeek: number; startMinutes: number; endMinutes: number }) => boolean;
   },
 ): OpenSlotMatch[] {
   const groupIds = [draft.studentGroupId, ...draft.extraGroupIds];
@@ -360,6 +369,7 @@ export function openSlotsFor(
     fallbackTeacherIds,
     placements: context.placements,
     constraints: context.constraints,
+    ...(context.allows ? { allows: context.allows } : {}),
     days: hasWeekend ? [1, 2, 3, 4, 5, 6, 7] : [1, 2, 3, 4, 5],
   });
 }

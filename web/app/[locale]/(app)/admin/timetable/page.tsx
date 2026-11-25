@@ -824,6 +824,34 @@ export default function TimetablePage() {
           studentGroupOf,
           placements,
           constraints: constraints ?? [],
+          // The grid's own judge for a lesson that is not stored yet (the ramtid, the class's meal, the year rules, the weeks of a
+          // lov), so that no time is offered that the create then refuses (E1: it asks the judge of a drag).
+          allows: (slot) =>
+            validatePlacement(
+              {
+                id: null,
+                ...slot,
+                teacherId: null,
+                roomId: null,
+                studentGroupId: creating.studentGroupId,
+                subjectId: creating.subjectId,
+                extraGroupIds: creating.extraGroupIds,
+                studentIds: creating.studentIds,
+                recurrence: creating.recurrence,
+                startDate: creating.startDate || null,
+                endDate: creating.endDate || null,
+                ...pupilBufferOf(pupilBuffers, creating),
+              },
+              placements,
+              constraints ?? [],
+              studentGroupOf,
+              groupConflictMap,
+              gradeSpanOf,
+              frameTimes,
+              lunchOf,
+              undefined,
+              closedWeeks,
+            ).length === 0,
         }),
       );
     }, showError);
