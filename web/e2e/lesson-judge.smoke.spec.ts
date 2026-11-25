@@ -87,6 +87,9 @@ function measure(page: Page, selector: string) {
 async function openJustera(page: Page, lessonId: string, day: number) {
   // On a phone the board draws one day, today's (E2): the day the lesson is on is chosen first. At a desk there is no such choice to make.
   const picker = page.getByRole("group", { name: "Visa en dag" });
+  // The buttons are in the board's keyboard module, which the grid fetches when it is editable: a phone is waited for them, and not asked
+  // once (`count()` does not wait, and a page whose module is a moment late would be tried with the wrong day drawn).
+  if ((page.viewportSize()?.width ?? 1280) < 768) await expect(picker).toBeVisible();
   if (await picker.count()) await picker.getByRole("button").nth(day - 1).click();
   await page.locator(`[data-lesson-id='${lessonId}']`).click();
   await expect(page.getByRole("dialog").getByRole("heading", { name: "Justera lektion" })).toBeVisible();
