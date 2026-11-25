@@ -418,8 +418,10 @@ export default function TimetablePage() {
    * because a dialog that is open and well must not be unmounted by a failure of another (the room dialog relies on outliving its own close).
    */
   const onDemandFailed = useCallback(
-    (which: "versions" | "rooms" | "swaps", error: unknown) => {
-      showError(error);
+    (which: "versions" | "rooms" | "swaps") => {
+      // A sentence of the app's own, as every other lazily fetched dialog of the app has (common.formLoadFailed, checklists.dialogLoadFailed): what the
+      // error says is "Failed to load chunk /_next/static/…", in English and with the file's path, which a teacher cannot do anything with.
+      toast.error(t("dialogLoadFailed"));
       if (which === "versions") {
         resetVersionsDialog();
         setVersionsUsed(false);
@@ -431,7 +433,7 @@ export default function TimetablePage() {
         setSwapsUsed(false);
       }
     },
-    [showError],
+    [t],
   );
 
   // -------------------------------------------------------------------
@@ -1579,7 +1581,7 @@ export default function TimetablePage() {
 
       {/* ---------------- Versions dialog ---------------- */}
       {versionsUsed && (
-        <DialogLoadBoundary onError={(error) => onDemandFailed("versions", error)}>
+        <DialogLoadBoundary onError={() => onDemandFailed("versions")}>
         <Suspense fallback={null}>
           <VersionsDialog
             open={versionsOpen}
@@ -1607,7 +1609,7 @@ export default function TimetablePage() {
         ref) — unmounting it would drop the guard the dialog documents.
       */}
       {roomsUsed && (
-        <DialogLoadBoundary onError={(error) => onDemandFailed("rooms", error)}>
+        <DialogLoadBoundary onError={() => onDemandFailed("rooms")}>
         <Suspense fallback={null}>
           <RoomOptimizationDialog
             open={roomsOpen}
@@ -1625,7 +1627,7 @@ export default function TimetablePage() {
 
       {/* ---------------- Byten och flyttar ---------------- */}
       {swapsUsed && (
-        <DialogLoadBoundary onError={(error) => onDemandFailed("swaps", error)}>
+        <DialogLoadBoundary onError={() => onDemandFailed("swaps")}>
         <Suspense fallback={null}>
           <SwapDialog
             open={swapLessonId !== null}

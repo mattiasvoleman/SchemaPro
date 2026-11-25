@@ -2181,6 +2181,7 @@
     "editSaved": "Lektionen uppdaterad — {count} kalenderlektioner flyttades med",
     "editConflict": "Schemakonflikt",
     "lessonIsPlaced": "Lektionen är förlagd, och Generera skriver om den från förläggningen. Ändra den i Förlägg i veckan (eller på timplansposten), eller för ett parallellt block med Förlägg … under Block på sidan Timplansposter.",
+    "dialogLoadFailed": "Dialogrutan kunde inte öppnas. Inget är ändrat – försök igen.",
     "addLesson": "Lägg till lektion",
     "addTitle": "Lägg till lektion",
     "addBody": "Placera en lektion manuellt på grundschemat. Den kontrolleras mot resten av schemat innan den sparas.",

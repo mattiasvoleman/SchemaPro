@@ -799,7 +799,7 @@ describe("a piece that did not arrive is fetched again through a new wrapper", (
       render(<TimetablePage />);
 
       await user.click(screen.getByRole("button", { name: "timetable.versions" }));
-      await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("Failed to load chunk"));
+      await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("timetable.dialogLoadFailed"));
       expect(screen.queryByRole("dialog")).toBeNull();
       expect(brokenPieces.versions).toBe(false);
       pageStands();
@@ -816,7 +816,7 @@ describe("a piece that did not arrive is fetched again through a new wrapper", (
       render(<TimetablePage />);
 
       await fromMoreMenu(user, "timetable.optimizeRooms");
-      await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("Failed to load chunk"));
+      await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("timetable.dialogLoadFailed"));
       expect(screen.queryByRole("dialog")).toBeNull();
       expect(brokenPieces.rooms).toBe(false);
       pageStands();
@@ -837,7 +837,7 @@ describe("a piece that did not arrive is fetched again through a new wrapper", (
         await user.click(await screen.findByRole("button", { name: "swaps.openButton" }));
       };
       await suggestSwaps();
-      await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("Failed to load chunk"));
+      await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("timetable.dialogLoadFailed"));
       expect(screen.queryByRole("dialog")).toBeNull();
       expect(brokenPieces.swaps).toBe(false);
       pageStands();
@@ -876,7 +876,7 @@ describe("a piece that did not arrive is fetched again through a new wrapper", (
 
       // The room dialog is modal: the failing press is made past it, as the page does when its own code runs.
       fireEvent.click(screen.getByRole("button", { name: "timetable.versions", hidden: true }));
-      await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("Failed to load chunk"));
+      await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("timetable.dialogLoadFailed"));
       expect(await screen.findByRole("dialog")).toHaveTextContent("roomOptimization.title");
     });
   });
