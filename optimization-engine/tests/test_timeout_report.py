@@ -231,10 +231,11 @@ def test_a_small_budget_is_spent_in_phase_1a_and_phase_1b_never_runs(monkeypatch
 def test_a_caller_that_waits_less_gets_a_search_that_says_it_was_given_less(monkeypatch: pytest.MonkeyPatch) -> None:
     """The caller waits 25 s of the engine's 46: the answer is due at 20 less the 10 a solve may overrun.
 
-    The search ends where the probe's floor (5 s) leaves room: 5 s of the 10 the
-    engine is set to. The report says both numbers and the wait, which is what
-    tells a school that its run was short on purpose and not that its week is
-    hard.
+    The search ends where the probe's floor (5 s) leaves room, less the overrun
+    held back for (half of the 5 s that are left, a clock this short cannot hold
+    back ten): 2.5 s of the 10 the engine is set to, reported as 2. The report
+    says both numbers and the wait, which is what tells a school that its run
+    was short on purpose and not that its week is hard.
     """
     tso._Clock(monkeypatch)
     tso._rules_to_probe(monkeypatch, 2)
@@ -244,9 +245,9 @@ def test_a_caller_that_waits_less_gets_a_search_that_says_it_was_given_less(monk
     response = _solve(tso._settings(SOLVER_MAX_TIME_SECONDS=10, SOLVER_PROBE_SECONDS=6), payload)
 
     report = response.report
-    assert (report.budget_seconds, report.configured_budget_seconds) == (5, 10)
+    assert (report.budget_seconds, report.configured_budget_seconds) == (2, 10)
     assert report.caller_wait_seconds == 25.0
-    assert _stages(response)[2] == ("SEARCH_CLEAN", 5.0)
+    assert _stages(response)[2] == ("SEARCH_CLEAN", 2.5)
 
 
 def test_best_effort_accounts_for_its_time_the_same_way(monkeypatch: pytest.MonkeyPatch) -> None:
