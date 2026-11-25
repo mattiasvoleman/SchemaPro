@@ -51,7 +51,7 @@ describe('SuggestionsController', () => {
       expect(Reflect.getMetadata(HTTP_CODE_METADATA, handler)).toBe(HttpStatus.ACCEPTED);
     });
 
-    it("is guarded exactly as the routes of a run are: school administrators with Schemaläggning or Drift", () => {
+    it("is guarded exactly as the routes of a run are: school administrators who write Schemaläggning and Drift (every area the class names)", () => {
       expect(Reflect.getMetadata(GUARDS_METADATA, SuggestionsController)).toEqual([JwtAuthGuard, RolesGuard]);
       expect(Reflect.getMetadata(ROLES_KEY, SuggestionsController)).toEqual([Role.SCHOOL_ADMIN]);
       expect(Reflect.getMetadata(AREA_KEY, SuggestionsController)).toEqual({ kind: 'area', areas: ['SCHEMALAGGNING', 'DRIFT'] });

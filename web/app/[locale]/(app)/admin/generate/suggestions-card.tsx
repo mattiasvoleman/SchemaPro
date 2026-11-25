@@ -124,7 +124,7 @@ export function SuggestionsCard({ job, linkYearId = null }: { job: OptimizationJ
       ) : null}
 
       {offered && !running ? (
-        <Button type="button" variant="outline" size="sm" disabled={ask.isPending} onClick={() => ask.mutate()} data-writes="SCHEMALAGGNING">
+        <Button type="button" variant="outline" size="sm" disabled={ask.isPending} onClick={() => ask.mutate()} data-writes="SCHEMALAGGNING DRIFT">
           {t(suggestions === null ? "offerAction" : "again")}
         </Button>
       ) : null}

@@ -434,7 +434,6 @@ export interface Applied {
 /** The most row problems one mapping reports; the rest are counted. */
 export const MAX_ROW_PROBLEMS = 200;
 
-
 const TIME_RANGE = /^(\d{1,2}[:.]\d{2})\s*[-‐-―−]\s*(\d{1,2}[:.]\d{2})$/;
 // No \s* round the separator: the parts are trimmed, and a \s* at both ends makes the split quadratic in a cell with a long run of spaces.
 const TEACHER_SEPARATOR = /[,;/|&]|\soch\s/i;

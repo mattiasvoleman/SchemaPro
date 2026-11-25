@@ -14,7 +14,8 @@ import type { SuggestionsView } from './suggestions';
  * Åtgärdsförslag vid vägran: the analysis of a run that ended without a timetable. Its own controller, under the optimization prefix,
  * so that the routes of a run (OptimizationController) are not touched by it.
  *
- * Guarded exactly as the routes it sits beside are: school administrators with Schemaläggning or Drift. The analysis reads the school as
+ * Guarded exactly as the routes it sits beside are: school administrators who write Schemaläggning AND Drift (@Area asks every area it
+ * names, RolesGuard assertAdministratorMay), so a profile with one of them gets the 403 that names the other. The analysis reads the school as
  * a Generera does, so it needs what a Generera needs, and it writes nothing but the run's own column.
  */
 @Controller('api/v1/optimization')

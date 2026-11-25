@@ -77,6 +77,59 @@ describe("TimeoutAccount", () => {
     expect(screen.getByText(`${NS}.searchNotRun`)).toBeInTheDocument();
   });
 
+  it("counts the walk's search with the others, so the sentence never says less than the list above it (60 s and 30 s are 90 s)", () => {
+    // The walk's planned-sites search has no phase (the engine notes one only for the two satisfaction searches), but the list names it
+    // as a search with its seconds: the sentence under "Hur långt sökningen kom" is made of the same steps.
+    render(
+      <TimeoutAccount
+        report={report({
+          stages: [
+            { stage: "PRECHECKS", seconds: 1 },
+            { stage: "SITES", seconds: 60 },
+            { stage: "SEARCH_CLEAN", seconds: 30 },
+          ],
+          search: { solutions: 0, phases: [{ phase: "CLEAN", seconds: 30, conflicts: 5, branches: 9 }] },
+        })}
+        conflicts={[]}
+      />,
+    );
+
+    expect(screen.getByText(`${NS}.stage(SITES|60)`)).toBeInTheDocument();
+    expect(screen.getByText(`${NS}.stage(SEARCH_CLEAN|30)`)).toBeInTheDocument();
+    expect(screen.getByText(`${NS}.searchNone(2|90)`)).toBeInTheDocument();
+    expect(screen.queryByText(`${NS}.searchNone(1|30)`)).toBeNull();
+  });
+
+  it("does not say that no search began when only the walk's search ran", () => {
+    render(
+      <TimeoutAccount
+        report={report({
+          stages: [{ stage: "BUILD", seconds: 20 }, { stage: "SITES", seconds: 60 }],
+          search: { solutions: 0, phases: [] },
+        })}
+        conflicts={[]}
+      />,
+    );
+
+    expect(screen.queryByText(`${NS}.searchNotRun`)).toBeNull();
+    expect(screen.getByText(`${NS}.searchNone(1|60)`)).toBeInTheDocument();
+  });
+
+  it("says that no search began when the walk's step took no time and nothing else searched", () => {
+    render(
+      <TimeoutAccount
+        report={report({
+          stages: [{ stage: "BUILD", seconds: 9.8 }, { stage: "SITES", seconds: 0 }, { stage: "PROBE", seconds: 0 }],
+          search: { solutions: 0, phases: [] },
+        })}
+        conflicts={[]}
+      />,
+    );
+
+    expect(screen.getByText(`${NS}.searchNotRun`)).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(`^${NS.replace(".", "\\.")}\\.searchNone`))).toBeNull();
+  });
+
   it("says what the search was given, and against what the engine is set to give it when it was less", () => {
     const { rerender } = render(<TimeoutAccount report={report()} conflicts={[]} />);
     expect(screen.getByText(`${NS}.budget(100)`)).toBeInTheDocument();
@@ -102,17 +155,40 @@ describe("TimeoutAccount", () => {
     expect(screen.getByText(`${NS}.tightYearsBound`)).toBeInTheDocument();
   });
 
-  it("says a week load that was cut short, and never that no other year is tight", () => {
-    render(<TimeoutAccount report={report({ weekLoadCut: true })} conflicts={[]} />);
+  const notCounted = (percent?: number): ConflictDetail => ({
+    category: "REQUIREMENT_DEMAND",
+    code: "WEEK_LOAD_NOT_COUNTED",
+    message: "…",
+    params: percent === undefined ? { seconds: 4 } : { seconds: 4, percent },
+    resourceNames: [],
+  });
 
-    expect(screen.getByText(`${NS}.weekLoadCut`)).toBeInTheDocument();
+  it("says a week load that was cut short against the threshold the engine's own row names, and never that no other year is tight", () => {
+    render(<TimeoutAccount report={report({ weekLoadCut: true })} conflicts={[notCounted(90)]} />);
+
+    expect(screen.getByText(`${NS}.weekLoadCut(90)`)).toBeInTheDocument();
     expect(screen.queryByText(/noOtherYear|inga andra/i)).toBeNull();
   });
 
-  it("says nothing of a cut count that did not happen", () => {
-    render(<TimeoutAccount report={report()} conflicts={[]} />);
+  it("does not write a threshold of its own when the engine's row does not say one", () => {
+    const { rerender } = render(<TimeoutAccount report={report({ weekLoadCut: true })} conflicts={[]} />);
+    expect(screen.getByText(`${NS}.weekLoadCutPlain`)).toBeInTheDocument();
 
-    expect(screen.queryByText(`${NS}.weekLoadCut`)).toBeNull();
+    rerender(<TimeoutAccount report={report({ weekLoadCut: true })} conflicts={[notCounted()]} />);
+    expect(screen.getByText(`${NS}.weekLoadCutPlain`)).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(`^${NS.replace(".", "\\.")}\\.weekLoadCut\\(`))).toBeNull();
+  });
+
+  it("writes the threshold of a row that says 0 as 0, and not as a row with no figure", () => {
+    render(<TimeoutAccount report={report({ weekLoadCut: true })} conflicts={[notCounted(0)]} />);
+    expect(screen.getByText(`${NS}.weekLoadCut(0)`)).toBeInTheDocument();
+    expect(screen.queryByText(`${NS}.weekLoadCutPlain`)).toBeNull();
+  });
+
+  it("says nothing of a cut count that did not happen", () => {
+    render(<TimeoutAccount report={report()} conflicts={[notCounted(90)]} />);
+
+    expect(screen.queryByText(new RegExp(`^${NS.replace(".", "\\.")}\\.weekLoadCut`))).toBeNull();
   });
 
   it("says nothing of the caller's wait in the fold when the request did not say one", () => {
@@ -134,6 +210,29 @@ describe("TimeoutAccount", () => {
     expect(within(fold).getByText(`${NS}.phaseNoFigures(CLONE|40)`)).toBeInTheDocument();
     expect(within(fold).getByText(`${NS}.callerWait(94)`)).toBeInTheDocument();
     expect(within(fold).getByText(`${NS}.configured(100|100)`)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["both missing", { conflicts: undefined, branches: undefined }],
+    ["the conflicts missing", { conflicts: undefined, branches: 920113 }],
+    ["the branches missing", { conflicts: 118344, branches: undefined }],
+  ])("says a search with no figures as that when the gateway leaves a count out altogether (%s), as it does for null", (_name, counts) => {
+    // The gateway turns a missing count into null (countOrNull); a gateway that did not would send nothing, and the sentence with a
+    // number in it cannot be formatted without one.
+    const phase = { phase: "CLONE" as const, seconds: 40, ...counts } as unknown as TimeoutReport["search"]["phases"][number];
+    render(<TimeoutAccount report={report({ search: { solutions: 0, phases: [phase] } })} conflicts={[]} />);
+
+    const fold = screen.getByText(`${NS}.technicalTitle`).closest("details") as HTMLElement;
+    expect(within(fold).getByText(`${NS}.phaseNoFigures(CLONE|40)`)).toBeInTheDocument();
+    expect(within(fold).queryByText(new RegExp(`^${NS.replace(".", "\\.")}\\.phase\\(`))).toBeNull();
+  });
+
+  it("says a search with a count of zero as figures, and not as a search with none", () => {
+    render(
+      <TimeoutAccount report={report({ search: { solutions: 0, phases: [{ phase: "CLEAN", seconds: 1, conflicts: 0, branches: 0 }] } })} conflicts={[]} />,
+    );
+
+    expect(screen.getByText(`${NS}.phase(CLEAN|1|0|0)`)).toBeInTheDocument();
   });
 
   it("names a short clock with the caller's wait where it has one, and without it where it has not", () => {
@@ -165,8 +264,19 @@ describe("the texts a school reads", () => {
   it("says the lower-bound caveat and the cut count, in words a school can read", () => {
     expect(say(sv, "sv", ["tightYearsBound"])).toContain("minst-tal");
     expect(say(sv, "sv", ["tightYearsBound"])).toContain("går inte att jämföra");
-    expect(say(sv, "sv", ["weekLoadCut"])).toContain("är inte räknad");
-    expect(say(en, "en", ["weekLoadCut"])).toContain("was not counted");
+    expect(say(sv, "sv", ["weekLoadCut"], { percent: 85 })).toContain("är inte räknad");
+    expect(say(en, "en", ["weekLoadCut"], { percent: 85 })).toContain("was not counted");
+    expect(say(sv, "sv", ["weekLoadCutPlain"])).toContain("är inte räknad");
+    expect(say(en, "en", ["weekLoadCutPlain"])).toContain("was not counted");
+  });
+
+  it("says the threshold the engine's row names, and a sentence with no figure when the row names none", () => {
+    expect(say(sv, "sv", ["weekLoadCut"], { percent: 90 })).toMatch(/under 90 %\.$/);
+    expect(say(en, "en", ["weekLoadCut"], { percent: 90 })).toMatch(/under 90 %\.$/);
+    for (const [messages, locale] of [[sv, "sv"], [en, "en"]] as const) {
+      expect(say(messages, locale, ["weekLoadCut"], { percent: 90 }), locale).not.toContain("85");
+      expect(say(messages, locale, ["weekLoadCutPlain"]), locale).not.toMatch(/\d/);
+    }
   });
 
   it("says each step in a school's words, with its seconds in the reader's own notation", () => {
@@ -206,10 +316,10 @@ describe("the texts a school reads", () => {
 
   it("has every cause, in both languages, with a sentence and a next step", () => {
     for (const messages of [sv, en]) {
-      for (const kind of ["RULES_MEASURED", "TIGHT_WEEK", "SHORT_CLOCK", "SLOW_SETUP", "NOTHING_FOUND"]) {
+      for (const kind of ["RULES_MEASURED", "PROBE_CHANGED_WEEK", "TIGHT_WEEK", "SHORT_CLOCK", "SLOW_SETUP", "NOTHING_FOUND"]) {
         expect(typeof (texts(messages).next as Record<string, unknown>)[kind]).toBe("string");
       }
-      for (const kind of ["RULES_MEASURED", "TIGHT_WEEK", "SHORT_CLOCK", "SHORT_CLOCK_WAIT", "SLOW_SETUP", "NOTHING_FOUND"]) {
+      for (const kind of ["RULES_MEASURED", "PROBE_CHANGED_WEEK", "TIGHT_WEEK", "SHORT_CLOCK", "SHORT_CLOCK_WAIT", "SLOW_SETUP", "NOTHING_FOUND"]) {
         expect(typeof (texts(messages).cause as Record<string, unknown>)[kind]).toBe("string");
       }
     }

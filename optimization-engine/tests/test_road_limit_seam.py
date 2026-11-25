@@ -83,7 +83,7 @@ def test_the_engine_answers_a_timeout_before_the_gateways_wait_and_so_before_the
     # even when every solve stops SOLVE_OVERRUN_SECONDS late, and the gateway's wait ends five seconds after.
     assert answered_at <= deadline - TRANSFER_MARGIN_SECONDS
     assert answered_at < ROAD_LIMIT_SECONDS - _path_margin_seconds()
-    # The clock must not starve the search either: production's 540 s is cut, not thrown away. 259 s at 4 s a build.
+    # The clock must not starve the search either: production's 540 s is cut, not thrown away. 249 s at 4 s a build (a setup of 8 s: 272 less the probe's floor, the overrun and the setup).
     assert search >= 240
     assert response.report.budget_seconds < response.report.configured_budget_seconds == 540
 

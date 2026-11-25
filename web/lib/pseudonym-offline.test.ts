@@ -9,6 +9,11 @@ import { closureOf, type Closure } from "@/lib/__fixtures__/import-closure";
  * the component test that runs the whole flow with every way out replaced by a trap, and the policy the browser itself enforces
  * (connect-src 'none', lib/pseudonym-policy.ts). This file holds the first, for the code of the core; the page's own files are added to ENTRIES
  * where the page is.
+ *
+ * What this test holds is not a proof. A static analysis of code is never complete: it finds the ways out that its lists and rules name
+ * (import-closure.ts), and a way out spelled in a form nobody has listed passes it. A green run says "none of the listed ways out is in this
+ * code", not "there is no way out". The other two things above are what catch the rest, and a rule is added to the list the day a spelling
+ * is found that it missed.
  */
 
 export const CORE_ENTRIES = [

@@ -1515,8 +1515,9 @@ class SchedulerSolver:
 
         EXACTLY the budget while it can, so a week whose builds are quick is
         searched for the number of seconds the deployment set. A search that
-        would run past where the clock leaves room for the probe's floor ends
-        there instead, and the TIMEOUT that follows says how long it had.
+        would run past where the clock leaves room for the probe's floor and for
+        the overrun a solve may stop past its limit ends there instead, and the
+        TIMEOUT that follows says how long it had (Deadline.search_budget).
         """
         budget = self._settings.solver_max_time_seconds
         if self._deadline is not None:
@@ -6086,7 +6087,7 @@ class SchedulerSolver:
         # it when the request carries one. Every step below that has a time of
         # its own counts it to this clock's edge, so what is optional gives way
         # before the answer is late: the probe, then the explanation, then the
-        # search itself down to the probe's floor (app.timing).
+        # search itself down to the probe's floor and the overrun it may run (app.timing).
         self._deadline = Deadline(
             entered,
             ceiling_seconds(
@@ -6160,7 +6161,7 @@ class SchedulerSolver:
         started = entered if travel is not None else time.monotonic()
         # THE SEARCH HAS ITS BUDGET, unless the request's clock cannot hold it
         # (a slow build, or a caller that waits less than the settings need):
-        # then it ends where the clock leaves the probe's floor, and the
+        # then it ends where the clock leaves the probe's floor and the overrun, and the
         # TIMEOUT says how long it had (_search_budget).
         total_budget = self._search_budget(request, started)
         # THE PROBE ENDS ON A CLOCK, with the walk or without it, and counts

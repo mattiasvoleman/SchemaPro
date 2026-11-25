@@ -135,6 +135,8 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
 
   const reset = () => {
     setAdding(false);
+    // The mark says which rule the open form is about (?roomRule=): a closed form is about none.
+    setMarked(null);
     setSubjectId("");
     setTarget(BY_TYPE);
     setRoomTypeId("");

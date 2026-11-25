@@ -36,7 +36,7 @@ const VIEWPORTS = [
 const SCHEMES = ["light", "dark"] as const;
 const WIDE_FONT = "body, button, input, select { font-family: 'DejaVu Sans Mono', monospace !important }";
 
-const scenarioOf = (name: "refusal" | "timeout" | "nothing") => `${SUGGESTIONS_SCENARIO}-${name}:${randomUUID()}`;
+const scenarioOf = (name: "refusal" | "timeout" | "nothing" | "saved") => `${SUGGESTIONS_SCENARIO}-${name}:${randomUUID()}`;
 
 async function open(page: Page, baseURL: string, scenario: string, size: { width: number; height: number }, scheme: (typeof SCHEMES)[number]) {
   await signIn(page.context(), "admin", baseURL);
@@ -51,9 +51,12 @@ async function open(page: Page, baseURL: string, scenario: string, size: { width
   return misses;
 }
 
-/** Presses Generera, which the stub answers with the run the scenario holds, and waits for the card of the last run. */
-async function runGenera(page: Page) {
-  await page.getByRole("button", { name: "Generera schema" }).click();
+/**
+ * Waits for the card of the last run. Generera is not pressed: the run is the year's newest in the history, and the page takes it up as it
+ * would a run it had started (D9), so the card is there when the page has loaded. A press that the walk does not need would also hide a page
+ * that has lost the history's run behind the press's own answer.
+ */
+async function lastRun(page: Page) {
   await expect(page.locator("#last-run")).toBeVisible();
 }
 
@@ -100,7 +103,7 @@ for (const size of VIEWPORTS) {
   for (const scheme of SCHEMES) {
     test(`a refused run at ${size.name}, ${scheme}: the offer, the counting and the list stay inside their boxes, a wide font too`, async ({ page, baseURL }) => {
       const misses = await open(page, baseURL!, scenarioOf("refusal"), size, scheme);
-      await runGenera(page);
+      await lastRun(page);
       await page.addStyleTag({ content: WIDE_FONT });
 
       const card = page.locator(CARD);
@@ -159,9 +162,27 @@ test("a reload brings back the card of the year's newest refused run, and the an
   expect(misses, MISSES).toEqual([]);
 });
 
+test("a run that already carries its analysis shows the list on load, with nothing pressed, and axe finds nothing on it", async ({ page, baseURL }) => {
+  const misses = await open(page, baseURL!, scenarioOf("saved"), { width: 1280, height: 900 }, "light");
+  const card = page.locator(CARD);
+
+  // The run holds the answer (the column the gateway keeps it in): the card is the list at once, not the offer, and it can be asked again. It is
+  // a REFUSED run's card: the account of where the time went belongs to a timeout and is not on the page.
+  await lastRun(page);
+  await expect(card.locator(CHANGES)).toHaveCount(3, { timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Så gick tiden" })).toHaveCount(0);
+  await expect(card).toContainText("Motorn har löst veckan med just de 4 ändringarna tillsammans");
+  await expect(card).toContainText("Ytterligare 1 ändring hör till samma lösning");
+  await expect(card.getByRole("button", { name: "Räkna om" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Räkna fram förslag" })).toHaveCount(0);
+
+  expect((await scanBothSchemes(page, "saved analysis", true)).join("\n")).toBe("");
+  expect(misses, MISSES).toEqual([]);
+});
+
 test("a timeout says what is already known, and after the press shows the one change the engine solved the week with, with its proof", async ({ page, baseURL }) => {
   const misses = await open(page, baseURL!, scenarioOf("timeout"), { width: 1280, height: 900 }, "light");
-  await runGenera(page);
+  await lastRun(page);
 
   const card = page.locator(CARD);
   // Before the engine is asked: nothing is proved, and what the probe measured is said as a measurement and no figure.
@@ -185,7 +206,7 @@ test("a timeout says what is already known, and after the press shows the one ch
 
 test("a timeout where the engine finds nothing says that, with its seconds, and that it is no proof", async ({ page, baseURL }) => {
   const misses = await open(page, baseURL!, scenarioOf("nothing"), { width: 1280, height: 900 }, "light");
-  await runGenera(page);
+  await lastRun(page);
 
   const card = page.locator(CARD);
   await card.getByRole("button", { name: "Räkna fram förslag" }).click();
@@ -201,7 +222,7 @@ test("a timeout where the engine finds nothing says that, with its seconds, and 
 
 test("axe finds nothing on the card: offered, counting, with a list, and with nothing found", async ({ page, baseURL }) => {
   const misses = await open(page, baseURL!, scenarioOf("refusal"), { width: 1280, height: 900 }, "light");
-  await runGenera(page);
+  await lastRun(page);
   const card = page.locator(CARD);
   await expect(card.getByRole("button", { name: "Räkna fram förslag" })).toBeVisible();
   const reports = await scanBothSchemes(page, "offered", true);

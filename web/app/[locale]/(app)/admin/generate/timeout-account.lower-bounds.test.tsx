@@ -103,6 +103,38 @@ describe.each(["sv", "en"] as const)("the card in %s", (loc) => {
     expect(text).not.toMatch(/trång|tight week|The week is tight/i);
   });
 
+  it("names the threshold of a cut count from the engine's own row, and writes none when the row names none", () => {
+    const row = (percent: number): ConflictDetail => ({
+      category: "REQUIREMENT_DEMAND",
+      code: "WEEK_LOAD_NOT_COUNTED",
+      message: "…",
+      params: { seconds: 4, percent },
+      resourceNames: [],
+    });
+    const named = said(loc, report({ weekLoadCut: true }), [row(90)]);
+    expect(named).toMatch(/under 90 %/);
+    expect(named).not.toMatch(/85/);
+    const unnamed = said(loc, report({ weekLoadCut: true }), []);
+    expect(unnamed).not.toMatch(/\d+ %/);
+    expect(unnamed).toMatch(loc === "sv" ? /inte räknad/ : /not counted/);
+  });
+
+  it("says a week that only a probe changing the week solved as that, and never as 'no cause could be measured'", () => {
+    // The engine's own summary says "relaxing a single rule made the same week solve" for such a week (PROBE_ONE_RULE_HELPED counts every
+    // probe that solved), and its row says what was changed; the card said "Ingen orsak kunde mätas" beside both.
+    const probe: ConflictDetail = {
+      category: "TIMEOUT_PROBE",
+      code: "PROBE_SOLVED_WITH_OWN_TEACHERS_AND_BLOCK",
+      message: "…",
+      params: { seconds: 9.8 },
+      resourceNames: [],
+    };
+    const text = said(loc, report(), [probe]);
+    expect(text).toMatch(loc === "sv" ? /ändrar veckan i stället för att lätta en regel/ : /changes the week instead of relaxing a rule/);
+    expect(text).not.toMatch(loc === "sv" ? /Ingen orsak kunde mätas/ : /No cause could be measured/);
+    expect(text).not.toMatch(loc === "sv" ? /Lätta på regeln/ : /Relax the rule/);
+  });
+
   it("does not draw a refusal's rows as a tight week", () => {
     const refusal: ConflictDetail[] = [
       {
