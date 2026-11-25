@@ -115,6 +115,18 @@ export function supportsDeadline(timing: EngineTiming | null): boolean {
 }
 
 /**
+ * What the engine said of `startLessons` (Ett schema som start, M9): 'YES' when it listed the capability, 'NO' when it
+ * said what it can take and `startLessons` is not among it (an engine from before the field), and 'UNKNOWN' when it
+ * has said nothing (it was not up when the API started, or it is older than /api/v1/timing itself). Three answers and not
+ * a boolean, because the two refusals differ: a NO is never sent the field, an UNKNOWN is sent it once and answered by
+ * the engine's own 422 if it is older (EngineLacksStartLessons).
+ */
+export function startLessonsCapability(timing: EngineTiming | null): 'YES' | 'NO' | 'UNKNOWN' {
+  if (timing === null) return 'UNKNOWN';
+  return timing.capabilities.includes('startLessons') ? 'YES' : 'NO';
+}
+
+/**
  * How long the API waits for one call to a route, in milliseconds.
  *
  * AI_ENGINE_TIMEOUT_MS when it is set: the operator's number is a ceiling the

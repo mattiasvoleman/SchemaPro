@@ -78,6 +78,117 @@ describe('Scheduling surface (e2e)', () => {
     });
 
     /*
+     * Ett schema som start (omgång 15, M9), as an administrator meets it over HTTP: the request's `startFrom`, what a click
+     * refuses with its code through the real exception filter, and what a stored run says of its start on the wire.
+     */
+    describe('a run that starts from a schedule', () => {
+      const startedFrom = {
+        source: 'CURRENT',
+        versionName: null,
+        engine: 'USED',
+        offered: 120,
+        used: 118,
+        held: 104,
+        moved: 12,
+        laid: 2,
+        dropped: { NO_POST: 2 },
+      };
+
+      afterEach(() => {
+        harness.tx['optimizationJob']!['create']!.mockReset();
+        harness.tx['optimizationJob']!['findUnique']!.mockReset();
+        harness.tx['scheduleVersion']!['findFirst']!.mockReset();
+        harness.tx['academicYear']!['findUnique']!.mockReset();
+      });
+
+      it('accepts startFrom CURRENT with 202, and queues one run', async () => {
+        harness.tx['optimizationJob']!['create']!.mockResolvedValue({ id: VERSION_ID });
+
+        await request(http())
+          .post('/api/v1/optimization/jobs')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID, startFrom: { source: 'CURRENT' } })
+          .expect(202);
+
+        expect(harness.tx['optimizationJob']!['create']).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses a version that is not the year’s with 404 and its code, and queues no run', async () => {
+        harness.tx['scheduleVersion']!['findFirst']!.mockResolvedValue(null);
+
+        const response = await request(http())
+          .post('/api/v1/optimization/jobs')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID, startFrom: { source: 'VERSION', versionId: VERSION_ID } })
+          .expect(404);
+
+        expect(response.body).toMatchObject({ code: 'START_VERSION_NOT_FOUND' });
+        expect(harness.tx['optimizationJob']!['create']).not.toHaveBeenCalled();
+        expect(harness.http.post).not.toHaveBeenCalled();
+      });
+
+      it('refuses last year’s schedule for a year that was not rolled over from another with 409 and its code', async () => {
+        harness.tx['academicYear']!['findUnique']!.mockResolvedValue({ predecessorId: null });
+
+        const response = await request(http())
+          .post('/api/v1/optimization/jobs')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID, startFrom: { source: 'PREVIOUS_YEAR' } })
+          .expect(409);
+
+        expect(response.body).toMatchObject({ code: 'START_NO_PREVIOUS_YEAR' });
+        expect(harness.tx['optimizationJob']!['create']).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['a source the gateway does not know', { source: 'FILE' }],
+        ['VERSION with no version', { source: 'VERSION' }],
+        ['a version that is not a UUID', { source: 'VERSION', versionId: 'v-1' }],
+        ['a start that is not an object', 'CURRENT'],
+      ])('refuses %s with 400, before anything is read', async (_what, startFrom) => {
+        await request(http())
+          .post('/api/v1/optimization/jobs')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID, startFrom })
+          .expect(400);
+
+        expect(harness.tx['optimizationJob']!['create']).not.toHaveBeenCalled();
+      });
+
+      it('refuses the synchronous trigger’s startFrom the same way', async () => {
+        await request(http())
+          .post('/api/v1/optimization/trigger')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID, startFrom: { source: 'FILE' } })
+          .expect(400);
+      });
+
+      it('carries what a stored run did with its start on the wire, whitelisted, and null for a run that started from nothing', async () => {
+        const row = (over: Record<string, unknown>) => ({
+          id: VERSION_ID,
+          academicYearId: YEAR_ID,
+          status: 'SUCCEEDED',
+          solverStatus: 'OPTIMAL',
+          lessonsGenerated: 118,
+          conflictSummary: null,
+          conflicts: [],
+          error: null,
+          createdAt: new Date('2026-08-07T10:00:00.000Z'),
+          finishedAt: new Date('2026-08-07T10:00:42.000Z'),
+          ...over,
+        });
+        harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(row({ startedFrom: { ...startedFrom, leaked: 'x' } }));
+
+        const started = await request(http()).get(`/api/v1/optimization/jobs/${VERSION_ID}`).set('x-test-user', admin()).expect(200);
+        expect(started.body.startedFrom).toEqual(startedFrom);
+
+        harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(row({}));
+        const plain = await request(http()).get(`/api/v1/optimization/jobs/${VERSION_ID}`).set('x-test-user', admin()).expect(200);
+        expect(plain.body.startedFrom).toBeNull();
+      });
+    });
+
+    /*
      * The queue entry (omgång 12, M4), as an administrator meets it over HTTP:
      * the first start, the second start of the same year, and a run whose
      * process is gone. The database half (the partial unique index, the lease,
