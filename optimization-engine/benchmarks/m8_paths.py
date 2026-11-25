@@ -3,7 +3,10 @@
 
     python benchmarks/m8_paths.py encoding --profile sweep --only 'n9-g6*' --encodings pairs,cliques,cohorts
     python benchmarks/m8_paths.py years    --only 'n9-g10-m0-s1-t5-h'
-    python benchmarks/m8_paths.py periods  --only 'n12-g3-m0-s1-t3'
+    python benchmarks/m8_paths.py periods-core     --only 'n12-g3-m0-s1-t3'
+    python benchmarks/m8_paths.py periods-calendar --only 'n12-g3-m0-s1-t3'
+    python benchmarks/m8_paths.py start    --only 'n12-g4-m0-s1' --into 1 --from-seed 2
+    python benchmarks/m8_paths.py slack    --only 'n9-g10-m0-s1-t5-h' --ends 18:00,16:00
 
 NOTHING IN THE ENGINE IS CHANGED. Like corpus_measure.py, every road is a subclass of the engine's own
 SchedulerSolver, or a sequence of ordinary requests handed to it, so a road that wins here is one the
@@ -368,6 +371,34 @@ def run_stage(
     )
 
 
+def _in_places(requirement, placed: list) -> list:
+    """`placed` in the order of the requirement's places, which is not the order of the clock.
+
+    `pinnedLessons` has one place for each lesson IN THE ORDER OF `lesson_minutes()` (the longest first), and for
+    a split post (`lessonTeacherIds`) place i is lead i's. A post of a 90- and a 60-minute lesson laid 60 on Monday
+    and 90 on Tuesday has its 90 at place 0: pinned in clock order the engine would be asked about a Monday of 90
+    and a Tuesday of 60, another timetable than the one the road laid, and `verified` would say yes to that one.
+    Where every lesson of a post is as long as the others and has no lead of its own the order is the clock's, as before."""
+    from_clock = sorted(placed, key=lambda l: (l.day_of_week, l.start_time))
+    out: list = []
+    for index, minutes in enumerate(requirement.lesson_minutes()):
+        lead = requirement.lesson_teacher(index) if requirement.lesson_teacher_ids is not None else None
+        pick = next(
+            (
+                l for l in from_clock
+                if (int(l.end_time[:2]) * 60 + int(l.end_time[3:5])) - (int(l.start_time[:2]) * 60 + int(l.start_time[3:5])) == minutes
+                and (lead is None or l.teacher_id == lead)
+            ),
+            None,
+        )
+        if pick is None:
+            msg = f"{requirement.id} has no lesson of {minutes} minutes laid for place {index}"
+            raise ValueError(msg)
+        from_clock.remove(pick)
+        out.append(pick)
+    return out
+
+
 def _pinned(requirements, lessons):
     """The requirements with every lesson in `lessons` pinned where it was laid (start only: rooms stay the engine's)."""
     from app.schemas.schedule import PinnedLesson
@@ -377,10 +408,11 @@ def _pinned(requirements, lessons):
         by_requirement.setdefault(lesson.requirement_id, []).append(lesson)
     out = []
     for requirement in requirements:
-        placed = sorted(by_requirement.get(requirement.id, ()), key=lambda l: (l.day_of_week, l.start_time))
+        placed = by_requirement.get(requirement.id, [])
         if len(placed) != requirement.lessons_per_week:
             msg = f"{requirement.id} has {len(placed)} lessons laid, the requirement asks {requirement.lessons_per_week}"
             raise ValueError(msg)
+        placed = _in_places(requirement, placed)
         out.append(requirement.model_copy(update={"pinned_lessons": [
             PinnedLesson(dayOfWeek=l.day_of_week, startTime=l.start_time, endTime=l.end_time) for l in placed
         ]}))

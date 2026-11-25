@@ -78,9 +78,11 @@ def test_every_encoding_keeps_the_pairs_apart(encoding: str) -> None:
 
 def test_the_encodings_post_fewer_rows_than_the_pairs() -> None:
     week = build_week(SchoolShape(classes_per_year=3, group_subjects=4, mixing=1.0))
+    # The rows are counted when the model is built; nothing here needs the week laid, so the search gets a
+    # budget too small to find a timetable in (four searches to a first timetable were 60 % of this file's time).
     rows = {
         encoding: paths.measure_encoding(
-            week, encoding, mode="count", budget=0, deterministic_budget=5, seed=1,
+            week, encoding, mode="count", budget=0, deterministic_budget=0.05, seed=1,
         )["noOverlapRows"]
         for encoding in paths.ENCODINGS
     }
