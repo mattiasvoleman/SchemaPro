@@ -8259,6 +8259,548 @@
      "ROOM"
     ]
    }
+  },
+  {
+   "name": "w0-weekend: L1 to day 6 at 09:15",
+   "world": 0,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "09:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w0-weekend: L1 to day 7 at 09:15",
+   "world": 0,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "09:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w1-weekend: L1 to day 6 at 10:10",
+   "world": 1,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "10:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w1-weekend: L1 to day 7 at 10:10",
+   "world": 1,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "10:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w2-weekend: L1 to day 6 at 11:30",
+   "world": 2,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "11:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w2-weekend: L1 to day 7 at 11:30",
+   "world": 2,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "11:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w3-weekend: L1 to day 6 at 10:20",
+   "world": 3,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "10:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w3-weekend: L1 to day 7 at 10:20",
+   "world": 3,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "10:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w4-weekend: L1 to day 6 at 13:00",
+   "world": 4,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w4-weekend: L1 to day 7 at 13:00",
+   "world": 4,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w5-weekend: L1 to day 6 at 08:50",
+   "world": 5,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "08:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w5-weekend: L1 to day 7 at 08:50",
+   "world": 5,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "08:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w6-weekend: L1 to day 6 at 13:05",
+   "world": 6,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "13:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w6-weekend: L1 to day 7 at 13:05",
+   "world": 6,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "13:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w7-weekend: L1 to day 6 at 09:35",
+   "world": 7,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "09:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w7-weekend: L1 to day 7 at 09:35",
+   "world": 7,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "09:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w8-weekend: L1 to day 6 at 10:45",
+   "world": 8,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "10:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w8-weekend: L1 to day 7 at 10:45",
+   "world": 8,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "10:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w9-weekend: L1 to day 6 at 13:00",
+   "world": 9,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w9-weekend: L1 to day 7 at 13:00",
+   "world": 9,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w10-weekend: L1 to day 6 at 11:20",
+   "world": 10,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "11:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w10-weekend: L1 to day 7 at 11:20",
+   "world": 10,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "11:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w11-weekend: L1 to day 6 at 12:05",
+   "world": 11,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "12:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w11-weekend: L1 to day 7 at 12:05",
+   "world": 11,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "12:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w12-weekend: L1 to day 6 at 14:50",
+   "world": 12,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "14:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY",
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w12-weekend: L1 to day 7 at 14:50",
+   "world": 12,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "14:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY",
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w13-weekend: L1 to day 6 at 09:20",
+   "world": 13,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "09:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w13-weekend: L1 to day 7 at 09:20",
+   "world": 13,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "09:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w14-weekend: L1 to day 6 at 10:55",
+   "world": 14,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "10:55"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w14-weekend: L1 to day 7 at 10:55",
+   "world": 14,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "10:55"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w15-weekend: L1 to day 6 at 13:00",
+   "world": 15,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w15-weekend: L1 to day 7 at 13:00",
+   "world": 15,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w16-weekend: L1 to day 6 at 10:35",
+   "world": 16,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "10:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w16-weekend: L1 to day 7 at 10:35",
+   "world": 16,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "10:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w17-weekend: L1 to day 6 at 13:50",
+   "world": 17,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "13:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w17-weekend: L1 to day 7 at 13:50",
+   "world": 17,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "13:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
   }
  ]
 }

@@ -1412,7 +1412,8 @@ describe('MasterLessonsService', () => {
           { startDate: day('2026-10-26'), endDate: day('2026-10-30'), minGradeLevel: null, maxGradeLevel: null },
         ]);
         sameDay([autumnLesson('2026-11-01')]);
-        await expect(service.create(createDto({ dayOfWeek: 6, startDate: '2026-10-26' }), testUser())).rejects.toMatchObject(refusedAs('TEACHER'));
+        // The Saturday is no school day (SCHOOL_DAY, the first reason), and the teacher's clash is found all the same: the weekend is written.
+        await expect(service.create(createDto({ dayOfWeek: 6, startDate: '2026-10-26' }), testUser())).rejects.toMatchObject(refusedAs('SCHOOL_DAY', { reasons: 'SCHOOL_DAY,TEACHER' }));
         // The same pair on a Wednesday is no clash: nobody sits that week.
         sameDay([autumnLesson('2026-11-01')]);
         await expect(service.create(createDto({ dayOfWeek: 3, startDate: '2026-10-26' }), testUser())).resolves.toMatchObject({

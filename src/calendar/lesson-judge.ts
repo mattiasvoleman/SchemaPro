@@ -58,6 +58,8 @@ import type { DayLesson, MasterLessonConflict, MasterLessonsService } from './ma
  */
 
 export type LessonRefusalReason =
+  /** The day is not a school day (Monday to Friday): the förläggning's own first question, asked here of the day alone. */
+  | 'SCHOOL_DAY'
   | 'TEACHER'
   | 'ROOM'
   | 'GROUP'
@@ -168,6 +170,14 @@ const sameGroups = (a: JudgedCandidate, b: JudgedCandidate): boolean => {
   return left === right;
 };
 
+const LAST_SCHOOL_DAY = 5;
+
+/** Whether an edit puts a lesson on a day that is no school day: asked of an edit that changes the day (låt stå). */
+function outsideSchoolDay(item: JudgeItem): boolean {
+  const day = item.candidate.dayOfWeek;
+  return (day < 1 || day > LAST_SCHOOL_DAY) && (!item.stands || item.stands.dayOfWeek !== day);
+}
+
 /** What the board's three rules read of a candidate: where it stands, in which weeks, for which classes. */
 export function placementChanged(now: JudgedCandidate, was: JudgedCandidate): boolean {
   return (
@@ -276,7 +286,10 @@ export async function judgeLessons(
   items: readonly JudgeItem[],
   options: { reads?: ConflictReads } = {},
 ): Promise<LessonVerdict[]> {
-  const refusals: LessonRefusal[][] = items.map(() => []);
+  // 0. The school day, a question about the day alone and the heaviest there is, as the förläggning asks it first. The engine reads
+  // SCHEDULE_DAYS, Monday to Friday, so a lesson on a Saturday or a Sunday is one a file brought in: it may stand (låt stå) and be changed
+  // on anything but its day, and no edit puts one there.
+  const refusals: LessonRefusal[][] = items.map((item) => (outsideSchoolDay(item) ? [{ reason: 'SCHOOL_DAY', params: {} }] : []));
 
   // 1. The clash rule.
   const hits: MasterLessonConflict[][] = [];
