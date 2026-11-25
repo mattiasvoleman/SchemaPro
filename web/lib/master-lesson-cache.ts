@@ -257,18 +257,28 @@ export function putLesson(queryClient: QueryClient, lesson: MasterLesson): void 
  * Somebody else changed these lessons: read just them, and lay what is there in the lists, and take out what is not (a lesson
  * somebody removed). The rows are read under this reader's own row-level security, as the year is, so the event gave nothing away.
  *
- * Says whether it did. False means the lists are to be read as before: no list is held to patch, or the read failed. Nothing is
- * patched from a read that failed.
+ * Says whether it did. False means the lists are to be read as before: no list is held to patch, the read failed, or a read of
+ * the year is on its way (it began before this change and would land on top of it). Nothing is patched in those cases.
  */
-export async function readHeard(queryClient: QueryClient, ids: readonly string[]): Promise<boolean> {
+export async function readHeard(
+  queryClient: QueryClient,
+  ids: readonly string[],
+  current: (id: string) => boolean = () => true,
+): Promise<boolean> {
   if (yearLists(queryClient).length === 0) return false;
   const { data, error } = await createClient().from("MasterLessons").select(MASTER_LESSON_SELECT).in("id", [...ids]);
   if (error || !Array.isArray(data)) return false;
+  // A read of the year that began before this change would land on top of it, with the lessons as they stood when it
+  // began, and nothing would mend them. The year is read again instead: the caller's invalidation stops the read on its
+  // way and starts another.
+  if (yearIsBeingRead(queryClient)) return false;
   const found = new Set<string>();
   for (const row of data as unknown as LessonRow[]) {
     found.add(row.id);
-    putLesson(queryClient, lessonOfRow(row));
+    // `current`: whether no later event has named the lesson since this read was asked for. A read that is answered after
+    // the later one would put the lesson as it stood before.
+    if (current(row.id)) putLesson(queryClient, lessonOfRow(row));
   }
-  for (const id of ids) if (!found.has(id)) removeLesson(queryClient, id);
+  for (const id of ids) if (!found.has(id) && current(id)) removeLesson(queryClient, id);
   return true;
 }

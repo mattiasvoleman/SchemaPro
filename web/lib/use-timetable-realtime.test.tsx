@@ -6,7 +6,7 @@
 // `API_BASE_URL` is captured at module-evaluation time, so every test stubs
 // the env var and re-imports the hook through a fresh module registry.
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, QueryObserver } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -59,8 +59,10 @@ interface SetupOptions {
   /** Holds the socket.io-client dynamic import open until resolved. */
   gateImport?: Promise<void>;
   /** What a read of lessons by id answers: the rows, or an error. Absent, a read is a test's mistake. */
-  read?: (ids: string[]) => { data: unknown; error: { message: string } | null };
+  read?: (ids: string[]) => ReadAnswer | Promise<ReadAnswer>;
 }
+
+type ReadAnswer = { data: unknown; error: { message: string } | null };
 
 async function setup(options: SetupOptions = {}) {
   const { token = "tok-1", session, gateImport, read } = options;
@@ -406,5 +408,65 @@ describe("a collaborator's change of a few lessons", () => {
     // The lesson a failed read did not find is not a lesson somebody removed.
     expect(held(queryClient).map((l) => l.id)).toEqual(["a", "gone"]);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["masterLessons"] });
+  });
+
+  it("reads the year, and does not let the one on its way land on top, when a read of the year began before the change", async () => {
+    // The server holds one lesson; the year's read is slow and reads the lesson as it stood when it began.
+    const server = { day: 1 };
+    const { socket, queryClient } = await setup({
+      read: (ids) => ({ data: ids.map((id) => row(id, { dayOfWeek: server.day })), error: null }),
+    });
+    const slow = deferred<void>();
+    let reads = 0;
+    queryClient.setQueryData(YEAR, [lesson("a")]);
+    const observer = new QueryObserver(queryClient, {
+      queryKey: YEAR,
+      staleTime: 0,
+      queryFn: async () => {
+        reads += 1;
+        const asItStood = server.day;
+        if (reads === 1) await slow.promise;
+        return [lesson("a", { dayOfWeek: asItStood })];
+      },
+    });
+    const stop = observer.subscribe(() => undefined);
+    await waitFor(() => expect(reads).toBe(1));
+
+    // A colleague moves the lesson while the year is being read, and the page hears of it.
+    server.day = 3;
+    await waitFor(() => expect(socket.on).toHaveBeenCalledWith("master_timetable_updated", expect.any(Function)));
+    act(() => socket.fire("master_timetable_updated", { lessonIds: ["a"] }));
+    // The page has answered the event: the lesson laid in, or the year read again.
+    await waitFor(() => expect(held(queryClient)[0]!.dayOfWeek === 3 || reads >= 2).toBe(true));
+    // The read that began first now comes in, with the lesson as it stood before.
+    slow.resolve();
+    await flush();
+
+    await waitFor(() => expect(held(queryClient)[0]!.dayOfWeek).toBe(3));
+    await flush();
+    expect(held(queryClient)[0]!.dayOfWeek).toBe(3);
+    stop();
+  });
+
+  it("lays the answer of the later event, whichever of two reads of one lesson comes back last", async () => {
+    // Two changes of one lesson, heard in order; the first read is slow and the second is not.
+    const first = deferred<ReadAnswer>();
+    const second = deferred<ReadAnswer>();
+    const answers = [first, second];
+    const { socket, queryClient, reads } = await setup({ read: () => answers.shift()!.promise });
+    queryClient.setQueryData(YEAR, [lesson("a")]);
+    await waitFor(() => expect(socket.on).toHaveBeenCalledWith("master_timetable_updated", expect.any(Function)));
+
+    act(() => socket.fire("master_timetable_updated", { lessonIds: ["a"] }));
+    await waitFor(() => expect(reads).toHaveLength(1));
+    act(() => socket.fire("master_timetable_updated", { lessonIds: ["a"] }));
+    await waitFor(() => expect(reads).toHaveLength(2));
+    second.resolve({ data: [row("a", { dayOfWeek: 3 })], error: null });
+    await flush();
+    first.resolve({ data: [row("a", { dayOfWeek: 2 })], error: null });
+    await flush();
+    await flush();
+
+    expect(held(queryClient).map((l) => [l.id, l.dayOfWeek])).toEqual([["a", 3]]);
   });
 });
