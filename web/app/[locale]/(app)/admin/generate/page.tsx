@@ -601,7 +601,7 @@ export default function GeneratePage() {
         return;
       }
       // A schedule to start from that cannot be one (a version that is not the year's, a year with none before it): said by its code.
-      const refusal = error instanceof ApiError ? endingText(error.code ?? null, error.params) : null;
+      const refusal = error instanceof ApiError ? endingText(error.code ?? null, error.params ?? null) : null;
       toast.error(refusal ?? apiErrorText(error, tCommon));
     }
   };

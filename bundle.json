@@ -1,0 +1,761 @@
+{
+  "mode": "tiered-route-own",
+  "flatBudgetKb": null,
+  "sharedGzipKb": 128.7,
+  "sharedBudgetKb": 132,
+  "sharedOverBudget": false,
+  "legacyPolyfillGzipKb": 38.6,
+  "worstRoute": "/[locale]/(app)/admin/timetable/page",
+  "worstRouteOnlyKb": 183.1,
+  "routeCount": 93,
+  "routes": [
+    {
+      "route": "/[locale]/(app)/admin/timetable/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 183.1,
+      "totalKb": 311.8,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/people/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 180.1,
+      "totalKb": 308.8,
+      "chunks": 22
+    },
+    {
+      "route": "/[locale]/(app)/admin/placements/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 179.2,
+      "totalKb": 307.9,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/timplan/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 178.3,
+      "totalKb": 307,
+      "chunks": 22
+    },
+    {
+      "route": "/[locale]/(app)/admin/staffing/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 178.2,
+      "totalKb": 306.9,
+      "chunks": 22
+    },
+    {
+      "route": "/[locale]/(app)/admin/analysis/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 177.6,
+      "totalKb": 306.2,
+      "chunks": 22
+    },
+    {
+      "route": "/[locale]/(app)/admin/requirements/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 177.4,
+      "totalKb": 306.1,
+      "chunks": 22
+    },
+    {
+      "route": "/[locale]/(app)/admin/constraints/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 175.8,
+      "totalKb": 304.5,
+      "chunks": 22
+    },
+    {
+      "route": "/[locale]/(app)/admin/activities/exams/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 174.3,
+      "totalKb": 303,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/groups/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 173.9,
+      "totalKb": 302.6,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/years/rollover/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 173.8,
+      "totalKb": 302.5,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/activities/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 173.4,
+      "totalKb": 302.1,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/teacher-absence/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 173.2,
+      "totalKb": 301.9,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/supervision/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 173,
+      "totalKb": 301.7,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/rooms/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 172.6,
+      "totalKb": 301.2,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/publishing/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 172,
+      "totalKb": 300.7,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/cover/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 171.6,
+      "totalKb": 300.3,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/gaps/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 170.6,
+      "totalKb": 299.3,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/subjects/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 170.3,
+      "totalKb": 299,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/generate/candidates/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 169.6,
+      "totalKb": 298.3,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/cancellations/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 169.6,
+      "totalKb": 298.3,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/generate/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 168.5,
+      "totalKb": 297.2,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/lunch-servings/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 168,
+      "totalKb": 296.7,
+      "chunks": 21
+    },
+    {
+      "route": "/[locale]/(app)/admin/breaks/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 167.5,
+      "totalKb": 296.1,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/reports/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 166.4,
+      "totalKb": 295.1,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/schemavisaren/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 166.3,
+      "totalKb": 295,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/rasts/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 165.6,
+      "totalKb": 294.3,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/timplan/tackning/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 165,
+      "totalKb": 293.7,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/frame-times/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 164.5,
+      "totalKb": 293.2,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/class-teachers/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 164.3,
+      "totalKb": 293,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/schedule-exchange/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 162.6,
+      "totalKb": 291.3,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/integrations/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 160.5,
+      "totalKb": 289.2,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/admin/dataskydd/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 160.4,
+      "totalKb": 289.1,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/admin/years/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 160.3,
+      "totalKb": 289,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/teacher/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 158.9,
+      "totalKb": 287.6,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/admin/klassbok/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 158.8,
+      "totalKb": 287.5,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/teacher/klassbok/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 158.8,
+      "totalKb": 287.5,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/student/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 158.2,
+      "totalKb": 286.9,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/teacher/klass-schema/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 158.2,
+      "totalKb": 286.9,
+      "chunks": 17
+    },
+    {
+      "route": "/[locale]/(app)/admin/school-day/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 158.1,
+      "totalKb": 286.8,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/teacher/franvaro/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 158,
+      "totalKb": 286.7,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/admin/setup/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 157.9,
+      "totalKb": 286.6,
+      "chunks": 20
+    },
+    {
+      "route": "/[locale]/(app)/admin/room-bookings/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 157.5,
+      "totalKb": 286.2,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/admin/staffing/uppdragsbeskrivning/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 157.3,
+      "totalKb": 286,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/admin/lessons/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 157.3,
+      "totalKb": 285.9,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/teacher/tjanst/uppdragsbeskrivning/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 157.2,
+      "totalKb": 285.9,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/teacher/school-day/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 157,
+      "totalKb": 285.7,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/teacher/checklists/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 156.5,
+      "totalKb": 285.2,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/admin/checklists/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 156.5,
+      "totalKb": 285.2,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/admin/meals/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 155.9,
+      "totalKb": 284.6,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/teacher/tjanst/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 155.8,
+      "totalKb": 284.5,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/teacher/rooms/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 155.7,
+      "totalKb": 284.4,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/admin/acknowledgements/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 155.5,
+      "totalKb": 284.1,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/admin/leave/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 155.4,
+      "totalKb": 284.1,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/teacher/resources/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 154.8,
+      "totalKb": 283.5,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/admin/utilisation/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 154.7,
+      "totalKb": 283.4,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/guardian/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 154.6,
+      "totalKb": 283.3,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/teacher/ledighet/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 154.5,
+      "totalKb": 283.2,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/teacher/acknowledgements/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 154.1,
+      "totalKb": 282.8,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/teacher/crisis/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 153.2,
+      "totalKb": 281.9,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/teacher/attendance/[lessonId]/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 152.8,
+      "totalKb": 281.5,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/admin/reporting-rate/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 152.6,
+      "totalKb": 281.3,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/admin/absence-watch/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 152.3,
+      "totalKb": 281,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/admin/publishing/print/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 152.3,
+      "totalKb": 281,
+      "chunks": 17
+    },
+    {
+      "route": "/[locale]/(app)/student/attendance/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 152.3,
+      "totalKb": 281,
+      "chunks": 19
+    },
+    {
+      "route": "/[locale]/(app)/admin/external-bookings/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 152,
+      "totalKb": 280.7,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/admin/resources/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 151.7,
+      "totalKb": 280.4,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/teacher/absence-stats/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 151.3,
+      "totalKb": 279.9,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/teacher/attendance/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 150.3,
+      "totalKb": 279,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/admin/calendar-feeds/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 150.3,
+      "totalKb": 279,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/calendar-feed/page",
+      "tier": "other",
+      "budgetKb": 170,
+      "routeOnlyKb": 150,
+      "totalKb": 278.7,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/teacher/absence-watch/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 149.3,
+      "totalKb": 278,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/admin/crisis/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 149.3,
+      "totalKb": 278,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/guardian/absence-watch/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 149.3,
+      "totalKb": 277.9,
+      "chunks": 18
+    },
+    {
+      "route": "/[locale]/(app)/teacher/lektion/[lessonId]/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 148.2,
+      "totalKb": 276.9,
+      "chunks": 17
+    },
+    {
+      "route": "/[locale]/(app)/guardian/acknowledgements/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 147.4,
+      "totalKb": 276.1,
+      "chunks": 17
+    },
+    {
+      "route": "/[locale]/(app)/teacher/reporting-rate/page",
+      "tier": "core",
+      "budgetKb": 170,
+      "routeOnlyKb": 146.7,
+      "totalKb": 275.4,
+      "chunks": 17
+    },
+    {
+      "route": "/[locale]/(app)/notifications/page",
+      "tier": "other",
+      "budgetKb": 170,
+      "routeOnlyKb": 146.7,
+      "totalKb": 275.4,
+      "chunks": 17
+    },
+    {
+      "route": "/[locale]/(app)/admin/intake/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 145.9,
+      "totalKb": 274.6,
+      "chunks": 17
+    },
+    {
+      "route": "/[locale]/(app)/admin/page",
+      "tier": "admin",
+      "budgetKb": 190,
+      "routeOnlyKb": 144.3,
+      "totalKb": 273,
+      "chunks": 17
+    },
+    {
+      "route": "/[locale]/huvudman/page",
+      "tier": "other",
+      "budgetKb": 170,
+      "routeOnlyKb": 33.5,
+      "totalKb": 162.2,
+      "chunks": 10
+    },
+    {
+      "route": "/[locale]/pseudonymisera/page",
+      "tier": "other",
+      "budgetKb": 170,
+      "routeOnlyKb": 27.4,
+      "totalKb": 156.1,
+      "chunks": 9
+    },
+    {
+      "route": "/[locale]/page",
+      "tier": "system",
+      "budgetKb": 50,
+      "routeOnlyKb": 21.6,
+      "totalKb": 150.3,
+      "chunks": 9
+    },
+    {
+      "route": "/[locale]/(auth)/login/page",
+      "tier": "auth",
+      "budgetKb": 110,
+      "routeOnlyKb": 10.6,
+      "totalKb": 139.3,
+      "chunks": 9
+    },
+    {
+      "route": "/[locale]/(auth)/update-password/page",
+      "tier": "auth",
+      "budgetKb": 110,
+      "routeOnlyKb": 9.9,
+      "totalKb": 138.6,
+      "chunks": 9
+    },
+    {
+      "route": "/[locale]/(auth)/forgot-password/page",
+      "tier": "auth",
+      "budgetKb": 110,
+      "routeOnlyKb": 9.8,
+      "totalKb": 138.5,
+      "chunks": 9
+    },
+    {
+      "route": "/[locale]/(auth)/no-profile/page",
+      "tier": "auth",
+      "budgetKb": 110,
+      "routeOnlyKb": 6.4,
+      "totalKb": 135.1,
+      "chunks": 9
+    },
+    {
+      "route": "/[locale]/tillganglighet/page",
+      "tier": "other",
+      "budgetKb": 170,
+      "routeOnlyKb": 5.7,
+      "totalKb": 134.4,
+      "chunks": 8
+    },
+    {
+      "route": "/_global-error/page",
+      "tier": "system",
+      "budgetKb": 50,
+      "routeOnlyKb": 3.5,
+      "totalKb": 132.1,
+      "chunks": 6
+    },
+    {
+      "route": "/_not-found/page",
+      "tier": "system",
+      "budgetKb": 50,
+      "routeOnlyKb": 3.5,
+      "totalKb": 132.1,
+      "chunks": 6
+    },
+    {
+      "route": "/v/[token]/embed/page",
+      "tier": "public",
+      "budgetKb": 6,
+      "routeOnlyKb": 3.5,
+      "totalKb": 132.1,
+      "chunks": 6
+    },
+    {
+      "route": "/v/[token]/page",
+      "tier": "public",
+      "budgetKb": 6,
+      "routeOnlyKb": 3.5,
+      "totalKb": 132.1,
+      "chunks": 6
+    },
+    {
+      "route": "/v/page",
+      "tier": "public",
+      "budgetKb": 6,
+      "routeOnlyKb": 3.5,
+      "totalKb": 132.1,
+      "chunks": 6
+    }
+  ],
+  "failures": 0,
+  "sharedMarginBytes": 3388,
+  "warnBytes": 2048,
+  "nearBudget": []
+}
