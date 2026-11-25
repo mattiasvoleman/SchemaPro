@@ -2327,6 +2327,7 @@
     "lessonIsPlaced": "Lektionen är förlagd, och Generera skriver om den från förläggningen. Ändra den i Förlägg i veckan (eller på timplansposten), eller för ett parallellt block med Förlägg … under Block på sidan Timplansposter.",
     "judgeChecking": "Kontrollerar mot resten av schemat …",
     "judgeOk": "Kontrollen hittar inget som hindrar.",
+    "judgeOkStaffing": "Lärarens behörighet för ämnet prövas först när du sparar.",
     "judgeRefused": "Det går inte att spara så här:",
     "judgeFailed": "Kontrollen svarade inte. Spara prövar ändå.",
     "dialogLoadFailed": "Dialogrutan kunde inte öppnas. Inget är ändrat – försök igen.",

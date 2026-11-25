@@ -152,6 +152,27 @@ describe("Justera lektion asks the judge while its fields are filled in", () => 
     expect(document.getElementById("edit-day")!.getAttribute("aria-invalid")).toBeNull();
   });
 
+  it("says that a new teacher's behörighet is asked only by the save, where the check finds nothing in the way", async () => {
+    post.mockResolvedValue(answer([]));
+    draw({ ...standing, teacherId: "bo" });
+    await settle();
+    expect(post.mock.calls[0]![1]).toEqual({ moves: [{ lessonId: "l-1", teacherId: "bo" }] });
+    expect(screen.getByRole("status").textContent).toBe(
+      "Kontrollen hittar inget som hindrar. Lärarens behörighet för ämnet prövas först när du sparar.",
+    );
+  });
+
+  it("says nothing of behörighet when the teacher is not changed, or is taken off", async () => {
+    post.mockResolvedValue(answer([]));
+    const first = draw({ ...standing, dayOfWeek: "2" });
+    await settle();
+    expect(screen.getByRole("status").textContent).toBe("Kontrollen hittar inget som hindrar.");
+    first.unmount();
+    draw({ ...standing, teacherId: NONE });
+    await settle();
+    expect(screen.getByRole("status").textContent).toBe("Kontrollen hittar inget som hindrar.");
+  });
+
   it("says a förlagd lesson in the sentence of a refused save", async () => {
     post.mockResolvedValue(answer([], { placed: true }));
     draw({ ...standing, dayOfWeek: "2" });

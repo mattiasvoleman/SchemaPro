@@ -2327,6 +2327,7 @@
     "lessonIsPlaced": "The lesson is placed, and Generera writes it again from the placement. Change it in Place in the week (or on its curriculum entry), or for a parallel block with Place lessons … under Blocks on the Curriculum entries page.",
     "judgeChecking": "Checking against the rest of the timetable …",
     "judgeOk": "The check finds nothing in the way.",
+    "judgeOkStaffing": "The teacher's qualification for the subject is checked only when you save.",
     "judgeRefused": "This cannot be saved as it stands:",
     "judgeFailed": "The check did not answer. Saving checks it anyway.",
     "dialogLoadFailed": "The dialog could not be opened. Nothing has changed – try again.",

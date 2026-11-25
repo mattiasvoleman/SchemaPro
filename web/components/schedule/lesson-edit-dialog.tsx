@@ -31,7 +31,7 @@ import { useTranslations } from "next-intl";
 import { ArrowLeftRight, Copy, Loader2, Lock, ParkingSquare, Trash2 } from "lucide-react";
 import type { LessonRecurrence, MasterLesson, Person, Room } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { type MoveRefusal, useLessonJudgement } from "@/lib/lesson-judgement";
+import { type MoveRefusal, moveOf, useLessonJudgement } from "@/lib/lesson-judgement";
 import { problemSentence } from "@/lib/problem-codes";
 import { RecurrenceFields } from "@/components/schedule/recurrence-fields";
 import { Button } from "@/components/ui/button";
@@ -136,6 +136,9 @@ export function LessonEditDialog({
   const verdict = judged.status === "done" ? judged.judgement : null;
   const refusals = verdict?.refusals ?? [];
   const marks = marksOf(refusals);
+  // A teacher the fields put on the lesson anew is asked of the staffing policy (behörighet) by the save and not by the judge, which a
+  // school that refuses the unqualified answers 409 to: the "nothing in the way" must not be read as a promise about that.
+  const newTeacher = lesson ? typeof moveOf(lesson, draft, none)?.teacherId === "string" : false;
   // One field is marked as the reason names it, and says which sentence to read: the status below the fields.
   const marked = (on: boolean) => ({
     "aria-invalid": on || undefined,
@@ -281,7 +284,9 @@ export function LessonEditDialog({
                 </ul>
               </div>
             ) : null}
-            {verdict && !verdict.placed && refusals.length === 0 ? <p className="text-xs text-muted-foreground">{t("judgeOk")}</p> : null}
+            {verdict && !verdict.placed && refusals.length === 0 ? (
+              <p className="text-xs text-muted-foreground">{newTeacher ? `${t("judgeOk")} ${t("judgeOkStaffing")}` : t("judgeOk")}</p>
+            ) : null}
           </div>
           <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
             <div className="flex items-center gap-2">
