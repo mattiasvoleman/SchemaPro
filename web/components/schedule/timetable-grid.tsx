@@ -512,8 +512,10 @@ const LessonCard = memo(function LessonCard({
         (hasClick || editable) && !lesson.duty
           ? "cursor-pointer hover:shadow-md"
           : "cursor-default",
-        // A finger on a card that drags must not scroll the page; on a phone nothing drags, and it may.
-        drags ? "touch-none" : "touch-pan-y",
+        // A finger on a card that drags must not scroll the page; on a phone nothing drags, and it may. A grid that is only read
+        // (a teacher's or a pupil's week, 720 px wide in a box that scrolls sideways) has no say in the finger: pan-y there would
+        // stop a swipe that starts on a card from scrolling the week sideways, and from zooming.
+        drags ? "touch-none" : editable && "touch-pan-y",
         /*
          * A cancelled lesson keeps full-strength text: struck
          * through, untinted, its edge dashed. Faded to 45 % it
