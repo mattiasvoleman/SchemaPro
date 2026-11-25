@@ -157,8 +157,9 @@ function availabilityResourceOf(message: string): 'TEACHER' | 'ROOM' | 'GROUP' {
   return 'GROUP';
 }
 
+// The dates a lesson runs in, and not which weeks of them (`recurrence`): a meal is read by dates (lunch-window.ts windowOf) and an
+// other school's hold has no weeks, so every week, the odd ones and the even ones stand in the same place as far as a rule can see.
 const sameWindow = (a: JudgedCandidate, b: JudgedCandidate): boolean =>
-  (a.recurrence ?? 'ALL_WEEKS') === (b.recurrence ?? 'ALL_WEEKS') &&
   (a.startDate?.getTime() ?? null) === (b.startDate?.getTime() ?? null) &&
   (a.endDate?.getTime() ?? null) === (b.endDate?.getTime() ?? null);
 const sameGroups = (a: JudgedCandidate, b: JudgedCandidate): boolean => {
