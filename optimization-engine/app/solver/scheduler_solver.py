@@ -4264,8 +4264,13 @@ class SchedulerSolver:
                 # without a word.
                 what = "day"
             else:
+                # Undantag med flit: a lock the school let stand over the meal on
+                # purpose (FixedLesson.exempt_from_lunch) is the one thing a meal
+                # placed by hand may lie on. Nothing else is left out here: the
+                # class's reservations below are read as they were.
                 locked = self._lunch_starts_blocked_by_fixed_lessons(
-                    request.fixed_lessons, {group_id}, sharing, slot, slot, lunch_slots,
+                    [lock for lock in request.fixed_lessons if not lock.exempt_from_lunch],
+                    {group_id}, sharing, slot, slot, lunch_slots,
                 ).get(key)
                 closed, covered = self._lunch_starts_blocked_by_constraints(
                     request.constraints, {group_id}, slot, slot, slot + lunch_slots, lunch_slots,
