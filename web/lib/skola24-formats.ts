@@ -175,8 +175,9 @@ const PUPILS: FormatDescriptor = {
   name: "Importera elever till klasser (Arkiv – Import – Urklipp – Klass/elev)",
   product: "Skola24 Schema",
   kind: "students",
-  // "Programmet har känt igen den första typen, som är tab-separerad": a table copied out of Excel.
-  separator: doc(PAGE.pupils, "\t"),
+  // "Programmet har känt igen den första typen, som är tab-separerad": a sentence about the clipboard, not a file's separator. A table copied
+  // out of Excel is tab-separated, which is our reading of it (the reader never looks at this field: a pasted table is split on what it holds).
+  separator: read(PAGE.pupils, "\t"),
   encoding: null,
   // The example has headers on the first row ("Utelämna första raden" is ticked). One example is not a rule.
   headerRow: read(PAGE.pupils, "yes"),
