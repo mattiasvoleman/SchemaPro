@@ -15,6 +15,8 @@ import {
 import { useTranslations } from "next-intl";
 import { Check, Lock, TriangleAlert, X } from "lucide-react";
 import { layoutDay } from "@/lib/day-lanes";
+import { useLazyModule } from "@/lib/use-lazy-module";
+import type { LessonCommand } from "./board-keys";
 import { cn } from "@/lib/utils";
 
 export interface TimetableLesson {
@@ -168,6 +170,16 @@ interface TimetableGridProps {
   onBandMove?: (id: string, dayOfWeek: number, startMinutes: number) => void;
   /** A removable band's × pressed, or Delete on its grip. */
   onBandRemove?: (id: string) => void;
+  /**
+   * This grid is the board of the grundschema (an editable grid only): the arrow keys move FOCUS, and a lesson is first taken up
+   * (Space) and then moved with a marker and put down (Enter), in a module the grid fetches when it is editable (board-keys.tsx),
+   * which also draws the line that says what happened; and under 768 px one day is shown at a time, with nothing to drag, a
+   * lesson being opened by a tap. Until the module has come the arrows do nothing, so nothing is moved by a slip. Absent, the
+   * grid is what it always was: the arrows move the lesson at once (Förlägg i veckan, which has its own tests).
+   */
+  board?: boolean;
+  /** Lock, park and remove from the keyboard (the board only): the page's own writes. */
+  onLessonCommand?: (id: string, command: LessonCommand) => void;
   className?: string;
 }
 
@@ -335,15 +347,34 @@ function createCell<T>(initial: T): Cell<T> {
   };
 }
 
+/** Under 768 px (Tailwind's md): the board shows one day. False where there is no window to ask, as on the server. */
+const NARROW = "(max-width: 767px)";
+function useNarrow(on: boolean): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      if (!on || typeof window.matchMedia !== "function") return () => undefined;
+      const query = window.matchMedia(NARROW);
+      query.addEventListener("change", notify);
+      return () => query.removeEventListener("change", notify);
+    },
+    () => on && typeof window.matchMedia === "function" && window.matchMedia(NARROW).matches,
+    () => false,
+  );
+}
+
 interface LessonCardProps {
   lesson: PositionedLesson;
   dayStartMinutes: number;
   pxPerMinute: number;
   editable: boolean;
+  /** A pointer drags the card (an editable grid that is not a phone's): else a tap or a click opens it. */
+  drags: boolean;
   /** The page gave the grid an onLessonClick: a card is something to press. */
   hasClick: boolean;
   selected: boolean;
   isDragSource: boolean;
+  /** The one card in the tab order on the board (the arrows move it); absent where every card is a stop. */
+  tabIndex?: number;
   /** The day's name, "Måndag": what a screen reader hears before the time. */
   dayName: string;
   cancelledLabel: string;
@@ -380,9 +411,11 @@ const LessonCard = memo(function LessonCard({
   dayStartMinutes,
   pxPerMinute,
   editable,
+  drags,
   hasClick,
   selected,
   isDragSource,
+  tabIndex,
   dayName,
   cancelledLabel,
   selectedLabel,
@@ -427,19 +460,20 @@ const LessonCard = memo(function LessonCard({
   const factInk = lesson.cancelled ? "text-muted-foreground" : "text-foreground/80";
   // A duty opens nothing: a block, not a button (see `duty`).
   const Block = lesson.duty ? "div" : "button";
-  const opens = !editable && !lesson.duty && hasClick;
+  const opens = !drags && !lesson.duty && hasClick;
   return (
     <Block
       key={lesson.id}
       {...(lesson.duty ? {} : { type: "button" as const })}
       data-lesson-id={lesson.id}
+      tabIndex={lesson.duty ? undefined : tabIndex}
       onClick={
         // In editable mode clicks are resolved on pointerup
         // (drag vs click); otherwise plain click-to-open.
         opens ? () => onOpen(lesson.id) : undefined
       }
       onPointerDown={
-        editable ? (event) => onPointerDown(event, lesson.id) : undefined
+        drags ? (event) => onPointerDown(event, lesson.id) : undefined
       }
       onKeyDown={
         editable
@@ -478,7 +512,10 @@ const LessonCard = memo(function LessonCard({
         (hasClick || editable) && !lesson.duty
           ? "cursor-pointer hover:shadow-md"
           : "cursor-default",
-        editable && "touch-none",
+        // A finger on a card that drags must not scroll the page; on a phone nothing drags, and it may. A grid that is only read
+        // (a teacher's or a pupil's week, 720 px wide in a box that scrolls sideways) has no say in the finger: pan-y there would
+        // stop a swipe that starts on a card from scrolling the week sideways, and from zooming.
+        drags ? "touch-none" : editable && "touch-pan-y",
         /*
          * A cancelled lesson keeps full-strength text: struck
          * through, untinted, its edge dashed. Faded to 45 % it
@@ -624,7 +661,7 @@ const LessonCard = memo(function LessonCard({
       ) : null}
         </>
       )}
-      {editable ? (
+      {drags ? (
         <div className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
       ) : null}
     </Block>
@@ -706,6 +743,8 @@ function TimetableGridInner({
   onBandRemove,
   bands,
   behind,
+  board: boardProp,
+  onLessonCommand,
   className,
 }: TimetableGridInnerProps) {
   const t = useTranslations("common");
@@ -744,6 +783,20 @@ function TimetableGridInner({
    * grid again — all the cards of it.
    */
   const [ghostCell] = useState(() => createCell<GhostState | null>(null));
+  /*
+   * The board: the layer that does its keyboard is fetched when a writer opens the page, and the two things it needs of this
+   * component are the card that is in the tab order and the card that is in hand.
+   */
+  const wantsBoard = editable && boardProp === true;
+  // A layer that does not come (a dropped connection) leaves the grid as it was before the board: the arrows move the lesson, a
+  // finger drags, and the week is drawn whole. Without it a phone would have no way to choose a day, and a keyboard no way to move.
+  const [keysFailed, setKeysFailed] = useState(false);
+  const board = wantsBoard && !keysFailed;
+  const narrow = useNarrow(board);
+  const [chosenDay, setChosenDay] = useState<number | null>(null);
+  const keys = useLazyModule(() => import("./board-keys"), () => setKeysFailed(true), wantsBoard);
+  const [roving, setRoving] = useState<string | null>(null);
+  const [pickedId, setPickedId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   /*
    * A meal being dragged, in state of its own beside the lessons'. Not folded
@@ -780,6 +833,17 @@ function TimetableGridInner({
 
   const includeWeekend = lessons.some((lesson) => lesson.dayOfWeek > 5);
   const dayCount = includeWeekend ? 7 : 5;
+  /*
+   * The days that are drawn: all of them, or on a phone the one the person chose (today's, until they choose). A day is a column
+   * of its own either way, so nothing below is told apart but how many there are and which.
+   */
+  const shownDay = narrow ? Math.min(dayCount, chosenDay ?? (new Date().getDay() || 7)) : null;
+  const days = useMemo(
+    () => (shownDay ? [shownDay] : Array.from({ length: dayCount }, (_, i) => i + 1)),
+    [shownDay, dayCount],
+  );
+  /** A pointer drags a lesson, a meal or the edge of a lesson; on a phone it does not, and a tap opens the lesson. */
+  const drags = editable && !narrow;
 
   const { startHour, endHour } = useMemo(() => {
     // The bands count towards the bounds. A lunch at 07:30 or 16:30 drawn on a
@@ -847,13 +911,13 @@ function TimetableGridInner({
       const rect = body.getBoundingClientRect();
       const x = clientX - rect.left - TIME_AXIS_PX;
       const y = clientY - rect.top;
-      const dayWidth = (rect.width - TIME_AXIS_PX) / dayCount;
+      const dayWidth = (rect.width - TIME_AXIS_PX) / days.length;
       if (dayWidth <= 0) return null;
-      const day = Math.min(dayCount, Math.max(1, Math.floor(x / dayWidth) + 1));
+      const day = days[Math.min(days.length - 1, Math.max(0, Math.floor(x / dayWidth)))]!;
       const minute = dayStartMinutes + y / pxPerMinute;
       return { day, minute };
     },
-    [dayCount, dayStartMinutes, pxPerMinute],
+    [days, dayStartMinutes, pxPerMinute],
   );
 
   const updateGhost = useCallback(
@@ -1111,7 +1175,7 @@ function TimetableGridInner({
   }, [bandDraggingId, locate, dayStartMinutes, dayEndMinutes, onBandMove]);
 
   const startBandDrag = (event: React.PointerEvent, band: TimetableBand) => {
-    if (!editable || !onBandMove || event.button !== 0) return;
+    if (!drags || !onBandMove || event.button !== 0) return;
     event.preventDefault();
     // The column behind the band creates a lesson on a click. This press is
     // the meal's, and must not become that.
@@ -1161,7 +1225,7 @@ function TimetableGridInner({
   };
 
   const startDrag = (event: React.PointerEvent, lesson: TimetableLesson) => {
-    if (!editable || event.button !== 0) return;
+    if (!drags || event.button !== 0) return;
     event.preventDefault();
 
     const target = event.currentTarget as HTMLElement;
@@ -1188,13 +1252,15 @@ function TimetableGridInner({
    * editor. Moves are validated before being applied.
    */
   const handleLessonKeyOn = (event: React.KeyboardEvent, lesson: TimetableLesson) => {
+    // On the board a plain Space takes a lesson up (board-keys.tsx), and the arrows are focus: what is left here is open and select.
+    if (board && (event.key === " ") !== event.shiftKey && event.key !== "Enter") return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       if (event.shiftKey && onToggleSelect) onToggleSelect(lesson.id);
       else if (onLessonClick) onLessonClick(lesson);
       return;
     }
-    if (!onLessonChange) return;
+    if (!onLessonChange || board) return;
 
     const duration = lesson.endMinutes - lesson.startMinutes;
     let day = lesson.dayOfWeek;
@@ -1269,10 +1335,22 @@ function TimetableGridInner({
     [tDays],
   );
 
+  /*
+   * The one card of the board in the tab order: the one last focused, or the first of the week. A week of 800 cards is not 800 tab
+   * stops, and the arrows go the rest of the way.
+   */
+  let rovingTarget: string | undefined;
+  if (board) {
+    const inView = (lesson: TimetableLesson) => !lesson.duty && (!shownDay || lesson.dayOfWeek === shownDay);
+    const kept = roving ? lessonById.get(roving) : undefined;
+    rovingTarget = kept && inView(kept) ? kept.id : lessons.find(inView)?.id;
+  }
+
   const hours: number[] = [];
   for (let h = startHour; h <= endHour; h++) hours.push(h);
 
   return (
+    <>
     <div
       tabIndex={drawnToMinutes !== undefined && !lessons.some((lesson) => !lesson.duty) ? 0 : undefined}
       className={cn(
@@ -1281,8 +1359,15 @@ function TimetableGridInner({
         className,
       )}
     >
-      <div className="min-w-[720px]">
-        {/* Header row */}
+      <div className={narrow ? undefined : "min-w-[720px]"}>
+        {/* Header row: the days, or on a phone the buttons that choose one */}
+        {narrow ? (
+          keys ? (
+            <keys.DayTabs lessons={lessons} dayCount={dayCount} shown={shownDay} onChoose={setChosenDay} />
+          ) : (
+            <div className="min-h-11 border-b" />
+          )
+        ) : (
         <div
           className="grid border-b"
           style={{ gridTemplateColumns: `3.5rem repeat(${dayCount}, 1fr)` }}
@@ -1324,13 +1409,14 @@ function TimetableGridInner({
             );
           })}
         </div>
+        )}
 
         {/* Body */}
         <div
           ref={bodyRef}
           className="relative grid"
           style={{
-            gridTemplateColumns: `3.5rem repeat(${dayCount}, 1fr)`,
+            gridTemplateColumns: `3.5rem repeat(${days.length}, 1fr)`,
             height: `${gridHeight}px`,
           }}
         >
@@ -1348,8 +1434,7 @@ function TimetableGridInner({
           </div>
 
           {/* Day columns */}
-          {Array.from({ length: dayCount }, (_, i) => {
-            const day = i + 1;
+          {days.map((day) => {
             const dayLessons = byDay.get(day) ?? [];
             return (
               <div
@@ -1463,9 +1548,11 @@ function TimetableGridInner({
                     dayStartMinutes={dayStartMinutes}
                     pxPerMinute={pxPerMinute}
                     editable={editable}
+                    drags={drags}
                     hasClick={hasClick}
                     selected={selectedIds?.has(lesson.id) ?? false}
-                    isDragSource={draggingId === lesson.id}
+                    isDragSource={draggingId === lesson.id || pickedId === lesson.id}
+                    tabIndex={board ? (rovingTarget === lesson.id ? 0 : -1) : undefined}
                     dayName={dayNames[lesson.dayOfWeek] ?? ""}
                     cancelledLabel={cancelledLabel}
                     selectedLabel={selectedLabel}
@@ -1488,5 +1575,27 @@ function TimetableGridInner({
         </div>
       </div>
     </div>
+    {board && keys ? (
+      <keys.BoardKeys
+        lessons={lessons}
+        bodyRef={bodyRef}
+        ghost={ghostCell}
+        dayCount={dayCount}
+        shownDay={shownDay}
+        showDay={setChosenDay}
+        dayStartMinutes={dayStartMinutes}
+        dayEndMinutes={dayEndMinutes}
+        validateChange={validateChange}
+        onLessonChange={onLessonChange}
+        onInvalidDrop={onInvalidDrop}
+        onLessonCommand={onLessonCommand}
+        setRoving={setRoving}
+        setPicked={setPickedId}
+        followFocus={(id) => {
+          refocusRef.current = { id, until: Date.now() + 10_000 };
+        }}
+      />
+    ) : null}
+    </>
   );
 }
