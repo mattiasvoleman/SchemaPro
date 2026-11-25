@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeXlsx } from "@/lib/__fixtures__/xlsx-builder";
@@ -250,6 +250,39 @@ describe("the tool, a file at a time", () => {
       await addFile(user, csv("lektioner.csv", FILE));
       expect(await screen.findByLabelText(sv["tool.wordsLabel"])).toHaveValue("");
     });
+
+    it("a file that is still being read when the button is pressed does not turn up on the emptied page afterwards", async () => {
+      const user = setup();
+      await addFile(user, csv("lektioner.csv", FILE));
+      await screen.findByRole("button", { name: sv["tool.run"] });
+      // A second file whose bytes arrive late: the page says it is reading, and the button is on the page meanwhile.
+      let arrive: () => void = () => undefined;
+      const late = new Promise<void>((resolve) => {
+        arrive = resolve;
+      });
+      const slow = csv("sent.csv", FILE);
+      const slice = slow.slice.bind(slow);
+      (slow as unknown as { slice: (...args: number[]) => Blob }).slice = (...args: number[]) => {
+        const part = slice(...args);
+        const bytes = part.arrayBuffer.bind(part);
+        (part as unknown as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer = async () => {
+          await late;
+          return bytes();
+        };
+        return part;
+      };
+      await addFile(user, slow);
+      expect(screen.getByText(sv["tool.reading"])).toBeInTheDocument();
+      await user.click(clearAll()[0]!);
+      expect(screen.queryByRole("button", { name: sv["tool.run"] })).not.toBeInTheDocument();
+      await act(async () => {
+        arrive();
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      });
+      expect(screen.queryAllByText(/sent\.csv/)).toHaveLength(0);
+      expect(screen.queryByRole("button", { name: sv["tool.run"] })).not.toBeInTheDocument();
+      expect(clearAll()).toHaveLength(0);
+    });
   });
 });
 
@@ -294,6 +327,22 @@ describe("what a translating browser is not given: the file's own text", () => {
     expectMarked(/Vi ses kl 8/, "a line of the preview");
   });
 
+  it("in the two boxes the user types into: the pasted table and the user's own words, whose text React keeps as the text of the box", async () => {
+    const user = setup();
+    await user.click(screen.getByLabelText(sv["tool.pasteLabel"]));
+    await user.paste("Anna Svensson\t7A");
+    await addFile(user, csv("lektioner.csv", FILE));
+    await user.type(await screen.findByLabelText(sv["tool.wordsLabel"]), "Karin Åberg");
+    for (const [label, typed] of [[sv["tool.pasteLabel"], "Anna Svensson"], [sv["tool.wordsLabel"], "Karin Åberg"]] as const) {
+      const box = screen.getByLabelText(label);
+      // A textarea's text is a text node of the page (React writes the typed text to it), so it is offered to a translator like any other.
+      expect(box.textContent, label).toContain(typed);
+      expect(box.closest('[translate="no"]'), `${label}: the box is offered to a translator`).not.toBeNull();
+      // And the browser is told not to keep what is typed in it among the form data it restores (or writes into a saved session).
+      expect(box, label).toHaveAttribute("autocomplete", "off");
+    }
+  });
+
   it("marks nothing else on the page: the page's own sentences stay translatable", async () => {
     const user = setup();
     await runFile(user);
@@ -302,6 +351,22 @@ describe("what a translating browser is not given: the file's own text", () => {
       expect(found.length, label).toBeGreaterThan(0);
       for (const { element, marked } of found) expect(marked, `${label} (<${element.tagName.toLowerCase()}>)`).toBe(false);
     }
+  });
+
+  it("in the sentence about a file that could not be read, or whose hidden sheets were left: the file's name is marked and the sentence round it is not", async () => {
+    const user = setup();
+    const book = await makeXlsx({ sheets: [{ name: "Lektioner", rows: [["Lärare"], ["Anna Svensson"]] }, { name: "Dolt", hidden: true, rows: [["hemligt"]] }] });
+    await user.upload(screen.getByLabelText(sv["tool.chooseFiles"]), [csv("Elevlista Anna Svensson.csv", ""), new File([book as unknown as BlobPart], "Åberg Karin.xlsx")]);
+    await screen.findByText(/dolt blad/);
+    const lines = within(screen.getByRole("alert")).getAllByRole("listitem");
+    expect(lines).toHaveLength(2);
+    for (const [line, name] of [[lines[0]!, "Elevlista Anna Svensson.csv"], [lines[1]!, "Åberg Karin.xlsx"]] as const) {
+      expect(line.closest('[translate="no"]'), `${name}: the whole sentence is marked`).toBeNull();
+      const marked = Array.from(line.querySelectorAll('[translate="no"]'));
+      expect(marked.map((element) => element.textContent), name).toEqual([name]);
+      expect(line.textContent!.replace(name, "").trim(), name).not.toBe("");
+    }
+    expect(lines[0]).toHaveTextContent("Elevlista Anna Svensson.csv: " + sv["problem.empty"]);
   });
 });
 

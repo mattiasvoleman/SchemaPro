@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Treatment } from "@/lib/pseudonym-headers";
 import { parseSource, type InputSource, type ParseFailure } from "@/lib/pseudonym-input";
-import { sayWith, type Labels, type LabelKey } from "@/lib/pseudonym-labels";
+import { sayWith, type Labels, type LabelKey, type Say } from "@/lib/pseudonym-labels";
+import type { MessageValues } from "@/lib/pseudonym-message";
 import { planFile, pseudonymise, type RunResult } from "@/lib/pseudonym-run";
 import { defaultOutName, type Entry } from "./entry";
 import { FileCard } from "./file-card";
@@ -29,24 +30,37 @@ function problemKey(failure: ParseFailure): LabelKey {
   }
 }
 
+/** A sentence about a file, in two halves round the file's name: the name is the file's own text (a name of a file can hold a name), the rest is the page's. */
+interface Problem {
+  before: string;
+  name: string;
+  after: string;
+}
+
+const NAME_AT = "\ue000";
+
+function aboutFile(say: Say, key: "problem.line" | "problem.hiddenSheets", name: string, values: MessageValues): Problem {
+  const [before = "", after = ""] = say(key, { ...values, name: NAME_AT }).split(NAME_AT);
+  return { before, name, after };
+}
+
 /**
  * The pseudonymiser, in the browser (Pseudonymiseraren, X1). Everything in this file and what it imports happens on this page: a file is read
  * with the File API, replaced in memory, and handed back as a download. Nothing is sent, stored or logged, which pseudonym-offline.test.ts reads
  * from the code, the component test runs with every way out replaced by a trap, and the page's own policy (connect-src 'none') makes the
  * browser refuse. The state lives in this component and goes with the tab; "Rensa allt" drops it at once.
  */
-export function PseudonymiserareTool({ labels, locale }: { labels: Labels; locale: string }) {
+function Tool({ labels, locale, onClear }: { labels: Labels; locale: string; onClear: () => void }) {
   const say = sayWith(labels, locale);
   const nextId = useRef(1);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [words, setWords] = useState("");
   const [pasted, setPasted] = useState("");
-  const [problems, setProblems] = useState<string[]>([]);
+  const [problems, setProblems] = useState<Problem[]>([]);
   const [reading, setReading] = useState(false);
   const [working, setWorking] = useState(false);
   const [result, setResult] = useState<RunResult | null>(null);
   const [confirmed, setConfirmed] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
   const resultHeading = useRef<HTMLHeadingElement>(null);
 
   // A result that has just been made is where the person is taken: the heading, which says so to a screen reader too.
@@ -64,7 +78,7 @@ export function PseudonymiserareTool({ labels, locale }: { labels: Labels; local
   const add = async (source: InputSource, shownName: string): Promise<void> => {
     const parsed = await parseSource(source);
     if (!parsed.ok) {
-      setProblems((current) => [...current, say("problem.line", { name: shownName, reason: say(problemKey(parsed)) })]);
+      setProblems((current) => [...current, aboutFile(say, "problem.line", shownName, { reason: say(problemKey(parsed)) })]);
       return;
     }
     const additions: Entry[] = parsed.inputs.map((input) => {
@@ -80,7 +94,7 @@ export function PseudonymiserareTool({ labels, locale }: { labels: Labels; local
       };
     });
     setEntries((current) => [...current, ...additions]);
-    if (parsed.hiddenSheets > 0) setProblems((current) => [...current, say("problem.hiddenSheets", { name: shownName, count: parsed.hiddenSheets })]);
+    if (parsed.hiddenSheets > 0) setProblems((current) => [...current, aboutFile(say, "problem.hiddenSheets", shownName, { count: parsed.hiddenSheets })]);
   };
 
   const addFiles = async (files: File[]): Promise<void> => {
@@ -106,14 +120,9 @@ export function PseudonymiserareTool({ labels, locale }: { labels: Labels; local
     setEntries((current) => current.map((entry) => (entry.id === id ? change(entry) : entry)));
   };
 
-  const clearAll = (): void => {
-    setEntries([]);
-    setWords("");
-    setPasted("");
-    setProblems([]);
-    stale();
-    if (fileInput.current !== null) fileInput.current.value = "";
-  };
+  // Not field by field: a file still being read when the button is pressed would put its table back on a page that has just been emptied, and the fields
+  // would keep what the browser itself holds for them (their history of edits). The whole instance is dropped and a new one starts.
+  const clearAll = onClear;
 
   const run = async (): Promise<void> => {
     setWorking(true);
@@ -157,7 +166,6 @@ export function PseudonymiserareTool({ labels, locale }: { labels: Labels; local
               {say("tool.chooseFiles")}
             </label>
             <input
-              ref={fileInput}
               id="file-input"
               type="file"
               multiple
@@ -178,7 +186,16 @@ export function PseudonymiserareTool({ labels, locale }: { labels: Labels; local
             <label htmlFor="paste-input" className={LABEL}>
               {say("tool.pasteLabel")}
             </label>
-            <textarea id="paste-input" className={TEXTAREA} value={pasted} onChange={(event) => setPasted(event.target.value)} aria-describedby="paste-hint" spellCheck={false} />
+            <textarea
+              id="paste-input"
+              className={TEXTAREA}
+              value={pasted}
+              onChange={(event) => setPasted(event.target.value)}
+              aria-describedby="paste-hint"
+              spellCheck={false}
+              translate="no"
+              autoComplete="off"
+            />
             <p id="paste-hint" className="text-xs text-muted-foreground">
               {say("tool.pasteHint")}
             </p>
@@ -195,7 +212,11 @@ export function PseudonymiserareTool({ labels, locale }: { labels: Labels; local
           {problems.length > 0 ? (
             <ul role="alert" className="space-y-1 rounded-md border border-destructive/50 bg-destructive/10 p-3">
               {problems.map((problem, i) => (
-                <li key={i}>{problem}</li>
+                <li key={i}>
+                  {problem.before}
+                  <span translate="no">{problem.name}</span>
+                  {problem.after}
+                </li>
               ))}
             </ul>
           ) : null}
@@ -252,6 +273,8 @@ export function PseudonymiserareTool({ labels, locale }: { labels: Labels; local
                 }}
                 aria-describedby="words-hint"
                 spellCheck={false}
+                translate="no"
+                autoComplete="off"
               />
               <p id="words-hint" className="mt-2 text-xs text-muted-foreground">
                 {say("tool.wordsHint")}
@@ -295,4 +318,13 @@ export function PseudonymiserareTool({ labels, locale }: { labels: Labels; local
       ) : null}
     </div>
   );
+}
+
+/**
+ * The tool as the page mounts it. "Rensa allt" starts a new instance of it (a new key): everything the old one held, the files, the fields, the result and
+ * a read that has not finished, goes with it, and a read that finishes after it has nowhere to put its table.
+ */
+export function PseudonymiserareTool({ labels, locale }: { labels: Labels; locale: string }) {
+  const [instance, setInstance] = useState(0);
+  return <Tool key={instance} labels={labels} locale={locale} onClear={() => setInstance((current) => current + 1)} />;
 }
