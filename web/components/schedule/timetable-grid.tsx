@@ -2,12 +2,15 @@
 
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { useTranslations } from "next-intl";
 import { Check, Lock, TriangleAlert, X } from "lucide-react";
@@ -291,6 +294,394 @@ function snap(minutes: number, step: number): number {
   return Math.round(minutes / step) * step;
 }
 
+/**
+ * A callback that never changes identity and always calls the latest one given.
+ *
+ * What lets a card be memoised: the page hands the grid new arrow functions at
+ * every render, and a card that took them as props would be drawn again for
+ * each one. Called only from events, after the commit that wrote the ref.
+ */
+function useStable<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const latest = useRef(fn);
+  useLayoutEffect(() => {
+    latest.current = fn;
+  });
+  return useCallback((...args: A) => latest.current(...args), []);
+}
+
+/** A value outside React's state that components read and that tells them when it changed. */
+interface Cell<T> {
+  get: () => T;
+  set: (next: T) => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+function createCell<T>(initial: T): Cell<T> {
+  let value = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set: (next) => {
+      if (Object.is(next, value)) return;
+      value = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+interface LessonCardProps {
+  lesson: PositionedLesson;
+  dayStartMinutes: number;
+  pxPerMinute: number;
+  editable: boolean;
+  /** The page gave the grid an onLessonClick: a card is something to press. */
+  hasClick: boolean;
+  selected: boolean;
+  isDragSource: boolean;
+  /** The day's name, "Måndag": what a screen reader hears before the time. */
+  dayName: string;
+  cancelledLabel: string;
+  selectedLabel: string;
+  onOpen: (id: string) => void;
+  onPointerDown: (event: React.PointerEvent, id: string) => void;
+  onKeyDown: (event: React.KeyboardEvent, id: string) => void;
+}
+
+/**
+ * Two cards are the same when every prop is and the lesson holds the same
+ * facts. The lesson object itself is new at every layout (layoutDay spreads a
+ * copy of each), so identity would say "different" for every card of the week
+ * after any one lesson changed, which is the 800 cards drawn again for one.
+ */
+function sameCard(before: LessonCardProps, after: LessonCardProps): boolean {
+  for (const key of Object.keys(after) as Array<keyof LessonCardProps>) {
+    if (key === "lesson") continue;
+    if (before[key] !== after[key]) return false;
+  }
+  const was = before.lesson as unknown as Record<string, unknown>;
+  const now = after.lesson as unknown as Record<string, unknown>;
+  const keys = Object.keys(now);
+  if (keys.length !== Object.keys(was).length) return false;
+  return keys.every((key) => was[key] === now[key]);
+}
+
+/**
+ * One lesson, memoised. A pointer that moves over a grid of 800 of them
+ * changes only the ghost, and the ghost is not in their props.
+ */
+const LessonCard = memo(function LessonCard({
+  lesson,
+  dayStartMinutes,
+  pxPerMinute,
+  editable,
+  hasClick,
+  selected,
+  isDragSource,
+  dayName,
+  cancelledLabel,
+  selectedLabel,
+  onOpen,
+  onPointerDown,
+  onKeyDown,
+}: LessonCardProps) {
+  const top = (lesson.startMinutes - dayStartMinutes) * pxPerMinute;
+  const length = (lesson.endMinutes - lesson.startMinutes) * pxPerMinute;
+  // A duty is its own length, never into the next box (see `duty`).
+  const height = lesson.duty ? length : Math.max(28, length);
+  /*
+   * WHAT THE BOX CAN HOLD, and what to do when it holds less
+   * than the lesson has to say.
+   *
+   * The grid is measured for the school's usual lesson, so a
+   * shorter one still arrives here with more rows than room —
+   * and the rows used to be drawn anyway and clipped by
+   * `overflow-hidden`, which cuts the last one through the
+   * middle of its letters. A half-letter is not information;
+   * it reads as a rendering fault.
+   *
+   * So the facts collapse onto one line before they are cut,
+   * and below two lines only the title survives. The full text
+   * is on the block's `title` either way — see below — so
+   * nothing is ever only half-said.
+   */
+  const facts = [
+    lesson.subtitle,
+    lesson.room,
+    lesson.recurrenceNote,
+  ].filter((fact): fact is string => Boolean(fact));
+  const linesThatFit = Math.max(
+    1,
+    Math.floor((height - BLOCK_PADDING_PX) / LINE_PX),
+  );
+  const stacked = 1 + facts.length <= linesThatFit;
+  const widthPct = 100 / lesson.laneCount;
+  // Muted ink on the subject's tint measured 4.1–4.4:1; the
+  // foreground at 80 % keeps the step below the title and
+  // clears AA on any tint. A cancelled lesson has no tint.
+  const factInk = lesson.cancelled ? "text-muted-foreground" : "text-foreground/80";
+  // A duty opens nothing: a block, not a button (see `duty`).
+  const Block = lesson.duty ? "div" : "button";
+  const opens = !editable && !lesson.duty && hasClick;
+  return (
+    <Block
+      key={lesson.id}
+      {...(lesson.duty ? {} : { type: "button" as const })}
+      data-lesson-id={lesson.id}
+      onClick={
+        // In editable mode clicks are resolved on pointerup
+        // (drag vs click); otherwise plain click-to-open.
+        opens ? () => onOpen(lesson.id) : undefined
+      }
+      onPointerDown={
+        editable ? (event) => onPointerDown(event, lesson.id) : undefined
+      }
+      onKeyDown={
+        editable
+          ? (event) => onKeyDown(event, lesson.id)
+          : undefined
+      }
+      /*
+       * The whole of it, one hover away.
+       *
+       * A block is a rectangle sized by the clock, so there is
+       * always a lesson somewhere that does not fit in it —
+       * and until this there was no way to read what had been
+       * left out without opening the editor. The time is here
+       * too, which the grid shows nowhere else: the axis is
+       * hourly, and a 40-minute lesson starts between its
+       * lines.
+       */
+      title={[
+        `${clockOf(lesson.startMinutes)}-${clockOf(lesson.endMinutes)}`,
+        lesson.title,
+        ...facts,
+        // NOT in `facts`, which is also what the block prints
+        // when it has room. A fourth line inside the rectangle
+        // would change what fits and push a real subject or a
+        // period badge out for a note about time that is not
+        // the lesson's; and the block's geometry stays the
+        // teaching time either way. See pupilTimeNote.
+        lesson.pupilTimeNote,
+      ]
+        .filter((fact): fact is string => Boolean(fact))
+        .join(" · ")}
+      className={cn(
+        "absolute overflow-hidden rounded-md border-l-4 text-left text-xs shadow-sm transition-shadow",
+        lesson.duty ? "flex items-center px-1.5 py-0" : "p-1.5",
+        lesson.relieved && "shadow-none outline-dashed outline-1 -outline-offset-1 outline-muted-foreground",
+        (hasClick || editable) && !lesson.duty
+          ? "cursor-pointer hover:shadow-md"
+          : "cursor-default",
+        editable && "touch-none",
+        /*
+         * A cancelled lesson keeps full-strength text: struck
+         * through, untinted, its edge dashed. Faded to 45 % it
+         * measured 1.7:1, and what was cancelled is exactly
+         * what a pupil has to be able to read.
+         */
+        lesson.cancelled && "border border-dashed border-l-4 line-through",
+        // The destructive token rather than a raw red: one
+        // colour for "this clashes" across the app, and one
+        // that holds 3:1 against the card in both themes.
+        lesson.conflicted && "ring-2 ring-destructive",
+        /*
+         * THE FOREGROUND COLOUR, not a blue one.
+         *
+         * A block is tinted with its subject's colour at a
+         * tenth of an opacity, so every one of them is pale —
+         * against which the foreground reads, and a mid-blue
+         * outline reads on a green lesson and disappears on a
+         * blue one. Which half of the timetable a selection is
+         * visible on should not depend on the subject.
+         *
+         * `outline` and not `ring`: the red clash mark above
+         * is a ring, and the two would be the same CSS
+         * property fighting over one lesson.
+         */
+        selected && "outline outline-2 outline-offset-1 outline-foreground",
+        isDragSource && "opacity-40",
+      )}
+      style={{
+        top: `${top}px`,
+        height: `${height}px`,
+        left: `calc(${lesson.lane * widthPct}% + 3px)`,
+        width: `calc(${widthPct}% - 6px)`,
+        // A duty sits on the rast's band (its time is a rast's), whose label
+        // would read through a tint: the card underneath, the tint on top.
+        ...(lesson.duty
+          ? {
+              backgroundColor: "hsl(var(--card))",
+              backgroundImage: lesson.relieved
+                ? undefined
+                : `linear-gradient(${lesson.color}1a, ${lesson.color}1a)`,
+            }
+          : { backgroundColor: lesson.cancelled ? "transparent" : `${lesson.color}1a` }),
+        borderLeftColor: lesson.color,
+      }}
+    >
+      {/*
+        When, and whether at all, for a screen reader: the eye
+        reads the day off the column, the time off the axis
+        and a cancellation off the strike-through, and without
+        this Monday's Svenska 7A and Wednesday's cancelled one
+        had the same name.
+      */}
+      <span className="sr-only">
+        {dayName} {clockOf(lesson.startMinutes)}–{clockOf(lesson.endMinutes)},{" "}
+        {lesson.cancelled ? `${cancelledLabel}, ` : null}
+      </span>
+      {lesson.duty ? (
+        // One line the eye reads as the screen reader does.
+        <div
+          className={cn(
+            "truncate text-[11px] leading-none",
+            lesson.relieved ? "text-muted-foreground" : "font-medium text-foreground",
+          )}
+        >
+          <span className="sr-only">{lesson.title} · </span>
+          {facts.join(" · ")}
+        </div>
+      ) : (
+        <>
+      <div className="flex items-start justify-between gap-1">
+        {/*
+          The subject's colour is the edge and the tint, never
+          the ink: a school picks any colour, and green on its
+          own tint measured 2.95:1.
+        */}
+        <div className={cn("truncate font-semibold", lesson.cancelled ? "text-muted-foreground" : "text-foreground")}>
+          {lesson.title}
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5">
+          {selected ? (
+            // Beside the outline rather than instead of it: an
+            // icon is independent of colour and contrast, and
+            // it settles one block on its own without holding
+            // it up against its neighbours.
+            <span className="rounded bg-foreground px-0.5 text-background">
+              <Check className="size-3" />
+              <span className="sr-only">{selectedLabel}</span>
+            </span>
+          ) : null}
+          {lesson.share ? (
+            <span
+              title={lesson.shareLabel}
+              className="rounded bg-foreground/10 px-1 text-[9px] font-semibold tabular-nums text-foreground"
+            >
+              {lesson.share}
+              <span className="sr-only">
+                {lesson.shareLabel ? ` ${lesson.shareLabel}` : ""}
+              </span>
+            </span>
+          ) : null}
+          {lesson.remoteEditor ? (
+            <span
+              title={lesson.remoteEditor}
+              className="rounded bg-warning/25 px-1 text-[9px] font-semibold text-foreground"
+            >
+              {lesson.remoteEditor}
+            </span>
+          ) : null}
+          {lesson.conflicted ? (
+            <TriangleAlert className="size-3 text-destructive" />
+          ) : null}
+          {lesson.locked ? (
+            <Lock className="size-3 text-muted-foreground" />
+          ) : null}
+        </div>
+      </div>
+      {stacked ? (
+        <>
+          {lesson.subtitle ? (
+            <div className={cn("truncate", factInk)}>
+              {lesson.subtitle}
+            </div>
+          ) : null}
+          {lesson.room ? (
+            <div className={cn("truncate", factInk)}>{lesson.room}</div>
+          ) : null}
+          {lesson.recurrenceNote ? (
+            <div className={cn("truncate font-medium uppercase tracking-wide text-[9px]", factInk)}>
+              {lesson.recurrenceNote}
+            </div>
+          ) : null}
+        </>
+      ) : linesThatFit >= 2 && facts.length > 0 ? (
+        <div className={cn("truncate", factInk)}>
+          {facts.join(" · ")}
+        </div>
+      ) : facts.length > 0 ? (
+        // Nowhere to draw them, but a reader who is listening
+        // rather than looking is not short of pixels. The
+        // sighted reader has the same text on the tooltip.
+        <span className="sr-only">{facts.join(" · ")}</span>
+      ) : null}
+        </>
+      )}
+      {editable ? (
+        <div className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
+      ) : null}
+    </Block>
+  );
+}, sameCard);
+
+/**
+ * The drag's ghost for one day's column, in a cell of its own.
+ *
+ * It was state of the grid: every pointer move that changed the ghost drew
+ * the grid again, and with it every card. Here it is the one component that
+ * hears of it, and only the column the ghost is in (or has just left).
+ */
+function DragGhost({
+  cell,
+  day,
+  dayStartMinutes,
+  pxPerMinute,
+}: {
+  cell: Cell<GhostState | null>;
+  day: number;
+  dayStartMinutes: number;
+  pxPerMinute: number;
+}) {
+  const ghost = useSyncExternalStore(
+    cell.subscribe,
+    () => {
+      const current = cell.get();
+      return current && current.dayOfWeek === day ? current : null;
+    },
+    () => null,
+  );
+  if (!ghost) return null;
+  return (
+    <div
+      className={cn(
+        "pointer-events-none absolute inset-x-0.5 z-10 rounded-md border-2 border-dashed px-1.5 py-1 text-[11px] font-medium tabular-nums",
+        // The edge carries the verdict (success 3.88 / 6.87,
+        // destructive 4.8 / 4.59 against the card) and the
+        // time label stays in the foreground: the success
+        // token as small text is under 4.5:1 in light.
+        ghost.valid
+          ? "border-success bg-success/15 text-foreground"
+          : "border-destructive bg-destructive/15 text-foreground",
+      )}
+      style={{
+        top: `${(ghost.startMinutes - dayStartMinutes) * pxPerMinute}px`,
+        height: `${Math.max(20, (ghost.endMinutes - ghost.startMinutes) * pxPerMinute)}px`,
+      }}
+    >
+      {clockOf(ghost.startMinutes)}
+      {"–"}
+      {clockOf(ghost.endMinutes)}
+    </div>
+  );
+}
+
 export const TimetableGrid = forwardRef<TimetableGridHandle, TimetableGridProps>(
   function TimetableGrid(props, ref) {
     return <TimetableGridInner {...props} handleRef={ref} />;
@@ -345,8 +736,14 @@ function TimetableGridInner({
     }
   });
   const dragRef = useRef<DragState | null>(null);
-  const ghostRef = useRef<GhostState | null>(null);
-  const [ghost, setGhost] = useState<GhostState | null>(null);
+  /*
+   * The ghost is a cell outside React's state, read by <DragGhost> and by the
+   * drop below (which needs the last position synchronously, and a side effect
+   * inside a setState updater would run twice under StrictMode). It used to be
+   * state of this component, and every pointer move that changed it drew the
+   * grid again — all the cards of it.
+   */
+  const [ghostCell] = useState(() => createCell<GhostState | null>(null));
   const [draggingId, setDraggingId] = useState<string | null>(null);
   /*
    * A meal being dragged, in state of its own beside the lessons'. Not folded
@@ -461,16 +858,15 @@ function TimetableGridInner({
 
   const updateGhost = useCallback(
     (next: GhostState | null) => {
-      ghostRef.current = next;
-      setGhost(next);
+      ghostCell.set(next);
     },
-    [],
+    [ghostCell],
   );
 
   const endDrag = useCallback(
     (commit: boolean, point?: { clientX: number; clientY: number }) => {
       const drag = dragRef.current;
-      const currentGhost = ghostRef.current;
+      const currentGhost = ghostCell.get();
       dragRef.current = null;
       setDraggingId(null);
       updateGhost(null);
@@ -519,7 +915,7 @@ function TimetableGridInner({
         });
       }
     },
-    [onLessonChange, onInvalidDrop, onDropOutside, updateGhost],
+    [onLessonChange, onInvalidDrop, onDropOutside, updateGhost, ghostCell],
   );
 
   useImperativeHandle(
@@ -592,6 +988,19 @@ function TimetableGridInner({
         };
       }
 
+      // A pointer moves a pixel at a time and the ghost a step of five minutes:
+      // most moves land on the square it is already on, and the verdict on that
+      // square is the one it has (the page's check reads the same lessons until a
+      // drop), so there is nothing to ask and nothing to draw.
+      const held = ghostCell.get();
+      if (
+        held &&
+        held.dayOfWeek === next.dayOfWeek &&
+        held.startMinutes === next.startMinutes &&
+        held.endMinutes === next.endMinutes
+      ) {
+        return;
+      }
       if (validateChange) {
         next.valid = validateChange(drag.lessonId, {
           dayOfWeek: next.dayOfWeek,
@@ -637,6 +1046,7 @@ function TimetableGridInner({
     validateChange,
     dayStartMinutes,
     dayEndMinutes,
+    ghostCell,
   ]);
 
   useEffect(() => {
@@ -777,7 +1187,7 @@ function TimetableGridInner({
    * lesson by 15 min (Up/Down) or one day (Left/Right); Enter opens the
    * editor. Moves are validated before being applied.
    */
-  const handleLessonKey = (event: React.KeyboardEvent, lesson: TimetableLesson) => {
+  const handleLessonKeyOn = (event: React.KeyboardEvent, lesson: TimetableLesson) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       if (event.shiftKey && onToggleSelect) onToggleSelect(lesson.id);
@@ -832,6 +1242,32 @@ function TimetableGridInner({
     );
     onSlotClick(day, minute);
   };
+
+  /*
+   * What a card is given, and all of it stable: the lesson is looked up when the
+   * event comes, from the grid's own list, so the card holds an id and never a
+   * callback that changes with the page's render. The caller still gets its own
+   * object, as before: `lane` and `laneCount` are layout state of this render.
+   */
+  const openLesson = useStable((id: string) => {
+    const lesson = lessonById.get(id);
+    if (lesson) onLessonClick?.(lesson);
+  });
+  const startLessonDrag = useStable((event: React.PointerEvent, id: string) => {
+    const lesson = lessonById.get(id);
+    if (lesson) startDrag(event, lesson);
+  });
+  const handleLessonKey = useStable((event: React.KeyboardEvent, id: string) => {
+    const lesson = lessonById.get(id);
+    if (lesson) handleLessonKeyOn(event, lesson);
+  });
+  const hasClick = Boolean(onLessonClick);
+  const cancelledLabel = tStatus("CANCELLED");
+  const selectedLabel = t("selected");
+  const dayNames = useMemo(
+    () => Array.from({ length: 8 }, (_, day) => (day === 0 ? "" : tDays(String(day)))),
+    [tDays],
+  );
 
   const hours: number[] = [];
   for (let h = startHour; h <= endHour; h++) hours.push(h);
@@ -1020,282 +1456,32 @@ function TimetableGridInner({
                   />
                 ))}
 
-                {dayLessons.map((lesson) => {
-                  // Callbacks always get the caller's own object: `lane` and
-                  // `laneCount` are layout state of this render, and the
-                  // editable pointer path already hands out the original.
-                  const source = lessonById.get(lesson.id) ?? lesson;
-                  const top = (lesson.startMinutes - startHour * 60) * pxPerMinute;
-                  const length = (lesson.endMinutes - lesson.startMinutes) * pxPerMinute;
-                  // A duty is its own length, never into the next box (see `duty`).
-                  const height = lesson.duty ? length : Math.max(28, length);
-                  /*
-                   * WHAT THE BOX CAN HOLD, and what to do when it holds less
-                   * than the lesson has to say.
-                   *
-                   * The grid is measured for the school's usual lesson, so a
-                   * shorter one still arrives here with more rows than room —
-                   * and the rows used to be drawn anyway and clipped by
-                   * `overflow-hidden`, which cuts the last one through the
-                   * middle of its letters. A half-letter is not information;
-                   * it reads as a rendering fault.
-                   *
-                   * So the facts collapse onto one line before they are cut,
-                   * and below two lines only the title survives. The full text
-                   * is on the block's `title` either way — see below — so
-                   * nothing is ever only half-said.
-                   */
-                  const facts = [
-                    lesson.subtitle,
-                    lesson.room,
-                    lesson.recurrenceNote,
-                  ].filter((fact): fact is string => Boolean(fact));
-                  const linesThatFit = Math.max(
-                    1,
-                    Math.floor((height - BLOCK_PADDING_PX) / LINE_PX),
-                  );
-                  const stacked = 1 + facts.length <= linesThatFit;
-                  const selected = selectedIds?.has(lesson.id) ?? false;
-                  const widthPct = 100 / lesson.laneCount;
-                  const isDragSource = draggingId === lesson.id;
-                  // Muted ink on the subject's tint measured 4.1–4.4:1; the
-                  // foreground at 80 % keeps the step below the title and
-                  // clears AA on any tint. A cancelled lesson has no tint.
-                  const factInk = lesson.cancelled ? "text-muted-foreground" : "text-foreground/80";
-                  // A duty opens nothing: a block, not a button (see `duty`).
-                  const Block = lesson.duty ? "div" : "button";
-                  const opens = !editable && !lesson.duty && onLessonClick;
-                  return (
-                    <Block
-                      key={lesson.id}
-                      {...(lesson.duty ? {} : { type: "button" as const })}
-                      data-lesson-id={lesson.id}
-                      onClick={
-                        // In editable mode clicks are resolved on pointerup
-                        // (drag vs click); otherwise plain click-to-open.
-                        opens ? () => onLessonClick(source) : undefined
-                      }
-                      onPointerDown={
-                        editable ? (event) => startDrag(event, source) : undefined
-                      }
-                      onKeyDown={
-                        editable
-                          ? (event) => handleLessonKey(event, source)
-                          : undefined
-                      }
-                      /*
-                       * The whole of it, one hover away.
-                       *
-                       * A block is a rectangle sized by the clock, so there is
-                       * always a lesson somewhere that does not fit in it —
-                       * and until this there was no way to read what had been
-                       * left out without opening the editor. The time is here
-                       * too, which the grid shows nowhere else: the axis is
-                       * hourly, and a 40-minute lesson starts between its
-                       * lines.
-                       */
-                      title={[
-                        `${clockOf(lesson.startMinutes)}-${clockOf(lesson.endMinutes)}`,
-                        lesson.title,
-                        ...facts,
-                        // NOT in `facts`, which is also what the block prints
-                        // when it has room. A fourth line inside the rectangle
-                        // would change what fits and push a real subject or a
-                        // period badge out for a note about time that is not
-                        // the lesson's; and the block's geometry stays the
-                        // teaching time either way. See pupilTimeNote.
-                        lesson.pupilTimeNote,
-                      ]
-                        .filter((fact): fact is string => Boolean(fact))
-                        .join(" · ")}
-                      className={cn(
-                        "absolute overflow-hidden rounded-md border-l-4 text-left text-xs shadow-sm transition-shadow",
-                        lesson.duty ? "flex items-center px-1.5 py-0" : "p-1.5",
-                        lesson.relieved && "shadow-none outline-dashed outline-1 -outline-offset-1 outline-muted-foreground",
-                        (onLessonClick || editable) && !lesson.duty
-                          ? "cursor-pointer hover:shadow-md"
-                          : "cursor-default",
-                        editable && "touch-none",
-                        /*
-                         * A cancelled lesson keeps full-strength text: struck
-                         * through, untinted, its edge dashed. Faded to 45 % it
-                         * measured 1.7:1, and what was cancelled is exactly
-                         * what a pupil has to be able to read.
-                         */
-                        lesson.cancelled && "border border-dashed border-l-4 line-through",
-                        // The destructive token rather than a raw red: one
-                        // colour for "this clashes" across the app, and one
-                        // that holds 3:1 against the card in both themes.
-                        lesson.conflicted && "ring-2 ring-destructive",
-                        /*
-                         * THE FOREGROUND COLOUR, not a blue one.
-                         *
-                         * A block is tinted with its subject's colour at a
-                         * tenth of an opacity, so every one of them is pale —
-                         * against which the foreground reads, and a mid-blue
-                         * outline reads on a green lesson and disappears on a
-                         * blue one. Which half of the timetable a selection is
-                         * visible on should not depend on the subject.
-                         *
-                         * `outline` and not `ring`: the red clash mark above
-                         * is a ring, and the two would be the same CSS
-                         * property fighting over one lesson.
-                         */
-                        selected && "outline outline-2 outline-offset-1 outline-foreground",
-                        isDragSource && "opacity-40",
-                      )}
-                      style={{
-                        top: `${top}px`,
-                        height: `${height}px`,
-                        left: `calc(${lesson.lane * widthPct}% + 3px)`,
-                        width: `calc(${widthPct}% - 6px)`,
-                        // A duty sits on the rast's band (its time is a rast's), whose label
-                        // would read through a tint: the card underneath, the tint on top.
-                        ...(lesson.duty
-                          ? {
-                              backgroundColor: "hsl(var(--card))",
-                              backgroundImage: lesson.relieved
-                                ? undefined
-                                : `linear-gradient(${lesson.color}1a, ${lesson.color}1a)`,
-                            }
-                          : { backgroundColor: lesson.cancelled ? "transparent" : `${lesson.color}1a` }),
-                        borderLeftColor: lesson.color,
-                      }}
-                    >
-                      {/*
-                        When, and whether at all, for a screen reader: the eye
-                        reads the day off the column, the time off the axis
-                        and a cancellation off the strike-through, and without
-                        this Monday's Svenska 7A and Wednesday's cancelled one
-                        had the same name.
-                      */}
-                      <span className="sr-only">
-                        {tDays(String(lesson.dayOfWeek))} {clockOf(lesson.startMinutes)}–{clockOf(lesson.endMinutes)},{" "}
-                        {lesson.cancelled ? `${tStatus("CANCELLED")}, ` : null}
-                      </span>
-                      {lesson.duty ? (
-                        // One line the eye reads as the screen reader does.
-                        <div
-                          className={cn(
-                            "truncate text-[11px] leading-none",
-                            lesson.relieved ? "text-muted-foreground" : "font-medium text-foreground",
-                          )}
-                        >
-                          <span className="sr-only">{lesson.title} · </span>
-                          {facts.join(" · ")}
-                        </div>
-                      ) : (
-                        <>
-                      <div className="flex items-start justify-between gap-1">
-                        {/*
-                          The subject's colour is the edge and the tint, never
-                          the ink: a school picks any colour, and green on its
-                          own tint measured 2.95:1.
-                        */}
-                        <div className={cn("truncate font-semibold", lesson.cancelled ? "text-muted-foreground" : "text-foreground")}>
-                          {lesson.title}
-                        </div>
-                        <div className="flex shrink-0 items-center gap-0.5">
-                          {selected ? (
-                            // Beside the outline rather than instead of it: an
-                            // icon is independent of colour and contrast, and
-                            // it settles one block on its own without holding
-                            // it up against its neighbours.
-                            <span className="rounded bg-foreground px-0.5 text-background">
-                              <Check className="size-3" />
-                              <span className="sr-only">{t("selected")}</span>
-                            </span>
-                          ) : null}
-                          {lesson.share ? (
-                            <span
-                              title={lesson.shareLabel}
-                              className="rounded bg-foreground/10 px-1 text-[9px] font-semibold tabular-nums text-foreground"
-                            >
-                              {lesson.share}
-                              <span className="sr-only">
-                                {lesson.shareLabel ? ` ${lesson.shareLabel}` : ""}
-                              </span>
-                            </span>
-                          ) : null}
-                          {lesson.remoteEditor ? (
-                            <span
-                              title={lesson.remoteEditor}
-                              className="rounded bg-warning/25 px-1 text-[9px] font-semibold text-foreground"
-                            >
-                              {lesson.remoteEditor}
-                            </span>
-                          ) : null}
-                          {lesson.conflicted ? (
-                            <TriangleAlert className="size-3 text-destructive" />
-                          ) : null}
-                          {lesson.locked ? (
-                            <Lock className="size-3 text-muted-foreground" />
-                          ) : null}
-                        </div>
-                      </div>
-                      {stacked ? (
-                        <>
-                          {lesson.subtitle ? (
-                            <div className={cn("truncate", factInk)}>
-                              {lesson.subtitle}
-                            </div>
-                          ) : null}
-                          {lesson.room ? (
-                            <div className={cn("truncate", factInk)}>{lesson.room}</div>
-                          ) : null}
-                          {lesson.recurrenceNote ? (
-                            <div className={cn("truncate font-medium uppercase tracking-wide text-[9px]", factInk)}>
-                              {lesson.recurrenceNote}
-                            </div>
-                          ) : null}
-                        </>
-                      ) : linesThatFit >= 2 && facts.length > 0 ? (
-                        <div className={cn("truncate", factInk)}>
-                          {facts.join(" · ")}
-                        </div>
-                      ) : facts.length > 0 ? (
-                        // Nowhere to draw them, but a reader who is listening
-                        // rather than looking is not short of pixels. The
-                        // sighted reader has the same text on the tooltip.
-                        <span className="sr-only">{facts.join(" · ")}</span>
-                      ) : null}
-                        </>
-                      )}
-                      {editable ? (
-                        <div className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
-                      ) : null}
-                    </Block>
-                  );
-                })}
+                {dayLessons.map((lesson) => (
+                  <LessonCard
+                    key={lesson.id}
+                    lesson={lesson}
+                    dayStartMinutes={dayStartMinutes}
+                    pxPerMinute={pxPerMinute}
+                    editable={editable}
+                    hasClick={hasClick}
+                    selected={selectedIds?.has(lesson.id) ?? false}
+                    isDragSource={draggingId === lesson.id}
+                    dayName={dayNames[lesson.dayOfWeek] ?? ""}
+                    cancelledLabel={cancelledLabel}
+                    selectedLabel={selectedLabel}
+                    onOpen={openLesson}
+                    onPointerDown={startLessonDrag}
+                    onKeyDown={handleLessonKey}
+                  />
+                ))}
 
-                {/* Drag ghost */}
-                {ghost && draggingId && ghost.dayOfWeek === day ? (
-                  <div
-                    className={cn(
-                      "pointer-events-none absolute inset-x-0.5 z-10 rounded-md border-2 border-dashed px-1.5 py-1 text-[11px] font-medium tabular-nums",
-                      // The edge carries the verdict (success 3.88 / 6.87,
-                      // destructive 4.8 / 4.59 against the card) and the
-                      // time label stays in the foreground: the success
-                      // token as small text is under 4.5:1 in light.
-                      ghost.valid
-                        ? "border-success bg-success/15 text-foreground"
-                        : "border-destructive bg-destructive/15 text-foreground",
-                    )}
-                    style={{
-                      top: `${(ghost.startMinutes - startHour * 60) * pxPerMinute}px`,
-                      height: `${Math.max(
-                        20,
-                        (ghost.endMinutes - ghost.startMinutes) * pxPerMinute,
-                      )}px`,
-                    }}
-                  >
-                    {String(Math.floor(ghost.startMinutes / 60)).padStart(2, "0")}:
-                    {String(ghost.startMinutes % 60).padStart(2, "0")}
-                    {"–"}
-                    {String(Math.floor(ghost.endMinutes / 60)).padStart(2, "0")}:
-                    {String(ghost.endMinutes % 60).padStart(2, "0")}
-                  </div>
-                ) : null}
+                {/* Drag ghost: a component of its own, so a pointer move draws no card */}
+                <DragGhost
+                  cell={ghostCell}
+                  day={day}
+                  dayStartMinutes={dayStartMinutes}
+                  pxPerMinute={pxPerMinute}
+                />
               </div>
             );
           })}
