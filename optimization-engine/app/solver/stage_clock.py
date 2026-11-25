@@ -62,13 +62,23 @@ class StageClock:
         # attributes could be read half changed. A solve begins in its checks.
         self._open: tuple[TimeoutStageName, float] | None = ("PRECHECKS", entered)
         self._phases: list[TimeoutSearchPhase] = []
+        # Where `finish` closed the last step, until the next `enter` takes it over: a solve that is asked again after
+        # its answer was built (an INFEASIBLE attempt's explanation is) has nothing open in between.
+        self._finished_at: float | None = None
 
     # -- the solve's side -----------------------------------------------------
 
     def enter(self, stage: TimeoutStageName, now: float) -> None:
-        """Close the step in progress at `now` and open `stage` at the same instant."""
+        """Close the step in progress at `now` and open `stage` at the same instant.
+
+        NO TIME FALLS BETWEEN TWO STEPS, also where `finish` closed the last one and the solve went on: the seconds
+        since then (the explanation of a refused attempt, which `_leave_stage` takes out of every step so that a
+        ceiling that falls in it names none) belong to the step that follows, and not to nobody. A step list that
+        adds up to less than the total says so to no reader (the card of a TIMEOUT)."""
+        began = self._finished_at if self._open is None and self._finished_at is not None else now
         self._close(now)
-        self._open = (stage, now)
+        self._finished_at = None
+        self._open = (stage, began)
 
     def note_search(
         self,
@@ -95,8 +105,10 @@ class StageClock:
         )
 
     def finish(self, now: float) -> None:
-        """Close the step in progress: the solve is over."""
-        self._close(now)
+        """Close the step in progress: the solve is over, or an attempt's answer is in and its explanation is next."""
+        if self._open is not None:
+            self._close(now)
+            self._finished_at = now
 
     def report(
         self,
