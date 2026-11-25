@@ -1,8 +1,12 @@
 import { QueryClient, QueryClientProvider, notifyManager } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { createTranslator } from "use-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
+import type { ProblemLookup } from "@/lib/api-error-text";
+import en from "@/messages/en.json";
+import sv from "@/messages/sv.json";
 import {
   STAFFING_SEARCH_POLL_MS,
   classifyProposalError,
@@ -334,6 +338,15 @@ describe("what a refusal is", () => {
       params: { days: 4 },
     });
     expect(classifyStartError(new Error("offline"))).toEqual({ kind: "OTHER", message: "", code: null, params: null });
+    // A 500 with the log's English says nothing the reader can use: the notice's general sentence is what is shown, not "An unexpected error occurred".
+    expect(classifyStartError(new ApiError(500, "An unexpected error occurred. Please try again later."))).toEqual({
+      kind: "OTHER",
+      message: "",
+      code: null,
+      params: null,
+    });
+    // A thrower's Swedish sentence for the reader is kept, with or without a code.
+    expect(classifyStartError(new ApiError(500, "Sökningen kunde inte startas."))).toMatchObject({ kind: "OTHER", message: "Sökningen kunde inte startas." });
     // The failure api.ts names for a request that got no answer is not a refusal with words of the gateway's to show.
     expect(classifyStartError(new ApiError(0, "Failed to fetch", "CLIENT_NETWORK_FAILURE"))).toEqual({
       kind: "OTHER",
@@ -353,9 +366,55 @@ describe("what a refusal is", () => {
   });
 
   it("any other failure of the proposal keeps the gateway's own words", () => {
-    expect(classifyProposalError(new ApiError(500, "Internal"))).toEqual({ kind: "OTHER", message: "Internal" });
+    expect(classifyProposalError(new ApiError(500, "Förslaget kunde inte läsas."))).toEqual({ kind: "OTHER", message: "Förslaget kunde inte läsas." });
+    // The log's English is not a sentence for the reader: the notice says its general one.
+    expect(classifyProposalError(new ApiError(500, "Internal"))).toEqual({ kind: "OTHER", message: "" });
     expect(classifyProposalError("x")).toEqual({ kind: "OTHER", message: "" });
     expect(classifyProposalError(new ApiError(0, "Failed to fetch", "CLIENT_NETWORK_FAILURE"))).toEqual({ kind: "OTHER", message: "" });
+  });
+
+  describe("given the translator for `common`, which the panel has", () => {
+    const swedish = createTranslator({ locale: "sv", messages: sv, namespace: "common" }) as unknown as ProblemLookup;
+    const english = createTranslator({ locale: "en", messages: en, namespace: "common" }) as unknown as ProblemLookup;
+
+    // A failure whose words are only a log's has a general sentence of its kind, which the reader can act on: "Något gick fel" says nothing of a
+    // sign-in that has gone, or of a permission the reader lacks.
+    it.each<[string, ApiError, string, string]>([
+      ["a 401", new ApiError(401, "Not authenticated."), "Din inloggning har gått ut. Logga in igen.", "Your session has expired. Sign in again."],
+      [
+        "a 403 from a role",
+        new ApiError(403, "You do not have permission to perform this action."),
+        "Du har inte behörighet att göra det här.",
+        "You are not allowed to do this.",
+      ],
+      [
+        "a 500",
+        new ApiError(500, "An unexpected error occurred. Please try again later."),
+        "Något gick fel hos oss. Försök igen om en stund.",
+        "Something went wrong on our side. Try again in a moment.",
+      ],
+      [
+        "no answer",
+        new ApiError(0, "Failed to fetch", "CLIENT_NETWORK_FAILURE"),
+        "Servern gick inte att nå. Kontrollera anslutningen och försök igen.",
+        "The server could not be reached. Check your connection and try again.",
+      ],
+    ])("says %s as its general sentence, in the reader's language, for the start and the proposal", (_name, error, inSwedish, inEnglish) => {
+      for (const [t, sentence] of [[swedish, inSwedish], [english, inEnglish]] as const) {
+        expect(classifyStartError(error, t)).toMatchObject({ kind: "OTHER", message: sentence });
+        expect(classifyProposalError(error, t)).toEqual({ kind: "OTHER", message: sentence });
+      }
+    });
+
+    it("keeps what a thrower wrote for the reader, with its code and values for the engine catalogue", () => {
+      expect(classifyStartError(new ApiError(409, "Veckan nekas", "TEACHER_WORK_DAYS", { days: 4 }), swedish)).toEqual({
+        kind: "OTHER",
+        message: "Veckan nekas",
+        code: "TEACHER_WORK_DAYS",
+        params: { days: 4 },
+      });
+      expect(classifyProposalError(new ApiError(500, "Förslaget kunde inte läsas."), swedish)).toEqual({ kind: "OTHER", message: "Förslaget kunde inte läsas." });
+    });
   });
 });
 

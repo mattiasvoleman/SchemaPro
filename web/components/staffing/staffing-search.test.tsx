@@ -274,6 +274,24 @@ describe("a start that is refused", () => {
     await user.click(await screen.findByRole("button", { name: "Sök lärarval" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Teacher cannot work that many days");
   });
+
+  it("says the general sentence, and not the log's English, for a start that failed with a 500", async () => {
+    gateway.post.mockRejectedValueOnce(new ApiError(500, "An unexpected error occurred. Please try again later."));
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole("button", { name: "Sök lärarval" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Något gick fel");
+    expect(alert).not.toHaveTextContent("unexpected error");
+  });
+
+  it("says a start whose session has gone as the sign-in's sentence, which the reader can act on, and not as a general one", async () => {
+    gateway.post.mockRejectedValueOnce(new ApiError(401, "Not authenticated."));
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole("button", { name: "Sök lärarval" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Din inloggning har gått ut. Logga in igen.");
+  });
 });
 
 describe("a search that goes on", () => {
@@ -778,7 +796,21 @@ describe("the proposal", () => {
     expect(screen.getByText("Sökningen finns inte längre. Sök igen.")).toBeInTheDocument();
   });
 
-  it("says another failure in the gateway's own words and lets the admin press again", async () => {
+  it("says another failure in the gateway's own words, when a thrower wrote them for the reader, and lets the admin press again", async () => {
+    server.latest = ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 3, hasProposal: true });
+    gateway.get.mockImplementation(async (path: string) => {
+      if (path === LATEST) return server.latest;
+      throw new ApiError(500, "Förslaget kunde inte läsas just nu.");
+    });
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole("button", { name: "Visa förslaget" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Förslaget kunde inte läsas just nu.");
+    expect(screen.getByRole("button", { name: "Visa förslaget" })).toBeEnabled();
+  });
+
+  it("says the general sentence, in the reader's language, for a failure whose words are only a log's", async () => {
     server.latest = ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 3, hasProposal: true });
     gateway.get.mockImplementation(async (path: string) => {
       if (path === LATEST) return server.latest;
@@ -788,8 +820,25 @@ describe("the proposal", () => {
     renderPanel();
     await user.click(await screen.findByRole("button", { name: "Visa förslaget" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Internal server error");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Något gick fel");
+    expect(alert).not.toHaveTextContent("Internal server error");
     expect(screen.getByRole("button", { name: "Visa förslaget" })).toBeEnabled();
+  });
+
+  it("says a proposal read the gateway refused for a role as the sentence of a permission the reader lacks", async () => {
+    server.latest = ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 3, hasProposal: true });
+    gateway.get.mockImplementation(async (path: string) => {
+      if (path === LATEST) return server.latest;
+      throw new ApiError(403, "You do not have permission to perform this action.");
+    });
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole("button", { name: "Visa förslaget" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Du har inte behörighet att göra det här.");
+    expect(alert).not.toHaveTextContent("permission");
   });
 });
 
