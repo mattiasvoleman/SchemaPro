@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
-import { isNetworkFailure, ownWords } from "@/lib/api-error-text";
+import { apiErrorText, isNetworkFailure, ownWords, type ProblemLookup } from "@/lib/api-error-text";
 import type { StaffingProposal } from "@/app/[locale]/(app)/admin/staffing/use-staffing-proposal";
 
 /*
@@ -232,9 +232,19 @@ export type StartProblem =
   | { kind: "ALREADY_RUNNING" | "NO_QUALIFICATIONS" | "NOT_READY" | "NO_POSTS" | "THROTTLED" | "UNAVAILABLE" }
   | { kind: "OTHER"; message: string; code: string | null; params: Record<string, string | number> | null };
 
-export function classifyStartError(error: unknown): StartProblem {
-  // No answer at all has no sentence of the gateway's: the notice says its general one, with no code to look up.
-  if (isNetworkFailure(error)) return { kind: "OTHER", message: "", code: null, params: null };
+/**
+ * What of a failure the notice may say, as a sentence. With the translator for `common` (the panel has it) it is what apiErrorText says
+ * for the failure in the reader's language: the general sentence of a 401, a 403, a 409 or a 500 whose words are only a log's, the
+ * catalogue's sentence for a code the web has one for (a busy server, 503 DATABASE_BUSY), and what a thrower wrote for the reader
+ * otherwise. Without one, only the thrower's words and "" for the rest (ownWords), and the notice says its own general sentence.
+ */
+function wordsOf(error: Error, t: ProblemLookup | undefined): string {
+  return t ? apiErrorText(error, t) : ownWords(error);
+}
+
+export function classifyStartError(error: unknown, t?: ProblemLookup): StartProblem {
+  // No answer at all has no sentence of the gateway's: the notice says the connection's, or its general one, with no code to look up.
+  if (isNetworkFailure(error)) return { kind: "OTHER", message: t ? apiErrorText(error, t) : "", code: null, params: null };
   if (error instanceof ApiError) {
     if (error.code === STAFFING_SEARCH_ALREADY_RUNNING) return { kind: "ALREADY_RUNNING" };
     if (error.code === STAFFING_SEARCH_NO_QUALIFICATIONS) return { kind: "NO_QUALIFICATIONS" };
@@ -244,7 +254,7 @@ export function classifyStartError(error: unknown): StartProblem {
     if (error.status === 502 || error.status === 503) return { kind: "UNAVAILABLE" };
     // The gateway's own words, when a thrower wrote them for the reader; "" for a log's English ("An unexpected error occurred") and for
     // a request that got no answer, and the notice says its general sentence then (lib/api-error-text.ts ownWords).
-    return { kind: "OTHER", message: ownWords(error), code: error.code ?? null, params: error.params ?? null };
+    return { kind: "OTHER", message: wordsOf(error, t), code: error.code ?? null, params: error.params ?? null };
   }
   return { kind: "OTHER", message: "", code: null, params: null };
 }
@@ -254,14 +264,14 @@ export type ProposalProblem =
   | { kind: "STALE" | "GONE" | "NOT_DONE" | "NO_PROPOSAL" }
   | { kind: "OTHER"; message: string };
 
-export function classifyProposalError(error: unknown): ProposalProblem {
-  if (isNetworkFailure(error)) return { kind: "OTHER", message: "" };
+export function classifyProposalError(error: unknown, t?: ProblemLookup): ProposalProblem {
+  if (isNetworkFailure(error)) return { kind: "OTHER", message: t ? apiErrorText(error, t) : "" };
   if (error instanceof ApiError) {
     if (error.code === STAFF_PROPOSAL_STALE) return { kind: "STALE" };
     if (error.code === STAFFING_SEARCH_GONE) return { kind: "GONE" };
     if (error.code === STAFFING_SEARCH_NOT_DONE) return { kind: "NOT_DONE" };
     if (error.code === STAFFING_SEARCH_NO_PROPOSAL) return { kind: "NO_PROPOSAL" };
-    return { kind: "OTHER", message: ownWords(error) };
+    return { kind: "OTHER", message: wordsOf(error, t) };
   }
   return { kind: "OTHER", message: "" };
 }

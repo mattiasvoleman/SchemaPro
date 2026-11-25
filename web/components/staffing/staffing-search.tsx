@@ -129,7 +129,7 @@ export function StaffingSearch({ academicYearId, pinnedRequirementIds = [], onPr
         ...(pinnedRequirementIds.length > 0 ? { pinnedRequirementIds: [...pinnedRequirementIds] } : {}),
       });
     } catch (error) {
-      setStartProblem(classifyStartError(error));
+      setStartProblem(classifyStartError(error, tCommon));
     }
   };
 
@@ -140,7 +140,7 @@ export function StaffingSearch({ academicYearId, pinnedRequirementIds = [], onPr
       const answer = await read.mutateAsync(view.id);
       onProposal(answer.proposal, answer.figures ?? null);
     } catch (error) {
-      const problem = classifyProposalError(error);
+      const problem = classifyProposalError(error, tCommon);
       setProposalProblem(problem);
       // A run that was still going, or is gone: what the panel shows is read again.
       if (problem.kind === "NOT_DONE" || problem.kind === "GONE") void latest.refetch();

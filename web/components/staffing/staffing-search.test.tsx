@@ -284,6 +284,14 @@ describe("a start that is refused", () => {
     expect(alert).toHaveTextContent("Något gick fel");
     expect(alert).not.toHaveTextContent("unexpected error");
   });
+
+  it("says a start whose session has gone as the sign-in's sentence, which the reader can act on, and not as a general one", async () => {
+    gateway.post.mockRejectedValueOnce(new ApiError(401, "Not authenticated."));
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole("button", { name: "Sök lärarval" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Din inloggning har gått ut. Logga in igen.");
+  });
 });
 
 describe("a search that goes on", () => {
@@ -816,6 +824,21 @@ describe("the proposal", () => {
     expect(alert).toHaveTextContent("Något gick fel");
     expect(alert).not.toHaveTextContent("Internal server error");
     expect(screen.getByRole("button", { name: "Visa förslaget" })).toBeEnabled();
+  });
+
+  it("says a proposal read the gateway refused for a role as the sentence of a permission the reader lacks", async () => {
+    server.latest = ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 3, hasProposal: true });
+    gateway.get.mockImplementation(async (path: string) => {
+      if (path === LATEST) return server.latest;
+      throw new ApiError(403, "You do not have permission to perform this action.");
+    });
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole("button", { name: "Visa förslaget" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Du har inte behörighet att göra det här.");
+    expect(alert).not.toHaveTextContent("permission");
   });
 });
 
