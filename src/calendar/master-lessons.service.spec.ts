@@ -5074,6 +5074,18 @@ describe('MasterLessonsService', () => {
         { lessonIds: [LESSON_ID] },
       );
     });
+
+    it('says a removal in DRAFT mode to the admins only: a draft is not the staff room\'s to hear of, ids and all', async () => {
+      arrangeRemove();
+      // The school's mode, as the first statement of every grundschema writer answers it (publish-mode.ts).
+      tx.$queryRaw.mockResolvedValue([{ mode: 'DRAFT' }]);
+
+      await service.remove(LESSON_ID, testUser());
+
+      await afterCommit();
+      expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+      expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { draft: true, lessonIds: [LESSON_ID] });
+    });
   });
 
   // -------------------------------------------------------------------
@@ -5646,6 +5658,9 @@ describe('MasterLessonsService', () => {
           expect(tx.masterLesson.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({ where: expect.objectContaining({ id: { in: [VT] }, startDate: springWeeks.startDate }) }),
           );
+          // The lesson that followed the card is a lesson the card moved: the others read it, too.
+          await afterCommit();
+          expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { lessonIds: [LESSON_ID, VT] });
         });
 
         it('refuses one lesson of a block that has another post, placed or not, as no card', async () => {
