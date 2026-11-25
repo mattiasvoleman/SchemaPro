@@ -249,9 +249,10 @@ test("Grundschemat: a lesson is taken up, moved, locked, parked and undone from 
   // The card is drawn again and focus is on it.
   await expect(card(MATH_LESSON.id)).toBeFocused();
 
-  // L locks it, and the line says so.
+  // L locks it, and the line says so: "Låser Matematik 7A." (#464's sentence, which says what is done and not what came of it) or, in a tree
+  // without that sentence, "Matematik 7A är låst." The line is read in the catalogue's words, so the spec reads either.
   await page.keyboard.press("l");
-  await expect(status).toContainText("är låst");
+  await expect(status).toContainText(/Låser Matematik 7A|Matematik 7A är låst/);
   await expect.poll(() => written.length).toBe(2);
   expect(written[1]).toEqual({ id: MATH_LESSON.id, body: { isLocked: true } });
 
