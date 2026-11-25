@@ -188,6 +188,24 @@ function holdsChanged(now: JudgedCandidate, was: JudgedCandidate): boolean {
   );
 }
 
+/**
+ * What the other schools' holds are asked of. A lesson that moved, or stands nowhere yet, is asked of all its teachers and its room.
+ * One that stays where it stands is asked only of what the edit CHANGED (låt stå): a lesson whose teacher is held at another school
+ * may be given another room, and one whose room is lent out may be given another teacher, without the hold it already stands in
+ * being said again. A teacher or a room that is itself held in that hour is refused as before.
+ */
+function heldOf({ candidate, stands }: Pick<JudgeItem, 'candidate' | 'stands'>): JudgedCandidate {
+  if (!stands || placementChanged(candidate, stands)) return candidate;
+  const taught = new Set([stands.teacherId, stands.coTeacherId ?? null]);
+  const kept = (id: string | null | undefined): boolean => id !== null && id !== undefined && taught.has(id);
+  return {
+    ...candidate,
+    teacherId: kept(candidate.teacherId) ? null : candidate.teacherId,
+    coTeacherId: kept(candidate.coTeacherId) ? null : (candidate.coTeacherId ?? null),
+    roomId: candidate.roomId === stands.roomId ? null : candidate.roomId,
+  };
+}
+
 /** What a lesson that a clash names is called: its class, its subject, and where it stands. */
 export interface NamedLesson {
   groupIds: ReadonlySet<string>;
@@ -338,7 +356,7 @@ export async function judgeLessons(
     const holds = (await readOtherSchoolHolds(tx, world.academicYearId, world.schoolId)).holds;
     if (holds.length > 0) {
       for (const index of holdItems) {
-        const schools = holdSchools(holds, items[index]!.candidate);
+        const schools = holdSchools(holds, heldOf(items[index]!));
         if (schools.length > 0) refusals[index]!.push({ reason: 'OTHER_SCHOOL', params: { schools: shortened(schools.join(', '), 200) } });
       }
     }
