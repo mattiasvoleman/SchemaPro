@@ -114,6 +114,21 @@ function marksOf(refusals: readonly MoveRefusal[]): { time: boolean; room: boole
   return marks;
 }
 
+/** The fields that say WHEN a lesson stands: what an exemption (Undantag med flit) is for. */
+const TIME_FIELDS = ["dayOfWeek", "startTime", "endTime", "recurrence", "startDate", "endDate"] as const;
+
+/** Whether the draft says the time and the weeks the lesson has. */
+function atOwnTime(lesson: MasterLesson, draft: LessonEditDraft): boolean {
+  return (
+    Number(draft.dayOfWeek) === lesson.dayOfWeek &&
+    draft.startTime === lesson.startTime.slice(0, 5) &&
+    draft.endTime === lesson.endTime.slice(0, 5) &&
+    draft.recurrence === lesson.recurrence &&
+    (draft.startDate === "" ? null : draft.startDate) === lesson.startDate &&
+    (draft.endDate === "" ? null : draft.endDate) === lesson.endDate
+  );
+}
+
 export function LessonEditDialog({
   open,
   lesson,
@@ -151,6 +166,15 @@ export function LessonEditDialog({
     "aria-describedby": on ? "edit-judgement" : undefined,
   });
   const markedClass = (on: boolean) => cn(on && "border-destructive");
+
+  // An exemption is for the time it was given for (the gateway: another time that breaks the rule asks again). A change of the day, the clock
+  // or the weeks puts the answer back to what the lesson itself has: the question is asked again of the new time, and the way back to the
+  // lesson's own time gives its own exemption (and its lock) back. A change of anything else leaves the answer as it is.
+  const edit = (next: LessonEditDraft) => {
+    const changesTime = TIME_FIELDS.some((field) => draft[field] !== next[field]);
+    if (!lesson || !changesTime || (next.exempt?.length ?? 0) === 0) return onDraftChange(next);
+    onDraftChange({ ...next, exempt: atOwnTime(lesson, next) ? lesson.exemptFrom ?? [] : [], isLocked: lesson.isLocked });
+  };
 
   // UNDANTAG MED FLIT. The question is put under a no that is the ramtid and the class's meal and nothing else (the judge says so:
   // `exemptable`, and the reasons agree), never on a guess, and answering yes is one press that names exactly the rules refused. The
@@ -193,7 +217,7 @@ export function LessonEditDialog({
             <Label htmlFor="edit-day">{t("editDay")}</Label>
             <Select
               value={draft.dayOfWeek}
-              onValueChange={(dayOfWeek) => onDraftChange({ ...draft, dayOfWeek })}
+              onValueChange={(dayOfWeek) => edit({ ...draft, dayOfWeek })}
             >
               <SelectTrigger id="edit-day" {...marked(marks.time)} className={markedClass(marks.time)}>
                 <SelectValue />
@@ -215,7 +239,7 @@ export function LessonEditDialog({
               {...marked(marks.time)}
               className={markedClass(marks.time)}
               value={draft.startTime}
-              onChange={(e) => onDraftChange({ ...draft, startTime: e.target.value })}
+              onChange={(e) => edit({ ...draft, startTime: e.target.value })}
             />
           </div>
           <div className="space-y-2">
@@ -226,7 +250,7 @@ export function LessonEditDialog({
               {...marked(marks.time)}
               className={markedClass(marks.time)}
               value={draft.endTime}
-              onChange={(e) => onDraftChange({ ...draft, endTime: e.target.value })}
+              onChange={(e) => edit({ ...draft, endTime: e.target.value })}
             />
           </div>
           <div className="space-y-2">
@@ -274,7 +298,7 @@ export function LessonEditDialog({
               startDate: draft.startDate,
               endDate: draft.endDate,
             }}
-            onChange={(next) => onDraftChange({ ...draft, ...next })}
+            onChange={(next) => edit({ ...draft, ...next })}
           />
           {/* What the gateway says of the fields as they stand, before Spara: one live region, always in the tree, so that a
               screen reader that has it announces the answer when it arrives. The reasons are the refusal's own sentence
