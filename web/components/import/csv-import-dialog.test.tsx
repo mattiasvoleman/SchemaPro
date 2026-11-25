@@ -1020,6 +1020,25 @@ describe("CsvImportDialog with files as schools save them", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("rejectedByServer"));
   });
 
+  it("says a later batch's refusal in the reader's language, on the row it stopped at", async () => {
+    // 501 pupils: the endpoint takes 500, so the second batch is one row and is refused with the gateway's English log sentence.
+    const refused = Object.assign(new Error("An unexpected error occurred. Please try again later."), { status: 500 });
+    mockPost.mockResolvedValueOnce({ created: 500, skipped: 0, errors: [] }).mockRejectedValueOnce(refused);
+    const rows = Array.from({ length: 501 }, (_, i) => `Elev${i};Ek;elev${i}@example.com;7A\r\n`).join("");
+    const user = userEvent.setup();
+    renderDialog();
+
+    await uploadCsv(user, BOM + "fornamn;efternamn;epost;klass\r\n" + rows);
+    await screen.findByText("rowsReady(count=501)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    await screen.findByText("resultSummary(created=500|skipped=0)");
+    // Row 502 of the file: the header is line 1 and the 501st pupil is line 502. The sentence is the catalogue's key, not the English.
+    expect(screen.getByText("rowError(row=502|message=problemServer)")).toBeInTheDocument();
+    expect(screen.queryByText(/An unexpected error occurred/)).toBeNull();
+  });
+
   it("names the row and the column of a cell it will not send, and says how rows are counted", async () => {
     const user = userEvent.setup();
     renderDialog();

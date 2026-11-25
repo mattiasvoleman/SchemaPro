@@ -461,6 +461,17 @@ describe("Analys och planering, löneunderlag", () => {
     expect(files.saveBase64).not.toHaveBeenCalled();
   });
 
+  it("says a file the gateway failed to build in the reader's language, not in the gateway's English", async () => {
+    api.post.mockRejectedValue(new ApiError(500, "An unexpected error occurred. Please try again later."));
+    renderPage();
+    await openTab("Löneunderlag");
+    await userEvent.click(screen.getByRole("button", { name: "Visa underlag" }));
+    await screen.findByRole("table", { name: "Löneunderlag per person och skoldel" });
+    await userEvent.click(screen.getByRole("button", { name: "CSV för Excel" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Något gick fel hos oss. Försök igen om en stund."));
+    expect(files.saveBase64).not.toHaveBeenCalled();
+  });
+
   it("offers no file for a period with no time in it, and says so", async () => {
     state.pay = payroll({ people: [], lines: [] });
     renderPage();

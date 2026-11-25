@@ -257,8 +257,11 @@ describe("Bjud in valda", () => {
       .mockResolvedValueOnce({ sent: 498, alreadyRegistered: 1, errors: [{ userId: ids[3]!, message: "x" }] })
       .mockRejectedValueOnce(new Error("HTTP 502"))
       .mockResolvedValueOnce({ sent: 203, alreadyRegistered: 0, errors: [] });
-    const report = await inviteInChunks(ids, post);
+    const report = await inviteInChunks(ids, post, (error) => `sagt: ${error instanceof Error ? error.message : "?"}`);
     expect(post.mock.calls.map(([chunk]) => (chunk as string[]).length)).toEqual([500, 500, 203]);
+    // The failed chunk is counted against each of its people with the sentence `say` gave, not with the failure's own words.
+    expect(report.errors.filter((error) => error.message === "sagt: HTTP 502")).toHaveLength(500);
+    expect(report.errors.filter((error) => error.message === "HTTP 502")).toHaveLength(0);
     expect(report.sent).toBe(701);
     expect(report.alreadyRegistered).toBe(1);
     expect(report.errors).toHaveLength(501);

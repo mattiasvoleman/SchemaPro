@@ -58,6 +58,7 @@ import { useRemoveSignInMethod, useSaveSignInMethod, useSignInSettings } from ".
 export function SignInTab() {
   const t = useTranslations("integrations.signIn");
   const tErrors = useTranslations("integrations.errors") as unknown as MessageLookup;
+  const tCommon = useTranslations("common");
   const settings = useSignInSettings();
 
   if (settings.isLoading) {
@@ -68,7 +69,7 @@ export function SignInTab() {
     );
   }
   if (settings.isError || !settings.data) {
-    const reason = settings.isError ? errorText(tErrors, settings.error, "") : "";
+    const reason = settings.isError ? errorText(tErrors, settings.error, tCommon) : "";
     return <LoadError title={t("loadFailed")} hint={reason || undefined} headingLevel={2} />;
   }
   return <SignInCard key={settings.data.method?.updatedAt ?? "none"} settings={settings.data} />;

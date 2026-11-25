@@ -375,7 +375,12 @@ export function CsvImportDialog({
                         {t("rowError", {
                           row: error.row,
                           // A later batch refused whole lands here (importCsvInBatches).
-                          message: error.message === REFUSED_BODY ? t("rejectedByServer") : error.message,
+                          message:
+                            error.failure !== undefined
+                              ? apiErrorText(error.failure, tCommon)
+                              : error.message === REFUSED_BODY
+                                ? t("rejectedByServer")
+                                : error.message,
                         })}
                       </li>
                     ))}

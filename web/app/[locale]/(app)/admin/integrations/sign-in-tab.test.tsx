@@ -87,6 +87,29 @@ beforeEach(() => {
   answer();
 });
 
+describe("/admin/integrations — Inloggning, a read that fails", () => {
+  it("says the failure in the reader's language, not in the gateway's English", async () => {
+    get.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/sign-in-method") throw new ApiError(500, "An unexpected error occurred. Please try again later.");
+      if (path === "/api/v1/ss12000-source") throw new ApiError(404, "none", "SS12000_SOURCE_NOT_FOUND");
+      return [];
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm">
+          <ProfileProvider profile={{} as Profile} school={null} readOnly={false}>
+            <IntegrationsPage />
+          </ProfileProvider>
+        </NextIntlClientProvider>
+      </QueryClientProvider>,
+    );
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Inloggning" }));
+    expect(await screen.findByText("Något gick fel hos oss. Försök igen om en stund.")).toBeInTheDocument();
+    expect(screen.queryByText(/An unexpected error occurred/)).not.toBeInTheDocument();
+  });
+});
+
 describe("/admin/integrations — Inloggning", () => {
   it("sets up Entra ID: the domains cleaned, the tenant lower case, SSO-only off", async () => {
     const card = await openTab();
