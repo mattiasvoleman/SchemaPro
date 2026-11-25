@@ -317,7 +317,8 @@ export function pathShortfall(timing: EngineTiming | null, limitSeconds: number 
     `It can need up to ${row.ceilingSeconds} s (SOLVER_MAX_TIME_SECONDS=${row.budgetSeconds} s, SOLVER_PROBE_SECONDS=${row.probeSeconds} s ` +
     `and up to ${row.headroomSeconds} s to build), so the API waits ${capMs / 1000} s at most. `;
   const consequence = supportsDeadline(timing)
-    ? `The engine is asked to answer inside that: its search is cut to about ${fitsBudgetSeconds ?? 0} s of its ${row.budgetSeconds} s, ` +
+    ? `The engine is asked to answer inside that: its search is cut short of its ${row.budgetSeconds} s, to what the deadline leaves it after its builds ` +
+      `(the engine works that length out${fitsBudgetSeconds !== undefined ? `, and it is not the ${fitsBudgetSeconds} s the remedy below names` : ''}), ` +
       `and a run that needs more ends as a TIMEOUT with its explanation and suggestions, not as a closed connection. `
     : `This engine is older than deadlineSeconds and cannot be asked to answer inside that: it goes on searching for its ` +
       `${row.budgetSeconds} s, and a run that needs more than ${fitsBudgetSeconds ?? 0} s ends when the API's wait does, with nothing to show of it. `;
