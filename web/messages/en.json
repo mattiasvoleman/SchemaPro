@@ -2309,10 +2309,10 @@
     "length": "{lesson} is {minutes} minutes and ends at {to}.",
     "lengthLimit": "{lesson}: the length cannot be changed that way.",
     "lengthRefused": "{lesson} cannot be {minutes} minutes. The nearest free times are shown.",
-    "locked": "{lesson} is locked. Generate will not rearrange it.",
-    "unlocked": "{lesson} is no longer locked.",
+    "locked": "Locking {lesson}.",
+    "unlocked": "Unlocking {lesson}.",
     "parked": "Parking {lesson}.",
-    "removed": "Removing {lesson}. Ctrl+Z undoes it.",
+    "removed": "Removing {lesson}.",
     "keysTitle": "Keys on the timetable",
     "keys": {
       "arrows": {

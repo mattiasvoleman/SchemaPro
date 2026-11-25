@@ -58,6 +58,9 @@ export function useTimetableRealtime(): {
     if (!API_BASE_URL) return undefined;
     let cancelled = false;
     let socket: Socket | null = null;
+    // The event that last named each lesson: a read asked for by an earlier one must not lay a lesson over the later one's.
+    let heardCount = 0;
+    const lastNamedBy = new Map<string, number>();
 
     void (async () => {
       const supabase = createClient();
@@ -95,15 +98,25 @@ export function useTimetableRealtime(): {
         if (!ids) return readTheYear();
         // A change of a few lessons: read just those and lay them in the list, as the person's own write is laid
         // (lib/master-lesson-cache.ts). A change the gateway did not name, or a read that does not come, is the year as before.
+        const heard = (heardCount += 1);
+        for (const id of ids) lastNamedBy.set(id, heard);
+        const stillCurrent = (id: string) => lastNamedBy.get(id) === heard;
+        const forget = () => {
+          for (const id of ids) if (lastNamedBy.get(id) === heard) lastNamedBy.delete(id);
+        };
         void import("@/lib/master-lesson-cache")
-          .then((cache) => cache.readHeard(queryClient, ids))
+          .then((cache) => cache.readHeard(queryClient, ids, stillCurrent))
           .then(
             (done) => {
+              // What else is kept under the lessons' key beside the year's list (the candidates' map of who owns each lesson,
+              // ["masterLessons", <year>, "origin"]) was read before this change, and the year's read used to bring it along.
+              if (done) void queryClient.invalidateQueries({ queryKey: ["masterLessons"], predicate: (query) => query.queryKey.length > 2 });
               if (done) void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
               else readTheYear();
             },
             readTheYear,
-          );
+          )
+          .finally(forget);
       });
       // Announce presence (no lesson open yet).
       socket.emit("timetable:presence", { editingLessonId: null });

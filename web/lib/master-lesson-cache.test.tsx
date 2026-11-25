@@ -119,6 +119,24 @@ describe("the year's lesson lists in the cache", () => {
     expect(held()[1]!.isLocked).toBe(true);
   });
 
+  it("does not put an older lesson over one a colleague's change has laid since the write was asked for", () => {
+    const { queryClient, held } = harness();
+    // Asked for: the card stands on Tuesday. A colleague moves the same lesson to Thursday, and the page reads it (use-timetable-realtime.ts).
+    const remembered = patchLesson(queryClient, "a", { dayOfWeek: 2 });
+    putLesson(queryClient, lesson("a", { dayOfWeek: 4 }));
+    // Then the write is refused: the lesson is where the database has it, and the refusal changed nothing of that.
+    putBack(queryClient, remembered);
+    expect(held()[0]!.dayOfWeek).toBe(4);
+  });
+
+  it("does not put a removed lesson back over what a colleague's change has laid in its place", () => {
+    const { queryClient, held } = harness();
+    const remembered = removeLesson(queryClient, "a");
+    putLesson(queryClient, lesson("a", { dayOfWeek: 4 }));
+    putBack(queryClient, remembered);
+    expect(held().filter((l) => l.id === "a").map((l) => l.dayOfWeek)).toEqual([4]);
+  });
+
   it("puts a removed lesson back, and a lesson the gateway made in its year", () => {
     const { queryClient, held } = harness();
     const remembered = removeLesson(queryClient, "a");
