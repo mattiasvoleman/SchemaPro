@@ -1,5 +1,6 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import type { MasterLesson } from "@/lib/types";
+import { createClient } from "@/utils/supabase/client";
 
 /**
  * The year's lesson lists in the query cache, patched one lesson at a time.
@@ -187,4 +188,65 @@ export function answered(
   if (kind === "update") patchLesson(queryClient, (input as { id: string }).id, lessonFieldsOf(result as object));
   if (kind === "create") addLesson(queryClient, { fromPlacement: false, ...(result as object) } as unknown as MasterLesson);
   return (context as Context | undefined)?.reading ? "read" : "keep";
+}
+
+// ---------------------------------------------------------------------------
+// A collaborator's change (lib/use-timetable-realtime.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * The columns of a lesson the year's list reads, with its extra groups and its pupils. The same string as
+ * `useMasterLessons` in lib/queries.ts reads, which cannot import this module (it would then be part of every route
+ * that shares that one, which is what loading this module late is for): a contract test holds the two equal.
+ */
+export const MASTER_LESSON_SELECT =
+  "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)";
+
+type LessonRow = Omit<MasterLesson, "extraGroupIds" | "studentIds"> & {
+  extraGroups: Array<{ studentGroupId: string }>;
+  participants: Array<{ studentId: string }>;
+};
+
+/** A row as the list holds it: the groups and the pupils as ids, as `useMasterLessons` lays them. */
+export function lessonOfRow({ extraGroups, participants, ...lesson }: LessonRow): MasterLesson {
+  return {
+    ...lesson,
+    extraGroupIds: extraGroups.map((entry) => entry.studentGroupId),
+    studentIds: participants.map((entry) => entry.studentId),
+  };
+}
+
+/** A lesson as it now is, in its year's list: in the place it had, or at the end of it. */
+export function putLesson(queryClient: QueryClient, lesson: MasterLesson): void {
+  for (const [key, lessons] of yearLists(queryClient)) {
+    if (key[1] !== lesson.academicYearId) continue;
+    const at = lessons.findIndex((held) => held.id === lesson.id);
+    if (at === -1) {
+      queryClient.setQueryData(key, [...lessons, lesson]);
+      continue;
+    }
+    const next = lessons.slice();
+    next[at] = lesson;
+    queryClient.setQueryData(key, next);
+  }
+}
+
+/**
+ * Somebody else changed these lessons: read just them, and lay what is there in the lists, and take out what is not (a lesson
+ * somebody removed). The rows are read under this reader's own row-level security, as the year is, so the event gave nothing away.
+ *
+ * Says whether it did. False means the lists are to be read as before: no list is held to patch, or the read failed. Nothing is
+ * patched from a read that failed.
+ */
+export async function readHeard(queryClient: QueryClient, ids: readonly string[]): Promise<boolean> {
+  if (yearLists(queryClient).length === 0) return false;
+  const { data, error } = await createClient().from("MasterLessons").select(MASTER_LESSON_SELECT).in("id", [...ids]);
+  if (error || !Array.isArray(data)) return false;
+  const found = new Set<string>();
+  for (const row of data as unknown as LessonRow[]) {
+    found.add(row.id);
+    putLesson(queryClient, lessonOfRow(row));
+  }
+  for (const id of ids) if (!found.has(id)) removeLesson(queryClient, id);
+  return true;
 }

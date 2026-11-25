@@ -58,10 +58,12 @@ interface SetupOptions {
   session?: Promise<SessionPayload>;
   /** Holds the socket.io-client dynamic import open until resolved. */
   gateImport?: Promise<void>;
+  /** What a read of lessons by id answers: the rows, or an error. Absent, a read is a test's mistake. */
+  read?: (ids: string[]) => { data: unknown; error: { message: string } | null };
 }
 
 async function setup(options: SetupOptions = {}) {
-  const { token = "tok-1", session, gateImport } = options;
+  const { token = "tok-1", session, gateImport, read } = options;
   const apiUrl = "apiUrl" in options ? options.apiUrl : "https://api.test";
 
   vi.resetModules();
@@ -85,8 +87,18 @@ async function setup(options: SetupOptions = {}) {
           data: { session: token === null ? null : { access_token: token } },
         }),
       );
+  const reads: string[][] = [];
+  const from = vi.fn(() => ({
+    select: () => ({
+      in: (_column: string, ids: string[]) => {
+        reads.push(ids);
+        if (!read) throw new Error("a read of lessons nobody asked for");
+        return Promise.resolve(read(ids));
+      },
+    }),
+  }));
   vi.doMock("@/utils/supabase/client", () => ({
-    createClient: () => ({ auth: { getSession } }),
+    createClient: () => ({ auth: { getSession }, from }),
   }));
 
   const { useTimetableRealtime } = await import("./use-timetable-realtime");
@@ -98,7 +110,7 @@ async function setup(options: SetupOptions = {}) {
   );
   const view = renderHook(() => useTimetableRealtime(), { wrapper });
 
-  return { view, io, socket, importStarted, getSession, invalidate };
+  return { view, io, socket, importStarted, getSession, invalidate, queryClient, reads, from };
 }
 
 afterEach(() => {
@@ -274,5 +286,116 @@ describe("useTimetableRealtime", () => {
     socket.emit.mockClear();
     setEditing("lesson-7");
     expect(socket.emit).not.toHaveBeenCalled();
+  });
+});
+
+describe("a collaborator's change of a few lessons", () => {
+  const YEAR = ["masterLessons", "year-1"];
+  const lesson = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id,
+    academicYearId: "year-1",
+    subjectId: "sv",
+    studentGroupId: "7a",
+    teacherId: "anna",
+    coTeacherId: null,
+    roomId: "r1",
+    dayOfWeek: 1,
+    startTime: "08:00:00",
+    endTime: "09:00:00",
+    isLocked: false,
+    isParked: false,
+    fromPlacement: false,
+    recurrence: "ALL_WEEKS",
+    startDate: null,
+    endDate: null,
+    extraGroupIds: [],
+    studentIds: [],
+    ...overrides,
+  });
+  /** A row as the read gives it: the groups and the pupils as nested rows. */
+  const row = (id: string, overrides: Record<string, unknown> = {}) => {
+    const { extraGroupIds: _g, studentIds: _s, ...rest } = lesson(id, overrides) as Record<string, unknown> & {
+      extraGroupIds: string[];
+      studentIds: string[];
+    };
+    return { ...rest, extraGroups: [{ studentGroupId: "7b" }], participants: [{ studentId: "pupil-1" }] };
+  };
+  const held = (queryClient: QueryClient) => queryClient.getQueryData<Array<{ id: string; dayOfWeek: number }>>(YEAR)!;
+  const heard = async (socket: ReturnType<typeof makeFakeSocket>, payload: unknown) => {
+    await waitFor(() => expect(socket.on).toHaveBeenCalledWith("master_timetable_updated", expect.any(Function)));
+    act(() => socket.fire("master_timetable_updated", payload));
+    await flush();
+    await flush();
+  };
+
+  it("reads just those lessons and lays them in the year's list, and does not read the year", async () => {
+    const { socket, invalidate, queryClient, reads } = await setup({
+      read: (ids) => ({ data: ids.map((id) => row(id, { dayOfWeek: 3 })), error: null }),
+    });
+    queryClient.setQueryData(YEAR, [lesson("a"), lesson("b"), lesson("c")]);
+    const others = held(queryClient).slice(1);
+
+    await heard(socket, { changedAt: "2026-11-25T10:00:00.000Z", lessonIds: ["a"] });
+
+    expect(reads).toEqual([["a"]]);
+    expect(held(queryClient).map((l) => [l.id, l.dayOfWeek])).toEqual([["a", 3], ["b", 1], ["c", 1]]);
+    // The row is as the list holds a row: the groups and the pupils as ids.
+    expect(held(queryClient)[0]).toMatchObject({ extraGroupIds: ["7b"], studentIds: ["pupil-1"] });
+    // The lessons nobody touched are the objects they were, which is what keeps their cards.
+    expect(held(queryClient).slice(1)).toEqual(others);
+    expect(held(queryClient)[1]).toBe(others[0]);
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["masterLessons"] });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["lunch-sittings"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["calendarLessons"] });
+  });
+
+  it("adds a lesson somebody made, and takes out one somebody removed", async () => {
+    const { socket, queryClient } = await setup({
+      read: (ids) => ({ data: ids.filter((id) => id === "new").map((id) => row(id)), error: null }),
+    });
+    queryClient.setQueryData(YEAR, [lesson("a"), lesson("gone")]);
+
+    await heard(socket, { lessonIds: ["new", "gone"] });
+
+    expect(held(queryClient).map((l) => l.id).sort()).toEqual(["a", "new"]);
+  });
+
+  it("reads the year, as before, when the event names no lessons (a regeneration, an older gateway)", async () => {
+    const { socket, invalidate, reads, queryClient } = await setup();
+    queryClient.setQueryData(YEAR, [lesson("a")]);
+
+    await heard(socket, { changedAt: "2026-11-25T10:00:00.000Z" });
+    expect(reads).toEqual([]);
+    expect(invalidate).toHaveBeenCalledTimes(4);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["masterLessons"] });
+  });
+
+  it("reads the year when it names more lessons than are read one by one, or something that is not ids", async () => {
+    const { socket, invalidate, reads, queryClient } = await setup();
+    queryClient.setQueryData(YEAR, [lesson("a")]);
+
+    await heard(socket, { lessonIds: Array.from({ length: 51 }, (_, index) => `l${index}`) });
+    await heard(socket, { lessonIds: [] });
+    await heard(socket, { lessonIds: [1, 2] });
+    expect(reads).toEqual([]);
+    expect(invalidate.mock.calls.filter(([filter]) => filter?.queryKey?.[0] === "masterLessons")).toHaveLength(3);
+  });
+
+  it("reads the year when there is no list to lay the lessons in", async () => {
+    const { socket, invalidate, reads } = await setup();
+    await heard(socket, { lessonIds: ["a"] });
+    expect(reads).toEqual([]);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["masterLessons"] });
+  });
+
+  it("reads the year, and patches nothing, when the read of the lessons fails", async () => {
+    const { socket, invalidate, queryClient } = await setup({ read: () => ({ data: null, error: { message: "JWT expired" } }) });
+    queryClient.setQueryData(YEAR, [lesson("a"), lesson("gone")]);
+
+    await heard(socket, { lessonIds: ["gone"] });
+
+    // The lesson a failed read did not find is not a lesson somebody removed.
+    expect(held(queryClient).map((l) => l.id)).toEqual(["a", "gone"]);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["masterLessons"] });
   });
 });
