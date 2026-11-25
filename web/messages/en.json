@@ -11810,10 +11810,10 @@
     "skipped": "{count, plural, one {# column is not read, as you chose} other {# columns are not read, as you chose}}: {names}.",
     "dropped": "{count, plural, one {# column that looks like personal identity numbers was dropped} other {# columns that look like personal identity numbers were dropped}}. None of it leaves the browser.",
     "emptied": "{count, plural, one {# row has nothing in the columns that are read and is skipped} other {# rows have nothing in the columns that are read and are skipped}}.",
-    "held": "{count, plural, one {Row {rows} has a confidentiality mark in the file and is not read} other {Rows {rows} have a confidentiality mark in the file and are not read}}, as in Skola24. The rest of the file is read.",
+    "held": "{count, plural, one {Row {rows} has a confidentiality mark in the file (a protected identity in Rastra) and is not read} other {Rows {rows} have a confidentiality mark in the file (a protected identity in Rastra) and are not read}}, as in Skola24. The rest of the file is read.",
     "format": {
       "label": "The file comes from Skola24",
-      "auto": "Recognise it",
+      "auto": "Recognise by the headers",
       "none": "None of these",
       "names": {
         "skola24-foraldrar-csv": "Importera föräldrar CSV (guardians, CSV)",
@@ -11821,6 +11821,8 @@
         "skola24-elever-klass": "Importera elever till klasser (pupils per class, pasted from Excel)"
       },
       "recognised": "The file is recognised as Skola24's “{name}”, and the columns are placed as Skola24 describes it.",
+      "recognisedByTemplate": "The file is recognised as Skola24's “{name}”, but the columns are placed by the school's template and not by Skola24's description.",
+      "read": "The file is read as Skola24's “{name}”, as you chose, and the columns are placed as Skola24 describes it.",
       "offered": "The file looks like Skola24's “{name}”.",
       "skipped": "{count, plural, one {# column is not read} other {# columns are not read}}: {names}.",
       "use": "Read it that way",
@@ -11833,7 +11835,7 @@
         "present": "Yes, the first row holds headers",
         "absent": "No, the first row is a person"
       },
-      "missing": "The file lacks {count, plural, one {the column} other {the columns}} that Skola24's description has: {names}.",
+      "missing": "The file lacks {count, plural, one {the column} other {the columns}} that Skola24's description has (Skola24's own Swedish names): {names}.",
       "gap": "Skola24's file has nothing for {count, plural, one {the field} other {the fields}} {names}, which Rastra's import requires. Point out a column yourself or complete the file.",
       "unread": {
         "school": "Not read: the import is for the school you are signed in to, so the school's name is not needed.",

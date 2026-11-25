@@ -52,6 +52,12 @@ export interface ColumnMappingPanelProps {
 const SKIP = "__skip__";
 const NONE = "";
 const NO_ROWS: readonly number[] = [];
+/** The most held rows named by number; a longer list is cut with an ellipsis, so that the count and the numbers beside it do not differ unsaid. */
+const HELD_ROWS_NAMED = 20;
+
+function heldRowsText(rows: readonly number[]): string {
+  return rows.slice(0, HELD_ROWS_NAMED).join(", ") + (rows.length > HELD_ROWS_NAMED ? ", …" : "");
+}
 
 /**
  * The mapping of a table's columns, in the one place it is done (Kolumnmappning, X2): which row holds the headers, which
@@ -93,6 +99,10 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
   const assignment: Assignment = chosen?.assignment ?? formatState?.assignment ?? offered?.assignment ?? recognition?.assignment ?? [];
   const applied = chosen ? chosen.applied : inUse !== null || offered !== null ? null : (recognition?.template ?? null);
   const heldRows = inUse?.reading.heldRows ?? offered?.heldRows ?? NO_ROWS;
+  // The school's own templates are said beside a description the panel applied by itself, too: a template that nearly fits is offered, and two
+  // that fit are asked between, whatever the description did on the exact headers. Said no more once the user has chosen the description, which
+  // is their say, nor beside a file that is only offered (it has no header row for a template to be recognised on).
+  const showTemplates = offered === null && (inUse === null || formatChoice === null);
   const columns = useMemo(() => (block ? describeColumns(block, kind, assignment) : []), [block, kind, assignment]);
   const result = useMemo(
     () => (block && assignment.length === block.headers.length ? applyMapping(block, kind, assignment) : null),
@@ -253,8 +263,8 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
     const readable = columns.filter((column) => column.status !== "personalNumber").length;
     return (
       <div className="space-y-3">
-        {inUse === null && offered === null ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
-        <FormatNotices kind={kind} inUse={inUse} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
+        {showTemplates ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
+        <FormatNotices kind={kind} inUse={inUse} chosen={formatChoice !== null} byTemplate={applied !== null && formatChoice === null} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
         <details
           open={userOpen ?? (latched || needsSay)}
           onToggle={(event) => setUserOpen(event.currentTarget.open)}
@@ -274,8 +284,8 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">{t("intro")}</p>
-      {inUse === null && offered === null ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
-      <FormatNotices kind={kind} inUse={inUse} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
+      {showTemplates ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
+      <FormatNotices kind={kind} inUse={inUse} chosen={formatChoice !== null} byTemplate={applied !== null && formatChoice === null} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
       {columnsView}
       {result ? <Summary result={result} label={label} columnName={columnName} heldRows={heldRows} fromFormat={inUse !== null} /> : null}
     </div>
@@ -294,7 +304,8 @@ function TemplateNotices({
   onUse: (template: MappingTemplate) => void;
 }) {
   const t = useTranslations("columnMapping");
-  if (!recognition && !applied) return null;
+  // Nothing to say is no box: an empty one still takes the parent's gap above and below it, beside every description the panel applies by itself.
+  if (applied === null && (recognition === null || (recognition.ambiguous.length <= 1 && recognition.offered.length === 0))) return null;
   return (
     <div className="space-y-2">
       {applied ? (
@@ -383,7 +394,7 @@ function Summary({
       {result.skipped.length > 0 ? <Notice tone="neutral">{t(fromFormat ? "format.skipped" : "skipped", { count: result.skipped.length, names: names(result.skipped) })}</Notice> : null}
       {result.dropped.length > 0 ? <Notice tone="neutral">{t("dropped", { count: result.dropped.length })}</Notice> : null}
       {result.emptied.length > 0 ? <Notice tone="neutral">{t("emptied", { count: result.emptied.length })}</Notice> : null}
-      {heldRows.length > 0 ? <Notice tone="neutral">{t("held", { count: heldRows.length, rows: heldRows.slice(0, 20).join(", ") })}</Notice> : null}
+      {heldRows.length > 0 ? <Notice tone="neutral">{t("held", { count: heldRows.length, rows: heldRowsText(heldRows) })}</Notice> : null}
       {result.warnings.filter((warning) => !compact || warning.code === "REPLACEMENT_CHARACTER").map((warning) => (
         <Notice key={warning.code} tone="warning">
           {t(`warnings.${warning.code}`, { rows: (warning.rows ?? []).join(", ") })}
