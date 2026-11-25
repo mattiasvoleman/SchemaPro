@@ -459,13 +459,13 @@ def test_with_no_rounds_allowed_the_schedule_is_a_hint_and_the_week_is_still_lai
     assert _faults(request, answer.lessons) == []
 
 
-def test_a_best_effort_run_reads_the_schedule_in_its_strict_try_only(
+def test_a_best_effort_run_with_nothing_priced_starts_from_the_schedule(
     schedule_of_the_first_week: list, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bästa möjliga schema tries the week strictly first, and that try is an ordinary solve.
+    """Where nothing in the week is priced Bästa möjliga schema IS the strict solve, so the driver runs.
 
-    It is the same call a request without `relaxation` makes, so it starts from the
-    schedule when it carries one; the relaxed solve after it never reads the field.
+    (A week with something priced goes straight to the relaxed solve, which does not read the field:
+    test_start_from_schedule_best_effort.py.)
     """
     calls: list[int] = []
     original = SchedulerSolver._solve_from_start

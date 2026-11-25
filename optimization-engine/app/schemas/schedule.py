@@ -1742,9 +1742,10 @@ class OptimizeScheduleRequest(CamelModel):
     #: JSON is too (a default of `[]` would put a key into every corpus week's digest, tests/test_school_corpus_pins.py).
     #: Entries for requirements the week no longer has, for a requirement that already has lessons pinned by the
     #: school, for a split lesson and for a lesson whose length no place of its requirement has are left out. A
-    #: Bästa möjliga schema run (`relaxation`) tries the week strictly first, and that try starts from the schedule
-    #: like any other; the relaxed solve after it does not read the field. The gateway sends it only for a week that
-    #: has a schedule to start from.
+    #: Bästa möjliga schema run (`relaxation`) reads the field only where nothing in the week is priced
+    #: (relaxation.prices_anything): the mode is then the strict solve and starts from the schedule like any other.
+    #: A week with something priced is laid by the relaxed solve, which does not read the field. The gateway sends it
+    #: only for a week that has a schedule to start from.
     start_lessons: list[StartedLesson] | None = Field(
         default=None,
         alias="startLessons",
