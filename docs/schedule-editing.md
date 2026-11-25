@@ -79,6 +79,21 @@ whatever the request names (decision 5: no forced clash).
   discarded draft, the schedule file in and out), `src/calendar/lesson-judge.exempt.property.spec.ts` (the same drag with and without a
   name gets the same verdict on every rule but the one named) and `src/calendar/master-lessons.judge.exempt.spec.ts`.
 
+## Brickorna och ägandet (E4)
+
+- **Ett lås vid en flytt.** En olåst lektion som flyttas för hand (en annan dag, ett annat klockslag, andra veckor, eller tillbaka från parkeringen) låses av
+  `PATCH /api/v1/master-lessons/:id`, och svaret säger det (`lockedByMove: true`): annars lägger nästa Generera om det handen just flyttat. Det gäller inte ett lås som
+  begäran själv satte eller tog bort (en låst lektion som flyttas med `isLocked: false` låses upp), inte en lektion som redan är låst, inte en ny sal eller lärare
+  (det flyttar ingenting av var lektionen står) och inte en lektion i ett parallellt block, vars lås är blockets (Lås blocket). Sidan säger "Flyttad och låst" och
+  ger Lås upp; ett ångrat flyttande tar låset med sig, eftersom ögonblicksbilden bär lektionens lås.
+- **Att låsa eller låsa upp frågar inte klashregeln** (granskaren g461, L-5). Ett PATCH som inte ändrar något domaren läser (dag, klockslag, veckor, lärare, sal,
+  klasser, elever) och inte namnger `exempt` flyttar ingenting och krockar inte med något nytt, så en lektion som redan är dubbelbokad kan låsas och låsas upp.
+  En ny sal, en flytt och en ny lärare frågas som förut.
+- **Ett undantag ges inte åt en lektion på parkeringen** (granskaren g467, L-3): `exempt` på en parkerad lektion, eller i samma PATCH som parkerar den, är 400, och
+  den läsande frågan svarar inget undantag för en sådan.
+- **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, och en dubbelbokad
+  lektion kan låsas) och `src/calendar/master-lessons.lock-at-move.spec.ts`.
+
 ## Tier 3
 
 - **Minimal-disruption re-optimization** — the gateway sends the current unlocked placements as `previousLessons`; the solver is rewarded (weight `disruption`) for keeping lessons on those slots and warm-started with them as hints. Mid-term re-runs now change as little as possible.

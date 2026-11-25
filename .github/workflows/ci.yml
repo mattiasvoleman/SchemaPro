@@ -440,6 +440,14 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-undantag.ts
 
+      # Brickorna och ägandet (E4): a lesson moved by hand is locked in sight and is then one of the lessons Generera keeps; a double-booked lesson
+      # can be locked and unlocked. It drops its schools.
+      - name: Brickor probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-brickor.ts
+
       # Anslutningarna (incident 2026-11-23): what a long fetch of a school's week does to the rest of the API. The real
       # school's first Generera answered every other request 500 "Unable to start a transaction in the given time" for 26 s
       # and failed ten background jobs' ticks, because Kontrollera veckan's and Generera's first step reads the week in one
