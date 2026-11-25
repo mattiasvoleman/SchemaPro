@@ -26,6 +26,15 @@ export function exemptionsOf(names: readonly string[] | null | undefined): Exemp
 }
 
 /**
+ * The key a lesson's result carries: only a lesson that has an exemption says so, so every other lesson is the object it was (toResult, a swap's
+ * log and answer).
+ */
+export function exemptionKey(names: readonly string[] | null | undefined): { exemptFrom?: ExemptableRule[] } {
+  const rules = exemptionsOf(names);
+  return rules.length > 0 ? { exemptFrom: rules } : {};
+}
+
+/**
  * A transaction that writes a lesson's exemption itself, to a value it has decided on, says so for the rest of the transaction
  * (app.keep_exemptions, the trigger MasterLessons_exemption_ends). Without it the trigger ends an exemption that a write leaves unchanged while
  * the lesson's day, clock, dates or lock change: the guard that catches a writer which does not know the column (a swap's apply), and

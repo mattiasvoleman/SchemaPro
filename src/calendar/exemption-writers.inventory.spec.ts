@@ -16,6 +16,7 @@ const ROOT = join(__dirname, '..', '..');
 const SRC = join(ROOT, 'src');
 
 const SETTERS: Record<string, string> = {
+  'src/calendar/lesson-exemption.ts': 'the key a lesson’s result carries (exemptionKey): only a lesson that has one says so; a swap’s log and answer use it too',
   'src/calendar/master-lessons.service.ts': 'the PATCH and the create that name the rule (`exempt`), the result that says it, and the block card whose members lose it',
   'src/calendar/schedule-versions.service.ts': 'a version’s snapshot and its restore: the lesson put back as the exemption it was',
   'src/publication/draft.service.ts': 'a discarded draft: the lesson as it was published',

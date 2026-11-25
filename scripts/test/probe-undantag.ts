@@ -99,10 +99,14 @@ export async function undantagChecks(owner: Client, api: PrismaService, check: C
       for (const [change, sql] of [
         ['a day', `"dayOfWeek" = 3`],
         ['a date', `"startDate" = '2026-09-01'`],
+        // Each of the other columns the trigger watches, alone (g467): a writer that shortens a lesson changes its end and nothing else.
+        ['the start alone', `"startTime" = "startTime" + interval '5 minutes'`],
+        ['the end alone', `"endTime" = "endTime" + interval '5 minutes'`],
+        ['the last date alone', `"endDate" = '2027-06-01'`],
         ['the lock taken off', `"isLocked" = false`],
         ['the tray', `"isParked" = true`],
       ] as const) {
-        await owner.query(`UPDATE "MasterLessons" SET "exemptFrom" = '{LUNCH}', "isLocked" = true, "isParked" = false, "dayOfWeek" = 1, "startDate" = NULL WHERE id = $1`, [L1]);
+        await owner.query(`UPDATE "MasterLessons" SET "exemptFrom" = '{LUNCH}', "isLocked" = true, "isParked" = false, "dayOfWeek" = 1, "startDate" = NULL, "endDate" = NULL WHERE id = $1`, [L1]);
         assert.deepEqual((await exemptOf(L1)).ex, ['LUNCH']);
         await owner.query(`UPDATE "MasterLessons" SET ${sql} WHERE id = $1`, [L1]);
         assert.deepEqual((await exemptOf(L1)).ex, [], `${change} ends it`);
@@ -116,6 +120,10 @@ export async function undantagChecks(owner: Client, api: PrismaService, check: C
       assert.deepEqual((await exemptOf(L1)).ex, ['FRAME']);
       await owner.query(`UPDATE "MasterLessons" SET "startTime" = '09:15', "endTime" = '10:15' WHERE id = $1`, [L1]);
       assert.deepEqual((await exemptOf(L1)).ex, [], 'and the next transaction asks again');
+      // A statement that writes the exemption itself, to another value than it had, is the writer's own say over the changed time (g467).
+      await owner.query(`UPDATE "MasterLessons" SET "exemptFrom" = '{LUNCH}', "isLocked" = true, "isParked" = false, "dayOfWeek" = 1, "startDate" = NULL, "endDate" = NULL WHERE id = $1`, [L1]);
+      await owner.query(`UPDATE "MasterLessons" SET "exemptFrom" = '{FRAME}', "startTime" = "startTime" + interval '5 minutes' WHERE id = $1`, [L1]);
+      assert.deepEqual((await exemptOf(L1)).ex, ['FRAME'], 'a rewritten exemption is the writer’s');
       // Put the world back.
       await owner.query(`UPDATE "MasterLessons" SET "startTime" = '09:00', "endTime" = '10:00', "roomId" = $2, "isLocked" = false, "exemptFrom" = '{}' WHERE id = $1`, [L1, a.roomId.get('R1')]);
     });
