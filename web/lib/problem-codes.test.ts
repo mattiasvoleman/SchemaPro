@@ -233,6 +233,16 @@ describe("MASTER_LESSON_REFUSED, said reason by reason", () => {
     expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: ["TEACHER"] }), english)).toBe(DETAIL);
   });
 
+  it("falls to the gateway's own sentence for a reason it has no words for, and for a clash that names no other lesson", () => {
+    // A newer gateway's reason is not "the class already has ...", and a clash with no lesson is not "... with , day  –".
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "SOMETHING_NEW", ...other }), swedish)).toBe(DETAIL);
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "TEACHER" }), swedish)).toBe(DETAIL);
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "PUPILS", reasons: "PUPILS" }), english)).toBe(DETAIL);
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "OTHER_SCHOOL" }), swedish)).toBe(DETAIL);
+    // The rules that name no lesson are said without one.
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "FRAME" }), swedish)).toBe("Tiden ligger utanför ramtiden för klassens stadium.");
+  });
+
   it("names a day of the week the sentence has no word for as a day number, in both languages", () => {
     const error = apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "TEACHER", ...other, day: 9 });
     expect(apiErrorText(error, swedish)).toBe("Läraren har redan Kemi med 8B, dag 9 13:10–14:10.");

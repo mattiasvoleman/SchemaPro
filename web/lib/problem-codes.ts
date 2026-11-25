@@ -133,6 +133,11 @@ export const PROBLEM_CODES: Readonly<Record<string, readonly string[]>> = {
   WORK_RULE_DAY_IS_PLANNED: [],
 };
 
+/** The reasons of a refused hand edit that common.codes.MASTER_LESSON_REFUSED has words for (src/calendar/lesson-judge.ts LessonRefusalReason). */
+const REFUSAL_REASONS: ReadonlySet<string> = new Set(["SCHOOL_DAY", "TEACHER", "ROOM", "GROUP", "PUPILS", "AVAILABILITY", "FRAME", "LUNCH", "GRADE_RULE", "OTHER_SCHOOL"]);
+/** The ones whose sentence names the other lesson, by class, subject, day and time. */
+const NAMES_THE_OTHER_LESSON: ReadonlySet<string> = new Set(["TEACHER", "ROOM", "GROUP", "PUPILS"]);
+
 /**
  * The sentence for a coded problem, or undefined when there is none to give: the code is not listed, or the sentence takes an
  * argument the gateway did not send (or sent as something other than a string or a number). The translator is only asked for a
@@ -161,6 +166,15 @@ export function problemSentence(code: string, sent: unknown, t: ProblemLookup): 
     if (typeof value === "string" || (typeof value === "number" && Number.isFinite(value))) values[name] = value;
     else if (optional) values[name] = "";
     else return undefined;
+  }
+  // A sentence that chooses on its reason says only the reasons it knows, and the clash of a lesson names the other lesson: a reason this
+  // web has no words for (a newer gateway's), or a clash that came without the lesson it is with, falls to the gateway's own sentence
+  // and not to the sentence's `other` ("Klassen har redan  med , dag  –.").
+  if (code === "MASTER_LESSON_REFUSED") {
+    const reason = values["reason"];
+    if (typeof reason !== "string" || !REFUSAL_REASONS.has(reason)) return undefined;
+    if (NAMES_THE_OTHER_LESSON.has(reason) && values["className"] === "") return undefined;
+    if (reason === "OTHER_SCHOOL" && values["schools"] === "") return undefined;
   }
   return t(`codes.${code}`, PROBLEM_CODES[code].length > 0 ? values : undefined);
 }
