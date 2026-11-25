@@ -51,7 +51,8 @@ export function matrixColumns(
  * writes the number its own way ("53.3", "1,122"). The cards of the omfattning say the language; `formatPercent` below is Swedish only.
  */
 export function formatFigure(value: number, locale: string): string {
-  const rounded = Math.round(value * 10) / 10;
+  // `+ 0` turns a minus zero (a value between -0.05 and 0 rounds to one) into a zero: String(-0) is "0", but (-0).toLocaleString("en") is "-0".
+  const rounded = Math.round(value * 10) / 10 + 0;
   if (locale !== "sv") return rounded.toLocaleString(locale);
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1).replace(".", ",");
 }

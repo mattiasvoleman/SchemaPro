@@ -88,6 +88,14 @@ describe("formatFigure", () => {
     expect(formatFigure(66.667, "en")).toBe("66.7");
   });
 
+  it("never writes a minus zero: a figure just under zero is a zero in both languages", () => {
+    expect(formatFigure(-0.04, "sv")).toBe("0");
+    expect(formatFigure(-0.04, "en")).toBe("0");
+    expect(formatFigure(-0, "en")).toBe("0");
+    expect(formatFigure(-0.4, "en")).toBe("-0.4");
+    expect(formatFigure(-3.25, "sv")).toBe("-3,2");
+  });
+
   it("rounds to one decimal in every language before it writes", () => {
     expect(formatFigure(53.349, "sv")).toBe("53,3");
     expect(formatFigure(53.349, "en")).toBe("53.3");
