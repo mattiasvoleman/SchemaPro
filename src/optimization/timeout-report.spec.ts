@@ -168,10 +168,21 @@ describe('timeoutReportOf', () => {
 
     expect(timeoutReportOf({ ...report(), budgetSeconds: day + 1 })).toBeNull();
     expect(timeoutReportOf({ ...report(), callerWaitSeconds: day + 1 })).toBeNull();
+    expect(timeoutReportOf({ ...report(), configuredBudgetSeconds: day + 1 })).toBeNull();
     expect(timeoutReportOf({ ...report(), stages: [{ stage: 'BUILD', seconds: day + 1 }] })).toBeNull();
+    expect(timeoutReportOf({ ...report(), search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: day + 1 }] } })).toBeNull();
     expect(timeoutReportOf({ ...report(), search: { solutions: most + 1, phases: [] } })).toBeNull();
     expect(timeoutReportOf({ ...report(), search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: 1, conflicts: most + 1 }] } })).toBeNull();
     expect(timeoutReportOf({ ...report(), search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: 1, branches: most + 1 }] } })).toBeNull();
+  });
+
+  it('keeps exactly as many steps and searches as it allows: twelve and six, where the tests above hold one more out', () => {
+    // The upper side is held by 'more than twelve stages' and 'more than six phases'. A cap lowered by one (the engine's own
+    // most is six steps and two searches, so nothing would be lost in production) is what only this side sees.
+    const stage = { stage: 'BUILD', seconds: 1 };
+    const phase = { phase: 'CLEAN', seconds: 1, conflicts: 1, branches: 1 };
+    expect(timeoutReportOf({ ...report(), stages: Array.from({ length: 12 }, () => stage) })?.stages).toHaveLength(12);
+    expect(timeoutReportOf({ ...report(), search: { solutions: 0, phases: Array.from({ length: 6 }, () => phase) } })?.search.phases).toHaveLength(6);
   });
 
   it('can never be larger than the column’s own check lets through: the fullest report it keeps is a fraction of 8 KiB', () => {
