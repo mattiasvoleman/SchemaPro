@@ -160,6 +160,19 @@ describe("ScopeCard", () => {
     });
   });
 
+  describe("the card's place on the page", () => {
+    // The browser gates (e2e/staffing-scope.a11y.spec.ts) find the card by #scope-card, and the region's name is its heading's: a card that loses its id
+    // is not found there, and a test of the card by role cannot tell. One card, one id, named by its own heading.
+    it("is the region #scope-card, named by its heading, the same on a page of its own", () => {
+      const { container, rerender } = render(<ScopeCard data={data()} />);
+      const region = screen.getByRole("region", { name: "title" });
+      expect(region).toBe(container.querySelector("#scope-card"));
+      expect(region).toHaveAttribute("aria-labelledby", "scope-card-title");
+      rerender(<ScopeCard data={data()} headingLevel="h2" own />);
+      expect(screen.getByRole("region", { name: "title" })).toHaveAttribute("id", "scope-card");
+    });
+  });
+
   describe("the link to the ordinance", () => {
     it("opens in a new tab without sending the page on, and says so in words for a reader who cannot see it", () => {
       render(<ScopeCard data={data()} />);
