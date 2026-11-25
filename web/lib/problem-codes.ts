@@ -16,6 +16,11 @@ import type { ProblemLookup } from "@/lib/api-error-text";
  *
  * A code a page words itself (its own catalogue, through engineMessage) is that page's: the page asks first, and this is the last
  * resort of the pages that fall back to apiErrorText.
+ *
+ * A name that ends in `?` is one the sentence takes only for some of the cases it stands for. MASTER_LESSON_REFUSED says one of nine
+ * reasons, and the gateway sends the other lesson's class, subject, day and time for a clash and nothing of them for a lunch or a ramtid:
+ * the sentence selects on the reason, and each branch takes what its reason sends. A name left out is passed as "" (a `select` falls to its
+ * `other`, a branch that is not chosen never reads its names), and only the names without a `?` must arrive for the sentence to be said.
  */
 export const PROBLEM_CODES: Readonly<Record<string, readonly string[]>> = {
   ABSENCE_STATS_TOO_SLOW: [],
@@ -67,6 +72,7 @@ export const PROBLEM_CODES: Readonly<Record<string, readonly string[]>> = {
   LESSON_LOG_RANGE: [],
   LESSON_LOG_TOO_LONG: ["max"],
   LESSON_LOG_TOPIC_ONE_LINE: [],
+  MASTER_LESSON_REFUSED: ["reason", "schools?", "resource?", "pupilTime?", "className?", "subjectName?", "day?", "start?", "end?"],
   NOTIFICATION_TYPE_NOT_OFFERED: [],
   NOTIFICATION_TYPE_REQUIRED: [],
   NOT_A_BLOCK_CARD: [],
@@ -133,12 +139,22 @@ export const PROBLEM_CODES: Readonly<Record<string, readonly string[]>> = {
  * sentence it can fill, so a missing argument never reaches it and the reader never sees its fallback ("common.codes.X").
  */
 export function problemCodeText(error: Error, code: string, t: ProblemLookup): string | undefined {
+  return problemSentence(code, (error as Error & { params?: unknown }).params, t);
+}
+
+/**
+ * The same from the code and the params themselves, for a sentence that is not an error's: the reasons the judge's read answers with
+ * (POST /master-lessons/judge) are the refusal's own `params`, and are said in the sentence the refusal of a save is.
+ */
+export function problemSentence(code: string, sent: unknown, t: ProblemLookup): string | undefined {
   if (!Object.prototype.hasOwnProperty.call(PROBLEM_CODES, code)) return undefined;
-  const sent = (error as Error & { params?: unknown }).params;
   const values: Record<string, string | number> = {};
-  for (const name of PROBLEM_CODES[code]) {
+  for (const declared of PROBLEM_CODES[code]) {
+    const optional = declared.endsWith("?");
+    const name = optional ? declared.slice(0, -1) : declared;
     const value = typeof sent === "object" && sent !== null ? (sent as Record<string, unknown>)[name] : undefined;
     if (typeof value === "string" || (typeof value === "number" && Number.isFinite(value))) values[name] = value;
+    else if (optional) values[name] = "";
     else return undefined;
   }
   return t(`codes.${code}`, PROBLEM_CODES[code].length > 0 ? values : undefined);

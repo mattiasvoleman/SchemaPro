@@ -1,5 +1,8 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createTranslator } from "use-intl";
+import en from "@/messages/en.json";
+import sv from "@/messages/sv.json";
 import { ApiError } from "@/lib/api";
 import { LESSON_IS_PLACED } from "@/lib/lesson-is-placed";
 import { useScheduleHistory } from "@/lib/use-schedule-history";
@@ -143,6 +146,62 @@ describe("how a failed write is told", () => {
     expect(told(new ApiError(409, "x", LESSON_IS_PLACED))).toEqual(["echo.lessonIsPlaced"]);
     toasts.error.mockClear();
     expect(told(new ApiError(409, "room taken"))).toEqual(["echo.editConflict: room taken"]);
+  });
+
+  describe("a refusal of the one judge (MASTER_LESSON_REFUSED, src/calendar/lesson-judge.ts)", () => {
+    // The real catalogues, through the real translator: the sentence the reader is shown is the sentence under test.
+    const common = (messages: typeof sv) => createTranslator({ locale: messages === sv ? "sv" : "en", messages, namespace: "common" }) as never;
+    const timetable = (messages: typeof sv) => createTranslator({ locale: messages === sv ? "sv" : "en", messages, namespace: "timetable" }) as never;
+    const toldWith = (error: unknown, messages: typeof sv = sv) => {
+      const { view } = setup({ t: timetable(messages), tCommon: common(messages) });
+      act(() => view.result.current.edits.showError(error));
+      return toasts.error.mock.calls.map((call) => call[0]);
+    };
+    const clash = {
+      reason: "TEACHER",
+      reasons: "TEACHER",
+      otherKind: "LESSON",
+      className: "8B",
+      subjectName: "Kemi",
+      day: 1,
+      start: "13:10",
+      end: "14:10",
+    };
+
+    it("says the clash in the catalogue's words, naming the other lesson by class, subject, day and time, with no 'Schemakonflikt' in front", () => {
+      const said = toldWith(new ApiError(409, "Läraren har redan Kemi 8B måndag 13:10–14:10.", "MASTER_LESSON_REFUSED", clash));
+      expect(said).toEqual(["Läraren har redan Kemi med 8B, måndag 13:10–14:10."]);
+      expect(said[0]).not.toContain("Schemakonflikt");
+    });
+
+    it("says it in English for an English reader", () => {
+      const said = toldWith(new ApiError(409, "x", "MASTER_LESSON_REFUSED", clash), en as never);
+      expect(said).toEqual(["The teacher already has Kemi with 8B, Monday 13:10–14:10."]);
+    });
+
+    it("says the board's rules, which name no other lesson", () => {
+      expect(toldWith(new ApiError(409, "x", "MASTER_LESSON_REFUSED", { reason: "LUNCH", reasons: "LUNCH" }))).toEqual([
+        "Tiden ligger på klassens lunch.",
+      ]);
+      toasts.error.mockClear();
+      expect(toldWith(new ApiError(409, "x", "MASTER_LESSON_REFUSED", { reason: "OTHER_SCHOOL", reasons: "OTHER_SCHOOL", schools: "Norra skolan" }))).toEqual([
+        "Tiden är upptagen av Norra skolan.",
+      ]);
+    });
+
+    it("says which member of a block's card it is about, when the gateway names one", () => {
+      const said = toldWith(new ApiError(409, "x", "MASTER_LESSON_REFUSED", { ...clash, requirement: "Idrott för 7A" }));
+      expect(said).toEqual(["Idrott för 7A: Läraren har redan Kemi med 8B, måndag 13:10–14:10."]);
+    });
+
+    it("falls back to the gateway's own sentence, still without 'Schemakonflikt', when the params did not come", () => {
+      const said = toldWith(new ApiError(409, "Läraren har redan en annan lektion.", "MASTER_LESSON_REFUSED"));
+      expect(said).toEqual(["Läraren har redan en annan lektion."]);
+    });
+
+    it("leaves a 409 with no code as it was: a conflict with the server's words", () => {
+      expect(toldWith(new ApiError(409, "Teacher already teaches Math in this slot."))).toEqual(["Schemakonflikt: Teacher already teaches Math in this slot."]);
+    });
   });
 
   it("says another error by its message, and something that is no error by the common one", () => {

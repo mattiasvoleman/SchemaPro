@@ -228,6 +228,9 @@ export default function TimetablePage() {
     lesson: MasterLesson;
     options: PlacementSuggestion[];
   } | null>(null);
+  // Krocklistan: open or not, and whether it has been asked for this visit (the latch keeps it out of the tree until the first press).
+  const [conflictsOpen, setConflictsOpen] = useState(false);
+  const [conflictsUsed, setConflictsUsed] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
   // Whether Versioner has been pressed this visit, which is what decides that
   // the dialog's code is fetched — the same rule as roomsUsed below.
@@ -274,6 +277,7 @@ export default function TimetablePage() {
     PublicationBadge,
     SharedMoveDialog,
     SuggestPlacementsDialog,
+    ConflictList,
   } = lazyDialogs;
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   /*
@@ -401,6 +405,8 @@ export default function TimetablePage() {
       setSlotMatches(null);
       setSuggesting(null);
       setPublishOpen(false);
+      setConflictsOpen(false);
+      setConflictsUsed(false);
       setConfirmUsed(false);
       setEditUsed(false);
       setCreateUsed(false);
@@ -602,6 +608,8 @@ export default function TimetablePage() {
         const options = suggestPlacements(candidate, placements, constraints ?? [], {
           days: hasWeekend ? [1, 2, 3, 4, 5, 6, 7] : [1, 2, 3, 4, 5],
           studentGroupOf,
+          // The drag's own judge, so that no time is offered that the drag then refuses (post mr-3).
+          allows: (attempt) => validateChange(id, attempt),
         });
         setSuggesting({ lesson, options });
       }, showError);
@@ -618,6 +626,7 @@ export default function TimetablePage() {
       lunchOf,
       pupilBuffers,
       closedWeeks,
+      validateChange,
       showError,
       t,
       blockKit,
@@ -1138,6 +1147,19 @@ export default function TimetablePage() {
             {t("conflictCount", { count: conflictCount })}
           </Badge>
         ) : null}
+        {conflictCount > 0 ? (
+          <Button
+            variant="link"
+            size="sm"
+            className="h-auto p-0"
+            onClick={() => {
+              setConflictsUsed(true);
+              setConflictsOpen(true);
+            }}
+          >
+            {t("conflictListOpen")}
+          </Button>
+        ) : null}
         {/* How to drag, click and key the grid's writes: no use where the grid takes no pointer. */}
         <span className="text-xs text-muted-foreground" data-writes="SCHEMALAGGNING DRIFT">
           {t("dragHint")}
@@ -1496,10 +1518,28 @@ export default function TimetablePage() {
           </Suspense>
         )}
 
+        {conflictsUsed && (
+          <Suspense fallback={null}>
+            <ConflictList
+              open={conflictsOpen}
+              onOpenChange={setConflictsOpen}
+              conflictMap={conflictMap}
+              lessonById={lessonById}
+              group={(id) => groupById.get(id)?.name ?? ""}
+              subject={(id) => subjectById.get(id)?.name ?? ""}
+              onGo={(lessonId) => {
+                setConflictsOpen(false);
+                openEditor(lessonId);
+              }}
+            />
+          </Suspense>
+        )}
+
         {editUsed && (
           <Suspense fallback={null}>
             <LessonEditDialog
               open={editing !== null}
+              lesson={editing}
               onOpenChange={(open) => {
                 if (!open) {
                   setEditing(null);

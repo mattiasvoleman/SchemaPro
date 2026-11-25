@@ -1,0 +1,82 @@
+"use client";
+
+/*
+ * Krocklistan: every lesson of the grundschema that stands against a rule, and what it stands against (E1).
+ *
+ * The grid marks a lesson that clashes with a ring and a triangle and says nothing more, and the header counts them. This says each one in
+ * a sentence: the rule, and the other lesson by class, subject, day and time (lib/conflict-rows.ts, the sentence of common.codes.
+ * MASTER_LESSON_REFUSED that a refused save is said in), with a button that opens the lesson to change it. It reads what the page has
+ * already read, and asks the gateway nothing.
+ *
+ * Fetched with the lesson dialogs' chunk (lesson-dialogs.ts), so that it shares their copy of the dialog, and drawn only after "Visa
+ * vilka" has been pressed.
+ */
+
+import { useLocale, useTranslations } from "next-intl";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { conflictRows, type ConflictNames } from "@/lib/conflict-rows";
+import type { ConflictHit } from "@/lib/conflicts";
+import { problemSentence } from "@/lib/problem-codes";
+import type { MasterLesson } from "@/lib/types";
+
+export interface ConflictListProps extends ConflictNames {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  conflictMap: ReadonlyMap<string, readonly ConflictHit[]>;
+  lessonById: ReadonlyMap<string, MasterLesson>;
+  /** Opens Justera lektion for the lesson. */
+  onGo: (lessonId: string) => void;
+}
+
+export function ConflictList({ open, onOpenChange, conflictMap, lessonById, group, subject, onGo }: ConflictListProps) {
+  const t = useTranslations("timetable");
+  const tCommon = useTranslations("common");
+  const tDays = useTranslations("days");
+  // The weekdays of the catalogue start with a capital, and in Swedish a day in the middle of a sentence does not.
+  const locale = useLocale();
+  const dayName = (day: number) => (locale === "sv" ? tDays(String(day)).toLocaleLowerCase("sv") : tDays(String(day)));
+  const rows = open ? conflictRows(conflictMap, lessonById, { group, subject }) : [];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{t("conflictListTitle")}</DialogTitle>
+          <DialogDescription>{t("conflictListBody")}</DialogDescription>
+        </DialogHeader>
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("conflictListEmpty")}</p>
+        ) : (
+          <ul className="space-y-3">
+            {rows.map(({ lesson, reasons }) => (
+              <li key={lesson.id} className="min-w-0 rounded-md border px-3 py-2">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <p className="min-w-0 break-words text-sm font-medium">
+                    {t("conflictListLesson", {
+                      subjectName: subject(lesson.subjectId),
+                      className: group(lesson.studentGroupId),
+                      day: dayName(lesson.dayOfWeek),
+                      start: lesson.startTime.slice(0, 5),
+                      end: lesson.endTime.slice(0, 5),
+                    })}
+                  </p>
+                  <Button variant="outline" size="sm" onClick={() => onGo(lesson.id)}>
+                    {t("conflictListGo")}
+                  </Button>
+                </div>
+                <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-destructive">
+                  {reasons.map((reason, index) => (
+                    <li key={`${reason.kind}-${index}`} className="break-words">
+                      {reason.values === null ? t("conflictRoomLock") : (problemSentence("MASTER_LESSON_REFUSED", reason.values, tCommon) ?? "")}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}

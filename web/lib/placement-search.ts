@@ -35,6 +35,15 @@ export interface PlacementSuggestion {
  * Finds the nearest conflict-free slots for a lesson, preserving its
  * duration. Scans the week on a fixed step and ranks results by distance
  * from the requested placement (same-day placements rank first).
+ *
+ * WHO SAYS A SLOT IS FREE. Given `allows`, it is the caller's own judge and nothing
+ * here: the page hands the drag control's predicate (validateChange), so that a
+ * time offered after a refused drop is a time the drag lets through. Left to
+ * itself the search asked validatePlacement for the clash rule and the weekly
+ * rows only, and offered a time the class eats in, a time outside its stage's
+ * ramtid, a time a year rule closes (post mr-3): the facts the drag is held
+ * to were never given to it, and a second list of them would drift again.
+ * Without `allows` (the tests of the search alone) it keeps that reading.
  */
 export function suggestPlacements(
   candidate: Placement,
@@ -47,6 +56,8 @@ export function suggestPlacements(
     stepMinutes?: number;
     limit?: number;
     studentGroupOf?: Map<string, string | null>;
+    /** Whether the lesson may stand at the attempted place: the caller's own judge. Replaces `others`, `constraints` and `studentGroupOf`. */
+    allows?: (attempt: Placement) => boolean;
   },
 ): PlacementSuggestion[] {
   const dayStart = options?.dayStartMinutes ?? 8 * 60;
@@ -73,8 +84,9 @@ export function suggestPlacements(
         endMinutes: start + duration,
       };
       if (
-        validatePlacement(attempt, others, constraints, options?.studentGroupOf)
-          .length > 0
+        options?.allows
+          ? !options.allows(attempt)
+          : validatePlacement(attempt, others, constraints, options?.studentGroupOf).length > 0
       ) {
         continue;
       }

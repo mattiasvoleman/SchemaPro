@@ -48,6 +48,13 @@ export function useUndoableEdits(inputs: {
       } else if (error instanceof ApiError && error.code === LESSON_IS_PLACED) {
         // No clash either: the lesson is its förläggning's, and is changed there.
         toast.error(t("lessonIsPlaced"));
+      } else if (error instanceof ApiError && error.code === "MASTER_LESSON_REFUSED") {
+        // The one judge's no (src/calendar/lesson-judge.ts): the reason and the other lesson's class, subject, day and
+        // time, in the reader's language and from the catalogue, so "Schemakonflikt" in front would only say it twice.
+        // A block's card names the member it is about; the sentence alone would not say which lesson it was.
+        const sentence = apiErrorText(error, tCommon);
+        const member = error.params?.["requirement"];
+        toast.error(typeof member === "string" ? `${member}: ${sentence}` : sentence);
       } else if (error instanceof ApiError && error.status === 409) {
         toast.error(`${t("editConflict")}: ${apiErrorText(error, tCommon)}`);
       } else {
