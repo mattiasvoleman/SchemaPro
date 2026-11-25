@@ -31,6 +31,8 @@ const WEEK = [
 const card = (id: string) => document.querySelector<HTMLElement>(`[data-lesson-id="${id}"]`)!;
 const ghost = (container: HTMLElement) => container.querySelector('[class*="border-dashed"]');
 const key = (id: string, init: KeyboardEventInit) => fireEvent.keyDown(card(id), init);
+/** The line under the week that says what a key did: a live region, found by its own mark (the page has a role="status" of its own). */
+const statusLine = () => document.querySelector<HTMLElement>("[data-board-status]");
 
 /** The board with its keys: waits for the layer, which the grid fetches when it is editable. */
 async function board(extra: Partial<React.ComponentProps<typeof TimetableGrid>> = {}, lessons = WEEK) {
@@ -43,7 +45,7 @@ async function board(extra: Partial<React.ComponentProps<typeof TimetableGrid>> 
     onToggleSelect: vi.fn(),
   };
   const view = render(<TimetableGrid lessons={lessons} editable board {...spies} {...extra} />);
-  await screen.findByRole("status");
+  await waitFor(() => expect(statusLine()).not.toBeNull());
   // The layer's listeners are put up by an effect that runs a moment after the line is drawn: let it run before a key is pressed.
   await act(async () => {});
   return { ...view, ...spies };
@@ -104,7 +106,7 @@ describe("the board's keys: focus", () => {
     const { onLessonClick } = await board();
     key("mon-9", { key: " " });
     expect(onLessonClick).not.toHaveBeenCalled();
-    expect(screen.getByRole("status")).toHaveTextContent(/^pickedUp /);
+    expect(statusLine()).toHaveTextContent(/^pickedUp /);
   });
 
   it("does nothing before the layer has come, and moves nothing", () => {
@@ -132,14 +134,14 @@ describe("the board's keys: taking a lesson up and putting it down", () => {
     key("mon-9", { key: "ArrowRight" });
     key("mon-9", { key: "ArrowDown", shiftKey: true });
     expect(ghost(container)).toHaveTextContent("09:20–10:20");
-    expect(screen.getByRole("status")).toHaveTextContent("markerFree 2 09:20 10:20");
+    expect(statusLine()).toHaveTextContent("markerFree 2 09:20 10:20");
 
     key("mon-9", { key: "Enter" });
     expect(onLessonChange).toHaveBeenCalledTimes(1);
     expect(onLessonChange).toHaveBeenCalledWith("mon-9", { dayOfWeek: 2, startMinutes: 560, endMinutes: 620 });
     expect(ghost(container)).toBeNull();
     expect(card("mon-9")).not.toHaveClass("opacity-40");
-    expect(screen.getByRole("status")).toHaveTextContent("placed Matematik 7A 2 09:20 10:20");
+    expect(statusLine()).toHaveTextContent("placed Matematik 7A 2 09:20 10:20");
   });
 
   it("puts it down with Space as well, and takes it up with M", async () => {
@@ -158,12 +160,12 @@ describe("the board's keys: taking a lesson up and putting it down", () => {
     expect(ghost(container)).toHaveClass("border-success");
     for (let step = 0; step < 3; step++) key("mon-9", { key: "ArrowDown" });
     expect(ghost(container)).toHaveClass("border-destructive");
-    expect(screen.getByRole("status")).toHaveTextContent(/^markerTaken /);
+    expect(statusLine()).toHaveTextContent(/^markerTaken /);
 
     key("mon-9", { key: "Enter" });
     expect(onLessonChange).not.toHaveBeenCalled();
     expect(onInvalidDrop).toHaveBeenCalledWith("mon-9", { dayOfWeek: 1, startMinutes: 600, endMinutes: 660 });
-    expect(screen.getByRole("status")).toHaveTextContent(/^refused /);
+    expect(statusLine()).toHaveTextContent(/^refused /);
     expect(ghost(container)).toBeNull();
   });
 
@@ -175,7 +177,7 @@ describe("the board's keys: taking a lesson up and putting it down", () => {
     expect(ghost(container)).toBeNull();
     expect(onLessonChange).not.toHaveBeenCalled();
     expect(onInvalidDrop).not.toHaveBeenCalled();
-    expect(screen.getByRole("status")).toHaveTextContent("letGo Matematik 7A");
+    expect(statusLine()).toHaveTextContent("letGo Matematik 7A");
   });
 
   it("puts it down on the square it came from without a write", async () => {
@@ -185,7 +187,7 @@ describe("the board's keys: taking a lesson up and putting it down", () => {
     key("mon-9", { key: "ArrowUp" });
     key("mon-9", { key: "Enter" });
     expect(onLessonChange).not.toHaveBeenCalled();
-    expect(screen.getByRole("status")).toHaveTextContent(/^letGo /);
+    expect(statusLine()).toHaveTextContent(/^letGo /);
   });
 
   it("keeps the marker inside the week and the hours drawn", async () => {
@@ -250,14 +252,14 @@ describe("the board's keys: length, lock, park and remove", () => {
     expect(onLessonChange).toHaveBeenLastCalledWith("mon-9", { dayOfWeek: 1, startMinutes: 540, endMinutes: 605 });
     key("mon-9", { key: "ArrowUp", altKey: true });
     expect(onLessonChange).toHaveBeenLastCalledWith("mon-9", { dayOfWeek: 1, startMinutes: 540, endMinutes: 595 });
-    expect(screen.getByRole("status")).toHaveTextContent(/^length Matematik 7A 55 /);
+    expect(statusLine()).toHaveTextContent(/^length Matematik 7A 55 /);
   });
 
   it("does not make a lesson shorter than fifteen minutes, and says so", async () => {
     const { onLessonChange } = await board({}, [lesson({ id: "short", startMinutes: 540, endMinutes: 555 })]);
     key("short", { key: "ArrowUp", altKey: true });
     expect(onLessonChange).not.toHaveBeenCalled();
-    expect(screen.getByRole("status")).toHaveTextContent(/^lengthLimit /);
+    expect(statusLine()).toHaveTextContent(/^lengthLimit /);
   });
 
   it("asks the page about a new length, and opens its list of free times when the length is refused", async () => {
@@ -265,16 +267,16 @@ describe("the board's keys: length, lock, park and remove", () => {
     key("mon-9", { key: "ArrowDown", altKey: true });
     expect(onLessonChange).not.toHaveBeenCalled();
     expect(onInvalidDrop).toHaveBeenCalledWith("mon-9", { dayOfWeek: 1, startMinutes: 540, endMinutes: 605 });
-    expect(screen.getByRole("status")).toHaveTextContent(/^lengthRefused /);
+    expect(statusLine()).toHaveTextContent(/^lengthRefused /);
   });
 
   it("asks the page to lock, park and remove, and says what it did", async () => {
     const { onLessonCommand } = await board();
     key("mon-9", { key: "l" });
     expect(onLessonCommand).toHaveBeenLastCalledWith("mon-9", "lock");
-    expect(screen.getByRole("status")).toHaveTextContent("locked Matematik 7A");
+    expect(statusLine()).toHaveTextContent("locked Matematik 7A");
     key("tue-930", { key: "L" });
-    expect(screen.getByRole("status")).toHaveTextContent("unlocked Engelska 7A");
+    expect(statusLine()).toHaveTextContent("unlocked Engelska 7A");
     key("mon-9", { key: "p" });
     expect(onLessonCommand).toHaveBeenLastCalledWith("mon-9", "park");
     key("mon-11", { key: "Delete" });
@@ -296,7 +298,7 @@ describe("the board's keys: length, lock, park and remove", () => {
     key("duty", { key: "l" });
     key("duty", { key: " " });
     expect(onLessonCommand).not.toHaveBeenCalled();
-    expect(screen.getByRole("status")).toHaveTextContent("");
+    expect(statusLine()).toHaveTextContent("");
   });
 });
 
@@ -340,12 +342,12 @@ describe("the default keys are the grid's own", () => {
     fireEvent.keyDown(card("mon-9"), { key: "ArrowDown" });
     expect(onLessonChange).toHaveBeenCalledWith("mon-9", { dayOfWeek: 1, startMinutes: 555, endMinutes: 615 });
     expect(card("mon-9")).not.toHaveAttribute("tabindex");
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(statusLine()).toBeNull();
   });
 
   it("is not a board for a reader: nothing is fetched and nothing moves", () => {
     render(<TimetableGrid lessons={WEEK} board />);
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(statusLine()).toBeNull();
     expect(card("mon-9")).not.toHaveAttribute("tabindex");
   });
 });
