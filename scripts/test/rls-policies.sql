@@ -7908,7 +7908,8 @@ BEGIN
   IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
     RAISE EXCEPTION 'lydelse: expected a GUARDIAN, resolved %', coalesce(app.current_user_role()::text, '<none>');
   END IF;
-  SELECT string_agg(code || '=' || "appliesBy" || ':' || "totalHours", ',' ORDER BY code) INTO figures
+  -- `code` is text, and the string below is written in byte order: COLLATE "C" on the sort (the rule at the top of this file; the review of #412, U-1).
+  SELECT string_agg(code || '=' || "appliesBy" || ':' || "totalHours", ',' ORDER BY code COLLATE "C") INTO figures
     FROM "NationalTimplanVersions" WHERE code LIKE 'SFS2025:729%';
   IF figures IS DISTINCT FROM 'SFS2025:729=COHORTS_STARTING:7424,SFS2025:729/AGA=COHORTS_STARTING:7424,SFS2025:729/AGB=COHORTS_STARTING:7199,SFS2025:729/SAM=COHORTS_STARTING:5007,SFS2025:729/SPE=COHORTS_STARTING:8604' THEN
     RAISE EXCEPTION 'lydelse: a guardian reads the 2028 rows as %', figures;
