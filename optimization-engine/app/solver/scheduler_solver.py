@@ -1526,7 +1526,8 @@ class SchedulerSolver:
         budget = self._settings.solver_max_time_seconds
         if self._deadline is not None:
             probe = self._settings.solver_probe_seconds if _runs_probes(request) else 0.0
-            budget = self._deadline.search_budget(started, budget, probe)
+            # The build estimate is the probe's: its floor is a rule's slice AND the build before it (g454, M-2).
+            budget = self._deadline.search_budget(started, budget, probe, self._build_seconds)
         self._search_seconds = budget
         return budget
 
@@ -6533,8 +6534,9 @@ class SchedulerSolver:
         )
         # THE SEARCH'S CLOCK COUNTS FROM THE REQUEST'S ARRIVAL here, builds
         # included, and has its budget unless the request's clock cannot hold it.
-        total_budget = self._search_budget(request, entered)
+        # The build's estimate first: the search's budget leaves the probe a rule's build as well as its slice.
         self._build_seconds = (time.monotonic() - entered) / 2
+        total_budget = self._search_budget(request, entered)
         tight = sorted(nearly_full.values(), key=lambda load: -load.load)
 
         def _remaining() -> float:
