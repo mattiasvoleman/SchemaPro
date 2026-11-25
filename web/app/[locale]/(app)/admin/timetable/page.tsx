@@ -76,6 +76,9 @@ import {
   loadLessonDialogs,
   lessonDialogs,
   resetLessonDialogs,
+  resetRoomOptimizationDialog,
+  resetSwapDialog,
+  resetVersionsDialog,
   LessonTimePanel,
   resetLessonTimePanel,
   SelectionBar,
@@ -405,6 +408,30 @@ export default function TimetablePage() {
       setPublishUsed(false);
     },
     [showError, setRemoteEditing],
+  );
+
+  /*
+   * Versioner, Optimera salar and Byten och flyttar, each fetched on its first press and each with a boundary of its own, as the lesson dialogs
+   * have: a piece that did not arrive (or threw while it drew) is said in a toast instead of taking the page down, and it gets a fresh lazy()
+   * wrapper, so that the next press fetches again. Releasing the latch is what unmounts the boundary (a new one stands in the next press) and
+   * keeps a chunk that keeps failing from being retried in a loop: the next attempt waits for somebody to press. Apart from one another,
+   * because a dialog that is open and well must not be unmounted by a failure of another (the room dialog relies on outliving its own close).
+   */
+  const onDemandFailed = useCallback(
+    (which: "versions" | "rooms" | "swaps", error: unknown) => {
+      showError(error);
+      if (which === "versions") {
+        resetVersionsDialog();
+        setVersionsUsed(false);
+      } else if (which === "rooms") {
+        resetRoomOptimizationDialog();
+        setRoomsUsed(false);
+      } else {
+        resetSwapDialog();
+        setSwapsUsed(false);
+      }
+    },
+    [showError],
   );
 
   // -------------------------------------------------------------------
@@ -1552,6 +1579,7 @@ export default function TimetablePage() {
 
       {/* ---------------- Versions dialog ---------------- */}
       {versionsUsed && (
+        <DialogLoadBoundary onError={(error) => onDemandFailed("versions", error)}>
         <Suspense fallback={null}>
           <VersionsDialog
             open={versionsOpen}
@@ -1567,6 +1595,7 @@ export default function TimetablePage() {
             showError={showError}
           />
         </Suspense>
+        </DialogLoadBoundary>
       )}
 
       {/* ---------------- Room optimisation dialog ---------------- */}
@@ -1578,6 +1607,7 @@ export default function TimetablePage() {
         ref) — unmounting it would drop the guard the dialog documents.
       */}
       {roomsUsed && (
+        <DialogLoadBoundary onError={(error) => onDemandFailed("rooms", error)}>
         <Suspense fallback={null}>
           <RoomOptimizationDialog
             open={roomsOpen}
@@ -1590,10 +1620,12 @@ export default function TimetablePage() {
             onApplied={afterRoomOptimization}
           />
         </Suspense>
+        </DialogLoadBoundary>
       )}
 
       {/* ---------------- Byten och flyttar ---------------- */}
       {swapsUsed && (
+        <DialogLoadBoundary onError={(error) => onDemandFailed("swaps", error)}>
         <Suspense fallback={null}>
           <SwapDialog
             open={swapLessonId !== null}
@@ -1612,6 +1644,7 @@ export default function TimetablePage() {
             onApplied={afterSwap}
           />
         </Suspense>
+        </DialogLoadBoundary>
       )}
 
       {/* ---------------- Publish dialog ---------------- */}

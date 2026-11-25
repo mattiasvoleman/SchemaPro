@@ -15,7 +15,7 @@ import * as lazyPieces from "./timetable-lazy";
  *   what the lazy() was written to save. It is the one thing a new module in
  *   this directory can silently undo;
  * - the size, so the page does not grow back into one file;
- * - the three lazy pieces that are replaced after a failed fetch.
+ * - the six lazy pieces that are replaced after a failed fetch.
  */
 const sources = import.meta.glob("./*.{ts,tsx}", { query: "?raw", import: "default", eager: true }) as Record<
   string,
@@ -152,10 +152,15 @@ describe("the timetable page's split", () => {
 
   it("has a page that never assigns the lazy bindings, only asks for new ones", () => {
     const page = files.find((file) => file.name === "page.tsx")!.source;
-    expect(page).not.toMatch(/^\s*(lessonDialogs|LessonTimePanel|SelectionBar)\s*=[^=]/m);
+    expect(page).not.toMatch(
+      /^\s*(lessonDialogs|LessonTimePanel|SelectionBar|VersionsDialog|RoomOptimizationDialog|SwapDialog)\s*=[^=]/m,
+    );
     expect(page).toMatch(/resetLessonDialogs\(\)/);
     expect(page).toMatch(/resetLessonTimePanel\(\)/);
     expect(page).toMatch(/resetSelectionBar\(\)/);
+    expect(page).toMatch(/resetVersionsDialog\(\)/);
+    expect(page).toMatch(/resetRoomOptimizationDialog\(\)/);
+    expect(page).toMatch(/resetSwapDialog\(\)/);
   });
 });
 
@@ -186,5 +191,33 @@ describe("the lazy pieces that are made again after a failed fetch", () => {
     lazyPieces.resetLessonTimePanel();
     expect(lazyPieces.LessonTimePanel).not.toBe(panel);
     expect(lazyPieces.lessonDialogs).toBe(dialogs);
+  });
+
+  it("replaces Versioner, Optimera salar and Byten och flyttar each on its own (the dialogs fetched on their first press, g381-L-3)", () => {
+    const pieces = {
+      versions: [() => lazyPieces.VersionsDialog, lazyPieces.resetVersionsDialog],
+      rooms: [() => lazyPieces.RoomOptimizationDialog, lazyPieces.resetRoomOptimizationDialog],
+      swaps: [() => lazyPieces.SwapDialog, lazyPieces.resetSwapDialog],
+    } as const;
+    const others = (except: keyof typeof pieces) =>
+      Object.entries(pieces).filter(([name]) => name !== except).map(([, [read]]) => read());
+    for (const name of Object.keys(pieces) as (keyof typeof pieces)[]) {
+      const [read, reset] = pieces[name];
+      const before = read();
+      const untouched = others(name);
+      reset();
+      expect(read(), `${name} is a new lazy() wrapper`).not.toBe(before);
+      expect(others(name), `${name} leaves the other two`).toEqual(untouched);
+    }
+    // The other pieces are as they were: a reset of these three touches neither the lesson dialogs, the panel nor the bar.
+    const dialogs = lazyPieces.lessonDialogs;
+    const panel = lazyPieces.LessonTimePanel;
+    const bar = lazyPieces.SelectionBar;
+    lazyPieces.resetVersionsDialog();
+    lazyPieces.resetRoomOptimizationDialog();
+    lazyPieces.resetSwapDialog();
+    expect(lazyPieces.lessonDialogs).toBe(dialogs);
+    expect(lazyPieces.LessonTimePanel).toBe(panel);
+    expect(lazyPieces.SelectionBar).toBe(bar);
   });
 });
