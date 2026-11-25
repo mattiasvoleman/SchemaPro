@@ -342,8 +342,23 @@ def test_a_refusal_that_names_held_lessons_lets_them_go_and_the_week_is_asked_ag
 
 
 def test_a_refusal_that_names_nothing_held_and_has_nothing_free_is_the_weeks_own(monkeypatch: pytest.MonkeyPatch) -> None:
-    held_per_call, response, _ = _drive(monkeypatch, [_answer("INFEASIBLE")])
+    # explained, and every cause it names is something that is not held
+    held_per_call, response, _ = _drive(monkeypatch, [_answer("INFEASIBLE", _ids(77), code="ROOM_NO_ROOM_FOR_REQUIREMENT")])
     assert response.status == "INFEASIBLE" and len(held_per_call) == 1
+
+
+def test_a_refusal_that_says_nothing_is_not_taken_for_the_weeks_own(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No explanation (probes off, no room on the clock, no core): the held lessons may be all of it, so the week is asked
+    once more with nothing held, as a week that has a timetable is never refused for what the schedule held."""
+    held_per_call, response, _ = _drive(monkeypatch, [_answer("INFEASIBLE"), _answer("FEASIBLE")])
+    assert response.status == "FEASIBLE" and len(held_per_call) == 2 and held_per_call[1] == set()
+
+    no_core = OptimizeScheduleResponse(
+        request_id=_ids(1), status="INFEASIBLE", lessons=[],  # type: ignore[arg-type]
+        conflicts=ConflictAnalysis(summaryCode="CONFLICT_NO_CORE", conflicts=[ConflictDetail(category="INSUFFICIENT_RESOURCES", code="CONFLICT_NO_CORE_GUESS")]),
+    )
+    held_per_call, response, _ = _drive(monkeypatch, [no_core, _answer("INFEASIBLE")])
+    assert response.status == "INFEASIBLE" and len(held_per_call) == 2 and held_per_call[1] == set(), "and the plain solve's refusal is the answer"
 
 
 def test_a_timeout_is_final(monkeypatch: pytest.MonkeyPatch) -> None:

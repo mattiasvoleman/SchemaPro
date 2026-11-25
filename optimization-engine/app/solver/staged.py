@@ -48,6 +48,7 @@ from app.schemas.schedule import (
     AnonymousRequirement,
     ConflictAnalysis,
     OptimizeScheduleRequest,
+    OptimizeScheduleResponse,
     PinnedLesson,
     PreviousLesson,
     StartedLesson,
@@ -289,6 +290,16 @@ def neighbours(request: OptimizeScheduleRequest, free: set[UUID], candidates: se
         requirement_id for requirement_id in candidates
         if by_id[requirement_id].teacher_id in teachers or pupil_key_of(by_id[requirement_id]) in reach
     }
+
+
+def unexplained(response: OptimizeScheduleResponse) -> bool:
+    """Whether a refusal says nothing of what it rests on: no explanation, or one that found no core.
+
+    The engine's own reading of it (`_explain_infeasible`: `conflicts is None or summary_code == "CONFLICT_NO_CORE"`). It
+    happens where the request turned its probes off, where the clock left no room for the explanation and where the
+    explaining solve found nothing in its time. Such a refusal cannot be told from one the held lessons made."""
+    analysis = response.conflicts
+    return analysis is None or analysis.summary_code == "CONFLICT_NO_CORE" or not analysis.conflicts
 
 
 def named_by_refusal(params: dict[str, str | int], candidates: set[UUID]) -> set[UUID]:

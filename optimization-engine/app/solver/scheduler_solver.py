@@ -6216,8 +6216,13 @@ class SchedulerSolver:
             self._enter_stage("START")
             named = staged.in_the_way(response.conflicts, candidates) or staged.neighbours(request, free, candidates)
             if not named:
-                # The week's own refusal: nothing held was in the way and nothing is free to widen from.
-                return response
+                if not staged.unexplained(response):
+                    # The week's own refusal: its explanation names causes and none of them is a lesson that is held.
+                    return response
+                # A refusal that says nothing (probes off, no room on the clock for the explanation, no core) may be the
+                # held lessons' and all of them: a week that has a timetable is never refused for what the schedule held.
+                # Asked once more with nothing held, the ordinary solve, which names the week's own cause if it has one.
+                named = candidates
             free |= staged.with_blocks(request, named)
             logger.info(
                 "start_schedule round=%d infeasible let_go=%d [requestId=%s]", rounds, len(free), request.request_id,
