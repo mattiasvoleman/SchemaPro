@@ -1129,12 +1129,13 @@ def test_a_squeezed_search_that_stops_as_late_as_the_incidents_did_still_answers
     """The clock's edge leaves room for what a solve runs past its limit (SOLVE_OVERRUN_SECONDS).
 
     The settings say 30 s of search and 6 of probe; the caller waits 35 s, so the
-    ceiling is 30 s. The search is cut to what the clock leaves (12 s) and then
+    ceiling is 30 s and the answer is due at 17. The search is cut to what the
+    clock leaves (12 s, of which half is held back for the overrun: 6 s) and then
     runs the ten seconds past that CP-SAT ran past its 180 on 2026-11-17: it ends
-    at 22 s and there is no time for a probe. With the edge three seconds before
-    the ceiling the search was given 22 s, ended at 32 s and the route had
-    answered 503 at 30: "did not answer within its longest wait", and no TIMEOUT
-    to read.
+    at 16 s, the probe has the 1 s that is left and runs its own ten over, and the
+    answer comes at 27 of 30. With the edge three seconds before the ceiling the
+    search was given 22 s, ended at 32 s and the route had answered 503 at 30:
+    "did not answer within its longest wait", and no TIMEOUT to read.
     """
     clock = _Clock(monkeypatch, overrun=10.0)
     entered = clock.now
@@ -1197,6 +1198,38 @@ def test_a_search_the_clock_cut_that_stops_ten_seconds_late_still_leaves_the_pro
     assert response.conflicts.summary_code == "PROBE_NOTHING_HELPED"
     assert response.conflicts.summary_params == {"budget": 87, "rules": 1, "slice": 5}
     assert clock.now - entered <= 115.0, "the route's ceiling for this request, the probe's own overrun included"
+
+
+@pytest.mark.parametrize(
+    ("overrun", "probed"),
+    [
+        (0.0, {"budget": 249, "rules": 1, "slice": 7}),
+        (10.0, {"budget": 249, "rules": 1, "slice": 1}),
+    ],
+)
+def test_the_probe_of_a_search_the_clock_cut_at_the_schools_own_setup_on_the_public_road(
+    monkeypatch: pytest.MonkeyPatch, overrun: float, probed: dict[str, int],
+) -> None:
+    """Production's 540/20/30 on the 290 s road (the answer due at 272), builds of 4 s: the setup of the 809-lesson week.
+
+    The search is given 249 s (272 less the floor, the overrun and the setup of 8). A rule's probe pays its rebuild
+    first, and the engine counts that at half the setup, 4 s: of the floor's 5 s one is left for the slice after a
+    search that stopped the whole ten seconds late, and seven of fifteen after one that stopped on time. The test
+    above builds in no time, so there the floor is a whole slice. Before the floor held the overrun the late search
+    left a bare TIMEOUT (g416-M-1); from a setup of 10 s the floor is gone to the rebuild again, and is not asked for here.
+    """
+    clock = _Clock(monkeypatch, build=4.0, overrun=overrun)
+    entered = clock.now
+    _rules_to_probe(monkeypatch, 3)
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=540, SOLVER_PROBE_SECONDS=20)).solve(
+        _with_deadline(_payload(changeover=5), 290),
+    )
+
+    assert response.status == "TIMEOUT"
+    assert response.conflicts is not None
+    assert response.conflicts.summary_params == probed
+    assert clock.now - entered <= 285.0, "the route's ceiling for a caller that waits 290 s"
 
 
 def test_a_deadline_the_settings_fit_inside_changes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1409,3 +1442,27 @@ def test_the_förläggning_verdicts_get_what_the_clock_has_left(monkeypatch: pyt
     )
 
     assert seen == [pytest.approx(17.0), pytest.approx(17.0)]
+
+
+def test_a_candidate_with_no_probe_keeps_its_budget_for_a_setup_of_seventeen_seconds_and_answers_inside_the_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A schemaförslag candidate after the first: 30 s of search, `probes` off, a wait of 75 s.
+
+    The ceiling is 60 and the answer is due at 47. The two builds take 17 s together and every solve runs the
+    ten seconds over its limit that CP-SAT ran on 2026-11-17. Nothing follows the search, so there is no floor
+    to keep: it is given its 30 s, ends at 57 and the route answers at 57 of 60. With the overrun held back it
+    was given 20 s and the answer came at 47, ten seconds of a candidate's search for nothing.
+    """
+    clock = _Clock(monkeypatch, build=8.5, overrun=10.0)
+    entered = clock.now
+    payload = _payload(changeover=5, search={"maxSeconds": 30, "probes": False})
+    payload["deadlineSeconds"] = 75
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=180, SOLVER_PROBE_SECONDS=20)).solve(
+        OptimizeScheduleRequest.model_validate(payload),
+    )
+
+    assert response.status == "TIMEOUT"
+    assert clock.solves == [pytest.approx(30.0)]
+    assert clock.now - entered <= 60.0 - 3.0, "answered before the route stops waiting, three seconds to spare"

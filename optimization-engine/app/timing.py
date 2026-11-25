@@ -167,6 +167,17 @@ class Deadline:
         the floor, the overrun and the budget is cut instead of held. At
         production's 540 s that is a setup of 22 s where it was 32 s.
 
+        ONLY WHERE A PROBE FOLLOWS. A search with no probe after it (a request
+        that turned its probes off, or a deployment with SOLVER_PROBE_SECONDS
+        at zero) has no floor to keep, and `answer_by` already lies the overrun
+        before the ceiling: a search ended at it and ran ten seconds over still
+        answers three seconds before the route stops waiting. Holding the
+        overrun back there is ten seconds of search paid for nothing, and it is
+        paid by the schemaförslag candidates after the first (30 s each, no
+        probes), where the lead keeps its 30 s up to a setup of 22 s and the
+        others lose a second for every second of setup over 7, so the
+        emphases are no longer compared at one budget.
+
         NEVER MORE THAN HALF OF WHAT IS LEFT. A caller that waits so little
         that ten seconds is most of what the clock has (`answer_by` itself
         gives up half of a ceiling shorter than its margins, for the same
@@ -176,7 +187,8 @@ class Deadline:
         """
         floor = min(max(0.0, probe_seconds), PROBE_FLOOR_SECONDS)
         left = self.answer_by - floor - started
-        room = left - min(SOLVE_OVERRUN_SECONDS, max(0.0, left) / 2)
+        held = min(SOLVE_OVERRUN_SECONDS, max(0.0, left) / 2) if floor > 0 else 0.0
+        room = left - held
         return budget if room >= budget else max(0.0, room)
 
     def probe_end(self, now: float, probe_seconds: float) -> float:
