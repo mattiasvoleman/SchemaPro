@@ -540,6 +540,7 @@ describe('the roster-reader inventory', () => {
         'ImportController.importRequirements',
         'LunchSittingsController.place',
         'MasterLessonsController.create',
+        'MasterLessonsController.judge',
         'MasterLessonsController.moveBlockCard',
         'MasterLessonsController.update',
         'OptimizationController.applyCandidate',

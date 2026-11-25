@@ -197,6 +197,8 @@ export function givenStaffingWorld(
     if (sql.includes('app.enter_grundschema_write') || sql.includes('app.school_publish_mode')) {
       return Promise.resolve([{ mode: 'DIRECT' }]);
     }
+    // A hand edit that moves a lesson asks the other schools' holds on it (lesson-judge.ts): this school has none, no sibling of its huvudman.
+    if (sql.includes('app.sibling_schools')) return Promise.resolve([]);
     if (fallback) return fallback(...call);
     throw new Error(`Unexpected raw statement: ${sql}`);
   });

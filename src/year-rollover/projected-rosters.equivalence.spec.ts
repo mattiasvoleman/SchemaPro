@@ -420,8 +420,9 @@ describe('förberäknade klasslistor — every reader reads the same before and 
         },
       },
     );
+    // The refusal is a hand edit's (MASTER_LESSON_REFUSED, lesson-judge.ts): the clash named by its class, subject, day and clock.
     expect(before).toEqual({
-      onMa8: '409 Students of this group already have Matematik in this slot.',
+      onMa8: '409 Elever i klassen har redan Matematik Ma8 grupp 1 måndag 08:00–09:00.',
       onThursday: 'moved',
     });
   });

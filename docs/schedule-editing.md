@@ -15,6 +15,29 @@ Implemented feature set (Tiers 1–3 of the flexibility roadmap).
 - **Versions** — save named snapshots, restore any snapshot (an automatic safety snapshot is taken first). `api/v1/schedule-versions`.
 - **Audit trail** — every create/update/delete/regenerate/restore is appended to `ScheduleChangeLogs` (before/after JSON, actor).
 
+## One judge for a hand edit (En domare med ord, E1)
+
+A lesson of the grundschema is held to the same rules whichever road it is written by: the PATCH and the create, a block's
+card, a swap's apply and a förläggning. `src/calendar/lesson-judge.ts` is the hand edit's: the clash rule
+(`findConflicts`: teacher, room, class, shared pupils, weekly closures), the stage's ramtid, the class's meal, the weekly rules
+on whole årskurser, and the other schools' holds on a shared teacher or a room (`FRAME`, `LUNCH`, `GRADE_RULE` and
+`OTHER_SCHOOL`, the board's rules of `src/swaps/board-rules.ts`).
+
+- **A no has a code and the other lesson.** 409 `MASTER_LESSON_REFUSED`, with flat `params`: `reason` (the heaviest),
+  `reasons` (all, comma-joined), and the reason's own figures: the other lesson's `className`, `subjectName`, `day`, `start` and
+  `end` for a clash (never a person), `resource` for a weekly closure, `schools` for another school's hold, `requirement` for the
+  member of a block's card it is about. `detail` is a Swedish sentence for the clients that read nothing else. No write path of
+  the grundschema's lessons answers 409 without a code (`lesson-write-refusals.inventory.spec.ts`).
+- **Låt stå.** A lesson that already stands against a frame, a meal, a rule on årskurser or another school's hold may be
+  changed on anything but where it stands: the rule is asked of an edit that moves its day, clock, weeks or classes (the holds
+  also of one that changes its teacher or room), as a förläggning that has stopped holding may be saved beside its rows. The clash
+  rule is not eased.
+- **The läsande frågan.** `POST /api/v1/master-lessons/judge` asks one or more tänkta drag, judged together as one move, with the
+  PATCH's own verdict and nothing written: `{ ok, moves: [{ lessonId, ok, placed?, refusals: [{ reason, params, text }] }] }`.
+- **Held in place by** `scripts/test/probe-domaren.ts` (the same drag through the hand edit's, a swap's and a förläggning's judge
+  over real Postgres, with the cases in `src/calendar/__fixtures__/lesson-judge-cases.json` that the web's mirror is held to) and
+  `src/calendar/lesson-judge.property.spec.ts` (the other schools' holds and the board's rules over random facts).
+
 ## Tier 3
 
 - **Minimal-disruption re-optimization** — the gateway sends the current unlocked placements as `previousLessons`; the solver is rewarded (weight `disruption`) for keeping lessons on those slots and warm-started with them as hints. Mid-term re-runs now change as little as possible.
