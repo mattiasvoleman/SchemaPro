@@ -5114,6 +5114,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "studentCount",
         # Terminer: the periods of the year the lock holds its window in.
         "periods",
+        # Undantag med flit: sent only on a lock whose lesson carries an
+        # exemption from the class's meal (src/calendar/lesson-exemption.ts).
+        "exemptFromLunch",
     }
     # The response's one row. teacherId is a split post's lead of THIS lesson,
     # and omitted wherever it is None — on every lesson of every other post —
