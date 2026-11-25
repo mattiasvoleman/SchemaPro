@@ -4,6 +4,7 @@ import type { ScopeCardData, TeacherScope } from "@/lib/assignment-scope";
 import { ScopeCard } from "./scope-card";
 
 vi.mock("next-intl", () => ({
+  useLocale: () => "sv",
   useTranslations: () => (key: string, values?: Record<string, unknown>) =>
     values ? `${key}(${Object.values(values).join("|")})` : key,
 }));
@@ -358,7 +359,10 @@ describe("ScopeCard", () => {
           data={data({ verdict: "OVER_MAX", teachingHours: 731, assessment: assessment({ levelHours: null, exceptionKind: "OWN_INITIATIVE", ownInitiativeOn: "2027-05-02" }) })}
         />,
       );
-      expect(screen.getByText(/exceptionRegistered\(exceptionKindOWN_INITIATIVE\)/)).toHaveTextContent("2027-05-02. exceptionKeepsVerdict");
+      // One sentence, the day inside it: it was a sentence of its own with the full stop written into the component ("2027-05-02. …").
+      expect(screen.getByText(/exceptionRegisteredOn\(exceptionKindOWN_INITIATIVE\|2027-05-02\)/)).toHaveTextContent(
+        "exceptionRegisteredOn(exceptionKindOWN_INITIATIVE|2027-05-02) exceptionKeepsVerdict",
+      );
       // The verdict above it is the same sentence it would be without the exception: the exception silences nothing.
       expect(screen.getByText(/verdictOverMax/)).toHaveClass("text-destructive");
       expect(rows().some((row) => row.startsWith("assessmentLevel"))).toBe(false);

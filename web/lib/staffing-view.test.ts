@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   cellValue,
   dutyMinutesOf,
+  formatFigure,
   formatPercent,
   groupsInSubject,
   kpis,
@@ -63,6 +64,43 @@ describe("formatPercent", () => {
     expect(formatPercent(53.3)).toBe("53,3");
     expect(formatPercent(80)).toBe("80");
     expect(formatPercent(66.667)).toBe("66,7");
+  });
+
+  it("is the same through `map`, which gives it the index as a second argument: it takes the value alone", () => {
+    // Several callers write `steps.map(formatPercent)`; a language parameter on this function would have read the index as one.
+    expect([53.3, 80, 66.667].map(formatPercent)).toEqual(["53,3", "80", "66,7"]);
+    expect(formatPercent.length).toBe(1);
+  });
+});
+
+describe("formatFigure", () => {
+  it("writes Swedish as formatPercent always has: the comma, no grouping", () => {
+    expect(formatFigure(603.3, "sv")).toBe("603,3");
+    expect(formatFigure(1122, "sv")).toBe("1122");
+    expect(formatFigure(1122, "sv")).toBe(formatPercent(1122));
+  });
+
+  it("writes English with a point and groups the thousands, which the Swedish comma and a bare 1122 did not", () => {
+    expect(formatFigure(603.3, "en")).toBe("603.3");
+    expect(formatFigure(1122, "en")).toBe("1,122");
+    expect(formatFigure(1122.5, "en")).toBe("1,122.5");
+    expect(formatFigure(80, "en")).toBe("80");
+    expect(formatFigure(66.667, "en")).toBe("66.7");
+  });
+
+  it("never writes a minus zero: a figure just under zero is a zero in both languages", () => {
+    expect(formatFigure(-0.04, "sv")).toBe("0");
+    expect(formatFigure(-0.04, "en")).toBe("0");
+    expect(formatFigure(-0, "en")).toBe("0");
+    expect(formatFigure(-0.4, "en")).toBe("-0.4");
+    expect(formatFigure(-3.25, "sv")).toBe("-3,2");
+  });
+
+  it("rounds to one decimal in every language before it writes", () => {
+    expect(formatFigure(53.349, "sv")).toBe("53,3");
+    expect(formatFigure(53.349, "en")).toBe("53.3");
+    expect(formatFigure(79.96, "en")).toBe("80");
+    expect(formatFigure(79.96, "sv")).toBe("80");
   });
 });
 
