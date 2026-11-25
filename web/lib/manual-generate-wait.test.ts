@@ -34,6 +34,11 @@ describe("anvandarmanual: the row for a wait that ran out", () => {
     expect(row).toContain("motorn eller nätet mellan tjänsten och motorn kan ha hängt sig");
   });
 
+  it("says the engine's figure as its own limit and not as what it needs, as the app's sentence does", () => {
+    expect(row).toContain("motorns egen gräns för en körning är ett högre antal sekunder");
+    expect(row).not.toMatch(/kan behöva upp till/);
+  });
+
   it("gives the advice the app gives: wait, run again, and contact whoever runs the service", () => {
     expect(row).toMatch(/Vänta några minuter och kör om/);
     expect(row).toContain("hör av dig till den som driver tjänsten");

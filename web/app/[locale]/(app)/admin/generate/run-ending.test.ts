@@ -153,6 +153,19 @@ describe("what a school reads when the API's own wait ran out short of the engin
     }
   });
 
+  it("does not say that the engine needs the time, which is how the cause was read before: the engine's figure is said as its own limit, and the advice is the one its sibling gives", () => {
+    // A request that carries its deadline is answered inside it, so "which can need up to N s" was the cause under another name; and the
+    // engine may go on working after the wait, which ENGINE_WAIT_EXPIRED_AFTER says and this sentence did not.
+    for (const [messages, locale, needs, wait] of [
+      [sv, "sv", /behöva/, /vänta några minuter innan du kör Generera igen/],
+      [en, "en", /\bneed\b/, /wait a few minutes before you run Generate again/],
+    ] as const) {
+      const sentence = say(messages, locale, values);
+      expect(sentence, locale).not.toMatch(needs);
+      expect(sentence, locale).toMatch(wait);
+    }
+  });
+
   it("says what it cannot tell, and the three things it may be", () => {
     expect(say(sv, "sv", values)).toMatch(/syns inte härifrån/);
     expect(say(sv, "sv", values)).toMatch(/för kort för en äldre motor/);
