@@ -5378,12 +5378,7 @@ class SchedulerSolver:
         the request's as for any generation solve, and what a measurement does with them is its own."""
         return self._generation_solver(request, seconds)
 
-    def _lay_by_years(
-        self,
-        request: OptimizeScheduleRequest,
-        seconds: float,
-        lunch_hints: dict[tuple[UUID, int], int] | None = None,
-    ) -> list[PreviousLesson] | None:
+    def _lay_by_years(self, request: OptimizeScheduleRequest, seconds: float) -> list[PreviousLesson] | None:
         """Lay the week one year at a time, each year held where it was laid; the timetable as hints, None where it did not come.
 
         THE ROAD BETWEEN PHASE 1a AND 1b (M8 PR 5, app/solver/years.py for the idea and the measurement). The week is cut
@@ -5397,6 +5392,10 @@ class SchedulerSolver:
         search it always did. What the road costs is phase 1a's whole slice on a week it then lays (at most
         CLEAN_SAT_CAP_SECONDS, of a budget of many times that), and what it buys is a first timetable for weeks that neither
         encoding finds in their time.
+
+        THE STEPS ARE GIVEN NO LUNCH HINTS, and that is measured: phase 1a's model is hinted with the meals the lunch stage settled
+        (a warm start worth 1.3x there), and the same hints, the week's or a step's own, laid 6 of 15 cases of five weeks at three
+        seeds where steps with none laid 11 (DEPLOYMENT §35.9). The meals are placed by the week's last step like everything else.
 
         NOTHING IS PROVED AND NOTHING IS REFUSED HERE. A step that finds no timetable (in its time, or INFEASIBLE with the
         years above it held, which says only that those years were a bad place to start), a step the engine refuses to build, or
@@ -5422,15 +5421,12 @@ class SchedulerSolver:
             step = years.step_request(request, unit.ids, held, f"years-{number}")
             step_began = time.monotonic()
             try:
-                model, _, decisions, plan, lunch = self._build_model(step, use_assumptions=False, include_objective=False)
+                model, _, decisions, plan, _ = self._build_model(step, use_assumptions=False, include_objective=False)
             except InvalidScheduleInputError as refusal:
                 logger.info("years step=%d/%d refused to build: %s [requestId=%s]", number, len(units), refusal.code, request.request_id)
                 return None
             # The meals the week's lunch stage settled, for the classes this step has: the same warm start phase 1a's model is
             # given, and the lessons are searched around meals that have a place.
-            for key, slot in (lunch_hints or {}).items():
-                if key in lunch:
-                    model.AddHint(lunch[key], slot)
             left = edge - time.monotonic()
             if left < self.MIN_PHASE_SECONDS:
                 logger.info("years step=%d/%d: no time left for its search [requestId=%s]", number, len(units), request.request_id)
@@ -6603,7 +6599,7 @@ class SchedulerSolver:
             # Between the two searches, on a week without the walk (whose planned sites it does not plan) that phase 1a
             # did not lay: a timetable it finds is the hint phase 1b starts from. See _lay_by_years.
             laid = (
-                self._lay_by_years(request, min(remaining * self.YEARS_SHARE, self.YEARS_CAP_SECONDS), lunch_hints)
+                self._lay_by_years(request, min(remaining * self.YEARS_SHARE, self.YEARS_CAP_SECONDS))
                 if travel is None and remaining >= 2 * self.MIN_PHASE_SECONDS
                 else None
             )
