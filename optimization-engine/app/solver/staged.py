@@ -56,8 +56,10 @@ from app.solver.weeks import meet, weeks_of
 
 logger = logging.getLogger(__name__)
 
-#: How many times the week is asked again before every lesson is let go and the schedule is only a hint. Each round is a
-#: refusal the engine has proved and explained (seconds), not a search, so six is a bound on the proofs and not on time.
+#: How many times the week is asked again before every lesson is let go and the schedule is only a hint. It is a bound on
+#: the rounds and NOT on the time they take: a round is a refusal the engine proved and explained, and a proof can take the
+#: whole of a search. What keeps the rounds inside the request's clock is the question put before each one
+#: (SchedulerSolver._clock_holds_an_attempt).
 MAX_ROUNDS = 6
 
 #: The codes of a refusal that name a pinned lesson (pins.PIN_CODES), which is what a held lesson is in the model.

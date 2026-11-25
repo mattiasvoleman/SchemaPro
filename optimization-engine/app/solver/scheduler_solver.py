@@ -6176,15 +6176,26 @@ class SchedulerSolver:
         rounds = 0
         while True:
             candidates = set(held.places) - free
+            # A FURTHER ATTEMPT BEGINS WITH ITS CHECKS AND ITS TWO BUILDS, and nothing in them is under the clock: an
+            # attempt begun with no time for them answers after the ceiling (a proof that came at 538 s, its
+            # explanation, and 60 s of builds: 632 s of 590), a 503 instead of the answer the proof had.
+            if rounds and not self._clock_holds_an_attempt():
+                logger.warning(
+                    "start_schedule rounds=%d: the clock cannot hold another attempt [requestId=%s]", rounds, request.request_id,
+                )
+                return self._timeout_answer(request, None, week_load_cut=False)
+            # An attempt counts its own builds from its own start (`_build_seconds`, the probe's and the explanation's
+            # gate): from the request's arrival, as the first one does, it is half of everything the rounds before it took.
+            began = entered if not rounds else time.monotonic()
             if rounds >= staged.MAX_ROUNDS or not candidates:
                 # Nothing is held: the ordinary solve, with the schedule as the hint it also is.
                 self._enter_stage("PRECHECKS")
                 logger.info("start_schedule rounds=%d held=0 [requestId=%s]", rounds, request.request_id)
-                return self._solve_strict(staged.attempt(request, held, set(held.places)), entered)
+                return self._solve_strict(staged.attempt(request, held, set(held.places)), began)
             rounds += 1
             self._enter_stage("PRECHECKS")
             try:
-                response = self._solve_strict(staged.attempt(request, held, free), entered)
+                response = self._solve_strict(staged.attempt(request, held, free), began)
             except InvalidScheduleInputError as refusal:
                 named = staged.named_by_refusal(refusal.params, candidates)
                 if not named:
@@ -6211,6 +6222,15 @@ class SchedulerSolver:
             logger.info(
                 "start_schedule round=%d infeasible let_go=%d [requestId=%s]", rounds, len(free), request.request_id,
             )
+
+    def _clock_holds_an_attempt(self) -> bool:
+        """Whether the request's clock has room for another attempt's checks and builds, and a search after them.
+
+        What an attempt costs before its search is twice what `_build_seconds` says the last one's builds cost (that
+        figure is half of the checks and the two builds, measured from the attempt's own start). No clock, no limit:
+        a step called outside solve()."""
+        left = self._clock_left()
+        return left is None or left >= self.MIN_PHASE_SECONDS + 2 * self._build_seconds
 
     def _solve_strict(
         self, request: OptimizeScheduleRequest, entered: float,
