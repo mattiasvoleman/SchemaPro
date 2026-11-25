@@ -4860,7 +4860,7 @@
       "planningFloorOnStages": "The planning floor is worked out on the hours in the stages: the ordinance gives no level for the other hours, so they add nothing to the floor.",
       "fitsNotShown": "Whether the annual working time holds the planning floor is not shown here: it is only worked out for a term-time contract, and only shown to someone who may see the size of the post.",
       "interpretation": "Interpretation ({section}), as recorded in Swedish: {note}",
-      "notAnnual": "May differ from Teaching per school year under Annual working time, which applies percentage and factor. This figure is the lessons' own time, unweighted. Both count school days.",
+      "notAnnual": "May differ from the row for teaching per school year under Annual working time, which applies percentage and factor. This figure is the lessons' own time, unweighted. Both count school days.",
       "caption": "Computed from the teaching posts: the lessons' own time over the weeks they run, unweighted and without duties. Not the target, which is the school's own measure. Source: {sfs}, in force from {from}.",
       "source": "Read the ordinance",
       "assessmentLevel": "The principal's level for the teacher, at full time",
