@@ -73,7 +73,9 @@ export function runEnding(code: string | null, params: Params): RunEnding | null
       const waitSeconds = seconds(params, "waitSeconds");
       if (waitSeconds === null) return { key: "ENGINE_WAIT_EXPIRED" };
       const engineCeilingSeconds = seconds(params, "engineCeilingSeconds");
-      // A wait that is shorter than the engine says it can need is the whole explanation, and not the school's to fix.
+      // A wait that is shorter than the engine says it can need is said with both figures and left to whoever runs the service. The
+      // sentence does not say the wait is the cause: since the engine is sent the caller's deadline, a wait that ran out is as likely an
+      // engine or a network that hung (it is the whole explanation only for an older engine, which does not take the deadline).
       return engineCeilingSeconds !== null && waitSeconds < engineCeilingSeconds
         ? { key: "ENGINE_WAIT_EXPIRED_SHORT", values: { waitSeconds, engineCeilingSeconds } }
         : { key: "ENGINE_WAIT_EXPIRED_AFTER", values: { waitSeconds } };

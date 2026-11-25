@@ -124,6 +124,58 @@ describe("a code that is not one of these endings", () => {
   });
 });
 
+describe("what a school reads when the API's own wait ran out short of the engine (ENGINE_WAIT_EXPIRED_SHORT)", () => {
+  const say = (messages: unknown, locale: string, values: Record<string, number>): string =>
+    new IntlMessageFormat(
+      (messages as { scheduleCandidates: { jobErrors: Record<string, string> } }).scheduleCandidates.jobErrors.ENGINE_WAIT_EXPIRED_SHORT!,
+      locale,
+    ).format(values) as string;
+  const values = { waitSeconds: 120, engineCeilingSeconds: 230 };
+
+  it("names both figures and the advice, which is to contact whoever runs the service", () => {
+    for (const [messages, locale, advice] of [
+      [sv, "sv", /Hör av dig till den som driver tjänsten\./],
+      [en, "en", /Contact whoever runs the service\./],
+    ] as const) {
+      const sentence = say(messages, locale, values);
+      expect(sentence, locale).toContain("120");
+      expect(sentence, locale).toContain("230");
+      expect(sentence, locale).toMatch(advice);
+    }
+  });
+
+  it("does not name the length of the wait as the cause: since the engine is sent the caller's deadline, a wait that still ran out is as likely a hung engine or a hung network", () => {
+    // True of an older engine, which does not take `deadlineSeconds`, and of nothing else that is always the case.
+    for (const [messages, locale] of [[sv, "sv"], [en, "en"]] as const) {
+      const sentence = say(messages, locale, values);
+      expect(sentence, locale).not.toMatch(/inställning|setting/i);
+      expect(sentence, locale).not.toMatch(/inget i ditt schema|nothing in your timetable/i);
+    }
+  });
+
+  it("does not say that the engine needs the time, which is how the cause was read before: the engine's figure is said as its own limit, and the advice is the one its sibling gives", () => {
+    // A request that carries its deadline is answered inside it, so "which can need up to N s" was the cause under another name; and the
+    // engine may go on working after the wait, which ENGINE_WAIT_EXPIRED_AFTER says and this sentence did not.
+    for (const [messages, locale, needs, wait] of [
+      [sv, "sv", /behöva/, /vänta några minuter innan du kör Generera igen/],
+      [en, "en", /\bneed\b/, /wait a few minutes before you run Generate again/],
+    ] as const) {
+      const sentence = say(messages, locale, values);
+      expect(sentence, locale).not.toMatch(needs);
+      expect(sentence, locale).toMatch(wait);
+    }
+  });
+
+  it("says what it cannot tell, and the three things it may be", () => {
+    expect(say(sv, "sv", values)).toMatch(/syns inte härifrån/);
+    expect(say(sv, "sv", values)).toMatch(/för kort för en äldre motor/);
+    expect(say(sv, "sv", values)).toMatch(/motorn eller nätet mellan tjänsten och motorn kan ha hängt sig/);
+    expect(say(en, "en", values)).toMatch(/cannot be told from here/);
+    expect(say(en, "en", values)).toMatch(/too short for an older engine/);
+    expect(say(en, "en", values)).toMatch(/the engine, or the network between the service and the engine, may have hung/);
+  });
+});
+
 describe("what a school reads when the road closed the call (ENGINE_PATH_CLOSED_AFTER)", () => {
   const say = (messages: unknown, locale: string, values: Record<string, number>): string =>
     new IntlMessageFormat(
