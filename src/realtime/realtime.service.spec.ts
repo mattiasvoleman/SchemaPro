@@ -239,10 +239,16 @@ describe('RealtimeService', () => {
     it('broadcasts the school whose timetable changed', () => {
       service.notifyMasterTimetableChanged(SCHOOL_ID);
 
-      expect(gateway.emitMasterTimetableUpdated).toHaveBeenCalledWith(
-        SCHOOL_ID,
-      );
+      expect(gateway.emitMasterTimetableUpdated).toHaveBeenCalledWith(SCHOOL_ID, 'staff', undefined);
       expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('says which lessons changed when the caller knows, to the staff room, or to the admins for a draft', () => {
+      service.notifyMasterTimetableChanged(SCHOOL_ID, { lessonIds: ['a', 'b'] });
+      service.notifyMasterTimetableChanged(SCHOOL_ID, { draft: true, lessonIds: ['c'] });
+
+      expect(gateway.emitMasterTimetableUpdated).toHaveBeenNthCalledWith(1, SCHOOL_ID, 'staff', ['a', 'b']);
+      expect(gateway.emitMasterTimetableUpdated).toHaveBeenNthCalledWith(2, SCHOOL_ID, 'admin', ['c']);
     });
 
     it('swallows a gateway failure so the mutation never fails', () => {

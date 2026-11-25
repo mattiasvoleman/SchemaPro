@@ -19,11 +19,13 @@ import {
   COVER_BOARD_UPDATED_EVENT,
   CRISIS_UPDATED_EVENT,
   LESSON_UPDATED_EVENT,
+  MASTER_TIMETABLE_IDS_MAX,
   MASTER_TIMETABLE_UPDATED_EVENT,
   TIMETABLE_PRESENCE_EVENT,
   type CalendarLessonUpdatedPayload,
   type CoverBoardUpdatedPayload,
   type CrisisUpdatedPayload,
+  type MasterTimetableUpdatedPayload,
   type TimetablePeer,
 } from './realtime.types';
 
@@ -279,10 +281,17 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
    * Notifies a school that the master timetable changed (clients refetch).
    * `admin`: a draft edit, announced to the school's admins only.
    */
-  emitMasterTimetableUpdated(schoolId: string, audience: 'staff' | 'admin' = 'staff'): void {
-    this.server
-      .to(`${audience}:${schoolId}`)
-      .emit(MASTER_TIMETABLE_UPDATED_EVENT, { changedAt: new Date().toISOString() });
+  emitMasterTimetableUpdated(
+    schoolId: string,
+    audience: 'staff' | 'admin' = 'staff',
+    lessonIds?: readonly string[],
+  ): void {
+    const payload: MasterTimetableUpdatedPayload = { changedAt: new Date().toISOString() };
+    // Which lessons, when it is a few (MasterTimetableUpdatedPayload).
+    if (lessonIds !== undefined && lessonIds.length > 0 && lessonIds.length <= MASTER_TIMETABLE_IDS_MAX) {
+      payload.lessonIds = [...new Set(lessonIds)];
+    }
+    this.server.to(`${audience}:${schoolId}`).emit(MASTER_TIMETABLE_UPDATED_EVENT, payload);
   }
 
   /**

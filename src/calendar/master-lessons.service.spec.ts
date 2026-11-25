@@ -151,9 +151,14 @@ describe('MasterLessonsService', () => {
   let prisma: PrismaMock;
   let realtime: { notifyMasterTimetableChanged: jest.Mock };
   let notifications: { recipientsForLessons: jest.Mock; notifyUsers: jest.Mock };
+  /** The turn after a write's commit, on which what is said of it is said. */
+  const afterCommit = async () => {
+    for (let turn = 0; turn < 3; turn += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+  };
 
   beforeEach(() => {
-    jest.useFakeTimers().setSystemTime(NOW);
+    // setImmediate is the mock's later turn: the after-commit hooks (the others hear of a write once it has committed) run on it.
+    jest.useFakeTimers({ doNotFake: ['setImmediate'] }).setSystemTime(NOW);
     tx = createTxMock();
     prisma = createPrismaMock(tx);
     realtime = { notifyMasterTimetableChanged: jest.fn() };
@@ -566,6 +571,38 @@ describe('MasterLessonsService', () => {
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(prisma.withSystemTransaction).not.toHaveBeenCalled();
       expect(prisma.withServicePrincipal).not.toHaveBeenCalled();
+    });
+
+    it('tells the others which lesson it made once the transaction has committed, and not inside it', async () => {
+      // A collaborator reads the lesson on hearing of it: it must be there to read (use-timetable-realtime.ts).
+      arrangeCreate();
+      const withRls = prisma.withRls.getMockImplementation()!;
+      let heardInside: boolean | null = null;
+      prisma.withRls.mockImplementation((user: unknown, fn: (client: unknown) => Promise<unknown>) =>
+        withRls(user, async (client: unknown) => {
+          const result = await fn(client);
+          heardInside = realtime.notifyMasterTimetableChanged.mock.calls.length > 0;
+          return result;
+        }),
+      );
+
+      await service.create(createDto(), testUser());
+
+      expect(heardInside).toBe(false);
+      await afterCommit();
+      expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+      await afterCommit();
+      expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { lessonIds: [LESSON_ID] });
+    });
+
+    it('says nothing of a write that did not commit', async () => {
+      arrangeCreate();
+      tx.masterLesson.create.mockRejectedValue(new Error('deadlock detected'));
+
+      await expect(service.create(createDto(), testUser())).rejects.toThrow('deadlock detected');
+
+      await afterCommit();
+      expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
     });
 
     // The composite (id, schoolId) keys added in 20260822130000 are what stop a
@@ -1439,6 +1476,7 @@ describe('MasterLessonsService', () => {
       await expect(promise).rejects.toBeInstanceOf(ConflictException);
       await expect(promise).rejects.toMatchObject(refusedAs('TEACHER'));
       expect(tx.masterLesson.create).not.toHaveBeenCalled();
+      await afterCommit();
       expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
     });
 
@@ -2548,8 +2586,10 @@ describe('MasterLessonsService', () => {
 
       await service.create(createDto(), testUser());
 
+      await afterCommit();
       expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(
         SCHOOL_ID,
+        { lessonIds: [expect.any(String)] },
       );
     });
 
@@ -2923,8 +2963,10 @@ describe('MasterLessonsService', () => {
       });
       // A plain move of an every-week lesson strands nothing.
       expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+      await afterCommit();
       expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(
         SCHOOL_ID,
+        { lessonIds: [LESSON_ID] },
       );
     });
 
@@ -3011,6 +3053,7 @@ describe('MasterLessonsService', () => {
         service.update(LESSON_ID, { dayOfWeek: 1 }, testUser()),
       ).rejects.toThrow(ConflictException);
       expect(tx.masterLesson.update).not.toHaveBeenCalled();
+      await afterCommit();
       expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
     });
 
@@ -5025,9 +5068,23 @@ describe('MasterLessonsService', () => {
           after: undefined,
         },
       });
+      await afterCommit();
       expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(
         SCHOOL_ID,
+        { lessonIds: [LESSON_ID] },
       );
+    });
+
+    it('says a removal in DRAFT mode to the admins only: a draft is not the staff room\'s to hear of, ids and all', async () => {
+      arrangeRemove();
+      // The school's mode, as the first statement of every grundschema writer answers it (publish-mode.ts).
+      tx.$queryRaw.mockResolvedValue([{ mode: 'DRAFT' }]);
+
+      await service.remove(LESSON_ID, testUser());
+
+      await afterCommit();
+      expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+      expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { draft: true, lessonIds: [LESSON_ID] });
     });
   });
 
@@ -5310,6 +5367,7 @@ describe('MasterLessonsService', () => {
         await expect(move()).rejects.toMatchObject({ response: expect.objectContaining({ code: 'LESSON_IS_PLACED' }) });
         expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
         expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
+        await afterCommit();
         expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
         // The same card not written from a förläggning moves as it always did.
         tx.masterLesson.findMany.mockReset();
@@ -5342,7 +5400,11 @@ describe('MasterLessonsService', () => {
           [FR_LESSON, 2, '09:00'],
         ]);
         expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(2);
+        await afterCommit();
         expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+        // Every lesson the card moved, the lessons that followed it included, and nothing else.
+        await afterCommit();
+        expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { lessonIds: [LESSON_ID, FR_LESSON] });
       });
 
       describe('the board’s rules (En domare med ord)', () => {
@@ -5596,6 +5658,9 @@ describe('MasterLessonsService', () => {
           expect(tx.masterLesson.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({ where: expect.objectContaining({ id: { in: [VT] }, startDate: springWeeks.startDate }) }),
           );
+          // The lesson that followed the card is a lesson the card moved: the others read it, too.
+          await afterCommit();
+          expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { lessonIds: [LESSON_ID, VT] });
         });
 
         it('refuses one lesson of a block that has another post, placed or not, as no card', async () => {
@@ -6149,6 +6214,9 @@ describe('MasterLessonsService', () => {
         });
         expect(result).toEqual({ blockId: BLOCK_ID, isLocked: true, lessonIds: [LESSON_ID, OTHER_LESSON_ID], parked: 1 });
         expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(2);
+        // The lessons whose lock changed are the ones the others read again.
+        await afterCommit();
+        expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { lessonIds: [LESSON_ID, OTHER_LESSON_ID] });
       });
 
       it('locks and unlocks the lessons a run wrote from a block’s förläggning, as it does a single placed lesson (a lock moves nothing)', async () => {
@@ -6200,6 +6268,7 @@ describe('MasterLessonsService', () => {
         arrangeLock();
         await service.lockBlock({ blockId: BLOCK_ID, isLocked: false, lessonIds: [LESSON_ID] }, testUser());
         expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+        await afterCommit();
         expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
 
         tx.teachingBlock.findUnique.mockResolvedValue(null);
