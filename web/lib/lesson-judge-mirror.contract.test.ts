@@ -22,7 +22,10 @@ import { cases, constraintsOf, framesOf, groupsOf, lessonsOf, worlds, type Case,
  */
 
 /** The kind of rule the grid says for each reason the judge gives. */
-const KIND: Readonly<Record<string, ConflictKind>> = {
+const KIND: Readonly<Record<string, ConflictKind | null>> = {
+  // The school day is no rule of the week's clash mirror but of the drag control itself (validateChange: a Saturday or a Sunday is not a place to
+  // drop a lesson, and a lesson that stands there may stay): suggestions-and-the-drag.test.ts holds that, for every case, against `validateChange`.
+  SCHOOL_DAY: null,
   TEACHER: "TEACHER",
   ROOM: "ROOM",
   GROUP: "GROUP",
@@ -103,10 +106,14 @@ describe("the cases", () => {
 describe("the grid's drag control, against the judge of a hand edit", () => {
   it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (_name, testCase) => {
     const said = mirrorSays(testCase);
-    if (!testCase.verdict.ok) {
-      // NEVER MILDER: the judge refuses, the grid refuses, and for every rule the judge names.
+    const gridReasons = testCase.verdict.reasons.filter((reason) => KIND[reason] !== null);
+    if (gridReasons.length > 0) {
+      // NEVER MILDER: the judge refuses, the grid refuses, and for every rule of the grid's the judge names.
       expect(said.length, "the grid lets through what the judge refuses").toBeGreaterThan(0);
-      for (const reason of testCase.verdict.reasons) expect(said, `the judge says ${reason}`).toContain(KIND[reason]);
+      for (const reason of gridReasons) expect(said, `the judge says ${reason}`).toContain(KIND[reason]);
+    } else if (!testCase.verdict.ok) {
+      // Only the school day says no: the drag control's rule, held in suggestions-and-the-drag.test.ts.
+      expect(testCase.verdict.reasons).toEqual(["SCHOOL_DAY"]);
     } else if (said.length > 0) {
       // STRICTER only where a case says so, and why.
       expect(MIRROR_STRICTER[testCase.name], `the grid refuses (${said.join(", ")}) what the judge lets through`).toBeDefined();
@@ -117,10 +124,11 @@ describe("the grid's drag control, against the judge of a hand edit", () => {
     const counts = { bothRefuse: 0, bothHold: 0 };
     for (const testCase of cases) {
       const said = mirrorSays(testCase);
-      if (!testCase.verdict.ok && said.length > 0) counts.bothRefuse++;
+      const gridRefuses = testCase.verdict.reasons.some((reason) => KIND[reason] !== null);
+      if (gridRefuses && said.length > 0) counts.bothRefuse++;
       if (testCase.verdict.ok && said.length === 0) counts.bothHold++;
     }
-    expect(counts.bothRefuse).toBe(cases.filter((entry) => !entry.verdict.ok).length);
+    expect(counts.bothRefuse).toBe(cases.filter((entry) => entry.verdict.reasons.some((reason) => KIND[reason] !== null)).length);
     expect(counts.bothHold + Object.keys(MIRROR_STRICTER).length).toBe(cases.filter((entry) => entry.verdict.ok).length);
   });
 });

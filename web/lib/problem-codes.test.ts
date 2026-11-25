@@ -209,6 +209,7 @@ describe("MASTER_LESSON_REFUSED, said reason by reason", () => {
     ["AVAILABILITY", { resource: "TEACHER" }, "Läraren är markerad som inte tillgänglig då.", "The teacher is marked as unavailable then."],
     ["AVAILABILITY", { resource: "ROOM" }, "Salen är markerad som inte tillgänglig då.", "The room is marked as unavailable then."],
     ["AVAILABILITY", { resource: "GROUP" }, "Klassen är markerad som inte tillgänglig då.", "The class is marked as unavailable then."],
+    ["SCHOOL_DAY", {}, "Lektionen ligger utanför skoldagen: måndag till fredag.", "The lesson is outside the school day: Monday to Friday."],
     ["FRAME", {}, "Tiden ligger utanför ramtiden för klassens stadium.", "The time is outside the frame time of the class's stage."],
     ["LUNCH", {}, "Tiden ligger på klassens lunch.", "The time is on the class's lunch."],
     ["GRADE_RULE", {}, "Tiden är stängd för klassens årskurs.", "The time is closed to the class's year."],
@@ -223,7 +224,7 @@ describe("MASTER_LESSON_REFUSED, said reason by reason", () => {
 
   it("is said with no value for a name only another reason sends, and the whole sentence falls back to `detail` without the reason", () => {
     // FRAME sends no class, no subject and no clock: the names are passed empty, and the branch that is chosen never reads them.
-    for (const reason of ["FRAME", "LUNCH", "GRADE_RULE"]) {
+    for (const reason of ["SCHOOL_DAY", "FRAME", "LUNCH", "GRADE_RULE"]) {
       const said = apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason }), swedish);
       expect(said).not.toBe(DETAIL);
       expect(said).not.toMatch(/[{}]|common\.codes|codes\./);
