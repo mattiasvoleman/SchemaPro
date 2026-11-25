@@ -92,7 +92,14 @@ from app.schemas.schedule import MAX_PERIODS, OptimizeScheduleRequest  # noqa: E
 
 #: Bump when a change to the generator changes what a shape builds, so a stored
 #: result can tell which corpus it was measured on.
-CORPUS_VERSION = 1
+#:
+#: 2 (M8, 2026-11-25): the week's name says a day that ends otherwise than at 16:00 (`-e1630`), so that a
+#: shape that differs only in it is another week with another name and requestId (g386-L-1, for the one
+#: field this version adds), and the cliff weeks exist (CLIFF_WEEKS). EVERY SHAPE OF VERSION 1 BUILDS THE
+#: SAME WEEK: only its requestId moved, because the version is in it. test_school_corpus_pins.py holds the
+#: v1 digests of the gate's thirteen weeks with the requestId left out, which is what "the gate's rows
+#: have not changed meaning" is.
+CORPUS_VERSION = 2
 
 #: The engine's limits (schemas/schedule.py), repeated here so that a shape is
 #: refused with the numbers before the request is built.
@@ -266,7 +273,10 @@ class SchoolShape:
             f"-p{self.groups_per_shared_teacher}"
             if self.shared_teachers and self.groups_per_shared_teacher != 3 else "",
         ))
-        return f"n{self.classes}-g{self.group_subjects}-m{self.shared_teachers}-s{self.seed}{extras}"
+        # A day that ends otherwise than at 16:00 is another week (the cliff weeks, CLIFF_WEEKS). The start and the
+        # changeover are still not in the name (g386-L-1's other fields: nothing varies them yet).
+        end = "" if self.day[1] == "16:00:00" else f"-e{self.day[1][:2]}{self.day[1][3:5]}"
+        return f"n{self.classes}-g{self.group_subjects}-m{self.shared_teachers}-s{self.seed}{extras}{end}"
 
     def checked(self) -> None:
         if self.classes_per_year < 1 or not self.years:
@@ -810,6 +820,45 @@ GATE_WEEKS: tuple[str, ...] = (
 )
 
 
+#: THE CLIFF WEEKS (M8, 2026-11-25): a corpus week at the LOWEST day end at which some road has laid it, so that
+#: a week has a witness (benchmarks/corpus/cliff_witnesses.json: the road, the encoding, the seed, the work, and
+#: where every lesson was laid; the engine accepts the week with every lesson pinned there, and the rooms hold).
+#:
+#: WHY. The sweep's weeks have random pupil groups, and a random draw of pupils may have no timetable in the
+#: frame: one that is TIMEOUT at 16:00 and a matter of 0.01-4 deterministic seconds at 17:00 is on a cliff, and
+#: its TIMEOUT does not say whether it has a timetable (DEPLOYMENT §35.2, the correction; §35.7). A week at its
+#: cliff end is solvable by construction, so a TIMEOUT on it is the search and not the week. Terms are not in
+#: them (the gate does not cover terms), and the gate does not read them yet: a week no tree lays is no
+#: measurement, and they are for the measurement of M8's roads (`corpus_measure.py --profile cliff`).
+#: (shape name in the sweep, day end). A week whose end is 16:00 is the sweep's own week.
+CLIFF_WEEKS: tuple[tuple[str, str], ...] = (
+    ("n9-g6-m0-s1", "16:00"),
+    ("n9-g8-m0-s1", "16:30"),
+    ("n9-g10-m0-s1", "16:30"),
+    ("n12-g4-m0-s1", "15:30"),
+    ("n12-g5-m0-s1", "16:00"),
+    ("n12-g6-m0-s1", "16:45"),
+    ("n12-g10-m0-s1", "17:00"),
+)
+
+
+def cliff_shapes() -> list[SchoolShape]:
+    """The cliff weeks, in CLIFF_WEEKS' order: each sweep week with its day ending where the witness says."""
+    by_name = {shape.name(): shape for shape in sweep_shapes()}
+    out = []
+    for name, end in CLIFF_WEEKS:
+        if name not in by_name:
+            msg = f"the cliff weeks name a week the sweep does not have: {name}"
+            raise ValueError(msg)
+        shape = by_name[name]
+        out.append(replace(shape, day=(shape.day[0], f"{end}:00", shape.day[2])))
+    names = [shape.name() for shape in out]
+    if len(set(names)) != len(names):
+        msg = "two cliff weeks have the same name"
+        raise ValueError(msg)
+    return out
+
+
 def gate_shapes() -> list[SchoolShape]:
     """The gate's weeks, in GATE_WEEKS' order. A name the sweep no longer has is an error, not a shorter gate."""
     by_name = {shape.name(): shape for shape in sweep_shapes()}
@@ -825,7 +874,9 @@ def profile(name: str) -> list[SchoolShape]:
         return sweep_shapes()
     if name == "gate":
         return gate_shapes()
-    msg = f"profile must be 'gate' or 'sweep', not {name!r}"
+    if name == "cliff":
+        return cliff_shapes()
+    msg = f"profile must be 'gate', 'sweep' or 'cliff', not {name!r}"
     raise ValueError(msg)
 
 

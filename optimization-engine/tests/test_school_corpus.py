@@ -273,7 +273,7 @@ def test_the_production_form_is_where_the_production_school_stands_against_the_e
 
 
 def test_profile_names_are_checked() -> None:
-    with pytest.raises(ValueError, match="gate' or 'sweep"):
+    with pytest.raises(ValueError, match="gate', 'sweep' or 'cliff"):
         corpus.profile("night")
 
 
