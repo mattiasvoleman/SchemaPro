@@ -3,6 +3,9 @@ import { Prisma } from '@prisma/client';
 /** The `code` of the 503 a request gets when no connection came free in time. */
 export const DATABASE_BUSY = 'DATABASE_BUSY';
 
+/** What that refusal says in English, for the 503's `detail` and for a run's stored `error` (a Generera job has no response to send it in). */
+export const DATABASE_BUSY_DETAIL = 'The server is busy right now, and nothing was done. Try again in a moment.';
+
 /**
  * Prisma's message for a transaction that found no connection within its
  * maxWait (TransactionManagerError, P2028). Every other P2028 is a transaction

@@ -455,6 +455,36 @@ describe('OptimizationJobsService', () => {
       });
     });
 
+    it.each([
+      [
+        'Prisma\'s wait',
+        () =>
+          new Prisma.PrismaClientKnownRequestError('Transaction API error: Unable to start a transaction in the given time.', {
+            code: 'P2028',
+            clientVersion: Prisma.prismaVersion.client,
+          }),
+      ],
+      ['pg\'s own wait', () => new Error('timeout exceeded when trying to connect')],
+    ])('stores DATABASE_BUSY, and not the driver\'s sentence, when the pool had no connection for the run (%s)', async (_name, refusal) => {
+      // The write after the engine is tried twice (retryOnceIfPoolBusy), and a second refusal ends the run here. The page names a
+      // run's ending by its code (ENGINE_PATH_CLOSED, SCHEDULE_BUSY, GENERATE_STALE); without one it shows the driver's English.
+      proxy.triggerScheduling.mockRejectedValue(refusal());
+
+      await service.start(YEAR_ID, testUser());
+      await flushBackgroundRun();
+
+      expect(tx.optimizationJob.update).toHaveBeenLastCalledWith({
+        where: { id: JOB_ID },
+        data: {
+          status: 'FAILED',
+          error: 'The server is busy right now, and nothing was done. Try again in a moment.',
+          errorCode: 'DATABASE_BUSY',
+          errorParams: DbNull,
+          finishedAt: expect.any(Date),
+        },
+      });
+    });
+
     it('keeps no code for a failure of ours rather than of the school\'s data', async () => {
       // A lost connection to the engine has nothing for a school to act on and
       // nothing to translate; a Swedish sentence over it would be a promise

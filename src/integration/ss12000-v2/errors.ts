@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ThrottlerException } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import { DATABASE_BUSY, DATABASE_BUSY_RETRY_AFTER_SECONDS, isPoolBusy } from '../../database/pool-wait';
 
 /**
  * The v2.0 provider's errors, in S1's shape and nothing else.
@@ -37,6 +38,7 @@ import type { Request, Response } from 'express';
  *   409 WEBHOOK_SECRET_MISSING / SUBSCRIPTION_LIMIT
  *   429 TOO_MANY_REQUESTS
  *   503 TOO_LARGE
+ *   503 DATABASE_BUSY          the pool had no connection in time (S1's 503_overload), with `Retry-After`
  *
  * The message is a fixed Swedish sentence per code (with at most a
  * parameter NAME), never a value a consumer sent.
@@ -70,6 +72,7 @@ export const v2Errors = {
   huvudmanChanged: () =>
     new Ss12000V2Error(409, 'HUVUDMAN_CHANGED', 'Huvudmannens skolor eller nyckeln ändrades under anropet; försök igen.'),
   tooLarge: () => new Ss12000V2Error(503, 'TOO_LARGE', 'Svaret är för stort; använd limit och pageToken eller ett snävare urval.'),
+  databaseBusy: () => new Ss12000V2Error(503, DATABASE_BUSY, 'Servern är upptagen just nu och inget har gjorts. Försök igen om en stund.'),
 } as const;
 
 /**
@@ -96,6 +99,7 @@ export class Ss12000V2ExceptionFilter implements ExceptionFilter {
       this.logger.warn(line);
     }
     response.setHeader('Cache-Control', 'no-store');
+    if (code === DATABASE_BUSY) response.setHeader('Retry-After', String(DATABASE_BUSY_RETRY_AFTER_SECONDS));
     if (status === HttpStatus.UNAUTHORIZED) response.setHeader('WWW-Authenticate', 'Bearer');
     if (status === HttpStatus.NOT_FOUND) {
       response.status(status).end();
@@ -110,6 +114,12 @@ export class Ss12000V2ExceptionFilter implements ExceptionFilter {
     }
     if (exception instanceof ThrottlerException) {
       const error = v2Errors.tooMany();
+      return { status: error.status, code: error.code, message: error.message };
+    }
+    // No connection came free in time: a busy server, answered as one (the house filter does the same, http-exception.filter.ts), and
+    // not as the 500 INTERNAL, logged as an error with its stack, that an integrator would take for a fault to report.
+    if (isPoolBusy(exception)) {
+      const error = v2Errors.databaseBusy();
       return { status: error.status, code: error.code, message: error.message };
     }
     if (exception instanceof HttpException) {

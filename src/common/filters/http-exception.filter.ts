@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Request, Response } from 'express';
-import { DATABASE_BUSY, DATABASE_BUSY_RETRY_AFTER_SECONDS, isPoolBusy } from '../../database/pool-wait';
+import { DATABASE_BUSY, DATABASE_BUSY_DETAIL, DATABASE_BUSY_RETRY_AFTER_SECONDS, isPoolBusy } from '../../database/pool-wait';
 import type { ProblemDetails } from '../interfaces/problem-details.interface';
 import { areaRefusal } from '../utils/prisma-errors';
 import { viewerTokenOf } from '../../publication/public-token';
@@ -151,7 +151,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       return {
         status: HttpStatus.SERVICE_UNAVAILABLE,
         title: 'Service Unavailable',
-        detail: 'The server is busy right now, and nothing was done. Try again in a moment.',
+        detail: DATABASE_BUSY_DETAIL,
         code: DATABASE_BUSY,
         retryAfterSeconds: DATABASE_BUSY_RETRY_AFTER_SECONDS,
       };

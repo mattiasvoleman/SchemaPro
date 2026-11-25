@@ -1,4 +1,5 @@
 import { BadRequestException, HttpException, Logger, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ThrottlerException } from '@nestjs/throttler';
 import { Ss12000V2ExceptionFilter, v2Errors } from './errors';
 
@@ -69,5 +70,28 @@ describe('Ss12000V2ExceptionFilter', () => {
     expect(crash.body).toEqual({ code: 'INTERNAL', message: expect.any(String) });
     expect(JSON.stringify(crash.body)).not.toContain('Girgensohn');
     expect(respond(v2Errors.tooLarge(), '').statusCode).toBe(503);
+  });
+  it.each([
+    [
+      'Prisma\'s wait',
+      () =>
+        new Prisma.PrismaClientKnownRequestError('Transaction API error: Unable to start a transaction in the given time.', {
+          code: 'P2028',
+          clientVersion: Prisma.prismaVersion.client,
+        }),
+    ],
+    ['pg\'s own wait', () => new Error('timeout exceeded when trying to connect')],
+  ])('answers a pool with no connection (%s) as a 503 that says when to ask again, and logs it as a warning', (_name, refusal) => {
+    const res = respond(refusal(), '/ss12000/v2.0/persons');
+
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toEqual({ code: 'DATABASE_BUSY', message: expect.any(String) });
+    expect(res.headers['Retry-After']).toBe('5');
+    expect(lines.join('\n')).toContain('GET /ss12000/v2.0/persons -> 503 DATABASE_BUSY');
+    expect(spies[1]).not.toHaveBeenCalled(); // error
+  });
+
+  it('sends no Retry-After with the other 503: a response that is too large is no better a moment later', () => {
+    expect(respond(v2Errors.tooLarge(), '').headers['Retry-After']).toBeUndefined();
   });
 });
