@@ -54,6 +54,7 @@ from app.schemas.schedule import (
     PreviousLesson,
     StartedLesson,
 )
+from app.solver import pins
 from app.solver.weeks import meet, weeks_of
 
 logger = logging.getLogger(__name__)
@@ -64,8 +65,9 @@ logger = logging.getLogger(__name__)
 #: (SchedulerSolver._clock_holds_an_attempt).
 MAX_ROUNDS = 6
 
-#: The codes of a refusal that name a pinned lesson (pins.PIN_CODES), which is what a held lesson is in the model.
-PIN_CODES = ("PLACED_LESSON_IN_THE_WAY", "PLACED_LESSON_IN_THE_WAY_ANY_ROOM")
+#: The codes of a refusal that name a pinned lesson, which is what a held lesson is in the model: the engine's own
+#: list (pins.PIN_CODES), not a copy of it that could drift from it.
+PIN_CODES = pins.PIN_CODES
 
 
 def pupil_key_of(requirement: AnonymousRequirement) -> UUID:
@@ -167,7 +169,7 @@ def held_places(request: OptimizeScheduleRequest, on_grid: Callable[[str], bool]
     return held
 
 
-def _blocks_of(request: OptimizeScheduleRequest) -> dict[UUID, set[UUID]]:
+def _block_members(request: OptimizeScheduleRequest) -> dict[UUID, set[UUID]]:
     """block id -> the requirement ids of its members, for a block of the request."""
     out: dict[UUID, set[UUID]] = defaultdict(set)
     for requirement in request.requirements:
@@ -179,7 +181,7 @@ def _blocks_of(request: OptimizeScheduleRequest) -> dict[UUID, set[UUID]]:
 def with_blocks(request: OptimizeScheduleRequest, ids: set[UUID]) -> set[UUID]:
     """`ids` and every other member of a block one of them is in: a block is held whole or let go whole."""
     block_of = {requirement.id: requirement.block_id for requirement in request.requirements}
-    blocks = _blocks_of(request)
+    blocks = _block_members(request)
     out = set(ids)
     for requirement_id in ids:
         block = block_of.get(requirement_id)
