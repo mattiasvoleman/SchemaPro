@@ -3022,7 +3022,8 @@ BEGIN
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND c.relkind = 'r'
     AND c.relname NOT IN ('_prisma_migrations', 'PushTickets', 'Ss12000SourceSecrets', 'IntegrationKeyWebhookSecrets',
-                          'JobRuns', 'JobClaims', 'LeaveRequestNotices', 'ReportingReminders', 'AbsenceStatsMonths', 'LeaveConsents')
+                          'JobRuns', 'JobClaims', 'LeaveRequestNotices', 'ReportingReminders', 'AbsenceStatsMonths', 'LeaveConsents',
+                          'OutboundNotices', 'OutboundPace')
     AND c.relrowsecurity
     AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid);
 
@@ -65711,7 +65712,16 @@ BEGIN
       ('app.ss12000_due_sources(integer, timestamp with time zone)', 'SS403', 'SS12000_SCHEDULER_IS_THE_JOBS'),
       ('app.ss12000_housekeeping(timestamp with time zone)', 'SS403', 'SS12000_SCHEDULER_IS_THE_JOBS'),
       -- Generera-körningarnas städning (#352, 20270222090000) har samma vakt i sin egen migrering och hör hit för formens skull.
-      ('app.optimization_jobs_sweep()', 'GQ403', 'The sweep of Generera runs takes no login')
+      ('app.optimization_jobs_sweep()', 'GQ403', 'The sweep of Generera runs takes no login'),
+      -- Den utgående kön (H3, 20270309090000): åtta plpgsql-dörrar med samma vakt, och en sql-dörr (adresserna) nedan.
+      ('app.outbound_enqueue(uuid, boolean, jsonb, uuid[], uuid[])', 'OB403', 'OUTBOUND_NOTICES_IS_THE_JOBS'),
+      ('app.outbound_claim(text, boolean, interval)', 'OB403', 'OUTBOUND_NOTICES_IS_THE_JOBS'),
+      ('app.outbound_plan(uuid, text, jsonb, interval)', 'OB403', 'OUTBOUND_NOTICES_IS_THE_JOBS'),
+      ('app.outbound_advance(uuid, text, interval, integer, integer, integer, integer, integer, integer)', 'OB403', 'OUTBOUND_NOTICES_IS_THE_JOBS'),
+      ('app.outbound_finish(uuid, text, text, text)', 'OB403', 'OUTBOUND_NOTICES_IS_THE_JOBS'),
+      ('app.outbound_release(uuid, text, interval)', 'OB403', 'OUTBOUND_NOTICES_IS_THE_JOBS'),
+      ('app.outbound_slot(text, integer)', 'OB403', 'OUTBOUND_NOTICES_IS_THE_JOBS'),
+      ('app.outbound_sweep()', 'OB403', 'OUTBOUND_NOTICES_IS_THE_JOBS')
     ) v(door, code, msg)
   LOOP
     guard := format($g$IF nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN RAISE EXCEPTION %L USING ERRCODE = %L; END IF;$g$, r.msg, r.code);
@@ -65721,14 +65731,15 @@ BEGIN
     PERFORM pg_temp.dv_expect('520 rights of ' || r.door, pg_temp.dv_acl(r.door), 'true/false/false');
     n_pl := n_pl + 1;
   END LOOP;
-  IF n_pl <> 29 THEN RAISE EXCEPTION 'jobbdörrar 520: % plpgsql doors were checked, not 29', n_pl; END IF;
+  IF n_pl <> 37 THEN RAISE EXCEPTION 'jobbdörrar 520: % plpgsql doors were checked, not 37', n_pl; END IF;
 
   -- De nio dörrarna som är LANGUAGE sql har vakten som ett villkor i frågan, så att planen är den samma som förut. Villkoret
   -- står i kroppen (kommentarerna borta, blanka tecken som ett mellanslag), och funktionen är kvar LANGUAGE sql.
   FOR r IN SELECT * FROM (VALUES
       ('app.absence_watch_digest_due(uuid, date)'), ('app.absence_watch_schools()'), ('app.delivery_opt_outs(uuid, uuid[], "NotificationType")'),
       ('app.gallring_schools()'), ('app.job_claim_finished(text, uuid, date, timestamp with time zone)'), ('app.job_runs_latest()'),
-      ('app.push_targets(uuid, uuid[], "NotificationType", boolean)'), ('app.reporting_digest_due(uuid, date)'), ('app.reporting_schools()')
+      ('app.push_targets(uuid, uuid[], "NotificationType", boolean)'), ('app.reporting_digest_due(uuid, date)'), ('app.reporting_schools()'),
+      ('app.outbound_addresses(uuid, uuid[])')
     ) v(door)
   LOOP
     IF position(cond IN pg_temp.dv_src(r.door)) = 0 THEN
@@ -65740,7 +65751,7 @@ BEGIN
     PERFORM pg_temp.dv_expect('520 rights of ' || r.door, pg_temp.dv_acl(r.door), 'true/false/false');
     n_sql := n_sql + 1;
   END LOOP;
-  IF n_sql <> 9 THEN RAISE EXCEPTION 'jobbdörrar 520: % sql doors were checked, not 9', n_sql; END IF;
+  IF n_sql <> 10 THEN RAISE EXCEPTION 'jobbdörrar 520: % sql doors were checked, not 10', n_sql; END IF;
 
   -- Personens dörr: svarar en session med en inloggning, och inget åt en utan.
   IF position($c$CASE WHEN nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN$c$
@@ -65748,7 +65759,7 @@ BEGIN
     RAISE EXCEPTION 'jobbdörrar 520: login_is_held_elsewhere does not ask for a login';
   END IF;
   PERFORM pg_temp.dv_expect('520 rights of login_is_held_elsewhere', pg_temp.dv_acl('app.login_is_held_elsewhere(uuid, uuid)'), 'true/false/false');
-  RAISE NOTICE 'jobbdörrar 520: the guard of 29 plpgsql doors (28 and the Generera sweep), the condition of 9 sql doors and the login door''s, and their rights';
+  RAISE NOTICE 'jobbdörrar 520: the guard of 37 plpgsql doors (28, the Generera sweep and the 8 of the outgoing queue), the condition of 10 sql doors and the login door''s, and their rights';
 END $$;
 ROLLBACK;
 
@@ -70155,5 +70166,134 @@ BEGIN
   PERFORM pg_temp.ut_expect('569 the teacher is removed', pg_temp.ut_try(format($q$DELETE FROM "Users" WHERE id = %L$q$, gone)), 'ok');
   PERFORM pg_temp.ut_expect('569 ... and the assessment of them with them', (SELECT count(*) FROM "AssignmentScopeAssessments" WHERE "userId" = gone)::text, '0');
   RAISE NOTICE 'ut 569: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Den utgående kön (H3, 20270309090000), sektion 590–592. Ägarens sida är 590o–594o i rls-owner-checks.sql: ingen API-roll läser
+-- tabellerna, så vad som ligger i dem (rader, räknare, vad en färdig rad bär) kan bara ägaren fråga.
+--
+--   590  en inloggad person når inte kön: tabellerna nekas, och varje dörr nekar en inloggning (OB403), också en administratörs
+--   591  PostgREST:s roll (authenticated) når varken tabellerna eller dörrarna
+--   592  jobbet, utan inloggning, kör en hel rad genom dörrarna med bara API-rollens rättigheter: in, tagen, planerad, steg,
+--        tillbakalämnad, tagen igen, färdig, och en gammal claim får nej
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+DECLARE
+  stmt text;
+  t text;
+BEGIN
+  PERFORM pg_temp.ut_expect('590 expected to act as app_authenticated', current_user::text, 'app_authenticated');
+  -- A school's own administrator, with every right a person has, reads and writes nothing in the queue.
+  FOREACH t IN ARRAY ARRAY['OutboundNotices', 'OutboundPace'] LOOP
+    FOREACH stmt IN ARRAY ARRAY[
+      format($q$SELECT count(*) FROM %I$q$, t),
+      -- A column the table has, so that the refusal is the privilege's and not the column's.
+      format($q$UPDATE %I SET %I = %I$q$, t, CASE t WHEN 'OutboundNotices' THEN 'status' ELSE 'nextAt' END, CASE t WHEN 'OutboundNotices' THEN 'status' ELSE 'nextAt' END),
+      format($q$DELETE FROM %I$q$, t),
+      format($q$TRUNCATE %I$q$, t)
+    ] LOOP
+      PERFORM pg_temp.ut_expect('590 the administrator and ' || left(stmt, 40), pg_temp.ut_try(stmt), '42501');
+    END LOOP;
+  END LOOP;
+  PERFORM pg_temp.ut_expect('590 ... nor an insert', pg_temp.ut_try($q$INSERT INTO "OutboundPace" ("channel", "nextAt") VALUES ('EMAIL', now())$q$), '42501');
+  PERFORM pg_temp.ut_expect('590 ... nor an insert into the queue', pg_temp.ut_try(format($q$INSERT INTO "OutboundNotices" ("schoolId", entries, "recipientIds", "notificationIds")
+    VALUES (%L, '[{"n":1}]', ARRAY[gen_random_uuid()], ARRAY[gen_random_uuid()])$q$, app.current_school_id())), '42501');
+
+  -- Every door asks for no login at all: a person is one.
+  FOREACH stmt IN ARRAY ARRAY[
+    format($q$SELECT app.outbound_enqueue(%L, false, '[{"n":1}]', ARRAY[gen_random_uuid()], ARRAY[gen_random_uuid()])$q$, app.current_school_id()),
+    $q$SELECT * FROM app.outbound_claim('x', false, interval '1 minute')$q$,
+    $q$SELECT app.outbound_plan(gen_random_uuid(), 'x', '{}', interval '1 minute')$q$,
+    $q$SELECT app.outbound_advance(gen_random_uuid(), 'x', interval '1 minute', 1, 1, 1, 1, 1, 1)$q$,
+    $q$SELECT app.outbound_finish(gen_random_uuid(), 'x', 'DONE', NULL)$q$,
+    $q$SELECT app.outbound_release(gen_random_uuid(), 'x', interval '0 seconds')$q$,
+    $q$SELECT app.outbound_slot('EMAIL', 500)$q$,
+    $q$SELECT * FROM app.outbound_sweep()$q$
+  ] LOOP
+    PERFORM pg_temp.ut_expect('590 refused to an administrator: ' || left(stmt, 44), pg_temp.ut_try(stmt), 'OB403');
+  END LOOP;
+  -- The addresses are none to a login: not the school's own people's either.
+  PERFORM pg_temp.ut_expect('590 an administrator is told no address', (SELECT count(*)::text FROM app.outbound_addresses(app.current_school_id(), (SELECT array_agg(id) FROM "Users"))), '0');
+  RAISE NOTICE 'ut 590: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT pg_temp.ut_become('TEACHER');
+DO $$
+DECLARE stmt text;
+BEGIN
+  -- A teacher, a guardian and a pupil are no closer to it than an administrator.
+  PERFORM pg_temp.ut_expect('590 the teacher reads nothing of the queue', pg_temp.ut_try($q$SELECT count(*) FROM "OutboundNotices"$q$), '42501');
+  PERFORM pg_temp.ut_expect('590 ... nor takes a slot', pg_temp.ut_try($q$SELECT app.outbound_slot('PUSH', 200)$q$), 'OB403');
+  PERFORM set_config('request.jwt.claims', '{}', true);
+  PERFORM pg_temp.ut_expect('590 claims that are an empty object are a login too', pg_temp.ut_try($q$SELECT app.outbound_slot('PUSH', 200)$q$), 'OB403');
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', 'a-subject-alone', true);
+  PERFORM pg_temp.ut_expect('590 a subject alone is a login too', pg_temp.ut_try($q$SELECT app.outbound_slot('PUSH', 200)$q$), 'OB403');
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  RAISE NOTICE 'ut 590 (teacher): % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE stmt text;
+BEGIN
+  PERFORM pg_temp.ut_expect('591 expected to act as authenticated', current_user::text, 'authenticated');
+  FOREACH stmt IN ARRAY ARRAY[
+    $q$SELECT count(*) FROM "OutboundNotices"$q$, $q$SELECT count(*) FROM "OutboundPace"$q$,
+    $q$INSERT INTO "OutboundPace" ("channel", "nextAt") VALUES ('EMAIL', now())$q$, $q$DELETE FROM "OutboundNotices"$q$, $q$UPDATE "OutboundPace" SET "nextAt" = now()$q$,
+    $q$SELECT app.outbound_slot('EMAIL', 500)$q$, $q$SELECT * FROM app.outbound_claim('x', false, interval '1 minute')$q$,
+    $q$SELECT app.outbound_sweep()$q$, $q$SELECT app.outbound_finish(gen_random_uuid(), 'x', 'DONE', NULL)$q$,
+    $q$SELECT * FROM app.outbound_addresses(app.current_school_id(), ARRAY[gen_random_uuid()])$q$
+  ] LOOP
+    PERFORM pg_temp.ut_expect('591 PostgREST''s role: ' || left(stmt, 50), pg_temp.ut_try(stmt), '42501');
+  END LOOP;
+  RAISE NOTICE 'ut 591: % checks', current_setting('ut.checks');
+END $$;
+RESET ROLE;
+ROLLBACK;
+
+-- 592: the job, as the API's role and with no login, takes a row through every door; what it may read of the row is what the doors answer.
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  made uuid;
+  first_claim text;
+  second_claim text;
+  mail_done integer;
+  push_done integer;
+  attempts integer;
+  planned text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  PERFORM pg_temp.ut_expect('592 the job acts as app_authenticated', current_user::text, 'app_authenticated');
+
+  made := app.outbound_enqueue(school, false, '[{"type":"LESSON_CANCELLED","meta":{},"n":2,"email":{"subject":"S","body":"B"}}]'::jsonb,
+                               ARRAY[gen_random_uuid(), gen_random_uuid()], ARRAY[gen_random_uuid(), gen_random_uuid()]);
+  PERFORM pg_temp.ut_expect('592 the row is in', (made IS NOT NULL)::text, 'true');
+  SELECT claim, c.mail_done, c.push_done, c.attempts, c.plan::text INTO STRICT first_claim, mail_done, push_done, attempts, planned FROM app.outbound_claim('suite', false, interval '2 minutes') c;
+  PERFORM pg_temp.ut_expect('592 ... taken, new, a first try', concat_ws('|', mail_done, push_done, attempts, coalesce(planned, 'noplan')), '0|0|1|noplan');
+  PERFORM pg_temp.ut_expect('592 ... planned', app.outbound_plan(made, first_claim, '{"from":"x","mail":[{"e":0,"bcc":["a@example.invalid"]}],"push":[]}'::jsonb, interval '2 minutes')::text, 'true');
+  PERFORM pg_temp.ut_expect('592 ... a step', app.outbound_advance(made, first_claim, interval '2 minutes', 1, 0, 1, 0, 0, 0)::text, 'true');
+  PERFORM pg_temp.ut_expect('592 ... handed back for later', app.outbound_release(made, first_claim, interval '0 seconds')::text, 'true');
+  SELECT claim, c.mail_done, c.attempts, c.plan::text INTO STRICT second_claim, mail_done, attempts, planned FROM app.outbound_claim('suite', false, interval '2 minutes') c;
+  PERFORM pg_temp.ut_expect('592 ... taken again with its plan and its place', concat_ws('|', mail_done, attempts, planned), '1|2|{"from": "x", "mail": [{"e": 0, "bcc": ["a@example.invalid"]}], "push": []}');
+  PERFORM pg_temp.ut_expect('592 the first claim is told no', app.outbound_finish(made, first_claim, 'DONE', NULL)::text, 'false');
+  PERFORM pg_temp.ut_expect('592 ... the second finishes it', app.outbound_finish(made, second_claim, 'DONE', NULL)::text, 'true');
+  PERFORM pg_temp.ut_expect('592 ... and nothing is left to take', (SELECT count(*)::text FROM app.outbound_claim('suite', false, interval '2 minutes')), '0');
+  PERFORM pg_temp.ut_expect('592 the pace gives the first slot at once', app.outbound_slot('EMAIL', 500)::text, '0');
+  PERFORM pg_temp.ut_expect('592 the sweep has nothing of ours to do', (SELECT (gave_up + deleted)::text FROM app.outbound_sweep()), '0');
+  RAISE NOTICE 'ut 592: % checks', current_setting('ut.checks');
 END $$;
 ROLLBACK;

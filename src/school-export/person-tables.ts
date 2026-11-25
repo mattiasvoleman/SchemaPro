@@ -245,6 +245,11 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   Ss12000SyncRuns: dump(['appliedById', 'requestedById']),
   IntegrationKeyWebhookSecrets: { excluded: 'Bär bara en krypterad hemlighet och vem som satte den. Ingen administratör kan läsa tabellen och hemligheten lämnas aldrig ut.' },
   Ss12000SourceSecrets: { excluded: 'Bär bara en krypterad hemlighet och vem som satte den. Ingen administratör kan läsa tabellen och hemligheten lämnas aldrig ut.' },
+  // Den utgående kön (H3, 20270309090000): id:n på de personer en notis gäller, så länge notisen väntar på att skickas.
+  OutboundNotices: {
+    excluded:
+      'Kön med utgående mejl och push. Raden bär id:n på de personer en notis gäller och mejlets text, och bara medan notisen väntar på att skickas: samma id:n och samma text som personens notiser.csv och mejlet redan har, och ingen adress och ingen token. När notisen är skickad eller har gett upp, högst 20 timmar efter att den lades in, töms raden på allt om en person (en CHECK i databasen håller det), och det som blir kvar är några tal utan person som tas bort efter sju dagar. En person som tas bort får ingenting skickat: adressen läses ur Users när raden planeras.',
+  },
   PublishedLessons: {
     excluded:
       'En kopia av lektionerna så som de såg ut vid varje publicering (lärare, grupper och elever per lektion). Personens lektioner står i MasterLessons, MasterLessonStudents och närvaron; kopian tillför inga uppgifter om personen utöver vilka versioner som publicerats.',
@@ -276,6 +281,7 @@ export const WITHOUT_KEY: Readonly<Record<string, readonly string[]>> = {
   IntegrationApiKeys: ['createdById'],
   IntegrationKeyWebhookSecrets: ['setById'],
   OptimizationJobs: ['actorId'],
+  OutboundNotices: ['recipientIds'],
   PersonProtectionEvents: ['actorId', 'userId'],
   PublishedLessons: ['coTeacherId', 'studentIds', 'teacherId'],
   ScheduleCandidateRuns: ['createdById'],
