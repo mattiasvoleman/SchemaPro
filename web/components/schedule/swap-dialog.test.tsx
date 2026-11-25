@@ -373,6 +373,28 @@ describe("SwapDialog: apply", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Teacher already teaches X in this slot."));
   });
 
+  it("says which of the moved lessons the refusal is about, as the gateway names it, and not only the lesson it clashes with", async () => {
+    await opened();
+    swaps.apply.mutateAsync.mockRejectedValueOnce(
+      new ApiError(409, "Kemi för 8B: Läraren har redan Matematik 7A måndag 08:00–09:00.", "MASTER_LESSON_REFUSED", {
+        reason: "TEACHER",
+        reasons: "TEACHER",
+        requirement: "Kemi för 8B",
+        otherKind: "LESSON",
+        className: "7A",
+        subjectName: "Matematik",
+        day: 1,
+        start: "08:00",
+        end: "09:00",
+      }),
+    );
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
+    await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    const said = (toast.error as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0] as string;
+    expect(said.startsWith("Kemi för 8B: codes.MASTER_LESSON_REFUSED(TEACHER")).toBe(true);
+  });
+
   it("reports any other failure and leaves the proposals where they are", async () => {
     await opened();
     swaps.apply.mutateAsync.mockRejectedValueOnce(new Error("boom"));

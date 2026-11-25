@@ -783,6 +783,10 @@ describe('Scheduling surface (e2e)', () => {
       harness.tx['optimizationJob']!['findUnique']!.mockReset();
       harness.tx['optimizationJob']!['findFirst']!.mockReset();
       harness.tx['optimizationJob']!['count']!.mockReset();
+      // Back to what createTxMock gives a raw read, for the rows after this describe: a raw read that answers a row where none is
+      // asked for is read as the other schools' holds by a hand edit (lesson-judge.ts).
+      harness.tx.$queryRaw.mockReset().mockResolvedValue([]);
+      harness.tx.$executeRaw.mockReset().mockResolvedValue(0);
     });
 
     it.each([
@@ -1104,6 +1108,118 @@ describe('Scheduling surface (e2e)', () => {
           detail: 'Läraren saknar behörighet i Matematik för åk 8.',
         });
         expect(harness.tx['masterLesson']!['update']).not.toHaveBeenCalled();
+      });
+    });
+
+    /*
+     * EN DOMARE MED ORD (E1). A hand edit that may not stand is a 409 with a CODE and FLAT params, through the real
+     * exception filter (a nested value on the body never reaches the client, and a unit spec reads the body before the
+     * filter does): the reason, the other lesson's class, subject, day and time, and a Swedish `detail` for the clients
+     * (the mobile app, an older web) that read nothing else. The question that asks it without writing is the scheduler's.
+     */
+    describe('a lesson that may not stand (En domare med ord)', () => {
+      const OTHER_LESSON = '55555555-5555-4555-8555-555555555556';
+      const OTHER_GROUP = '88888888-8888-4888-8888-888888888889';
+      const hhmm = (value: string) => new Date(`1970-01-01T${value}:00.000Z`);
+      const stored = {
+        id: LESSON_ID,
+        academicYearId: YEAR_ID,
+        subjectId: SUBJECT_ID,
+        studentGroupId: GROUP_ID,
+        teacherId: TEACHER_ID,
+        coTeacherId: null,
+        roomId: null,
+        dayOfWeek: 2,
+        startTime: hhmm('08:20'),
+        endTime: hhmm('09:20'),
+        isLocked: false,
+        isParked: false,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        extraGroups: [],
+        participants: [],
+        fromPlacement: false,
+        school: { id: '33333333-3333-4333-8333-333333333333', timezone: 'Europe/Stockholm', _count: { academicYears: 1 } },
+      };
+      const other = {
+        id: OTHER_LESSON,
+        academicYearId: YEAR_ID,
+        subjectId: '99999999-9999-4999-8999-999999999990',
+        studentGroupId: OTHER_GROUP,
+        teacherId: TEACHER_ID,
+        coTeacherId: null,
+        roomId: null,
+        dayOfWeek: 2,
+        startTime: hhmm('13:10'),
+        endTime: hhmm('14:10'),
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        subject: { name: 'Kemi' },
+        studentGroup: { name: '8B' },
+        extraGroups: [],
+        participants: [],
+      };
+      const arrange = () => {
+        harness.tx['masterLesson']!['findUnique']!.mockResolvedValue(stored);
+        harness.tx['masterLesson']!['findMany']!.mockImplementation(async (query: { where?: Record<string, any> }) => {
+          const where = query.where ?? {};
+          const rows = [stored, other];
+          if (where['id']?.in) return rows.filter((row) => where['id'].in.includes(row.id));
+          return rows.filter((row) => row.dayOfWeek === where['dayOfWeek'] && row.id !== where['id']?.not);
+        });
+        harness.tx['masterLesson']!['update']!.mockResolvedValue(stored);
+      };
+      afterEach(() => {
+        harness.tx['masterLesson']!['findUnique']!.mockReset();
+        harness.tx['masterLesson']!['findMany']!.mockReset().mockResolvedValue([]);
+        harness.tx['masterLesson']!['update']!.mockReset();
+      });
+
+      it('PATCH answers 409 MASTER_LESSON_REFUSED with the reason and the other lesson by class, subject, day and time, and writes nothing', async () => {
+        arrange();
+
+        const response = await request(http())
+          .patch(`/api/v1/master-lessons/${LESSON_ID}`)
+          .set('x-test-user', admin())
+          .send({ startTime: '13:10', endTime: '14:10' })
+          .expect(409);
+
+        expect(response.body).toMatchObject({
+          status: 409,
+          code: 'MASTER_LESSON_REFUSED',
+          params: { reason: 'TEACHER', reasons: 'TEACHER', otherKind: 'LESSON', className: '8B', subjectName: 'Kemi', day: 2, start: '13:10', end: '14:10' },
+        });
+        // `detail` is a sentence of its own, for the clients that read nothing else.
+        expect(response.body.detail).toBe('Läraren har redan Kemi 8B tisdag 13:10–14:10.');
+        // No person, no id of a lesson or a teacher, reaches the answer.
+        expect(JSON.stringify(response.body)).not.toContain(TEACHER_ID);
+        expect(JSON.stringify(response.body)).not.toContain(OTHER_LESSON);
+        expect(harness.tx['masterLesson']!['update']).not.toHaveBeenCalled();
+      });
+
+      it('the question answers the same reason for the same drag, writes nothing, and is the scheduler’s', async () => {
+        arrange();
+        const ask = (body: object) => request(http()).post('/api/v1/master-lessons/judge').set('x-test-user', admin()).send(body);
+
+        const answer = await ask({ moves: [{ lessonId: LESSON_ID, startTime: '13:10', endTime: '14:10' }] }).expect(200);
+        expect(answer.body).toMatchObject({
+          ok: false,
+          moves: [{ lessonId: LESSON_ID, ok: false, refusals: [{ reason: 'TEACHER', params: { className: '8B', subjectName: 'Kemi', day: 2, start: '13:10', end: '14:10' }, text: 'Läraren har redan Kemi 8B tisdag 13:10–14:10.' }] }],
+        });
+        await ask({ moves: [{ lessonId: LESSON_ID, startTime: '15:00', endTime: '16:00' }] }).expect(200).expect((res) => expect(res.body.ok).toBe(true));
+        expect(harness.tx['masterLesson']!['update']).not.toHaveBeenCalled();
+
+        await request(http()).post('/api/v1/master-lessons/judge').send({ moves: [{ lessonId: LESSON_ID }] }).expect(401);
+        await request(http())
+          .post('/api/v1/master-lessons/judge')
+          .set('x-test-user', asUser({ role: 'TEACHER' as never }))
+          .send({ moves: [{ lessonId: LESSON_ID }] })
+          .expect(403);
+        for (const body of [{}, { moves: [] }, { moves: [{}] }, { moves: [{ lessonId: 'nope' }] }, { moves: [{ lessonId: LESSON_ID, startTime: '34:00' }] }, { moves: [{ lessonId: LESSON_ID, dayOfWeek: 8 }] }, { moves: [{ lessonId: LESSON_ID, extra: 1 }] }]) {
+          await ask(body).expect(400);
+        }
       });
     });
 

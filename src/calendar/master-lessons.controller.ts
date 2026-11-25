@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -26,6 +27,8 @@ import {
 import { CreateMasterLessonDto } from './dto/create-master-lesson.dto';
 import { LockBlockDto, MoveBlockCardDto } from './dto/block-card.dto';
 import { UpdateMasterLessonDto } from './dto/update-master-lesson.dto';
+import { JudgeLessonsDto } from './dto/judge-lessons.dto';
+import type { LessonJudgement } from './lesson-judge';
 
 @Controller('api/v1/master-lessons')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -36,8 +39,10 @@ export class MasterLessonsController {
 
   /**
    * `POST /api/v1/master-lessons` — manually add a timetable slot. Validated
-   * against the rest of the timetable; responds 409 with a conflict list when
-   * the new slot would double-book.
+   * against the rest of the timetable and the rules a swap and a förläggning
+   * are held to; responds 409 MASTER_LESSON_REFUSED, with the reason and the
+   * other lesson's class, subject, day and time, when the new slot may not
+   * stand.
    */
   @Post()
   create(
@@ -48,10 +53,23 @@ export class MasterLessonsController {
   }
 
   /**
+   * `POST /api/v1/master-lessons/judge` — whether one or more tänkta drag would
+   * be let through, said the way a write says no (the reason and the other
+   * lesson's class, subject, day and time), and nothing written. The moves are
+   * judged together as one move. A POST because the question is a body, not
+   * because it changes anything.
+   */
+  @Post('judge')
+  @HttpCode(200)
+  judge(@Body() dto: JudgeLessonsDto, @CurrentUser() user: AuthenticatedUser): Promise<LessonJudgement> {
+    return this.masterLessons.judgeMoves(dto, user);
+  }
+
+  /**
    * `PATCH /api/v1/master-lessons/block-card` — move a parallel block's card,
    * the lessons of its members that stand in one slot, to another slot as one
    * move. Validated against the rest of the timetable like a single lesson;
-   * responds 409 with a conflict list when any member would double-book, 409
+   * responds 409 MASTER_LESSON_REFUSED when any member may not stand there, 409
    * BLOCK_CARD_STALE when the lessons no longer stand together, and 400
    * NOT_A_BLOCK_CARD for lessons that are not one block's card. Declared
    * before `:id`, whose UUID pipe would refuse the word.
@@ -80,8 +98,10 @@ export class MasterLessonsController {
   /**
    * `PATCH /api/v1/master-lessons/:id` — manually adjust a timetable slot
    * (day, time, room, teacher, lock state). Validated against the rest of the
-   * timetable; responds 409 with a conflict list when the change would
-   * double-book.
+   * timetable and the rules a swap and a förläggning are held to, a lesson that
+   * already stands against one of the board's rules being let stand; responds
+   * 409 MASTER_LESSON_REFUSED, with the reason and the other lesson's class,
+   * subject, day and time, when the change may not stand.
    */
   @Patch(':id')
   update(

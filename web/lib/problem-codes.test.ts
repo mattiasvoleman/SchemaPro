@@ -1,3 +1,4 @@
+import { parse, TYPE, type MessageFormatElement } from "@formatjs/icu-messageformat-parser";
 import { createTranslator } from "use-intl";
 import { describe, expect, it } from "vitest";
 import en from "@/messages/en.json";
@@ -50,12 +51,37 @@ const SENT: Record<string, Record<string, string | number>> = {
 /** The gateway's own sentence, as `detail` carries it: what must NOT be shown for a code that has one in the catalogue. */
 const DETAIL = "Gatewayens egen mening i kastarens språk.";
 
-/** The arguments a sentence names, as `{name}` (a plural or a select inside it would name its own). */
-const argumentsOf = (sentence: string): string[] => [...new Set([...sentence.matchAll(/\{\s*([A-Za-z_]\w*)\s*[,}]/g)].map((match) => match[1]!))].sort();
+/**
+ * The arguments a sentence names: every argument of its ICU syntax tree, the ones a `select` or a plural chooses on and the ones its
+ * branches take. A scan for `{name}` would read the one-word branch of a select ("{Monday}") as an argument, and does not tell an
+ * argument from the text a branch says.
+ */
+const argumentsOf = (sentence: string): string[] => {
+  const names = (elements: readonly MessageFormatElement[]): string[] =>
+    elements.flatMap((element) => {
+      if (element.type === TYPE.literal || element.type === TYPE.pound) return [];
+      if (element.type === TYPE.select || element.type === TYPE.plural) {
+        return [element.value, ...Object.values(element.options).flatMap((option) => names(option.value))];
+      }
+      return [element.value];
+    });
+  return [...new Set(names(parse(sentence)))].sort();
+};
+
+/** What a declared name stands for: the name, without the `?` that says the gateway sends it for some cases only. */
+const nameOf = (declared: string): string => (declared.endsWith("?") ? declared.slice(0, -1) : declared);
+/** The declared names the gateway must send for the sentence to be said at all. */
+const requiredOf = (code: string): string[] => PROBLEM_CODES[code]!.filter((declared) => !declared.endsWith("?"));
 
 /** The sentence with its arguments filled by hand, so the expectation does not lean on the formatter under test. */
 const filled = (sentence: string, values: Record<string, string | number>): string =>
   sentence.replace(/\{(\w+)\}/g, (_match, name: string) => String(values[name]));
+
+/**
+ * The codes whose sentence chooses on one of its params (a `select` on the reason): filled by hand it would be the formatter's job done
+ * twice, so each is said in a describe of its own below, branch by branch.
+ */
+const SELECTING = new Set(["MASTER_LESSON_REFUSED"]);
 
 const CODES = Object.keys(PROBLEM_CODES);
 
@@ -69,7 +95,7 @@ describe("a problem with a code the web has a sentence for", () => {
     ["sv", swedish, sv],
     ["en", english, en],
   ] as const)("in %s", (_name, translator, messages) => {
-    it.each(CODES)("%s is said as the catalogue's sentence, not as the gateway's", (code) => {
+    it.each(CODES.filter((code) => !SELECTING.has(code)))("%s is said as the catalogue's sentence, not as the gateway's", (code) => {
       const error = apiError(code === "DATABASE_BUSY" ? 503 : 409, DETAIL, code, SENT[code]);
       const expected = filled(sentencesOf(messages)[code]!, SENT[code] ?? {});
       const shown = apiErrorText(error, translator);
@@ -128,10 +154,10 @@ describe("a problem with a code the web has a sentence for", () => {
   });
 
   it("falls back to the gateway's sentence when an argument the sentence takes did not arrive, never to the translator's fallback", () => {
-    const withArguments = CODES.filter((code) => PROBLEM_CODES[code]!.length > 0);
+    const withArguments = CODES.filter((code) => requiredOf(code).length > 0);
     expect(withArguments.length).toBeGreaterThan(0);
     for (const code of withArguments) {
-      for (const sent of [undefined, {}, { unrelated: 1 }, ...PROBLEM_CODES[code]!.map((name) => ({ ...SENT[code], [name]: undefined }))]) {
+      for (const sent of [undefined, {}, { unrelated: 1 }, ...requiredOf(code).map((name) => ({ ...SENT[code], [name]: undefined }))]) {
         const error = apiError(400, DETAIL, code, sent);
         expect(apiErrorText(error, swedish)).toBe(DETAIL);
         expect(apiErrorText(error, english)).toBe(DETAIL);
@@ -160,6 +186,72 @@ describe("a problem with a code the web has a sentence for", () => {
       ["codes.DATABASE_BUSY", undefined],
       ["codes.LESSON_LOG_TOO_LONG", { max: 200 }],
     ]);
+  });
+});
+
+/**
+ * MASTER_LESSON_REFUSED (src/calendar/lesson-refusal.ts): one sentence that chooses on the reason, so each reason is said here with what
+ * the gateway sends for it (src/calendar/lesson-judge.ts), in both languages, through the real translator.
+ */
+describe("MASTER_LESSON_REFUSED, said reason by reason", () => {
+  const other = { otherKind: "LESSON", className: "8B", subjectName: "Kemi", day: 1, start: "13:10", end: "14:10" };
+  const CASES: ReadonlyArray<readonly [string, Record<string, string | number>, string, string]> = [
+    ["TEACHER", other, "Läraren har redan Kemi med 8B, måndag 13:10–14:10.", "The teacher already has Kemi with 8B, Monday 13:10–14:10."],
+    ["ROOM", { ...other, day: 2 }, "Salen är redan upptagen av Kemi med 8B, tisdag 13:10–14:10.", "The room is already taken by Kemi with 8B, Tuesday 13:10–14:10."],
+    ["GROUP", { ...other, day: 5 }, "Klassen har redan Kemi med 8B, fredag 13:10–14:10.", "The class already has Kemi with 8B, Friday 13:10–14:10."],
+    [
+      "PUPILS",
+      { ...other, day: 3 },
+      "Elever i klassen är också med i en annan grupp som har Kemi med 8B, onsdag 13:10–14:10.",
+      "Pupils of the class are also in another group that has Kemi with 8B, Wednesday 13:10–14:10.",
+    ],
+    ["GROUP", { ...other, pupilTime: 1, note: "Klassen är upptagen med ombyte eller dusch." }, "Klassen är upptagen med ombyte eller dusch kring Kemi med 8B, måndag 13:10–14:10.", "The class is busy changing or showering around Kemi with 8B, Monday 13:10–14:10."],
+    ["AVAILABILITY", { resource: "TEACHER" }, "Läraren är markerad som inte tillgänglig då.", "The teacher is marked as unavailable then."],
+    ["AVAILABILITY", { resource: "ROOM" }, "Salen är markerad som inte tillgänglig då.", "The room is marked as unavailable then."],
+    ["AVAILABILITY", { resource: "GROUP" }, "Klassen är markerad som inte tillgänglig då.", "The class is marked as unavailable then."],
+    ["SCHOOL_DAY", {}, "Lektionen ligger utanför skoldagen: måndag till fredag.", "The lesson is outside the school day: Monday to Friday."],
+    ["FRAME", {}, "Tiden ligger utanför ramtiden för klassens stadium.", "The time is outside the frame time of the class's stage."],
+    ["LUNCH", {}, "Tiden ligger på klassens lunch.", "The time is on the class's lunch."],
+    ["GRADE_RULE", {}, "Tiden är stängd för klassens årskurs.", "The time is closed to the class's year."],
+    ["OTHER_SCHOOL", { schools: "Norra skolan, Södra skolan" }, "Tiden är upptagen av Norra skolan, Södra skolan.", "The time is held by Norra skolan, Södra skolan."],
+  ];
+
+  it.each(CASES)("%s %j", (reason, params, inSwedish, inEnglish) => {
+    const error = apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason, reasons: reason, ...params });
+    expect(apiErrorText(error, swedish)).toBe(inSwedish);
+    expect(apiErrorText(error, english)).toBe(inEnglish);
+  });
+
+  it("is said with no value for a name only another reason sends, and the whole sentence falls back to `detail` without the reason", () => {
+    // FRAME sends no class, no subject and no clock: the names are passed empty, and the branch that is chosen never reads them.
+    for (const reason of ["SCHOOL_DAY", "FRAME", "LUNCH", "GRADE_RULE"]) {
+      const said = apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason }), swedish);
+      expect(said).not.toBe(DETAIL);
+      expect(said).not.toMatch(/[{}]|common\.codes|codes\./);
+    }
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", {}), swedish)).toBe(DETAIL);
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: ["TEACHER"] }), english)).toBe(DETAIL);
+  });
+
+  it("falls to the gateway's own sentence for a reason it has no words for, and for a clash that names no other lesson", () => {
+    // A newer gateway's reason is not "the class already has ...", and a clash with no lesson is not "... with , day  –".
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "SOMETHING_NEW", ...other }), swedish)).toBe(DETAIL);
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "TEACHER" }), swedish)).toBe(DETAIL);
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "PUPILS", reasons: "PUPILS" }), english)).toBe(DETAIL);
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "OTHER_SCHOOL" }), swedish)).toBe(DETAIL);
+    // The rules that name no lesson are said without one.
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "FRAME" }), swedish)).toBe("Tiden ligger utanför ramtiden för klassens stadium.");
+  });
+
+  it("names a day of the week the sentence has no word for as a day number, in both languages", () => {
+    const error = apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "TEACHER", ...other, day: 9 });
+    expect(apiErrorText(error, swedish)).toBe("Läraren har redan Kemi med 8B, dag 9 13:10–14:10.");
+    expect(apiErrorText(error, english)).toBe("The teacher already has Kemi with 8B, day 9 13:10–14:10.");
+  });
+
+  it("is said for a Saturday and a Sunday, which a school with a weekend lesson has", () => {
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "ROOM", ...other, day: 6 }), swedish)).toContain("lördag");
+    expect(apiErrorText(apiError(409, DETAIL, "MASTER_LESSON_REFUSED", { reason: "ROOM", ...other, day: 7 }), english)).toContain("Sunday");
   });
 });
 
@@ -196,7 +288,7 @@ describe("the list and the catalogues", () => {
   });
 
   it.each(CODES)("%s: the arguments the list declares are the ones both sentences take", (code) => {
-    const declared = [...PROBLEM_CODES[code]!].sort();
+    const declared = PROBLEM_CODES[code]!.map(nameOf).sort();
     expect(argumentsOf(sentencesOf(sv)[code]!)).toEqual(declared);
     expect(argumentsOf(sentencesOf(en)[code]!)).toEqual(declared);
   });

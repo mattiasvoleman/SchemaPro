@@ -505,6 +505,63 @@ function groupsShareStudents(
 }
 
 /**
+ * The weekly rows that close the placement's own hour, in the order they are given: one AVAILABILITY hit of validatePlacement each. The
+ * krocklista asks it to say WHICH rule closed the hour (a teacher's, a room's, a class's or a year's), as the judge of a hand edit does,
+ * which the grid's one kind does not.
+ */
+export function closingConstraints(
+  candidate: Placement,
+  constraints: AvailabilityConstraint[],
+  gradeSpanOf?: Map<string, GradeSpan>,
+): AvailabilityConstraint[] {
+  const closed: AvailabilityConstraint[] = [];
+  for (const constraint of constraints) {
+    if (constraint.type !== "UNAVAILABLE") continue;
+    if (constraint.date !== null) continue; // one-off dates act at publish time
+    // A rule with no weekday applies to EVERY teaching day — the engine reads
+    // it that way (TimeGrid.window_to_absolute_range), and this line used to
+    // read it as applying to none, because `null !== 1`. The rules page cannot
+    // create such a row today, so this is a divergence closed before it is
+    // reached rather than a bug anyone has hit.
+    if (constraint.dayOfWeek !== null && constraint.dayOfWeek !== candidate.dayOfWeek) {
+      continue;
+    }
+
+    const applies =
+      (constraint.resourceType === "TEACHER" &&
+        constraint.userId !== null &&
+        teacherIdsOf(candidate).includes(constraint.userId)) ||
+      (constraint.resourceType === "ROOM" &&
+        candidate.roomId !== null &&
+        constraint.roomId === candidate.roomId) ||
+      (constraint.resourceType === "STUDENT_GROUP" &&
+        constraint.studentGroupId !== null &&
+        groupsOf(candidate).includes(constraint.studentGroupId)) ||
+      // A year rule names no row at all — it carries a span instead, and
+      // reaches whichever groups overlap it. Without this branch it matched
+      // nothing: the solver refused to place åk 4 after 15:00 while this
+      // function let a lesson be dragged there and reported no conflict.
+      (constraint.resourceType === "GRADE_LEVEL" &&
+        groupsOf(candidate).some((groupId) =>
+          spanMeetsRule(gradeSpanOf?.get(groupId), constraint),
+        ));
+    if (!applies) continue;
+
+    if (
+      overlaps(
+        candidate.startMinutes,
+        candidate.endMinutes,
+        timeToMinutes(constraint.startTime),
+        timeToMinutes(constraint.endTime),
+      )
+    ) {
+      closed.push(constraint);
+    }
+  }
+  return closed;
+}
+
+/**
  * Validates a single placement against the rest of the timetable and the
  * weekly UNAVAILABLE constraints. `others` should contain all lessons of the
  * academic year; the placement's own id is skipped automatically.
@@ -656,49 +713,7 @@ export function validatePlacement(
     }
   }
 
-  for (const constraint of constraints) {
-    if (constraint.type !== "UNAVAILABLE") continue;
-    if (constraint.date !== null) continue; // one-off dates act at publish time
-    // A rule with no weekday applies to EVERY teaching day — the engine reads
-    // it that way (TimeGrid.window_to_absolute_range), and this line used to
-    // read it as applying to none, because `null !== 1`. The rules page cannot
-    // create such a row today, so this is a divergence closed before it is
-    // reached rather than a bug anyone has hit.
-    if (constraint.dayOfWeek !== null && constraint.dayOfWeek !== candidate.dayOfWeek) {
-      continue;
-    }
-
-    const applies =
-      (constraint.resourceType === "TEACHER" &&
-        constraint.userId !== null &&
-        teacherIdsOf(candidate).includes(constraint.userId)) ||
-      (constraint.resourceType === "ROOM" &&
-        candidate.roomId !== null &&
-        constraint.roomId === candidate.roomId) ||
-      (constraint.resourceType === "STUDENT_GROUP" &&
-        constraint.studentGroupId !== null &&
-        groupsOf(candidate).includes(constraint.studentGroupId)) ||
-      // A year rule names no row at all — it carries a span instead, and
-      // reaches whichever groups overlap it. Without this branch it matched
-      // nothing: the solver refused to place åk 4 after 15:00 while this
-      // function let a lesson be dragged there and reported no conflict.
-      (constraint.resourceType === "GRADE_LEVEL" &&
-        groupsOf(candidate).some((groupId) =>
-          spanMeetsRule(gradeSpanOf?.get(groupId), constraint),
-        ));
-    if (!applies) continue;
-
-    if (
-      overlaps(
-        candidate.startMinutes,
-        candidate.endMinutes,
-        timeToMinutes(constraint.startTime),
-        timeToMinutes(constraint.endTime),
-      )
-    ) {
-      hits.push({ kind: "AVAILABILITY" });
-    }
-  }
+  hits.push(...closingConstraints(candidate, constraints, gradeSpanOf).map((): ConflictHit => ({ kind: "AVAILABILITY" })));
 
   // The frames last, so a lesson that is both double-booked and outside the
   // day reports the booking first — that is the one whose fix is unambiguous.

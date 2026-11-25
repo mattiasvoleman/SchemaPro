@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { apiErrorText, type ProblemLookup } from "@/lib/api-error-text";
 import { PROBLEM_CODES } from "@/lib/problem-codes";
@@ -61,6 +61,26 @@ const SITES = (() => {
 /** Whether an object literal near a site names `param` as a key (`{ date: lastDate }`, `{ field, max }`): what the thrower sends beside the code. */
 const sendsParam = (site: Site, param: string): boolean => new RegExp(String.raw`\{[^{}]*(?:^|[\s{,])${param}\s*(?::|,|\})`).test(site.near);
 
+/**
+ * Whether the file that sends a code, or a module it imports, writes `param` as the key of an object: where a sentence that takes the name
+ * only for some of its reasons (a name ending in `?` in the list) gets it from. A refusal that is built from a list of reasons (the judge
+ * names the other lesson's class and clock, the refusal adds the code and the heaviest reason) puts the name in a module beside the one
+ * that holds the code; the object that sends the code does not spell it out, so the lines about it cannot be asked as `sendsParam` asks.
+ */
+const buildsParam = (site: Site, param: string): boolean => {
+  const key = new RegExp(String.raw`(?:^|[\s{,(])${param}\s*:`, "m");
+  const code = (path: string): string =>
+    readFileSync(path, "utf8")
+      .split("\n")
+      .filter((line) => !/^\s*(?:\*|\/\/|\/\*)/.test(line))
+      .join("\n");
+  const text = code(site.file);
+  const imported = [...text.matchAll(/from\s+['"](\.[^'"]*)['"]/g)]
+    .map((match) => resolve(dirname(site.file), `${match[1]}.ts`))
+    .filter((path) => existsSync(path));
+  return [text, ...imported.map(code)].some((source) => key.test(source));
+};
+
 const CODES = Object.keys(PROBLEM_CODES);
 
 describe("the codes the web has a sentence for, against the gateway's sources", () => {
@@ -70,9 +90,12 @@ describe("the codes the web has a sentence for, against the gateway's sources", 
   });
 
   it.each(CODES.filter((code) => PROBLEM_CODES[code]!.length > 0))("%s: the gateway sends the params its sentence takes", (code) => {
-    for (const param of PROBLEM_CODES[code]!) {
-      // A sentence whose argument the gateway no longer sends is never filled: it falls back to `detail`, silently.
-      expect(SITES(code).some((site) => sendsParam(site, param))).toBe(true);
+    for (const declared of PROBLEM_CODES[code]!) {
+      const optional = declared.endsWith("?");
+      const param = optional ? declared.slice(0, -1) : declared;
+      // A sentence whose argument the gateway no longer sends is never filled: it falls back to `detail`, silently. A name the sentence
+      // takes for some of its reasons only is written where the refusal is built, which is not always beside the code.
+      expect(SITES(code).some((site) => (optional ? buildsParam(site, param) : sendsParam(site, param)))).toBe(true);
     }
   });
 });

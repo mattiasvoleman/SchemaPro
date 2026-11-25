@@ -44,6 +44,8 @@ const state = vi.hoisted(() => ({
   yearsLoading: false,
   /** The year's timplansposter: only their blockId is read here (Block i schemat). */
   requirements: [] as unknown[],
+  /** The weekly rows that close an hour (resource availability), as useConstraints reads them. */
+  constraints: [] as unknown[],
   /** GROUPS and PEOPLE unless a row adds to them; null between tests. */
   groups: null as unknown[] | null,
   people: null as unknown[] | null,
@@ -156,7 +158,7 @@ vi.mock("@/lib/queries", () => ({
     state.askedFor.requirements = yearId;
     return { data: state.requirements };
   },
-  useConstraints: () => ({ data: [] }),
+  useConstraints: () => ({ data: state.constraints }),
   useGroupMemberships: () => ({ data: state.memberships }),
   useFrameTimes: () => ({ data: [] }),
   useLunchSettings: () => ({ data: state.lunchSettings }),
@@ -642,6 +644,7 @@ beforeEach(() => {
   state.askedFor = {};
   state.yearsLoading = false;
   state.requirements = [];
+  state.constraints = [];
   state.groups = null;
   state.people = null;
   state.rooms = null;
@@ -1406,6 +1409,93 @@ describe("the edit dialog", () => {
   });
 });
 
+describe("a refusal of the one judge, and the krocklista (E1)", () => {
+  /*
+   * PATCH /master-lessons/:id says no with MASTER_LESSON_REFUSED and the reason's params (src/calendar/lesson-refusal.ts): the toast is the
+   * catalogue's sentence in the reader's language, with nothing of "Schemakonflikt" in front, and the page's own count of clashes has a way
+   * to the list that says each one.
+   */
+  beforeEach(() => {
+    toasts.error.mockClear();
+  });
+  afterEach(() => {
+    noMutation.mutateAsync.mockReset().mockResolvedValue({ id: "x" });
+  });
+
+  it("says a refused save in the catalogue's sentence, with no 'editConflict' in front", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    noMutation.mutateAsync.mockRejectedValue(new ApiError(409, "Tiden ligger på klassens lunch.", "MASTER_LESSON_REFUSED", { reason: "LUNCH", reasons: "LUNCH" }));
+    const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+    await user.click(await screen.findByRole("button", { name: "common.save" }));
+
+    await waitFor(() => expect(toasts.error).toHaveBeenCalledTimes(1));
+    const said = toasts.error.mock.calls[0]![0] as string;
+    expect(said.startsWith("common.codes.MASTER_LESSON_REFUSED(LUNCH")).toBe(true);
+    expect(said).not.toContain("editConflict");
+  });
+
+  it("has no way to the list for a week without a clash", async () => {
+    render(<TimetablePage />);
+    await screen.findAllByRole("button");
+    expect(screen.queryByRole("button", { name: "timetable.conflictListOpen" })).toBeNull();
+  });
+
+  it("opens the list of what clashes with the press of 'Visa vilka', and the list opens the lesson it names", async () => {
+    // Two lessons of the same teacher at the same hour: one clash, seen from both.
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), lesson("l-b", "s-sl", "g-51", "08:00")];
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    await user.click(await screen.findByRole("button", { name: "timetable.conflictListOpen" }));
+    const list = await screen.findByRole("dialog");
+    expect(within(list).getByText("timetable.conflictListTitle")).toBeTruthy();
+    // One row per lesson, each with the sentence of the refusal for the other lesson it clashes with.
+    const buttons = within(list).getAllByRole("button", { name: "timetable.conflictListGo" });
+    expect(buttons).toHaveLength(2);
+    expect(within(list).getAllByText(/^common\.codes\.MASTER_LESSON_REFUSED\(TEACHER/)).toHaveLength(2);
+
+    await user.click(buttons[0]!);
+    // The list closes and Justera lektion opens for the lesson.
+    expect(await screen.findByText("timetable.editTitle")).toBeTruthy();
+  });
+
+  it("says whose hour a weekly row closes, from the page's own rows: the teacher's, as a refused save says it", async () => {
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00")];
+    state.constraints = [
+      { id: "c-1", resourceType: "TEACHER", userId: "t-1", roomId: null, studentGroupId: null, minGradeLevel: null, maxGradeLevel: null, dayOfWeek: 1, date: null, startTime: "07:00", endTime: "12:00", type: "UNAVAILABLE", reason: null },
+    ];
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await user.click(await screen.findByRole("button", { name: "timetable.conflictListOpen" }));
+    const list = await screen.findByRole("dialog");
+    // The echo of the catalogue's sentence: reason, schools, resource.
+    expect(within(list).getByText(/^common\.codes\.MASTER_LESSON_REFUSED\(AVAILABILITY\|\|TEACHER\|/)).toBeTruthy();
+  });
+});
+
+describe("the krocklista for a reader (Läsbehörighet)", () => {
+  /*
+   * The page gives a profile that changes nothing no editor: a click on a card opens none ("gives a reader the grid to read"). The list
+   * says what clashes to that profile as well, and must not open Justera lektion from its rows.
+   */
+  it("says what clashes, and has no way to Justera lektion from its rows", async () => {
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), lesson("l-b", "s-sl", "g-51", "08:00")];
+    const user = userEvent.setup();
+    render(
+      <ProfileProvider profile={{} as Profile} school={null} readOnly>
+        <TimetablePage />
+      </ProfileProvider>,
+    );
+    await user.click(await screen.findByRole("button", { name: "timetable.conflictListOpen" }));
+    const list = await screen.findByRole("dialog");
+    expect(within(list).getAllByText(/^common\.codes\.MASTER_LESSON_REFUSED\(TEACHER/)).toHaveLength(2);
+    expect(within(list).queryByRole("button", { name: "timetable.conflictListGo" })).toBeNull();
+  });
+});
+
 describe("a re-teachered lesson under the staffing policy", () => {
   /*
    * PATCH /master-lessons/:id answers a new teacher with the policy's verdict:
@@ -1727,6 +1817,43 @@ describe("the dialogs the page lifts out", () => {
     );
   });
 
+  describe("the times it offers are the times the drag lets through (post mr-3)", () => {
+    /*
+     * The search after a refused drop used to be given the clash rule and the weekly rows, and none of the board's own: the class's
+     * meal, the stage's ramtid, the year rules, the rooms two classes may share, the weeks of a lov. A time free of every clash could
+     * be a time the class eats, and the offer was a time the drag refused when it was picked. It is now asked of the drag's own
+     * predicate (validateChange), so the two cannot disagree.
+     */
+    const dragSlojdOntoMondayEight = async () => {
+      render(<TimetablePage />);
+      const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+      fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 260 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 62 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 62 });
+      const dialog = await screen.findByRole("dialog");
+      return Array.from(dialog.querySelectorAll("button"))
+        .filter((button) => button.textContent?.includes("–"))
+        .map((button) => button.textContent!.trim());
+    };
+
+    it("does not offer a time on the class's own meal", async () => {
+      const before = await dragSlojdOntoMondayEight();
+      expect(before.length).toBeGreaterThan(0);
+      // The first offer is the nearest free time; the class eats then.
+      const [from, to] = before[0]!.match(/\d{2}:\d{2}/g)!;
+      cleanup();
+      toasts.error.mockClear();
+      state.sittings = [
+        { id: "s-g-51", studentGroupId: "g-51", dayOfWeek: 1, startTime: `${from}:00`, endTime: `${to}:00`, headcount: 24, isGenerated: false, startDate: null, endDate: null },
+      ];
+
+      const after = await dragSlojdOntoMondayEight();
+
+      expect(after.length).toBeGreaterThan(0);
+      expect(after).not.toContain(before[0]);
+    });
+  });
+
   it("searches the week for a free time from Lägg till", async () => {
     // The slot finder's search is awaited from the lesson dialogs' chunk now,
     // not called in the page; its answer has to reach the dialog all the same.
@@ -1744,6 +1871,41 @@ describe("the dialogs the page lifts out", () => {
     expect(
       await screen.findAllByText(/timetable\.slotFinder(Assigned|Fallback|None)/),
     ).not.toHaveLength(0);
+  });
+
+  it("offers no time from Lägg till on the class's own meal: the create would refuse it (E1)", async () => {
+    // The slot finder knew the clash rule and the class's own hours and none of the board's, and offered the class's lunch.
+    state.requirements = [{ id: "r-sl51", studentGroupId: "g-51", subjectId: "s-sl", teacherId: "t-1", coTeacherId: null, blockId: null }];
+    const search = async () => {
+      const user = userEvent.setup();
+      render(<TimetablePage />);
+      const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+      fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+      await user.click(await screen.findByRole("button", { name: "timetable.duplicateLesson" }));
+      await user.click(await screen.findByRole("button", { name: "timetable.slotFinderSearch" }));
+      await screen.findAllByText(/timetable\.slotFinder(Assigned|Fallback|None)/);
+      return screen
+        .getAllByRole("button")
+        .filter((button) => /\d{2}:\d{2}–\d{2}:\d{2}/.test(button.textContent ?? "") && /slotFinder/.test(button.textContent ?? ""))
+        .map((button) => button.textContent!);
+    };
+    const before = await search();
+    expect(before.length).toBeGreaterThan(0);
+    const [from, to] = before[0]!.match(/\d{2}:\d{2}/g)!;
+    const day = Number(/days\.(\d)/.exec(before[0]!)?.[1] ?? "NaN");
+    expect(Number.isNaN(day)).toBe(false);
+    cleanup();
+    toasts.error.mockClear();
+    // The class eats in the first time offered.
+    state.sittings = [
+      { id: "s-g-51", studentGroupId: "g-51", dayOfWeek: day, startTime: `${from}:00`, endTime: `${to}:00`, headcount: 24, isGenerated: false, startDate: null, endDate: null },
+    ];
+
+    const after = await search();
+
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.some((text) => text.includes(`${from}–${to}`) && text.includes(`days.${day}`))).toBe(false);
   });
 
   it("publishes the year on screen from the review dialog, from the school's today, with the dry run's digest", async () => {
