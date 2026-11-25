@@ -46,11 +46,18 @@ export class RealtimeService {
    * delete/regenerate/restore). Collaborating admin clients refetch on it.
    * `draft`: the school is in DRAFT and the change is a draft, so only its
    * admins hear of it; the staff room hears when it is published.
+   * `lessonIds`: the master lessons a change of a few of them touched
+   * (MasterTimetableUpdatedPayload). Left out, the client reads the year again.
+   * A caller that passes `lessonIds` calls this AFTER the write has committed:
+   * a client that reads those lessons on hearing of them must find them as they
+   * now are.
    */
-  notifyMasterTimetableChanged(schoolId: string, options: { draft?: boolean } = {}): void {
+  notifyMasterTimetableChanged(
+    schoolId: string,
+    options: { draft?: boolean; lessonIds?: readonly string[] } = {},
+  ): void {
     try {
-      if (options.draft) this.gateway.emitMasterTimetableUpdated(schoolId, 'admin');
-      else this.gateway.emitMasterTimetableUpdated(schoolId);
+      this.gateway.emitMasterTimetableUpdated(schoolId, options.draft ? 'admin' : 'staff', options.lessonIds);
     } catch {
       this.logger.warn(`Realtime timetable broadcast failed [school=${schoolId}]`);
     }
