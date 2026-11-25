@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Scale } from "lucide-react";
 import { profileDecides } from "@/lib/admin-areas";
-import { formatPercent } from "@/lib/staffing-view";
+import { formatFigure } from "@/lib/staffing-view";
+import { formatDay, formatDayOf } from "@/lib/staffing-day";
 import type { ScopeAssessmentView } from "@/lib/assignment-scope";
 import { useScopeAssessmentActions } from "@/lib/scope-assessment-queries";
 import {
@@ -56,7 +57,10 @@ export interface ScopeAssessmentCardProps {
 export function ScopeAssessmentCard({ teacher, academicYearId, assessment, fullTimeHighestHours }: ScopeAssessmentCardProps) {
   const t = useTranslations("staffing.scopeAssessment");
   const tCommon = useTranslations("common");
-  const me = useProfile().profile;
+  const locale = useLocale();
+  const { profile: me, school } = useProfile();
+  // The school's own day for an instant, Stockholm's where the profile names none (as the other pages say it).
+  const timeZone = school?.timezone ?? "Europe/Stockholm";
   const decides = profileDecides(me?.adminProfile === undefined ? "FULL" : me.adminProfile);
   const actions = useScopeAssessmentActions();
   const [editing, setEditing] = useState(false);
@@ -118,15 +122,15 @@ export function ScopeAssessmentCard({ teacher, academicYearId, assessment, fullT
       {!editing ? (
         assessment ? (
           <ul className="space-y-0.5 text-sm">
-            {assessment.levelHours !== null ? <li>{t("summaryLevel", { hours: formatPercent(assessment.levelHours) })}</li> : <li>{t("summaryNoLevel")}</li>}
+            {assessment.levelHours !== null ? <li>{t("summaryLevel", { hours: formatFigure(assessment.levelHours, locale) })}</li> : <li>{t("summaryNoLevel")}</li>}
             {assessment.exceptionKind ? (
               <li>
                 {t("summaryException", { kind: t(`exception${assessment.exceptionKind}`) })}
-                {assessment.ownInitiativeOn ? ` ${t("summaryInitiativeOn", { day: assessment.ownInitiativeOn })}` : ""}
+                {assessment.ownInitiativeOn ? ` ${t("summaryInitiativeOn", { day: formatDay(assessment.ownInitiativeOn, locale) })}` : ""}
               </li>
             ) : null}
             {assessment.note ? <li className="text-muted-foreground">{t("summaryNote", { note: assessment.note })}</li> : null}
-            {assessment.decidedAt ? <li className="text-xs text-muted-foreground">{t("summaryDecided", { day: assessment.decidedAt.slice(0, 10) })}</li> : null}
+            {assessment.decidedAt ? <li className="text-xs text-muted-foreground">{t("summaryDecided", { day: formatDayOf(assessment.decidedAt, timeZone, locale) })}</li> : null}
           </ul>
         ) : (
           <p className="text-sm text-muted-foreground">{t("none")}</p>
@@ -154,7 +158,7 @@ export function ScopeAssessmentCard({ teacher, academicYearId, assessment, fullT
               onChange={(event) => patch({ level: event.target.value })}
             />
             <p id={id("level-hint")} className="text-xs text-muted-foreground">
-              {fullTimeHighestHours === null ? t("levelHintNoEdge") : t("levelHint", { edge: formatPercent(fullTimeHighestHours) })}
+              {fullTimeHighestHours === null ? t("levelHintNoEdge") : t("levelHint", { edge: formatFigure(fullTimeHighestHours, locale) })}
             </p>
           </div>
           <div className="space-y-1.5">

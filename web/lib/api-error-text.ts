@@ -1,3 +1,5 @@
+import { problemCodeText } from "@/lib/problem-codes";
+
 /**
  * The sentence a failed request is shown as, in the reader's language.
  *
@@ -14,14 +16,22 @@
  *   - a request that got no answer (NETWORK_FAILURE, made by api.ts);
  *   - a 400 whose validation sentences the gateway sent (`problems`), class-validator's English said again in the reader's language
  *     (lib/validation-problems.ts);
- *   - a refusal with no `code` whose sentence is only a log's: Nest's, Prisma's and the filter's own English (GATEWAY_LOG, pinned
- *     against the gateway's sources by api-error-text.contract.test.ts), a bare status ("Not Found", "HTTP 502", "Cannot GET /x"),
- *     and, for a 404, a 429 and a 5xx, any English sentence: a thrower writes the reader's sentences in Swedish;
+ *   - a refusal whose sentence is only a log's: Nest's, Prisma's and the filter's own English (GATEWAY_LOG, pinned against the
+ *     gateway's sources by api-error-text.contract.test.ts), whatever `code` the filter gave it; with no `code`, also a bare status
+ *     ("Not Found", "HTTP 502", "Cannot GET /x") and, for a 404, a 429 and a 5xx, any English sentence: a thrower writes the reader's
+ *     sentences in Swedish;
+ *   - a problem the filter itself coded before any route was reached (FILTER_CODES: a body too large, not JSON, or in an encoding or a
+ *     character set it will not read), whichever of its sentences it carries: it words one code in more than one way;
  *   - a 401, which says the sign-in has gone, except the one that says there is no person behind it.
  *
  * What a thrower wrote for the reader is left as it is: a Swedish 404 or 503 ("Läraren har ingen tjänst det läsåret. Lägg in tjänsten
- * först."), a 400, 403 or 409 whose service worded it, and any problem WITH a `code` (a refusal the gateway worded for the reader or
- * one a page words itself from the code). So is an error that is not the gateway's.
+ * först."), a 400, 403 or 409 whose service worded it, and a problem WITH a `code` the web has no sentence of its own for (a refusal the
+ * gateway worded for the reader, or one a page words itself from the code). So is an error that is not the gateway's.
+ *
+ * A problem with a code the web HAS a sentence for (lib/problem-codes.ts: `common.codes.<CODE>`, with the params the gateway sends) is
+ * said from that sentence in the reader's language, after the two cases above: a log's sentence or a code of the filter's own is said
+ * as a general one, whatever the table holds for the code. A page that words a code itself, through engineMessage, asks first; this is
+ * the last resort of the pages that fall back to apiErrorText. ownWords has no translator and so never gets such a sentence.
  *
  * It asks the translator for a key and never for `has`: the page tests replace
  * next-intl with a stub that only echoes (web-page-tests-mock-next-intl), and
@@ -100,6 +110,19 @@ export const GATEWAY_LOG: Readonly<Record<string, ProblemKey>> = {
   "No active user profile is linked to this account.": "problemNoProfile",
 };
 
+/**
+ * The codes the filter gives what it answers itself, before any route is reached (REQUEST_BODY_* in src/common/filters/
+ * http-exception.filter.ts), by the general sentence each stands for. A code and not a sentence, because the filter words one code in
+ * more than one way (a body "too large" and one with "too many fields"; an encoding and a character set it will not read), and a log's
+ * English is no key to list them by. problem-codes.contract.test.ts reads the filter for the codes it names and holds each to a
+ * sentence in the reader's language, either here or in lib/problem-codes.ts.
+ */
+const FILTER_CODES: Readonly<Record<string, ProblemKey>> = {
+  REQUEST_BODY_TOO_LARGE: "problemTooLarge",
+  REQUEST_BODY_NOT_JSON: "problemBadRequest",
+  REQUEST_ENCODING_UNSUPPORTED: "problemBadRequest",
+};
+
 /** The general sentence for a status, when the sentence the gateway gave for it is only a log's. */
 const BY_STATUS: Readonly<Record<number, ProblemKey>> = {
   400: "problemBadRequest",
@@ -152,7 +175,7 @@ export function generalKey(error: unknown): ProblemKey | null {
   // (REQUEST_BODY_TOO_LARGE and the others) and keep their English `detail`, which a code-first rule would show to the reader as it is.
   const logged = GATEWAY_LOG[sentence];
   if (logged) return logged;
-  if (typeof code === "string") return null;
+  if (typeof code === "string") return Object.prototype.hasOwnProperty.call(FILTER_CODES, code) ? FILTER_CODES[code]! : null;
   if (status === 401) return "problemSignedOut";
   // A status and nothing else to say: the general sentence of the status, where there is one.
   if (sentence === "" || BARE_STATUS.test(sentence)) return BY_STATUS[status] ?? (status >= 500 ? "problemServer" : null);
@@ -177,6 +200,8 @@ export function apiErrorText(error: unknown, t: ProblemLookup): string {
   }
   const key = generalKey(error);
   if (key) return t(key);
+  const coded = typeof code === "string" ? problemCodeText(error, code, t) : undefined;
+  if (coded !== undefined) return coded;
   // Its own words, and the generic sentence where there are none.
   return error.message === "" ? t("error") : error.message;
 }

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import type { TemplateKind } from "@/lib/column-fields";
+import type { MappingTemplate } from "@/lib/column-mapping";
 import { readTable } from "@/lib/column-table";
 import { ColumnMappingPanel, type MappingState } from "./column-mapping-panel";
 
@@ -32,12 +33,12 @@ vi.mock("next-intl", () => ({
   },
 }));
 
-function renderPanel(kind: TemplateKind, text: string) {
+function renderPanel(kind: TemplateKind, text: string, templates: MappingTemplate[] = []) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const onChange = vi.fn();
   render(
     <QueryClientProvider client={client}>
-      <ColumnMappingPanel kind={kind} table={readTable(text)} templates={[]} onChange={onChange} />
+      <ColumnMappingPanel kind={kind} table={readTable(text)} templates={templates} onChange={onChange} />
     </QueryClientProvider>,
   );
   return { state: () => onChange.mock.calls.at(-1)![0] as MappingState };
@@ -57,9 +58,53 @@ describe("a file with no header row whose description is only offered", () => {
     expect(screen.getByText("held(1|1)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "format.use" })).toBeInTheDocument();
     // Offered, not applied: nothing is recognised and no column is placed.
-    expect(screen.queryByText(/^format\.recognised/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^format\.(recognised|read)/)).not.toBeInTheDocument();
     expect(state().assignment.every((entry) => entry === undefined)).toBe(true);
     expect(state().block.rowNumbers).toEqual([2, 3]);
+  });
+
+  it("says nothing of a school's template, which is recognised on a header row and this file has none", () => {
+    // A template whose posts happen to be the first person's cells ("Erik", "Exempel", the e-mail) would be offered if the first row were
+    // taken for a header, and it is not: the first row is a person.
+    const template: MappingTemplate = {
+      id: "t1",
+      kind: "teachers",
+      name: "Skolans egen",
+      headerRow: null,
+      placements: [
+        { key: "testskolan", label: "Testskolan", field: null },
+        { key: "avda", label: "Avd A", field: null },
+        { key: "erik", label: "Erik", field: "firstName" },
+        { key: "nej", label: "Nej", field: "lastName" },
+      ],
+    };
+    renderPanel("teachers", MARKED_LAST, [template]);
+    expect(screen.getByRole("button", { name: "format.use" })).toBeInTheDocument();
+    expect(screen.queryByText(/^template\./)).not.toBeInTheDocument();
+  });
+
+  describe("when many rows carry the mark", () => {
+    // The rows are named by number, twenty at most: a longer list is cut with an ellipsis, so that the count in the sentence (25) and the
+    // numbers beside it (twenty) are not two different answers. One person is left unmarked so that the file has something to read.
+    const marked = (count: number) =>
+      Array.from({ length: count }, (_, at) => `Testskolan;;99999001TF${String(at + 1).padStart(2, "0")};Förnamn${at + 1};Efternamn${at + 1};;person${at + 1}@example.invalid;1\r\n`).join("") +
+      "Testskolan;;99999001TF99;Erik;Exempel;;erik.exempel@example.invalid;0\r\n";
+    const first = (count: number) => Array.from({ length: count }, (_, at) => at + 1).join(", ");
+
+    it("cuts the list of rows at twenty with an ellipsis, and the count says how many there are", () => {
+      renderPanel("teachers", marked(25));
+      expect(screen.getByText(`held(25|${first(20)}, …)`)).toBeInTheDocument();
+    });
+
+    it("cuts at twenty-one and not at twenty: twenty rows are all of them", () => {
+      renderPanel("teachers", marked(21));
+      expect(screen.getByText(`held(21|${first(20)}, …)`)).toBeInTheDocument();
+    });
+
+    it("names twenty rows in full, with no ellipsis", () => {
+      renderPanel("teachers", marked(20));
+      expect(screen.getByText(`held(20|${first(20)})`)).toBeInTheDocument();
+    });
   });
 
   it("does not take the first person for a header row: both people are rows, and there is no header row to choose or template to save", () => {
@@ -92,7 +137,7 @@ describe("a file with no header row whose description is only offered", () => {
     const user = userEvent.setup();
     const { state } = renderPanel("teachers", MARKED_FIRST);
     await user.click(screen.getByRole("button", { name: "format.use" }));
-    expect(screen.getByText(/^format\.recognised\(/)).toBeInTheDocument();
+    expect(screen.getByText(/^format\.read\(/)).toBeInTheDocument();
     expect(state().block.rowNumbers).toEqual([2, 3]);
     expect(state().assignment).toEqual([null, null, null, "firstName", "lastName", null, "email", null]);
     expect(screen.getByText("held(1|1)")).toBeInTheDocument();

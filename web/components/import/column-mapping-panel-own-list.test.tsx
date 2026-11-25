@@ -35,7 +35,7 @@ describe("Rastra's own template in the column panel", () => {
         <ColumnMappingPanel kind={kind} table={readTable(templateCsvContent(kind as "students"))} templates={[]} onChange={vi.fn()} />
       </QueryClientProvider>,
     );
-    expect(screen.queryByText(/^format\.(offered|recognised)/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^format\.(offered|recognised|read)/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "format.use" })).not.toBeInTheDocument();
   });
 });

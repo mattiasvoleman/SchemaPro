@@ -255,6 +255,9 @@ export function suggestionsOf(value: unknown): SuggestionsStored | null {
     changes.push(change);
   }
   if (changes.length > total) return null;
+  // A list the strict model did not accept holds MAY_HELP and nothing more: suggestionsFromEngine stores it so, and a column that says
+  // SOLVED over an unverified list was written by something else (the review of #388, U-1).
+  if (!value.verified && changes.some((change) => change.proof !== 'MAY_HELP')) return null;
   const stored: SuggestionsStored = {
     version: 1,
     state: state as SuggestionsState,
@@ -390,9 +393,13 @@ export function suggestionsFromEngine(
     return failedSuggestions(startedAt, 'ENGINE_FAILED', now);
   }
   const entries = verdict === 'CHANGES' ? response.changes : [];
+  // `verified` is the one thing that makes a proof, and only `true` is it. A truthy value that is not (a string, a number) used to keep the
+  // engine's proofs here and then be stored as `verified: false`, which the read refuses (suggestionsOf): the analysis was lost to ENGINE_FAILED
+  // at the write (the review of #431).
+  const checked = response.verified === true;
   const mapped = entries.map((change) => {
     const stored = realisedChange(change, realiser);
-    return response.verified ? stored : { ...stored, proof: 'MAY_HELP' as const };
+    return checked ? stored : { ...stored, proof: 'MAY_HELP' as const };
   });
   // Two part-timers' days say nothing the first did not: one change, the prices added.
   const days = mapped.filter((change) => change.hidden);
@@ -416,7 +423,7 @@ export function suggestionsFromEngine(
     finishedAt: now.toISOString(),
     // A refusal the engine's hard rules make carries its sentence in the run's own rows; this keeps only that no change can help.
     verdict,
-    verified: response.verified === true && (verdict === 'CHANGES' || verdict === 'SOLVABLE_AS_IS'),
+    verified: checked && (verdict === 'CHANGES' || verdict === 'SOLVABLE_AS_IS'),
     // The engine's own count: the proof (SOLVED_TOGETHER) is about the WHOLE list, and the part-timers' days that were merged into one
     // entry above are still each a change the school has to make. The page says "and N more belong to it" from this.
     total: mapped.length,

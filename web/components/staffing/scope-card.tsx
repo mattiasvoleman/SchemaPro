@@ -1,7 +1,8 @@
 "use client";
 
-import { useTranslations } from "next-intl";
-import { formatPercent } from "@/lib/staffing-view";
+import { useLocale, useTranslations } from "next-intl";
+import { formatFigure } from "@/lib/staffing-view";
+import { formatDay } from "@/lib/staffing-day";
 import { hoursOver, type ScopeCardData } from "@/lib/assignment-scope";
 import { SectionCard } from "@/components/ui/section-card";
 
@@ -33,8 +34,11 @@ export interface ScopeCardProps {
  */
 export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardProps) {
   const t = useTranslations("staffing.scope");
+  // The reader's language writes the hours and the day (the review of #411, L-1 and L-5): "603.3 h" and "2 May 2027" in English.
+  const locale = useLocale();
+  const figure = (value: number) => formatFigure(value, locale);
   const { teacher, version, yearReason, interpretations } = data;
-  const hours = (value: number) => t("hours", { hours: formatPercent(value) });
+  const hours = (value: number) => t("hours", { hours: figure(value) });
   const judged = yearReason === null && teacher.verdict !== "NOT_JUDGED";
   const over = hoursOver(teacher);
   const overOnly = teacher.overOnlyWithUnregulated === true;
@@ -51,7 +55,7 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
   if (teacher.fullTimeHighestHours !== null && teacher.fullTimeLowestHours !== null && yearReason === null) {
     rows.push({
       label: t("spanFullTime"),
-      value: t("span", { low: formatPercent(teacher.fullTimeLowestHours), high: formatPercent(teacher.fullTimeHighestHours) }),
+      value: t("span", { low: figure(teacher.fullTimeLowestHours), high: figure(teacher.fullTimeHighestHours) }),
     });
   }
   for (const stage of teacher.stages) {
@@ -106,14 +110,14 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
           ? t("verdictNoStageUnknown")
           : t("verdictNoStageBoth");
   }
-  else if (teacher.verdict === "OVER_MAX") verdict = over === null ? t("verdictOverMaxHidden") : t("verdictOverMax", { over: formatPercent(over) });
+  else if (teacher.verdict === "OVER_MAX") verdict = over === null ? t("verdictOverMaxHidden") : t("verdictOverMax", { over: figure(over) });
   else if (teacher.verdict === "OVER_OWN") {
     verdict =
       over === null
         ? t("verdictOverOwnHidden")
         : own
-          ? t("own.verdictOverOwn", { over: formatPercent(over) })
-          : t("verdictOverOwn", { over: formatPercent(over) });
+          ? t("own.verdictOverOwn", { over: figure(over) })
+          : t("verdictOverOwn", { over: figure(over) });
   }
   else if (teacher.verdict === "INSIDE") {
     // Past the edge only with the hours outside the stages (T7): "not over the highest level" would be said of someone whose total is over it,
@@ -124,6 +128,7 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
   }
   else verdict = t("verdictNone");
   const bad = teacher.verdict === "OVER_MAX" || teacher.verdict === "OVER_OWN";
+  const exceptionKind = assessment?.exceptionKind ? (own ? t(`own.exceptionKind${assessment.exceptionKind}`) : t(`exceptionKind${assessment.exceptionKind}`)) : "";
   const blended = teacher.stages.length > 1;
 
   return (
@@ -149,8 +154,11 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
       ) : null}
       {assessment?.exceptionKind ? (
         <p className="text-xs text-muted-foreground">
-          {t("exceptionRegistered", { kind: own ? t(`own.exceptionKind${assessment.exceptionKind}`) : t(`exceptionKind${assessment.exceptionKind}`) })}
-          {assessment.ownInitiativeOn ? ` ${assessment.ownInitiativeOn}.` : ""} {t("exceptionKeepsVerdict")}
+          {/* One sentence: the day (the exception on the teacher's own initiative has one) is inside it, and the sentence and the language write it. */}
+          {assessment.ownInitiativeOn
+            ? t("exceptionRegisteredOn", { kind: exceptionKind, day: formatDay(assessment.ownInitiativeOn, locale) })
+            : t("exceptionRegistered", { kind: exceptionKind })}{" "}
+          {t("exceptionKeepsVerdict")}
         </p>
       ) : null}
       {assessment?.note ? <p className="text-xs text-muted-foreground">{t("assessmentNote", { note: assessment.note })}</p> : null}

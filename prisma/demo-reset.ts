@@ -167,6 +167,61 @@ export async function resetDemoSchool(client: PrismaClient, options: ResetOption
   );
 }
 
+/**
+ * What `db:seed` says when the school with the demo's slug is already there and no reset was asked for. The school is judged first, as a
+ * reset would judge it, so that a school which is not the demo school is not told "Use --reset", the advice that ends in NOT RESET
+ * (the review of #405, L-7). Nothing is written. `refused` is for the exit code: the school is there and it is not the demo school.
+ */
+export async function describeExistingDemoSchool(
+  client: PrismaClient,
+  existingId: string,
+  spec: DemoSpec = DEMO,
+): Promise<{ text: string; refused: boolean }> {
+  const verdict = await resetDemoSchool(client, { spec, write: false });
+  if (verdict.kind === 'REFUSED') return { text: describeResult(verdict, spec), refused: true };
+  return { text: `Demo school already exists (${existingId}). Use --reset to recreate it.`, refused: false };
+}
+
+export type SeedSchoolDeletion =
+  | { kind: 'ABSENT' }
+  | { kind: 'DELETED'; schoolId: string }
+  /** A dry run (`write: false`): the school is there and would be deleted. */
+  | { kind: 'MAY_BE_DELETED'; schoolId: string }
+  | { kind: 'REFUSED'; schoolId: string; refusal: Refusal };
+
+/**
+ * Deletes the school a seed of fictional people made (prisma/seed-hogstadium.ts), and only if it is that school: the same lock, the same
+ * judgement and the same single transaction as the demo school's reset, applied to the seed's own slug, name and domain. `School.slug` is
+ * unique, so a real school that had been given the slug would have been found by `--reset` and deleted with all its data
+ * (the review of #405, L-5). A refusal is a return with nothing written.
+ */
+export async function deleteSeedSchool(client: PrismaClient, spec: DemoSpec, options: { write?: boolean } = {}): Promise<SeedSchoolDeletion> {
+  const write = options.write ?? true;
+  return client.$transaction(
+    async (tx) => {
+      const found = await tx.$queryRaw<{ id: string; name: string }[]>(Prisma.sql`SELECT "id"::text AS id, "name" FROM "Schools" WHERE "slug" = ${spec.slug} FOR UPDATE`);
+      const school = found[0];
+      if (school === undefined) return { kind: 'ABSENT' as const };
+      const refusal = judgeDemoSchool(await readFacts(tx, spec, school.id, school.name), spec);
+      if (refusal !== null) return { kind: 'REFUSED' as const, schoolId: school.id, refusal };
+      if (!write) return { kind: 'MAY_BE_DELETED' as const, schoolId: school.id };
+      await tx.school.delete({ where: { id: school.id } });
+      return { kind: 'DELETED' as const, schoolId: school.id };
+    },
+    { timeout: 120_000, maxWait: 30_000 },
+  );
+}
+
+/**
+ * Null when a school of fictional people may be made in the database, as `db:seed` asks it of the demo school where that is not there: no school
+ * of the database has a person at an address outside the names reserved for examples (`judgeDatabase`). The högstadium seed asks it before it
+ * makes anything where its school is not there, so `db:seed:hogstadium` run against a database with a real school (the production database holds
+ * one) adds no school of 450 fictional pupils to it. Nothing is written.
+ */
+export async function judgeSeedDatabase(client: PrismaClient): Promise<Refusal | null> {
+  return client.$transaction(async (tx) => judgeDatabase(await readDatabase(tx)), { timeout: 30_000, maxWait: 30_000 });
+}
+
 /** The sentences a person reads of a result. Counts, never an address and never a name. */
 export function describeResult(result: ResetResult, spec: DemoSpec = DEMO): string {
   switch (result.kind) {

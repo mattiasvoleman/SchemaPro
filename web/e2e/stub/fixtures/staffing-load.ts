@@ -6,6 +6,7 @@ import type {
   StaffingReconciliationResponse,
   TeacherReconciliation,
 } from "../../../lib/staffing-reconciliation";
+import type { ScopeInterpretation, ScopeReport, ScopeStageHours, ScopeVersionInfo, TeacherScope } from "../../../lib/assignment-scope";
 import { changesDuringYear, postStretches } from "../../../lib/employment-periods";
 import { shownEmployment } from "../../../lib/teacher-load";
 import type {
@@ -445,6 +446,7 @@ export function loadReport(
     qualificationsRecorded: QUALIFICATIONS.length > 0,
     subjectBottlenecks,
     bottlenecksComputed: QUALIFICATIONS.length > 0,
+    scope: scopeOf(teachers),
     totals: {
       teacherMinutesPerWeek: Math.round([...tallies.values()].reduce((sum, tally) => sum + tally.assigned, 0)),
       lessonMinutesPerWeek: Math.round(lessonMinutesPerWeek),
@@ -453,9 +455,112 @@ export function loadReport(
   };
 }
 
+// --- Undervisningsuppdragets omfattning (SFS 2026:1487) ------------------------
+
+/**
+ * The `scope` block of GET /staffing/load (src/staffing/assignment-scope.ts): each teacher's teaching hours for the läsår against the ordinance's
+ * span for the stage, which the cards of tjänstefördelningen's drawer and of Min tjänst, and the assessment card in the drawer, are drawn from.
+ *
+ * A short copy of what the fixtures exercise, as the arithmetic above is. The hours are the lessons' OWN minutes over the year's teaching weeks
+ * (unweighted: the report's charge is not time), the stage is the group's years (a group over two stages is read in the stricter, as the
+ * gateway does), the span is the ordinance's own, blended by hours and scaled by the post, and nobody here has a level of their own, so a
+ * teacher is INSIDE or OVER_MAX. The bands, the version's title and the interpretation are the migration's (20270301090000), not made up.
+ *
+ * ONE THING THE STUB DOES THAT THE GATEWAY DOES NOT. The ordinance holds from 2027-07-01 and the gateway answers `version: null`, so that no
+ * card is drawn, for a läsår that began before it. The stub's läsår is the one around today (calendar.ts), and the browser gates must draw
+ * the cards on whatever day they run (a card that appeared on 2027-07-01 would move every baseline that holds one, with no change of code),
+ * so the stub answers as if the ordinance held for its läsår. Its version says the date the ordinance says.
+ */
+const SCOPE_VERSION: ScopeVersionInfo = {
+  code: "SFS2026:1487",
+  sfs: "SFS 2026:1487",
+  title: "Förordning om omfattning av tiden för lärares och förskollärares undervisningsuppdrag",
+  validFrom: "2027-07-01",
+  validTo: null,
+  source: "https://svenskforfattningssamling.se/sites/default/files/sfs/2026-06/SFS2026-1487.pdf",
+};
+
+const SCOPE_BANDS = [
+  { gradeFrom: 1, gradeTo: 6, teachingHoursLow: 550, teachingHoursHigh: 650, planningFloorPercent: 100 },
+  { gradeFrom: 7, gradeTo: 9, teachingHoursLow: 500, teachingHoursHigh: 600, planningFloorPercent: 110 },
+] as const;
+
+const SCOPE_INTERPRETATION: ScopeInterpretation = {
+  section: "4 § p. 1 och 5 § p. 1",
+  note: 'Tolkning: 5 § säger "Utöver den tid som anges i 4 §" men 4 § räknar inte upp årskurs 7-9. Läst som 100 % (4 §) och ytterligare minst 10 % (5 §), vilket är utredningens egen sammanfattning (prop. 2025/26:196 bilaga 1 s. 125).',
+};
+
+/** The band of a group's years: 0 or 1 for a stage, "UNREGULATED" for förskoleklass, "UNKNOWN" for a group with no årskurs. */
+function scopeBandOf(span: GradeSpan | null): 0 | 1 | "UNREGULATED" | "UNKNOWN" {
+  if (span === null) return "UNKNOWN";
+  if (span.max === 0) return "UNREGULATED";
+  if (span.max <= 6) return 0;
+  // 7-9, or a span over both stages: the stricter band.
+  return 1;
+}
+
+function scopeOf(teachers: TeacherLoad[]): ScopeReport {
+  const rows = teachers.map((teacher): TeacherScope => {
+    const weeks = teacher.annual.teachingWeeksPerYear;
+    const stageMinutes = [0, 0];
+    let unregulatedMinutes = 0;
+    let unknownMinutes = 0;
+    for (const assignment of teacher.assignments) {
+      const minutes = assignment.timeMinutesPerWeek * weeks;
+      const band = scopeBandOf(assignment.gradeSpan);
+      if (band === "UNREGULATED") unregulatedMinutes += minutes;
+      else if (band === "UNKNOWN") unknownMinutes += minutes;
+      else stageMinutes[band]! += minutes;
+    }
+    const hours = (minutes: number) => round1(minutes / 60);
+    const inStages = stageMinutes[0]! + stageMinutes[1]!;
+    const total = inStages + unregulatedMinutes + unknownMinutes;
+    const stages: ScopeStageHours[] = SCOPE_BANDS.flatMap((band, index) =>
+      stageMinutes[index]! > 0 ? [{ ...band, hours: hours(stageMinutes[index]!) }] : [],
+    );
+    const blended = (pick: (band: (typeof SCOPE_BANDS)[number]) => number) =>
+      inStages > 0 ? round1(SCOPE_BANDS.reduce((sum, band, index) => sum + (stageMinutes[index]! / inStages) * pick(band), 0)) : null;
+    const fullTimeHighestHours = blended((band) => band.teachingHoursHigh);
+    const fullTimeLowestHours = blended((band) => band.teachingHoursLow);
+    const employment = teacher.employment;
+    const active =
+      employment && employment.employmentPercent !== null && employment.reductionPercent !== null
+        ? employment.employmentPercent - employment.reductionPercent
+        : null;
+    const highestHours = fullTimeHighestHours !== null && active !== null ? round1((fullTimeHighestHours * active) / 100) : null;
+    const planningFloorHours =
+      inStages > 0 ? round1(SCOPE_BANDS.reduce((sum, band, index) => sum + (stageMinutes[index]! / 60) * (band.planningFloorPercent / 100), 0)) : null;
+    // Whether the floor fits is worked out for a full ferietjänst only: the working time that is left after the teaching and every uppdrag.
+    const remainingHours =
+      teacher.annual.contractKind === "FERIE" && teacher.annual.annualHours !== null
+        ? round1(teacher.annual.annualHours - hours(total) - teacher.annual.dutyHoursPerYear)
+        : null;
+    const base = {
+      userId: teacher.userId,
+      teachingHours: hours(total),
+      stages,
+      unregulatedHours: hours(unregulatedMinutes),
+      unknownGradeHours: hours(unknownMinutes),
+      fullTimeHighestHours,
+      fullTimeLowestHours,
+      highestHours,
+      ordinanceHighestHours: highestHours,
+      planningFloorHours,
+      remainingHours,
+      planningFits: remainingHours !== null && planningFloorHours !== null ? remainingHours >= planningFloorHours : null,
+    };
+    if (total === 0) return { ...base, verdict: "NOT_JUDGED", notJudged: "NO_TEACHING" };
+    if (employment === null) return { ...base, verdict: "NOT_JUDGED", notJudged: "NO_POST" };
+    if (inStages === 0) return { ...base, verdict: "NOT_JUDGED", notJudged: "NO_STAGE" };
+    return { ...base, verdict: hours(inStages) > highestHours! ? "OVER_MAX" : "INSIDE", notJudged: null };
+  });
+  return { version: SCOPE_VERSION, yearReason: null, interpretations: [SCOPE_INTERPRETATION], teachers: rows };
+}
+
 /** What a TEACHER is answered: their own row, and none of the admin's lists. */
 export const ownLoad = (report: LoadResponse, userId: string): LoadResponse => ({
   ...report,
+  scope: report.scope && { ...report.scope, teachers: report.scope.teachers.filter((row) => row.userId === userId) },
   teachers: report.teachers.filter((row) => row.userId === userId),
   unstaffedRequirements: [],
   unqualifiedAssignments: report.unqualifiedAssignments.filter((row) => row.userId === userId),

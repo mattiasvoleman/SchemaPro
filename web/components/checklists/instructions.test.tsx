@@ -27,6 +27,11 @@ const supabase = vi.hoisted(() => ({ client: null as unknown }));
 vi.mock("@/utils/supabase/client", () => ({ createClient: () => supabase.client }));
 
 const day = (iso: string) => new Intl.DateTimeFormat("sv", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(`${iso}T00:00:00Z`));
+// The file's own clock, held still. TODAY was read when the file loaded and the dialog reads the day when it opens, after the warm-up below
+// (up to two minutes on a loaded host), so a run that crossed UTC midnight between the two had two days: the first Web run of #447 loaded this
+// file at 23:59:41 and opened the dialog at 00:00:16, and "tomorrow" was today. Only Date is faked; timers and userEvent's pauses are real.
+const NOW = new Date("2026-11-24T12:00:00.000Z");
+vi.useFakeTimers({ toFake: ["Date"], now: NOW });
 const TODAY = toDateString(new Date());
 const TOMORROW = toDateString(addDays(new Date(), 1));
 
@@ -39,6 +44,7 @@ beforeAll(() => warmChecklists(), 120_000);
 // render later, and a user that acts with no pause at all can reach the dialog's field in between (on a slow machine it does).
 
 beforeEach(() => {
+  vi.setSystemTime(NOW);
   vi.clearAllMocks();
   profile.readOnly = false;
   state = scenario();

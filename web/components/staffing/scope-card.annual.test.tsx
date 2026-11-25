@@ -4,6 +4,7 @@ import type { ScopeCardData } from "@/lib/assignment-scope";
 import { ScopeCard } from "./scope-card";
 
 vi.mock("next-intl", () => ({
+  useLocale: () => "sv",
   useTranslations: () => (key: string, values?: Record<string, unknown>) =>
     values ? `${key}(${Object.values(values).join("|")})` : key,
 }));
