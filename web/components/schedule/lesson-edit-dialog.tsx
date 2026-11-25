@@ -31,6 +31,7 @@ import { useTranslations } from "next-intl";
 import { ArrowLeftRight, Copy, Loader2, Lock, ParkingSquare, Trash2 } from "lucide-react";
 import type { LessonRecurrence, MasterLesson, Person, Room } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { EXEMPT_RULES, exemptableReasons, type ExemptRule } from "@/lib/exemptions";
 import { type MoveRefusal, moveOf, useLessonJudgement } from "@/lib/lesson-judgement";
 import { problemSentence } from "@/lib/problem-codes";
 import { RecurrenceFields } from "@/components/schedule/recurrence-fields";
@@ -68,6 +69,11 @@ export interface LessonEditDraft {
   /** YYYY-MM-DD, or "" for the academic year's own boundary. */
   startDate: string;
   endDate: string;
+  /**
+   * Undantag med flit: the rules the reader has answered "Lägg ändå" to for the time the fields say (the lesson's own, when it has some).
+   * Answering yes locks the lesson, as the gateway does, and the lock is held on while an exemption rests on it. Absent is none.
+   */
+  exempt?: ExemptRule[];
 }
 
 export interface LessonEditDialogProps {
@@ -145,6 +151,17 @@ export function LessonEditDialog({
     "aria-describedby": on ? "edit-judgement" : undefined,
   });
   const markedClass = (on: boolean) => cn(on && "border-destructive");
+
+  // UNDANTAG MED FLIT. The question is put under a no that is the ramtid and the class's meal and nothing else (the judge says so:
+  // `exemptable`, and the reasons agree), never on a guess, and answering yes is one press that names exactly the rules refused. The
+  // answer rides on the question the fields already ask (lib/lesson-judgement.ts moveOf), so the judge says what it would do before Spara.
+  const exempt = draft.exempt ?? [];
+  const exemptWords = (rules: readonly ExemptRule[]) => rules.map((rule) => t(`exemptRule${rule}` as never)).join(t("exemptAnd"));
+  const refusedRules = verdict && !verdict.placed && verdict.exemptable === true ? exemptableReasons(refusals.map((refusal) => refusal.reason).join(",")) : null;
+  const asksYes = refusedRules !== null && refusedRules.length > 0 && exempt.length === 0;
+  const giving = verdict && !verdict.placed && refusals.length === 0 ? EXEMPT_RULES.filter((rule) => verdict.exempted?.includes(rule)) : [];
+  const has = exempt.length > 0 && judged.status !== "checking" && (giving.length > 0 || judged.status === "idle");
+  const takeBack = () => onDraftChange({ ...draft, exempt: [], isLocked: lesson?.isLocked ?? false });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -286,10 +303,39 @@ export function LessonEditDialog({
                 </ul>
               </div>
             ) : null}
-            {verdict && !verdict.placed && refusals.length === 0 ? (
+            {verdict && !verdict.placed && refusals.length === 0 && giving.length === 0 ? (
               <p className="text-xs text-muted-foreground">{newTeacher ? `${t("judgeOk")} ${t("judgeOkStaffing")}` : t("judgeOk")}</p>
             ) : null}
+            {giving.length > 0 ? (
+              <p className="rounded-md border px-3 py-2">{t("exemptGiven", { rules: exemptWords(giving) })}</p>
+            ) : null}
+            {judged.status === "idle" && exempt.length > 0 ? (
+              <p className="rounded-md border px-3 py-2">{t("exemptHas", { rules: exemptWords(exempt) })}</p>
+            ) : null}
           </div>
+          {/* The question, and the way back. Outside the live region: a button inside it is read out as the answer arrives, and the
+              question is the answer's own sentence above it. Only an administrator answers, and only the page's admin profiles reach here. */}
+          {asksYes ? (
+            <div className="col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
+              <p className="min-w-0 text-sm">{t("exemptQuestion")}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-writes="SCHEMALAGGNING DRIFT"
+                onClick={() => onDraftChange({ ...draft, exempt: refusedRules, isLocked: true })}
+              >
+                {t("exemptYes")}
+              </Button>
+            </div>
+          ) : null}
+          {has ? (
+            <div className="col-span-2 flex justify-end">
+              <Button type="button" variant="ghost" size="sm" onClick={takeBack}>
+                {t("exemptTakeBack")}
+              </Button>
+            </div>
+          ) : null}
           <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
             <div className="flex items-center gap-2">
               <Lock className="size-4 text-muted-foreground" />
@@ -298,14 +344,16 @@ export function LessonEditDialog({
                   {t("lockLabel")}
                 </label>
                 <div id="edit-lock-hint" className="text-xs text-muted-foreground">
-                  {t("lockHint")}
+                  {exempt.length > 0 ? t("lockHintExempt") : t("lockHint")}
                 </div>
               </div>
             </div>
             <Switch
               id="edit-lock"
               aria-describedby="edit-lock-hint"
-              checked={draft.isLocked}
+              checked={draft.isLocked || exempt.length > 0}
+              // An exemption rests on the lock (the gateway locks the lesson with it, and refuses a request that says the opposite).
+              disabled={exempt.length > 0}
               onCheckedChange={(isLocked) => onDraftChange({ ...draft, isLocked })}
             />
           </div>

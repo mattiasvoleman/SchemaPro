@@ -46,6 +46,7 @@ const state = vi.hoisted(() => ({
   requirements: [] as unknown[],
   /** The weekly rows that close an hour (resource availability), as useConstraints reads them. */
   constraints: [] as unknown[],
+  frameTimes: [] as unknown[],
   /** GROUPS and PEOPLE unless a row adds to them; null between tests. */
   groups: null as unknown[] | null,
   people: null as unknown[] | null,
@@ -160,7 +161,7 @@ vi.mock("@/lib/queries", () => ({
   },
   useConstraints: () => ({ data: state.constraints }),
   useGroupMemberships: () => ({ data: state.memberships }),
-  useFrameTimes: () => ({ data: [] }),
+  useFrameTimes: () => ({ data: state.frameTimes }),
   useLunchSettings: () => ({ data: state.lunchSettings }),
   useLunchSittings: (yearId: string | null) => {
     state.askedFor.sittings = yearId;
@@ -645,6 +646,7 @@ beforeEach(() => {
   state.yearsLoading = false;
   state.requirements = [];
   state.constraints = [];
+  state.frameTimes = [];
   state.groups = null;
   state.people = null;
   state.rooms = null;
@@ -1473,6 +1475,36 @@ describe("a refusal of the one judge, and the krocklista (E1)", () => {
     const list = await screen.findByRole("dialog");
     // The echo of the catalogue's sentence: reason, schools, resource.
     expect(within(list).getByText(/^common\.codes\.MASTER_LESSON_REFUSED\(AVAILABILITY\|\|TEACHER\|/)).toBeTruthy();
+  });
+});
+
+describe("a lesson that stands outside the ramtid on purpose (Undantag med flit)", () => {
+  // The day of the stage the lessons' classes belong to runs 07:00-09:00; the lesson is at 08:00-09:00 and the other at 10:00-11:00.
+  const frame = (minGradeLevel: number, maxGradeLevel: number) => ({ id: "f-1", minGradeLevel, maxGradeLevel, dayOfWeek: null, startTime: "07:00:00", endTime: "09:00:00" });
+  const given = (id: string, subjectId: string, groupId: string, startTime: string) => ({ ...lesson(id, subjectId, groupId, startTime), isLocked: true, exemptFrom: ["FRAME"] });
+
+  it("is no conflict: the header counts no conflict for it, says the exemption beside, and the list says it under its own heading", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), given("l-late", "s-sl", "g-51", "10:00")];
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    // The lesson at 10:00 is outside the ramtid and the one at 08:00 is not: no conflict is counted, one exemption is.
+    expect(await screen.findByText(/timetable\.exemptionCount/)).toBeTruthy();
+    expect(screen.queryByText(/timetable\.conflictCount/)).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "timetable.conflictListOpen" }));
+    const list = await screen.findByRole("dialog");
+    expect(within(list).getByRole("heading", { name: "timetable.conflictListExemptionsTitle" })).toBeTruthy();
+    expect(within(list).getByText("timetable.conflictExemptFRAME")).toBeTruthy();
+    expect(within(list).queryByText(/^common\.codes\.MASTER_LESSON_REFUSED/)).toBeNull();
+  });
+
+  it("is a conflict as before for a lesson without the exemption, and the header says conflicts and no exemption", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-late", "s-sl", "g-51", "10:00")];
+    render(<TimetablePage />);
+    expect(await screen.findByText(/timetable\.conflictCount/)).toBeTruthy();
+    expect(screen.queryByText(/timetable\.exemptionCount/)).toBeNull();
   });
 });
 

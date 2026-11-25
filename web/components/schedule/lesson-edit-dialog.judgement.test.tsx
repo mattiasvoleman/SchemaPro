@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LessonJudgement } from "@/lib/lesson-judgement";
 import type { MasterLesson } from "@/lib/types";
@@ -53,15 +53,15 @@ const answer = (refusals: LessonJudgement["moves"][number]["refusals"], extra: P
   moves: [{ lessonId: "l-1", ok: refusals.length === 0 && !extra.placed, refusals, ...extra }],
 });
 
-const draw = (draft: LessonEditDraft, open = true) =>
+const draw = (draft: LessonEditDraft, open = true, onDraftChange: (draft: LessonEditDraft) => void = () => {}, standingLesson: MasterLesson = lesson) =>
   render(
     <LessonEditDialog
       open={open}
-      lesson={lesson}
+      lesson={standingLesson}
       onOpenChange={() => {}}
       lessonName="Matematik 7A"
       draft={draft}
-      onDraftChange={() => {}}
+      onDraftChange={onDraftChange}
       rooms={[]}
       teachers={[]}
       onDelete={() => {}}
@@ -212,5 +212,86 @@ describe("Justera lektion asks the judge while its fields are filled in", () => 
     draw({ ...standing, dayOfWeek: "2" }, false);
     await settle();
     expect(post).not.toHaveBeenCalled();
+  });
+});
+
+describe("Justera lektion puts the question Lägg ändå (Undantag med flit)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    post.mockReset();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const frame = { reason: "FRAME", params: {}, text: "Tiden ligger utanför ramtiden." };
+  const lunch = { reason: "LUNCH", params: {}, text: "Tiden ligger på klassens lunch." };
+  const teacher = { reason: "TEACHER", params: { otherKind: "LESSON", className: "8B", subjectName: "Kemi", day: 1, start: "14:30", end: "15:30" }, text: "x" };
+  const late = { ...standing, startTime: "14:30", endTime: "15:30" };
+
+  it("puts it under a no that is the ramtid and the lunch and nothing else, and answering yes asks for the rules refused and locks the lesson", async () => {
+    post.mockResolvedValue(answer([frame, lunch], { exemptable: true, exempted: [] }));
+    const changed = vi.fn();
+    draw(late, true, changed);
+    await settle();
+    // It says what breaks (the refusal's own sentences) and asks.
+    expect(screen.getByRole("status").textContent).toContain("ramtid");
+    expect(screen.getByText(/Lägg ändå\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Lägg ändå" }));
+    expect(changed).toHaveBeenCalledWith({ ...late, exempt: ["FRAME", "LUNCH"], isLocked: true });
+  });
+
+  it("puts no question under a no that is anything more: a clash cannot be answered yes to", async () => {
+    post.mockResolvedValue(answer([frame, teacher], { exemptable: false, exempted: [] }));
+    draw(late);
+    await settle();
+    expect(screen.queryByRole("button", { name: "Lägg ändå" })).toBeNull();
+    expect(screen.queryByText(/Lägg ändå\?/)).toBeNull();
+    // And none from a gateway that does not say (an older one): the question is never put on a guess.
+    post.mockResolvedValue(answer([frame]));
+    draw({ ...late, startTime: "14:35" });
+    await settle();
+    expect(screen.queryByRole("button", { name: "Lägg ändå" })).toBeNull();
+  });
+
+  it("asks with the answer yes, and says what it will do when the judge lets it through: the rules, and that the lesson is locked", async () => {
+    post.mockResolvedValue(answer([], { exemptable: false, exempted: ["FRAME"] }));
+    draw({ ...late, exempt: ["FRAME"], isLocked: true });
+    await settle();
+    expect(post).toHaveBeenCalledWith("/api/v1/master-lessons/judge", { moves: [{ lessonId: "l-1", startTime: "14:30", endTime: "15:30", exempt: ["FRAME"] }] }, expect.anything());
+    const status = screen.getByRole("status").textContent ?? "";
+    expect(status).toContain("Lektionen läggs ändå");
+    expect(status).toContain("ramtiden");
+    expect(status).toContain("låses");
+    expect(status).not.toContain("Kontrollen hittar inget som hindrar");
+  });
+
+  it("takes the answer back with one press, and gives the lock back as the lesson had it", async () => {
+    post.mockResolvedValue(answer([], { exempted: ["LUNCH"] }));
+    const changed = vi.fn();
+    draw({ ...late, exempt: ["LUNCH"], isLocked: true }, true, changed);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Ta tillbaka Lägg ändå" }));
+    expect(changed).toHaveBeenCalledWith({ ...late, exempt: [], isLocked: false });
+  });
+
+  it("says a lesson that already has an exemption has it, for the time it stands at, with a way to take it back", async () => {
+    const exempt = { ...lesson, isLocked: true, exemptFrom: ["FRAME" as const] };
+    const changed = vi.fn();
+    draw({ ...standing, isLocked: true, exempt: ["FRAME"] }, true, changed, exempt);
+    await settle();
+    expect(post).not.toHaveBeenCalled();
+    expect(screen.getByText(/Undantag: ramtiden/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Ta tillbaka Lägg ändå" }));
+    expect(changed).toHaveBeenCalledWith({ ...standing, exempt: [], isLocked: true });
+  });
+
+  it("holds the lock on while an exemption rests on it", async () => {
+    post.mockResolvedValue(answer([], { exempted: ["FRAME"] }));
+    draw({ ...late, exempt: ["FRAME"], isLocked: true });
+    await settle();
+    const lock = screen.getByRole("switch", { name: /Lås lektion/ });
+    expect(lock.getAttribute("aria-checked")).toBe("true");
+    expect(lock.hasAttribute("disabled")).toBe(true);
   });
 });

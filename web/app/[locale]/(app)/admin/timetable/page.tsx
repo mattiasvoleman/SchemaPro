@@ -314,7 +314,7 @@ export default function TimetablePage() {
     yearGroups, closedWeeks, teachers, students, studentGroupOf,
     gradeSpanOf, homeClassIds, rosterIndex, groupConflictMap, subjectById,
     groupById, roomById, teacherById, personById, lessonById,
-    lunchOf, pupilBuffers, conflictMap, remoteEditors, placements,
+    lunchOf, pupilBuffers, conflictMap, exemptionMap, remoteEditors, placements,
     validateChange,
   } = engine;
   const view = useTimetableView({
@@ -745,6 +745,8 @@ export default function TimetablePage() {
       recurrence: lesson.recurrence,
       startDate: lesson.startDate ?? "",
       endDate: lesson.endDate ?? "",
+      // Undantag med flit: the lesson's own, so that it is said, and can be taken back, before anything is moved.
+      exempt: lesson.exemptFrom ?? [],
     });
   };
 
@@ -763,6 +765,9 @@ export default function TimetablePage() {
         // API stores as null — not as an empty string.
         startDate: editDraft.startDate === "" ? null : editDraft.startDate,
         endDate: editDraft.endDate === "" ? null : editDraft.endDate,
+        // Undantag med flit: the rules answered "Lägg ändå" for this time, or [] to take back one the lesson had. Said only then, so a
+        // save of a lesson that has none is the request it always was.
+        ...(editDraft.exempt && editDraft.exempt.length > 0 ? { exempt: editDraft.exempt } : editing.exemptFrom && editing.exemptFrom.length > 0 ? { exempt: [] } : {}),
       });
       if (!blockKit?.announce(editing, result)) announceSaved(result);
       setEditing(null);
@@ -1175,7 +1180,9 @@ export default function TimetablePage() {
             {t("conflictCount", { count: conflictCount })}
           </Badge>
         ) : null}
-        {conflictCount > 0 ? (
+        {/* Undantag med flit: lessons that stand against the ramtid or the class's meal on purpose are counted apart, never as conflicts. */}
+        {exemptionMap.size > 0 ? <Badge variant="outline">{t("exemptionCount", { count: exemptionMap.size })}</Badge> : null}
+        {conflictCount > 0 || exemptionMap.size > 0 ? (
           <Button
             variant="link"
             size="sm"
@@ -1553,6 +1560,7 @@ export default function TimetablePage() {
               rules={{ constraints: constraints ?? [], gradeSpanOf }}
               onOpenChange={setConflictsOpen}
               conflictMap={conflictMap}
+              exemptions={exemptionMap}
               lessonById={lessonById}
               group={(id) => groupById.get(id)?.name ?? ""}
               subject={(id) => subjectById.get(id)?.name ?? ""}

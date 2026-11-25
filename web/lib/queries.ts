@@ -42,6 +42,7 @@ import type {
   TeacherQualificationKind,
   StaffingWarning,
 } from "@/lib/types";
+import type { ExemptRule } from "@/lib/exemptions";
 
 // ---------------------------------------------------------------------------
 // Reads — the school's own tables straight from Supabase under RLS; other
@@ -634,7 +635,7 @@ export function useMasterLessons(academicYearId: string | null) {
         supabase
           .from("MasterLessons")
           .select(
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, exemptFrom, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
           )
           .eq("academicYearId", academicYearId!)
           .order("dayOfWeek")
@@ -1074,6 +1075,11 @@ export interface UpdateMasterLessonInput {
   roomId?: string | null;
   teacherId?: string | null;
   isLocked?: boolean;
+  /**
+   * Undantag med flit: the rules the administrator answered "Lägg ändå" to for THIS time (FRAME, LUNCH); the gateway lets through those the
+   * time breaks, saves their names on the lesson and locks it. `[]` takes an exemption back. Absent leaves what the lesson has.
+   */
+  exempt?: ExemptRule[];
   propagate?: boolean;
   extraGroupIds?: string[];
   studentIds?: string[];

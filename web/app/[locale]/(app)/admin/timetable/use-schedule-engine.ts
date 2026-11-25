@@ -1,3 +1,4 @@
+import { splitExemptions } from "@/lib/exemptions";
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { closedWeeksOf } from "@/lib/closed-weeks";
 import { timeToMinutes } from "@/lib/utils";
@@ -246,7 +247,7 @@ export function useScheduleEngine(inputs: Pick<TimetableReads, "groups" | "shown
     };
   }, [roomRules, lessonById, gradeSpanOf]);
 
-  const conflictMap = useMemo(
+  const foundConflicts = useMemo(
     () =>
       detectConflicts(
         lessons ?? [],
@@ -273,6 +274,10 @@ export function useScheduleEngine(inputs: Pick<TimetableReads, "groups" | "shown
       closedWeeks,
     ],
   );
+
+  // UNDANTAG MED FLIT: a hit for a rule the lesson has been given an exemption for is no conflict, and is said apart (the card's märke, the
+  // krocklistan's rubrik). The grid, the header's count and the list all read the map without it; a page where no lesson has one reads its own map.
+  const { conflicts: conflictMap, exemptions: exemptionMap } = useMemo(() => splitExemptions(foundConflicts, lessonById), [foundConflicts, lessonById]);
 
   /** lessonId → collaborator label (soft edit-locks from presence). */
   const remoteEditors = useMemo(() => {
@@ -369,7 +374,7 @@ export function useScheduleEngine(inputs: Pick<TimetableReads, "groups" | "shown
     ],
   );
 
-  return { yearGroups, closedWeeks, teachers, students, studentGroupOf, gradeSpanOf, homeClassIds, rosterIndex, groupConflictMap, subjectById, groupById, roomById, teacherById, personById, lessonById, lunchOf, pupilBuffers, conflictMap, remoteEditors, placements, validateChange };
+  return { yearGroups, closedWeeks, teachers, students, studentGroupOf, gradeSpanOf, homeClassIds, rosterIndex, groupConflictMap, subjectById, groupById, roomById, teacherById, personById, lessonById, lunchOf, pupilBuffers, conflictMap, exemptionMap, remoteEditors, placements, validateChange };
 }
 
 export type ScheduleEngine = ReturnType<typeof useScheduleEngine>;
