@@ -45,6 +45,11 @@ export class ApiError extends Error {
      * "One or more fields failed validation." (lib/api-error-text.ts shows them).
      */
     public readonly problems?: readonly string[],
+    /**
+     * The request's method. A refused GET was a read (the gateway checks a query's parameters with a DTO too), and what is said of it
+     * is not that something was not saved.
+     */
+    public readonly method?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -142,7 +147,7 @@ async function request<T>(
     // would ask it again.
     const page = pageSchool();
     if (code === "SCHOOL_NOT_AVAILABLE" && page && (school ?? page) === page) window.location.reload();
-    throw new ApiError(response.status, detail, code, params, problems);
+    throw new ApiError(response.status, detail, code, params, problems, method);
   }
 
   if (response.status === 204) {

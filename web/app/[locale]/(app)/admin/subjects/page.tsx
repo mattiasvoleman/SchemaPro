@@ -37,7 +37,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { FormField } from "@/components/ui/form-field";
+import { FormField, FormProblems } from "@/components/ui/form-field";
 import { LoadError } from "@/components/ui/load-error";
 import { RowActions } from "@/components/ui/row-actions";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -169,12 +169,15 @@ export default function SubjectsPage() {
   const [editing, setEditing] = useState<Subject | null>(null);
   const [deleting, setDeleting] = useState<Subject | null>(null);
   const [form, setForm] = useState<SubjectForm>(EMPTY_FORM);
+  // What the last save was refused for: the fields it names draw their own sentence (FormProblems), beside the toast.
+  const [saveFailure, setSaveFailure] = useState<unknown>(null);
   // Svenska and SvA are ONE national subject, SV_SVA; a school writes SV or SVA.
   const suggested = nationalByCode.get(form.code.trim().toUpperCase().replace(/^SVA?$/, "SV_SVA"));
 
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY_FORM);
+    setSaveFailure(null);
     setDialogOpen(true);
   };
 
@@ -194,6 +197,7 @@ export default function SubjectsPage() {
       notLastInDay: subject.notLastInDay ?? false,
       qualificationSubjectId: subject.qualificationSubjectId ?? OWN_QUALIFICATION,
     });
+    setSaveFailure(null);
     setDialogOpen(true);
   };
 
@@ -240,6 +244,7 @@ export default function SubjectsPage() {
         ? { qualificationSubjectId: form.qualificationSubjectId === OWN_QUALIFICATION ? null : form.qualificationSubjectId }
         : {}),
     };
+    setSaveFailure(null);
     try {
       if (editing) {
         await mutations.update.mutateAsync({ id: editing.id, ...body });
@@ -250,6 +255,7 @@ export default function SubjectsPage() {
       }
       setDialogOpen(false);
     } catch (error) {
+      setSaveFailure(error);
       toast.error(apiErrorText(error, tCommon));
     }
   };
@@ -407,8 +413,8 @@ export default function SubjectsPage() {
             <DialogTitle>{editing ? t("editSubject") : t("addSubject")}</DialogTitle>
             <DialogDescription>{t("dialogHint")}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <FormField id="subject-name" label={tCommon("name")}>
+          <FormProblems error={saveFailure} className="space-y-4">
+            <FormField id="subject-name" label={tCommon("name")} field="name">
               <Input
                 value={form.name}
                 placeholder={t("namePlaceholder")}
@@ -416,14 +422,14 @@ export default function SubjectsPage() {
               />
             </FormField>
             <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
-              <FormField id="subject-code" label={tCommon("code")} optional>
+              <FormField id="subject-code" label={tCommon("code")} field="code" optional>
                 <Input
                   value={form.code}
                   placeholder={t("codePlaceholder")}
                   onChange={(e) => setForm({ ...form, code: e.target.value })}
                 />
               </FormField>
-              <FormField id="subject-color" label={tCommon("color")}>
+              <FormField id="subject-color" label={tCommon("color")} field="color">
                 <Input
                   type="color"
                   className="h-9 w-full p-1"
@@ -435,6 +441,7 @@ export default function SubjectsPage() {
             <FormField
               id="subject-room-type"
               label={t("requiredRoomType")}
+              field="requiredRoomTypeId"
               optional
               // A failed list leaves the picker empty; the stored type is still
               // what Spara sends, and the hint says so instead of the rule.
@@ -473,6 +480,7 @@ export default function SubjectsPage() {
               <FormField
                 id="subject-national-code"
                 label={t("nationalCode")}
+                field="nationalCode"
                 hint={nationalTimplans.isError ? t("nationalCodeUnavailable") : t("nationalCodeHint")}
               >
                 {(control) => (
@@ -543,6 +551,7 @@ export default function SubjectsPage() {
             <FormField
               id="subject-qualification-source"
               label={t("qualificationSource")}
+              field="qualificationSubjectId"
               optional
               hint={
                 qualificationHeirs.length > 0
@@ -584,6 +593,7 @@ export default function SubjectsPage() {
             <FormField
               id="subject-load-factor"
               label={t("loadFactor")}
+              field="loadFactor"
               // The rule replaces the hint while the value breaks it: both say the
               // range, and one sentence under the field is enough.
               hint={loadFactor === null ? undefined : t("loadFactorHint")}
@@ -636,7 +646,7 @@ export default function SubjectsPage() {
                 </label>
               ))}
             </fieldset>
-          </div>
+          </FormProblems>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {tCommon("cancel")}

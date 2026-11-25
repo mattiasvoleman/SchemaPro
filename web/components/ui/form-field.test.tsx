@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { FormField } from "./form-field";
+import { FormField, FormProblems } from "./form-field";
 import { Input } from "./input";
 
+const SAYS: Record<string, string> = { optional: "valfritt", validationEmpty: "får inte vara tomt", validationMax: "får inte vara större än {max}" };
 vi.mock("next-intl", () => ({
-  useTranslations: () => (key: string) => (key === "optional" ? "valfritt" : key),
+  useTranslations: () => (key: string, values?: Record<string, string>) =>
+    (SAYS[key] ?? key).replace(/\{(\w+)\}/g, (_, name: string) => values?.[name] ?? ""),
 }));
+
+/** A failed save as api.ts builds it, as a shape. */
+const refused = (...problems: string[]) => Object.assign(new Error("One or more fields failed validation."), { status: 400, problems });
 
 describe("FormField", () => {
   it("labels its control and leaves the aria props off when there is nothing to describe", () => {
@@ -69,5 +74,64 @@ describe("FormField", () => {
       </FormField>,
     );
     expect(screen.getByText("Räknas mot timplanen.")).toHaveClass("text-foreground");
+  });
+
+  describe("inside a FormProblems", () => {
+    it("draws the sentence the gateway's validation gave for its property, as the error, beside its control", () => {
+      render(
+        <FormProblems error={refused("name should not be empty", "capacity must not be greater than 10000")}>
+          <FormField id="room-name" label="Namn" field="name">
+            <Input />
+          </FormField>
+          <FormField id="room-capacity" label="Platser" field="capacity">
+            <Input />
+          </FormField>
+          <FormField id="room-code" label="Kod" field="code">
+            <Input />
+          </FormField>
+        </FormProblems>,
+      );
+      const name = screen.getByRole("textbox", { name: "Namn" });
+      expect(name).toHaveAttribute("aria-invalid", "true");
+      expect(name).toHaveAttribute("aria-describedby", "room-name-error");
+      expect(screen.getByText("Får inte vara tomt.")).toHaveClass("text-destructive");
+      expect(screen.getByRole("textbox", { name: "Platser" })).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByText("Får inte vara större än 10000.")).toBeInTheDocument();
+      // A property no sentence names is left as it was.
+      expect(screen.getByRole("textbox", { name: "Kod" })).not.toHaveAttribute("aria-invalid");
+    });
+
+    it("leaves a control with no `field`, and a form with no failure, as they were, and lets an explicit error win", () => {
+      const { rerender } = render(
+        <FormProblems error={refused("name should not be empty")}>
+          <FormField id="room-name" label="Namn">
+            <Input />
+          </FormField>
+          <FormField id="room-name-2" label="Andra namnet" field="name" error="Namnet är taget.">
+            <Input />
+          </FormField>
+        </FormProblems>,
+      );
+      expect(screen.getByRole("textbox", { name: "Namn" })).not.toHaveAttribute("aria-invalid");
+      expect(screen.getByText("Namnet är taget.")).toBeInTheDocument();
+      expect(screen.queryByText("Får inte vara tomt.")).not.toBeInTheDocument();
+      rerender(
+        <FormProblems error={null}>
+          <FormField id="room-name" label="Namn" field="name">
+            <Input />
+          </FormField>
+        </FormProblems>,
+      );
+      expect(screen.getByRole("textbox", { name: "Namn" })).not.toHaveAttribute("aria-invalid");
+    });
+
+    it("reads nothing outside a FormProblems", () => {
+      render(
+        <FormField id="room-name" label="Namn" field="name">
+          <Input />
+        </FormField>,
+      );
+      expect(screen.getByRole("textbox", { name: "Namn" })).not.toHaveAttribute("aria-invalid");
+    });
   });
 });

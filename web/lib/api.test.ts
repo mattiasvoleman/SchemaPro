@@ -259,6 +259,19 @@ describe("api client", () => {
     });
   });
 
+  it("carries the method of a refused request, so that a refused read is not told as something that was not saved", async () => {
+    const refusal = () =>
+      new Response(JSON.stringify({ title: "Bad Request", status: 400, detail: "One or more fields failed validation.", errors: { body: ["from must be YYYY-MM-DD."] } }), {
+        status: 400,
+        headers: { "Content-Type": "application/problem+json" },
+      });
+    fetchMock.mockImplementation(() => Promise.resolve(refusal()));
+    const { api } = await loadApi();
+    expect(await api.get("/api/v1/absence-stats").catch((caught: unknown) => caught)).toMatchObject({ status: 400, method: "GET" });
+    expect(await api.put("/api/v1/scope-assessments", {}).catch((caught: unknown) => caught)).toMatchObject({ status: 400, method: "PUT" });
+    expect(await api.delete("/api/v1/rooms/1").catch((caught: unknown) => caught)).toMatchObject({ method: "DELETE" });
+  });
+
   it("keeps at most a hundred sentences, so that the count the reader is told is the count there is, and only strings, and leaves them out when there are none", async () => {
     const many = Array.from({ length: 120 }, (_, index) => `fel ${index}`);
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 400, detail: "x", errors: { body: [...many, 7, ""] } }), { status: 400 }));

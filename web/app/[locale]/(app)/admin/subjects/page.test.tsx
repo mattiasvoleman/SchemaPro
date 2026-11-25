@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
 import type { NationalSubject, Subject } from "@/lib/types";
 import SubjectsPage from "./page";
 
@@ -481,6 +482,30 @@ describe("the national code the school's own code already is", () => {
     await user.click(screen.getByRole("button", { name: "cancel" }));
     await user.click(screen.getByRole("button", { name: "editNamed(Matte)" }));
     expect(screen.queryByText(/^nationalCodeSuggestion/)).not.toBeInTheDocument();
+  });
+});
+
+describe("a save the gateway's validation refuses", () => {
+  it("draws each sentence at the field that holds the property it names, and forgets it when the dialog is opened again", async () => {
+    createMock.mockRejectedValue(
+      new ApiError(400, "One or more fields failed validation.", undefined, undefined, ["name must be shorter than or equal to 100 characters", "color must be a string"], "POST"),
+    );
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await openCreate(user);
+    await user.type(screen.getByLabelText("name"), "Svenska");
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    // The test's translator echoes the key; the name's sentence is validationMaxLength with its limit.
+    expect(await screen.findByText("ValidationMaxLength(100).")).toBeInTheDocument();
+    expect(screen.getByLabelText("name")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("color")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("code (optional)")).not.toHaveAttribute("aria-invalid");
+
+    await user.click(screen.getByRole("button", { name: "cancel" }));
+    await openCreate(user);
+    expect(screen.queryByText("ValidationMaxLength(100).")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("name")).not.toHaveAttribute("aria-invalid");
   });
 });
 

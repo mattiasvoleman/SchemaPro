@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { FormField } from "@/components/ui/form-field";
+import { FormField, FormProblems } from "@/components/ui/form-field";
 import { LoadError } from "@/components/ui/load-error";
 import { RowActions } from "@/components/ui/row-actions";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -181,10 +181,13 @@ export default function RoomsPage() {
   const [editing, setEditing] = useState<Room | null>(null);
   const [deleting, setDeleting] = useState<Room | null>(null);
   const [form, setForm] = useState<RoomForm>(EMPTY_FORM);
+  // What the last save was refused for: the fields it names draw their own sentence (FormProblems), beside the toast.
+  const [saveFailure, setSaveFailure] = useState<unknown>(null);
 
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY_FORM);
+    setSaveFailure(null);
     setDialogOpen(true);
   };
 
@@ -207,6 +210,7 @@ export default function RoomsPage() {
       siteId: room.siteId ?? NO_SITE,
       canBeShared: room.canBeShared ?? false,
     });
+    setSaveFailure(null);
     setDialogOpen(true);
   };
 
@@ -235,6 +239,7 @@ export default function RoomsPage() {
       // from before the rule without a key it refuses.
       ...(form.canBeShared !== (editing?.canBeShared ?? false) ? { canBeShared: form.canBeShared } : {}),
     };
+    setSaveFailure(null);
     try {
       if (editing) {
         await mutations.update.mutateAsync({ id: editing.id, ...body });
@@ -245,6 +250,7 @@ export default function RoomsPage() {
       }
       setDialogOpen(false);
     } catch (error) {
+      setSaveFailure(error);
       toast.error(apiErrorText(error, tCommon));
     }
   };
@@ -401,8 +407,8 @@ export default function RoomsPage() {
             <DialogTitle>{editing ? t("editRoom") : t("addRoom")}</DialogTitle>
             <DialogDescription>{t("dialogHint")}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <FormField id="room-name" label={tCommon("name")}>
+          <FormProblems error={saveFailure} className="space-y-4">
+            <FormField id="room-name" label={tCommon("name")} field="name">
               <Input
                 value={form.name}
                 placeholder={t("namePlaceholder")}
@@ -410,14 +416,14 @@ export default function RoomsPage() {
               />
             </FormField>
             <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
-              <FormField id="room-code" label={tCommon("code")} optional>
+              <FormField id="room-code" label={tCommon("code")} field="code" optional>
                 <Input
                   value={form.code}
                   placeholder={t("codePlaceholder")}
                   onChange={(e) => setForm({ ...form, code: e.target.value })}
                 />
               </FormField>
-              <FormField id="room-capacity" label={tCommon("capacity")}>
+              <FormField id="room-capacity" label={tCommon("capacity")} field="capacity">
                 <Input
                   type="number"
                   min={1}
@@ -426,7 +432,7 @@ export default function RoomsPage() {
                 />
               </FormField>
             </div>
-            <FormField id="room-type" label={tCommon("type")}>
+            <FormField id="room-type" label={tCommon("type")} field="roomTypeId">
               {(control) => (
                 <Select
                   value={form.roomTypeId}
@@ -469,7 +475,7 @@ export default function RoomsPage() {
 
             {form.stage === CUSTOM_RANGE ? (
               <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
-                <FormField id="room-min-grade" label={t("stageFrom")}>
+                <FormField id="room-min-grade" label={t("stageFrom")} field="minGradeLevel">
                   <Input
                     type="number"
                     min={0}
@@ -478,7 +484,7 @@ export default function RoomsPage() {
                     onChange={(e) => setForm({ ...form, minGradeLevel: e.target.value })}
                   />
                 </FormField>
-                <FormField id="room-max-grade" label={t("stageTo")}>
+                <FormField id="room-max-grade" label={t("stageTo")} field="maxGradeLevel">
                   <Input
                     type="number"
                     min={0}
@@ -491,7 +497,7 @@ export default function RoomsPage() {
             ) : null}
 
             {siteName.size > 0 ? (
-              <FormField id="room-site" label={t("site")} hint={t("siteHint")}>
+              <FormField id="room-site" label={t("site")} hint={t("siteHint")} field="siteId">
                 {(control) => (
                   <Select value={form.siteId} onValueChange={(value) => setForm({ ...form, siteId: value })}>
                     <SelectTrigger {...control}>
@@ -514,7 +520,7 @@ export default function RoomsPage() {
                 sits under the floor, where the wrong value was typed. */}
             <div className="space-y-1.5">
               <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
-                <FormField id="room-building" label={t("building")} optional>
+                <FormField id="room-building" label={t("building")} field="building" optional>
                   <Input
                     value={form.building}
                     maxLength={60}
@@ -526,6 +532,7 @@ export default function RoomsPage() {
                 <FormField
                   id="room-floor"
                   label={t("floor")}
+                  field="floor"
                   optional
                   error={floor === undefined ? t("floorInvalid") : undefined}
                 >
@@ -586,7 +593,7 @@ export default function RoomsPage() {
                 </p>
               ) : null}
             </div>
-          </div>
+          </FormProblems>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {tCommon("cancel")}
