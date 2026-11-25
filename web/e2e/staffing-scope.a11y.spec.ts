@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { DESKTOP, PHONE, scanBothSchemes, setScheme } from "./axe";
+import { cardsOf } from "./card-edge";
 import { freezeClock, settle, signIn, watchStubMisses } from "./signed-in";
 import { PEOPLE } from "./stub/sessions";
 
@@ -18,24 +19,12 @@ const MISSES = "the backend stub could not answer these reads; each says which f
 const NARROW = { width: 320, height: 700 };
 
 /**
- * How many elements of the cards whose headings are `titles` (each card is the nearest element with an id above its heading) reach past the page's
- * left or right edge, and how many cards were found.
+ * How many elements of the cards whose headings are `titles` reach past the page's left or right edge, how many cards were found and how many
+ * elements were measured (e2e/card-edge.ts: the card is the section the heading is in, and the heading has an id of its own, so "the nearest
+ * element with an id" is the heading itself).
  */
 function beyondTheEdge(page: Page, titles: string[]) {
-  return page.evaluate((cardTitles) => {
-    const roots = [...document.querySelectorAll("h2, h3")]
-      .filter((heading) => cardTitles.includes((heading.textContent ?? "").trim()))
-      .map((heading) => heading.closest("[id]"))
-      .filter((root): root is Element => root !== null);
-    const mine = roots.flatMap((root) => [root, ...root.querySelectorAll("*")]).filter((element) => !element.closest(".sr-only"));
-    return {
-      roots: roots.length,
-      beyond: mine.filter((element) => {
-        const rect = element.getBoundingClientRect();
-        return rect.width > 0 && (rect.right > window.innerWidth + 1 || rect.left < -1);
-      }).length,
-    };
-  }, titles);
+  return page.evaluate(cardsOf, titles);
 }
 
 async function scanAt(page: Page, label: string, reports: string[]) {
@@ -73,7 +62,9 @@ test("Min tjänst: the scope card is drawn for a teacher, axe finds nothing on i
   await setScheme(page, "light", true);
   await page.setViewportSize(NARROW);
   await settle(page);
-  expect(await beyondTheEdge(page, ["Omfattning enligt förordningen"])).toEqual({ roots: 1, beyond: 0 });
+  const edge = await beyondTheEdge(page, ["Omfattning enligt förordningen"]);
+  expect(edge, "the card, measured whole (a heading alone is one element)").toMatchObject({ cards: 1, beyond: 0 });
+  expect(edge.measured, "elements of the card measured").toBeGreaterThan(10);
   reports.push(...(await scanBothSchemes(page, "Min tjänst 320", true)));
   expect(reports.join("\n"), "WCAG 2.1 AA violations").toBe("");
 });
@@ -107,7 +98,8 @@ for (const teacher of [
     await page.setViewportSize(NARROW);
     await settle(page);
     const edge = await beyondTheEdge(page, ["Omfattning enligt förordningen", "Rektorns bedömning"]);
-    expect(edge.roots, "the two cards of the drawer").toBe(2);
+    expect(edge.cards, "the two cards of the drawer").toBe(2);
+    expect(edge.measured, "elements of the two cards measured: more than their headings").toBeGreaterThan(15);
     expect(edge.beyond, "elements of the cards past the page's edge at 320 px").toBe(0);
     reports.push(...(await scanBothSchemes(page, `drawer of ${teacher.name} 320`, true)));
     expect(reports.join("\n"), "WCAG 2.1 AA violations").toBe("");
