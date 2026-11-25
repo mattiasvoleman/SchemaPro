@@ -128,4 +128,37 @@ describe("what the board says, in the catalogue's own words", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("calls a clash a clash, in both languages", async () => {
+    for (const [locale, word] of [["sv", "Krock"], ["en", "Clash"]] as const) {
+      const { unmount } = await board(locale, {});
+      unmount();
+      render(
+        <NextIntlClientProvider locale={locale} messages={(locale === "sv" ? sv : en) as never}>
+          <TimetableGrid lessons={[lesson({ id: "x", conflicted: true, conflictNote: "Läraren har Kemi 8B." })]} />
+        </NextIntlClientProvider>,
+      );
+      expect(card("x").textContent).toContain(`${word}: Läraren har Kemi 8B.`);
+      document.body.innerHTML = "";
+    }
+  });
+
+  it("calls the card of a block by the block and answers L, P and Delete on it by saying that its own dialog opens, in both languages", async () => {
+    const block = lesson({ id: "blk", title: "Språkval åk 7", subtitle: "7A · A. Lind; 7B · B. Ek", blockCard: true });
+    const onLessonCommand = vi.fn();
+    for (const [locale, opens] of [
+      ["sv", "Språkval åk 7 är ett block: blockets egen ruta öppnas, där lås, parkera och ta bort gäller hela blocket."],
+      ["en", "Språkval åk 7 is a block: its own dialog opens, where lock, park and remove apply to the whole block."],
+    ] as const) {
+      const { unmount } = await board(locale, { lessons: [block], onLessonCommand });
+      for (const [pressed, command] of [["l", "lock"], ["p", "park"], ["Delete", "remove"]] as const) {
+        key("blk", { key: pressed });
+        expect(said()).toBe(opens);
+        expect(onLessonCommand).toHaveBeenLastCalledWith("blk", command);
+      }
+      key("blk", { key: " " });
+      expect(said()).toMatch(locale === "sv" ? /^Tog upp Språkval åk 7, Måndag 09:00–10:00\./ : /^Picked up Språkval åk 7, Monday 09:00–10:00\./);
+      unmount();
+    }
+  });
 });

@@ -23,6 +23,8 @@ import {
 import { useCreateMasterLesson, useDeleteMasterLesson, useUpdateMasterLesson } from "@/lib/queries";
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { PlanningYearPicker, ProjectedRostersBanner } from "@/components/schedule/planning-year";
+import type { LessonCommand } from "@/components/schedule/board-keys";
+import { useConflictNotes } from "./use-conflict-notes";
 import type { MessageLookup } from "@/lib/engine-message";
 import { savedToast } from "@/lib/staffing-warnings";
 import { FilterPicker } from "@/components/schedule/filter-picker";
@@ -317,9 +319,21 @@ export default function TimetablePage() {
     lunchOf, pupilBuffers, conflictMap, remoteEditors, placements,
     validateChange,
   } = engine;
+  // What each clashing card says, in words: made by a module fetched only when something clashes.
+  const conflictNotes = useConflictNotes({
+    conflictMap,
+    lessonById,
+    groupById,
+    subjectById,
+    constraints: reads.constraints,
+    gradeSpanOf,
+    roomLock: t("conflictRoomLock"),
+    tCommon,
+  });
   const view = useTimetableView({
     ...reads,
     ...engine,
+    conflictNotes,
     t,
     tLunch,
     locale,
@@ -498,6 +512,24 @@ export default function TimetablePage() {
         .catch(showError);
     },
     [undoableUpdate, showError, t, lessonName],
+  );
+
+  /**
+   * The keys that are writes (L, P and Delete on a lesson, board-keys.tsx): the page's own, each one step of undo. A block's card is
+   * not a lesson of its own and has its dialog, where the lock, the tray and the removal say what they do to the whole block.
+   */
+  const handleLessonCommand = useCallback(
+    (id: string, command: LessonCommand) => {
+      const lesson = lessonById.get(id);
+      if (!lesson) return void openEditor(id);
+      if (command === "park") return park(lesson);
+      if (command === "lock") return void undoableUpdate(lesson, { isLocked: !lesson.isLocked }).catch(showError);
+      void undoableDelete(lesson)
+        .then((result) => toast.success(t("deleted", { count: result.removedCalendarLessons })))
+        .catch(showError);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lessonById, park, undoableUpdate, undoableDelete, showError, t, blockKit],
   );
 
   /**
@@ -1397,6 +1429,8 @@ export default function TimetablePage() {
               <TimetableGrid
                 lessons={board.lessons}
                 editable={!readOnly}
+                board
+                onLessonCommand={handleLessonCommand}
                 onLessonClick={readOnly ? undefined : (lesson) => openEditor(lesson.id)}
                 onLessonChange={handleGridChange}
                 validateChange={validateGridChange}
@@ -1419,6 +1453,8 @@ export default function TimetablePage() {
           ref={gridRef}
           lessons={gridLessons}
           editable={!readOnly}
+          board
+          onLessonCommand={handleLessonCommand}
           onLessonClick={readOnly ? undefined : (lesson) => openEditor(lesson.id)}
           onLessonChange={handleGridChange}
           validateChange={validateGridChange}

@@ -63,6 +63,15 @@ const draw = (overrides: Partial<React.ComponentProps<typeof ConflictList>> = {}
 };
 
 describe("the krocklista", () => {
+  it("draws no empty point for a reason it has no sentence for", () => {
+    // Anna's clash with Kemi 8B, in a school whose class names are not read yet: the sentence needs the other lesson's class.
+    draw({ group: () => "" });
+    const dialog = screen.getByRole("dialog");
+    const points = [...dialog.querySelectorAll("ul ul li")];
+    expect(points.length).toBeGreaterThan(0);
+    for (const point of points) expect(point.textContent?.trim()).not.toBe("");
+  });
+
   it("says each lesson that clashes, and what it clashes with by class, subject, day and time", () => {
     draw();
     const dialog = screen.getByRole("dialog");

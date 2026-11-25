@@ -7,7 +7,7 @@ import { detectConflicts } from "@/lib/conflicts";
 import type { AvailabilityConstraint } from "@/lib/types";
 import { problemSentence } from "@/lib/problem-codes";
 import type { MasterLesson } from "@/lib/types";
-import { conflictRows, type ConflictNames } from "./conflict-rows";
+import { conflictRows, reasonSentences, type ConflictNames } from "./conflict-rows";
 
 const lesson = (id: string, overrides: Partial<MasterLesson>): MasterLesson => ({
   id,
@@ -173,5 +173,32 @@ describe("the rows of the krocklista", () => {
       names,
     );
     expect(rows.map((row) => [row.lesson.id, row.reasons.length])).toEqual([["a", 1]]);
+  });
+});
+
+describe("the sentences of a lesson's reasons (the list's rows and the grid's cards)", () => {
+  const a = lesson("a", { teacherId: "anna" });
+  const b = lesson("b", { subjectId: "Ke", studentGroupId: "8B", teacherId: "anna", startTime: "10:30:00", endTime: "11:30:00" });
+  const byId = new Map([a, b].map((entry) => [entry.id, entry]));
+
+  it("says each reason in the refusal's sentence, the room's lock in the page's own, and leaves out a reason that has no sentence", () => {
+    const rows = conflictRows(
+      new Map([["a", [{ kind: "TEACHER" as const, otherLessonId: "b" }, { kind: "FRAME" as const }, { kind: "ROOM_LOCK" as const }]]]),
+      byId,
+      names,
+    );
+    expect(reasonSentences(rows[0]!.reasons, "Salen är låst.", swedish)).toEqual([
+      "Läraren har redan Kemi med 8B, måndag 10:30–11:30.",
+      "Tiden ligger utanför ramtiden för klassens stadium.",
+      "Salen är låst.",
+    ]);
+    // The other lesson's class has no name here (a class the page holds no name for): the sentence of a clash cannot be written, and is
+    // not written as "Läraren har redan  med , dag …" or as an empty point in a list.
+    const unnamed = conflictRows(new Map([["a", [{ kind: "TEACHER" as const, otherLessonId: "b" }, { kind: "LUNCH" as const }]]]), byId, {
+      group: () => "",
+      subject: (id) => NAMES[id] ?? id,
+    });
+    expect(reasonSentences(unnamed[0]!.reasons, "x", swedish)).toEqual(["Tiden ligger på klassens lunch."]);
+    expect(reasonSentences(unnamed[0]!.reasons.slice(0, 1), "x", swedish)).toEqual([]);
   });
 });
