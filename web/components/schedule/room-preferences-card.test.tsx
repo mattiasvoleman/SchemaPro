@@ -438,6 +438,50 @@ describe("the ?roomRule= deep link", () => {
     expect(create).toHaveBeenCalledWith({ subjectId: "s-no", roomIds: ["r-a14"], kind: "LOCK", minGradeLevel: 7, maxGradeLevel: 9 });
   });
 
+  // The mark says which rule the form beside it is about. A form that is closed (Avbryt) or saved is about nothing, and a rule that stays marked
+  // after it reads as if the card still pointed at it (the review of #390).
+  it("takes the mark off the rule when the form is cancelled", async () => {
+    window.history.replaceState(null, "", "/?roomRule=p-lock");
+    const user = userEvent.setup();
+    render(<RoomPreferencesCard kind="LOCK" />);
+    await screen.findByRole("button", { name: "save" });
+    expect(screen.getByRole("listitem")).toHaveAttribute("aria-current", "true");
+
+    await user.click(screen.getByRole("button", { name: "cancel" }));
+
+    expect(screen.queryByRole("button", { name: "save" })).toBeNull();
+    expect(screen.getByRole("listitem")).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("listitem")).not.toHaveClass("bg-accent");
+  });
+
+  it("takes the mark off the rule when the rule beside it is saved", async () => {
+    window.history.replaceState(null, "", "/?roomRule=p-lock");
+    const user = userEvent.setup();
+    render(<RoomPreferencesCard kind="LOCK" />);
+    await screen.findByRole("button", { name: "save" });
+    await user.click(screen.getByLabelText("A14"));
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "save" })).toBeNull());
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("listitem")).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("listitem")).not.toHaveClass("bg-accent");
+  });
+
+  it("keeps the mark while the form is open and a save is refused: the form is still about that rule", async () => {
+    window.history.replaceState(null, "", "/?roomRule=p-lock");
+    create.mockRejectedValueOnce(new Error("refused"));
+    const user = userEvent.setup();
+    render(<RoomPreferencesCard kind="LOCK" />);
+    await screen.findByRole("button", { name: "save" });
+    await user.click(screen.getByLabelText("A14"));
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "save" })).toBeInTheDocument();
+    expect(screen.getByRole("listitem")).toHaveAttribute("aria-current", "true");
+  });
+
   it("opens nothing for an id that is none of this school's rules, and shows no error", () => {
     window.history.replaceState(null, "", "/?roomRule=an-id-from-another-school");
     render(<RoomPreferencesCard kind="LOCK" />);
