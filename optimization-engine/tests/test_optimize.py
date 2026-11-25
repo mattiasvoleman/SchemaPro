@@ -8407,6 +8407,75 @@ def test_a_lock_outside_the_frame_is_taken_as_a_fact_and_needs_no_exemption() ->
     assert [lunch.start_time for lunch in response.lunches] == ["12:30:00"]
 
 
+def test_an_exemption_releases_the_lock_it_is_on_and_no_other_lock_under_the_same_meal() -> None:
+    """The field is a lock's, not the class's and not the day's: a plain lock beside an exempt one still refuses the meal.
+
+    The meal placed at 12:15 runs 12:15-12:45. The first lock (12:00-12:30) is the one the school let stand over it; the
+    second (12:30-13:00) lies on the meal's second half and nobody has said anything about it.
+    """
+    both = _placed_payload("12:15")
+    _exempt_lock(both, "12:00", "12:30")
+    _exempt_lock(both, "12:30", "13:00")
+    assert _solve(both).status in {"OPTIMAL", "FEASIBLE"}
+
+    payload = _placed_payload("12:15")
+    _exempt_lock(payload, "12:00", "12:30")
+    _lock(payload, "12:30", "13:00")
+
+    refusal = _refusal(payload)
+
+    assert refusal.code == "LUNCH_PLACEMENT_COLLIDES"
+    assert refusal.params["what"] == "locked"
+
+
+def test_the_exemption_of_one_class_releases_no_other_class_from_its_own_lock() -> None:
+    """Class A's meal on A's plain lock is refused whatever another class's lock under the same hour has been let to do."""
+    payload = _placed_payload("12:30")
+    other = str(uuid4())
+    payload["groups"].append({"id": other, "lunchHeadcount": 24, "minGradeLevel": 4, "maxGradeLevel": 6})  # type: ignore[attr-defined]
+    _lock(payload, "12:30", "13:30")
+    _exempt_lock(payload, "12:30", "13:30")
+    payload["fixedLessons"][-1]["studentGroupId"] = other  # type: ignore[index]
+
+    refusal = _refusal(payload)
+
+    assert refusal.code == "LUNCH_PLACEMENT_COLLIDES"
+    assert refusal.params["what"] == "locked"
+    assert refusal.params["group"] == payload["groups"][0]["id"]  # type: ignore[index]
+
+
+def test_an_exemption_on_another_weekday_releases_nothing_on_the_day_of_the_meal() -> None:
+    """The lock that is let stand is on Tuesday, the meal and its plain lock are on Monday: Monday is refused as it was."""
+    payload = _placed_payload("12:30")
+    _lock(payload, "12:30", "13:30")
+    _exempt_lock(payload, "12:30", "13:30")
+    payload["fixedLessons"][-1]["dayOfWeek"] = 2  # type: ignore[index]
+
+    refusal = _refusal(payload, SCHEDULE_DAYS="1,2")
+
+    assert refusal.code == "LUNCH_PLACEMENT_COLLIDES"
+    assert (refusal.params["day"], refusal.params["what"]) == (1, "locked")
+
+
+def test_an_exempt_lock_over_the_whole_window_leaves_a_class_with_no_placed_meal_a_refusal_by_name() -> None:
+    """The exemption never takes a class's meal away: nobody placed one, so the lock must still leave a start.
+
+    The lock fills 11:00-12:00, which is the whole window. With the meal placed at 12:00 (outside it, as the school's own
+    case) the week is solved; with no meal placed the engine refuses by name rather than answer a week with a class that
+    does not eat, and the exemption changes neither verdict.
+    """
+    placed = _placed_payload("12:00")
+    _exempt_lock(placed, "11:00", "12:00")
+    response = _solve(placed)
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert [lunch.start_time for lunch in response.lunches] == ["12:00:00"]
+
+    unplaced = _placed_payload()
+    _exempt_lock(unplaced, "11:00", "12:00")
+
+    assert _refusal(unplaced).code == "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK"
+
+
 @pytest.mark.parametrize(
     ("start", "why"),
     [
