@@ -558,7 +558,7 @@ export class MasterLessonsService {
       }
 
       this.logger.log(`Master lesson created manually [lesson=${created.id}]`);
-      this.announce(year.schoolId, mode);
+      this.announce(tx, year.schoolId, mode, [created.id]);
       return { ...result, warnings };
     });
   }
@@ -1113,7 +1113,7 @@ export class MasterLessonsService {
       this.logger.log(
         `Master lesson adjusted [lesson=${id}, propagated=${propagatedLessons}, removed=${removedCalendarLessons}]`,
       );
-      this.announce(lesson.school.id, mode);
+      this.announce(tx, lesson.school.id, mode, [id]);
 
       // In-app schedule-change notice to affected classes once published
       // lessons actually moved — or disappeared, which the class needs to
@@ -1580,7 +1580,12 @@ export class MasterLessonsService {
       this.logger.log(
         `Block card moved [block=${blockId}, lessons=${lessons.length}, followed=${followers.length}, propagated=${propagatedLessons}, removed=${removedCalendarLessons}]`,
       );
-      this.announce(leader.school.id, mode);
+      this.announce(
+        tx,
+        leader.school.id,
+        mode,
+        results.map((moved) => moved.id),
+      );
       // As update() tells a class its published lessons moved: one notice per
       // member, to the roster attending it, about its own subject.
       for (const { lesson, after } of notices) {
@@ -1701,7 +1706,12 @@ export class MasterLessonsService {
           });
         }
         this.logger.log(`Block ${dto.isLocked ? 'locked' : 'unlocked'} [block=${block.id}, lessons=${targets.length}]`);
-        this.announce(block.schoolId, mode);
+        this.announce(
+          tx,
+          block.schoolId,
+          mode,
+          targets.map((lesson) => lesson.id),
+        );
       }
       return { blockId: block.id, isLocked: dto.isLocked, lessonIds: targets.map((lesson) => lesson.id), parked };
     });
@@ -2181,7 +2191,7 @@ export class MasterLessonsService {
         `Master lesson deleted [lesson=${id}, removedCalendarLessons=${removedCalendarLessons}]`,
       );
 
-      this.announce(lesson.schoolId, mode);
+      this.announce(tx, lesson.schoolId, mode, [id]);
       return { id, removedCalendarLessons };
     });
   }
@@ -3018,10 +3028,17 @@ export class MasterLessonsService {
   /**
    * The staff room hears of a DIRECT change, exactly as before; a DRAFT
    * change is a draft, and only the school's admins hear of it.
+   *
+   * Said when the transaction has COMMITTED (PrismaService.onCommit), and not in it: a collaborator who read the year at once
+   * could read it before the commit and find the lessons as they were. That was a stale read that the next read mended; now that
+   * the event says which lessons changed, and the client reads just those (use-timetable-realtime.ts), it would be a stale
+   * lesson that nothing mends. A write that fails or is retried is not announced for the run that did not commit. Outside a
+   * transaction there is no commit to wait for, and it is said at once.
    */
-  private announce(schoolId: string, mode: 'DIRECT' | 'DRAFT'): void {
-    if (mode === 'DRAFT') this.realtime.notifyMasterTimetableChanged(schoolId, { draft: true });
-    else this.realtime.notifyMasterTimetableChanged(schoolId);
+  private announce(tx: PrismaClient, schoolId: string, mode: 'DIRECT' | 'DRAFT', lessonIds: readonly string[]): void {
+    const say = () =>
+      this.realtime.notifyMasterTimetableChanged(schoolId, mode === 'DRAFT' ? { draft: true, lessonIds } : { lessonIds });
+    if (!this.prisma.onCommit(tx, async () => say())) say();
   }
 
   // ---------------------------------------------------------------------

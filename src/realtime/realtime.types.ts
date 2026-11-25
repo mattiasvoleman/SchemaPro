@@ -28,6 +28,22 @@ export const LESSON_UPDATED_EVENT = 'calendar_lesson_updated';
 /** Master timetable changed — collaborating admin clients refetch. */
 export const MASTER_TIMETABLE_UPDATED_EVENT = 'master_timetable_updated';
 
+/**
+ * What the master timetable event carries: when, and for a change of a few lessons which ones.
+ *
+ * `lessonIds` are the master lessons the change created, changed or removed, as opaque UUIDs and nothing else: not what
+ * changed in them, and not a row. The row is the client's to read, under its own row-level security, so the event gives a
+ * socket nothing it could not read. Absent, the change is not a few lessons (a regeneration, an import, a restore, a
+ * room optimisation) or is not known to be, and the client reads the year again, as it did before the ids existed. A
+ * client from before them ignores the field. Over `MASTER_TIMETABLE_IDS_MAX` the field is left out as well: a list that
+ * long is not cheaper to read than the year.
+ */
+export interface MasterTimetableUpdatedPayload {
+  changedAt: string;
+  lessonIds?: string[];
+}
+export const MASTER_TIMETABLE_IDS_MAX = 200;
+
 /** Presence roster for the timetable editor (soft edit-locks). */
 export const TIMETABLE_PRESENCE_EVENT = 'timetable_presence';
 
