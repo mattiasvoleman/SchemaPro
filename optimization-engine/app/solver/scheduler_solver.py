@@ -1494,6 +1494,10 @@ class SchedulerSolver:
         # a step that has to build again (the explanation, a probe) is not
         # started unless the clock has that much besides its own time.
         self._build_seconds: float = 0.0
+        # The seconds the week load had when it was cut short, the least of the weeks': the request's clock
+        # can cut the count to less than WEEK_LOAD_SECONDS, and the row that says so (WEEK_LOAD_NOT_COUNTED)
+        # must say the seconds it had and not the seconds it would have had (g371-L-1).
+        self._week_load_seconds: float | None = None
 
     # ---- the request's clock (app.timing) -------------------------------------
 
@@ -1637,12 +1641,19 @@ class SchedulerSolver:
         it holds: a year it did not reach has no row, and "no row" reads as "not
         tight" unless this says otherwise. Not a bound and not a proof: only
         that those years were not counted.
+
+        THE SECONDS ARE THE ONES THE COUNT HAD, which the request's clock may have cut
+        below WEEK_LOAD_SECONDS (`_week_loads` clamps its deadline to the answer's edge):
+        a count that had two seconds says two, and one not known to have been cut says the
+        four it was given.
         """
+        had = self.WEEK_LOAD_SECONDS if self._week_load_seconds is None else self._week_load_seconds
+        tenths = round(had, 1)
         row = ConflictDetail(
             category="REQUIREMENT_DEMAND",
             code="WEEK_LOAD_NOT_COUNTED",
             params={
-                "seconds": round(self.WEEK_LOAD_SECONDS),
+                "seconds": int(tenths) if tenths == int(tenths) else tenths,
                 "percent": round(self.TIGHT_WEEK_LOAD * 100),
             },
         )
@@ -3122,6 +3133,7 @@ class SchedulerSolver:
         # The request's clock edge, when a solve runs one (M1): a week check has
         # none, and _clock_clamp then hands the deadline back unchanged.
         deadline = self._clock_clamp(deadline)
+        given = max(0.0, deadline - time.monotonic())
         loads = week_loads(
             request.requirements,
             request.frame_times,
@@ -3140,6 +3152,8 @@ class SchedulerSolver:
         )
         if cut is not None and time.monotonic() >= deadline:
             cut.append(True)
+            held = self._week_load_seconds
+            self._week_load_seconds = given if held is None else min(held, given)
         return loads
 
     @staticmethod
@@ -6096,6 +6110,7 @@ class SchedulerSolver:
             ),
         )
         self._search_seconds = None
+        self._week_load_seconds = None
         # WHERE THE TIME GOES, from the same instant (stage_clock.py).
         self._stages = StageClock(entered)
         try:

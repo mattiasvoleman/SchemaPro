@@ -316,13 +316,24 @@ def measure_shape(
             "firstScheduleDeterministic": None, "mode": mode,
             "deterministicBudget": deterministic_budget if mode == "count" else None, "seed": seed,
         }
-    runs = [
-        measure_request(
-            week.request, mode=mode, budget=budget, deterministic_budget=deterministic_budget,
-            seed=seed + offset,
-        )
-        for offset in range(max(1, seeds))
-    ]
+    try:
+        runs = [
+            measure_request(
+                week.request, mode=mode, budget=budget, deterministic_budget=deterministic_budget,
+                seed=seed + offset,
+            )
+            for offset in range(max(1, seeds))
+        ]
+    except Exception as error:  # noqa: BLE001
+        # A crash in one week's measurement before its first timetable (CP-SAT, the engine, a corpus week the
+        # tree cannot take) is that week's answer, named, and not the end of the run: the nightly job used to go
+        # red at the first crash and stay red every night until it was found (g394-L-6a). The gate reads ERROR.
+        return {
+            "name": week.name, "facts": week.facts, "status": "ERROR",
+            "conflictCodes": [type(error).__name__, str(error)[:200]], "firstScheduleSeconds": None,
+            "firstScheduleDeterministic": None, "mode": mode,
+            "deterministicBudget": deterministic_budget if mode == "count" else None, "seed": seed,
+        }
     result = runs[0] if len(runs) == 1 else {
         **median_run(runs), "seeds": len(runs), "seedWork": [run["firstScheduleDeterministic"] for run in runs],
     }

@@ -186,3 +186,73 @@ def test_a_timeout_the_deterministic_budget_decided_is_still_a_timeout() -> None
     result = measure.measure_request(build_week(BIGGER).request, mode="count", deterministic_budget=0.001)
     assert result["status"] == "TIMEOUT"
     assert all(s["deterministic"] >= 0.95 * 0.001 for s in result["searches"])
+
+
+# ---- g394-L-6a/c: a crash is a week's answer, the 0.95 and the probe have tests ----------------------------
+
+
+def test_a_crash_in_one_week_is_that_weeks_error_row_and_not_the_end_of_the_run(monkeypatch) -> None:
+    """The nightly job used to go red at the first crash and stay red every night until it was found."""
+    real = measure.measure_request
+    crashing = replace(TINY, seed=2)
+
+    def flaky(request, **kwargs):
+        if request.request_id == build_week(crashing).request.request_id:
+            msg = "cp-sat raised IndexError in phase 1a"
+            raise RuntimeError(msg)
+        return real(request, **kwargs)
+
+    monkeypatch.setattr(measure, "measure_request", flaky)
+
+    rows = measure.run_profile([TINY, crashing, TINY], mode="count", budget=0, deterministic_budget=5, jobs=1)
+
+    assert [row["name"] for row in rows] == [TINY.name(), crashing.name(), TINY.name()]
+    assert [row["status"] for row in rows] == ["FIRST_SCHEDULE", "ERROR", "FIRST_SCHEDULE"]
+    assert rows[1]["conflictCodes"][0] == "RuntimeError"
+    assert "IndexError" in rows[1]["conflictCodes"][1]
+    assert rows[1]["facts"]["lessons"] > 0, "the row names the week it was about, with its facts"
+    assert rows[1]["firstScheduleDeterministic"] is None
+
+
+def _search_that_ends_at(monkeypatch, deterministic: float) -> None:
+    """Every search of the solve ends UNKNOWN after `deterministic` seconds of work, without running CP-SAT."""
+
+    class Ended(measure._RecordingCpSolver):  # noqa: SLF001
+        def Solve(self, model, solution_callback=None):  # noqa: N802
+            self._recording.searches.append(measure.Search("UNKNOWN", 1.0, deterministic, 0, False))
+            return measure.cp_model.UNKNOWN
+
+    monkeypatch.setattr(measure, "_RecordingCpSolver", Ended)
+
+
+def test_the_budget_counts_as_reached_at_ninety_five_percent_and_not_before(monkeypatch) -> None:
+    """A search that ends at 94 % of its deterministic budget was cut by the wall clock (an ERROR); at 95 % it ran out of budget."""
+    assert measure.BUDGET_REACHED == 0.95
+    request = build_week(TINY).request
+
+    _search_that_ends_at(monkeypatch, 0.94 * 5)
+    cut = measure.measure_request(request, mode="count", deterministic_budget=5)
+    _search_that_ends_at(monkeypatch, 0.95 * 5)
+    reached = measure.measure_request(request, mode="count", deterministic_budget=5)
+
+    assert (cut["status"], cut["conflictCodes"][0]) == ("ERROR", "WALL_LIMIT_BEFORE_BUDGET")
+    assert reached["status"] == "TIMEOUT"
+
+
+def test_a_measurement_runs_with_the_probe_off(monkeypatch) -> None:
+    """The probe is spent AFTER a timeout, naming a rule: not part of the time to a timetable, and a waste of the run."""
+    seen: list[float] = []
+    real = measure.MeasuringSolver.__init__
+
+    def spy(self, settings, **kwargs):
+        seen.append(settings.solver_probe_seconds)
+        real(self, settings, **kwargs)
+
+    monkeypatch.setattr(measure.MeasuringSolver, "__init__", spy)
+    _search_that_ends_at(monkeypatch, 5.0)
+
+    result = measure.measure_request(build_week(TINY).request, mode="count", deterministic_budget=5)
+
+    assert seen == [0]
+    assert result["status"] == "TIMEOUT"
+    assert len(result["searches"]) == 2, "phase 1a and phase 1b, and no probe's searches after them"

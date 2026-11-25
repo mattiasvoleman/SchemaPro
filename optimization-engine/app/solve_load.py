@@ -19,9 +19,13 @@ be measured before anything is built to stop an analysis.
 IT COUNTS THE THREAD'S LIFE, NOT THE ANSWER'S. A solve's thread cannot be cancelled, so the 503 at a route's ceiling ends
 the wait and not the work (the same lesson as the analysis gate's). `running` is entered INSIDE the thread, around the
 solve, and left in a `finally`: a thread that outlived its 503 still counts, and a coroutine that was closed before its
-thread was started (a client that went away) counts nothing and cannot leave a count behind. The price is a window of
-microseconds between a thread being handed to the executor and its starting, in which an analysis may be admitted beside
-a Generera that has just arrived: the harmless direction, since a Generera is never refused.
+thread was started (a client that went away) counts nothing and cannot leave a count behind. The price is a window between a
+thread being handed to the executor and its starting, in which an analysis may be admitted beside a Generera that has
+just arrived: the harmless direction, since a Generera is never refused. The window is microseconds only while the
+executor has an idle worker; when it is full the thread waits for one, and the window lasts as long as that wait, silently
+as far as the count goes. What is said is that the overlap is logged from the analysis's side (`generation_beside_analysis`
+names the analysis it started beside, and the analysis's own line, `analysis_beside_generation`, names the Generera it was
+admitted beside and how long that had run), not that the window cannot be long.
 
 ONE PER PROCESS, NOT PER APP. The gates live on `app.state` so that a test's app is its own. This count is read by
 `run_solver`, which has no request to read it from, and what it counts is the process's cores, so it is a module-level

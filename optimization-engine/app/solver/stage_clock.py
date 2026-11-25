@@ -16,8 +16,10 @@ app/timing.py it never reads the clock itself: every method takes `now`, so the
 tests that replace `scheduler_solver.time` go on steering all of it.
 
 THE STEPS ARE CONTIGUOUS. `enter` closes the step in progress at `now` and opens
-the next one at the same instant, so the seconds add up to the solve's total
-and no time falls between two of them. A step the solve skipped has no entry,
+the next one at the same instant, so no time falls between two of them and the
+steps cover the solve from its entry (not the route's) to the answer. Each
+figure is rounded to a tenth on its own (`_seconds`), so the rounded seconds
+add up to the rounded total only to within 0.05 s a step. A step the solve skipped has no entry,
 and a step entered twice is summed (a best-effort solve's phase 1a runs once,
 but the rule is the same for every step).
 """

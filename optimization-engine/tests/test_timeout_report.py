@@ -27,6 +27,7 @@ from app.schemas.schedule import OptimizeScheduleRequest
 from app.solver import scheduler_solver
 from app.solver.scheduler_solver import SchedulerSolver
 from app.solver.stage_clock import StageClock
+from app.timing import Deadline
 from tests import test_search_options as tso
 from tests import test_travel as tt
 
@@ -349,6 +350,35 @@ def test_a_week_load_that_was_cut_short_is_said_beside_the_probes_answer(monkeyp
         "The count of the week load ran out of its 4 s before it had counted every year. "
         "A year with no line here was not counted, which is not the same as being under 85 %."
     )
+
+
+@pytest.mark.parametrize(("ceiling", "said"), [(4.0, 2), (1.4, 0.7), (30.0, 4)])
+def test_the_row_says_the_seconds_the_count_had_when_the_clock_cut_it_below_its_own_four(
+    monkeypatch: pytest.MonkeyPatch, ceiling: float, said: float,
+) -> None:
+    """g371-L-1: the row said the four seconds the count is given, whatever the request's clock left it.
+
+    The count's deadline is clamped to the answer's edge (a ceiling of 4 s is answered by 2: it gives up
+    half of itself). A count that ran past THAT had two seconds, and the row says two; a ceiling that
+    holds the whole four says four.
+    """
+    clock = tso._Clock(monkeypatch)
+    solver = SchedulerSolver(tso._settings())
+    solver._deadline = Deadline(entered=clock.now, ceiling=ceiling)
+
+    def ran_out(*_args: object, deadline: float, **_kwargs: object) -> list[object]:
+        clock.now = deadline + 1.0
+        return []
+
+    monkeypatch.setattr(scheduler_solver, "week_loads", ran_out)
+    cut: list[bool] = []
+
+    solver._week_loads(OptimizeScheduleRequest.model_validate(tso._payload()), cut=cut)
+
+    assert cut == [True]
+    row = solver._with_uncounted_weeks(None).conflicts[0]
+    assert row.code == "WEEK_LOAD_NOT_COUNTED"
+    assert row.params["seconds"] == said
 
 
 def test_a_cut_week_load_with_nothing_else_to_say_is_the_whole_answer(monkeypatch: pytest.MonkeyPatch) -> None:

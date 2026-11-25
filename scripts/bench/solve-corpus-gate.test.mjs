@@ -78,6 +78,15 @@ test('a week the floor solves and this tree refuses fails: a rule got stricter',
   assert.ok(verdict.reasons.some((r) => r.startsWith('n9-m4') && r.includes('INFEASIBLE')));
 });
 
+test('a refusal that the engine raised as an exception is named by its class and not printed as (-)', () => {
+  const crash = week('n9-m4', null, {
+    status: 'REFUSED', conflictCodes: ['SolverCrashedError', 'cp-sat raised IndexError in phase 1b (a sentence is not a code)'],
+  });
+  const verdict = gate([floorRows[0], crash, floorRows[2], floorRows[3]], floorRows);
+  assert.equal(verdict.failed, true);
+  assert.ok(verdict.reasons.some((r) => r.startsWith('n9-m4') && r.includes('REFUSED (SolverCrashedError)')), verdict.reasons.join('\n'));
+});
+
 test('a week lost well inside the budget fails; one lost near the edge does not on its own', () => {
   const clear = [week('n9-m0', null), ...floorRows.slice(1)];
   assert.equal(gate(clear, floorRows).failed, true);

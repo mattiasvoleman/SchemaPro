@@ -132,7 +132,9 @@ export function invalidReason(head, floor) {
   return null;
 }
 
-const code = (row) => (row.conflictCodes ?? []).filter((c) => /^[A-Z_]+$/.test(c)).join('+') || '-';
+// A code is a word: ENGINE_CODES_LIKE_THIS or, for a refusal the engine raised as an exception, the class's own
+// name (SolverCrashedError). A sentence after it is not one (g394-L-6b: the class name used to print as `(-)`).
+const code = (row) => (row.conflictCodes ?? []).filter((c) => /^[A-Z][A-Za-z0-9_]*$/.test(c)).join('+') || '-';
 
 /** One week's verdict: what happened to it between the floor and this tree. */
 export function compareWeek(head, floor, budget) {
