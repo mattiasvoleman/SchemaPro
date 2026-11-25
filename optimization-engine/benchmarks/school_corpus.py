@@ -28,8 +28,9 @@ THE AXES are the ones a school can count itself (SchoolShape):
                       `shared_teachers_of` counts it from the request alone: over the
                       WHOLE request, a union. The engine counts per week (a period
                       times a parity), so for a week with terms the figure here can
-                      be larger than any one of its weeks' (g386-L-5); the tables'
-                      M is the largest week's, and equals this for a week without terms.
+                      be larger than any one of its weeks' (g386-L-5). The tables print this
+                      figure (`facts["sharedTeachers"]`) and only for weeks without terms, where
+                      it is the engine's own.
   G  group_subjects   how many of the year's ten subjects are taught in groups cut
                       across the classes (0 = every subject by class, the earlier
                       benches; the production school ten, Teknik aside)

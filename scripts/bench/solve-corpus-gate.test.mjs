@@ -154,6 +154,21 @@ test('a tree that cannot be handed a week answers ERROR: a failure when it is th
   assert.equal(gained.failed, false, gained.lines.join('\n'));
 });
 
+test('a crash of this tree on a week the floor cannot solve fails too: only a crash the floor has as well excuses it', () => {
+  const crash = (name) => week(name, null, { status: 'ERROR', conflictCodes: ['RuntimeError', 'cp-sat raised IndexError in phase 1b'] });
+  const slow = [floorRows[0], floorRows[1], floorRows[2], week('n12-m8', null)];
+  // The floor times out on n12-m8 and this tree crashes on it: it used to pass as 'recoded', deciding nothing.
+  const lost = gate([slow[0], slow[1], slow[2], crash('n12-m8')], slow);
+  assert.equal(lost.failed, true, lost.lines.join('\n'));
+  assert.ok(lost.reasons.some((r) => r.startsWith('n12-m8') && r.includes('ERROR (RuntimeError)') && r.includes('TIMEOUT')), lost.reasons.join('\n'));
+  // The floor refuses it (a proof, not a search): the crash is still this tree's.
+  const refusedFloor = gate([floorRows[0], floorRows[1], floorRows[2], crash('n12-m8')], floorRows);
+  assert.equal(refusedFloor.failed, true, refusedFloor.lines.join('\n'));
+  // The floor crashed as well: the same crash in both trees is not this tree's doing.
+  const both = gate([slow[0], slow[1], slow[2], crash('n12-m8')], [slow[0], slow[1], slow[2], crash('n12-m8')]);
+  assert.equal(both.failed, false, both.lines.join('\n'));
+});
+
 test('the same week read differently by the two trees is invalid: a ratio of two weeks says nothing', () => {
   const dropped = floorRows.map((row) => (row.name === 'n9-m0' ? { ...row, facts: { corpusVersion: 1, termRequirements: 0 } } : { ...row, facts: { corpusVersion: 1, termRequirements: 0 } }));
   const head = floorRows.map((row) => ({ ...row, facts: { corpusVersion: 1, termRequirements: row.name === 'n9-m0' ? 36 : 0 } }));
