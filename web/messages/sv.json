@@ -2308,10 +2308,10 @@
     "length": "{lesson} är {minutes} minuter och slutar {to}.",
     "lengthLimit": "{lesson}: längden går inte att ändra åt det hållet.",
     "lengthRefused": "{lesson} går inte att göra {minutes} minuter. De närmaste lediga tiderna visas.",
-    "locked": "{lesson} är låst. Generera lägger inte om den.",
-    "unlocked": "{lesson} är inte låst längre.",
+    "locked": "Låser {lesson}.",
+    "unlocked": "Låser upp {lesson}.",
     "parked": "Parkerar {lesson}.",
-    "removed": "Tar bort {lesson}. Ctrl+Z ångrar.",
+    "removed": "Tar bort {lesson}.",
     "keysTitle": "Tangenter på schemat",
     "keys": {
       "arrows": {

@@ -521,8 +521,10 @@ const LessonCard = memo(function LessonCard({
         (hasClick || editable) && !lesson.duty
           ? "cursor-pointer hover:shadow-md"
           : "cursor-default",
-        // A finger on a card that drags must not scroll the page; on a phone nothing drags, and it may.
-        drags ? "touch-none" : "touch-pan-y",
+        // A finger on a card that drags must not scroll the page; on a phone nothing drags, and it may. A grid that is only read
+        // (a teacher's or a pupil's week, 720 px wide in a box that scrolls sideways) has no say in the finger: pan-y there would
+        // stop a swipe that starts on a card from scrolling the week sideways, and from zooming.
+        drags ? "touch-none" : editable && "touch-pan-y",
         /*
          * A cancelled lesson keeps full-strength text: struck
          * through, untinted, its edge dashed. Faded to 45 % it
@@ -804,10 +806,14 @@ function TimetableGridInner({
    * The board: the layer that does its keyboard is fetched when a writer opens the page, and the two things it needs of this
    * component are the card that is in the tab order and the card that is in hand.
    */
-  const board = editable && boardProp === true;
+  const wantsBoard = editable && boardProp === true;
+  // A layer that does not come (a dropped connection) leaves the grid as it was before the board: the arrows move the lesson, a
+  // finger drags, and the week is drawn whole. Without it a phone would have no way to choose a day, and a keyboard no way to move.
+  const [keysFailed, setKeysFailed] = useState(false);
+  const board = wantsBoard && !keysFailed;
   const narrow = useNarrow(board);
   const [chosenDay, setChosenDay] = useState<number | null>(null);
-  const keys = useLazyModule(() => import("./board-keys"), undefined, board);
+  const keys = useLazyModule(() => import("./board-keys"), () => setKeysFailed(true), wantsBoard);
   const [roving, setRoving] = useState<string | null>(null);
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
