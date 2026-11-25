@@ -59,9 +59,18 @@ function offerButton(): HTMLElement {
   return screen.getByRole("button", { name: "generate.suggestions.offerAction" });
 }
 
-/** The areas the gateway asks of the route that starts the analysis: the class's @Area, read from the controller's source. */
+/**
+ * The areas the gateway asks of the route that starts the analysis: the class's @Area, read from the controller's source. RolesGuard reads the
+ * handler's @Area before the class's (getAllAndOverride), and a route of the neighbouring controller does carry its own (POST candidates), so a
+ * second @Area in this file would ask something else of the route than the class says. The file holds one, and a second is refused here
+ * rather than read around: whoever adds it also says here which of the two the button follows.
+ */
 function gatewayAreas(): AdminArea[] {
   const source = readFileSync(path.resolve(__dirname, "../../../../../../src/optimization/suggestions.controller.ts"), "utf8");
+  expect(
+    [...source.matchAll(/^\s*@Area\(/gm)],
+    "the controller has an @Area besides the class's: the handler's wins in RolesGuard, and this test reads only the class's",
+  ).toHaveLength(1);
   const decorated = /@Area\(([^)]*)\)\s*export class SuggestionsController\b/.exec(source);
   expect(decorated, "the controller's class carries an @Area(...)").not.toBeNull();
   const areas = [...decorated![1]!.matchAll(/'([A-Z]+)'/g)].map((found) => found[1] as AdminArea);
