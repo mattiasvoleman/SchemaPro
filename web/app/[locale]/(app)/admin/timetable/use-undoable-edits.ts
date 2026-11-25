@@ -20,6 +20,14 @@ import { apiErrorText } from "@/lib/api-error-text";
 type Translator = ReturnType<typeof useTranslations>;
 
 /**
+ * The errors an UNDO of a move threw (a lesson put back where it stood). The gateway's judge lets a lesson that stands against a rule stand
+ * (låt stå) and moving it away is let through, but putting it back is a NEW place and is refused by the same rule (beslut 4): the reader is told
+ * that the undo cannot be done and why, and that the lesson stays where it is (granskaren g461, M-3). Only a move is told so: what an undone
+ * create or delete meets is another matter, and a redo is a move like the first.
+ */
+const undoOfAMove = new WeakSet<object>();
+
+/**
  * Undoable writes of lessons, the history keyboard and the one way a failed write is told. Every
  * mutation of the page goes through here, so that "drag freely, undo if wrong" is one idiom.
  */
@@ -52,7 +60,8 @@ export function useUndoableEdits(inputs: {
         // The one judge's no (src/calendar/lesson-judge.ts): the reason and the other lesson's class, subject, day and
         // time, in the reader's language and from the catalogue, so "Schemakonflikt" in front would only say it twice.
         // A block's card names the member it is about (lib/problem-codes.ts says it, as it does for a swap's apply).
-        toast.error(apiErrorText(error, tCommon));
+        const why = apiErrorText(error, tCommon);
+        toast.error(undoOfAMove.has(error) ? t("undoRefused", { why }) : why);
       } else if (error instanceof ApiError && error.status === 409) {
         toast.error(`${t("editConflict")}: ${apiErrorText(error, tCommon)}`);
       } else {
@@ -71,7 +80,12 @@ export function useUndoableEdits(inputs: {
       history.push({
         label: "update",
         undo: async () => {
-          await updateLesson.mutateAsync({ id: lesson.id, ...before });
+          try {
+            await updateLesson.mutateAsync({ id: lesson.id, ...before });
+          } catch (error) {
+            if (typeof error === "object" && error !== null) undoOfAMove.add(error);
+            throw error;
+          }
         },
         redo: async () => {
           await updateLesson.mutateAsync({ id: lesson.id, ...after });

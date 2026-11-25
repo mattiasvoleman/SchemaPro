@@ -2345,6 +2345,7 @@
     "lockHint": "Låsta lektioner överlever omgenerering — optimeraren planerar runt dem.",
     "undo": "Ångra",
     "redo": "Gör om",
+    "undoRefused": "Det går inte att ångra. {why} Lektionen ligger kvar där den är.",
     "undone": "Ändringen ångrades",
     "redone": "Ändringen gjordes om",
     "conflictCount": "{count, plural, =1 {1 konflikt} other {# konflikter}}",
