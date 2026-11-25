@@ -29,7 +29,15 @@
  *   (8) the rows the read log leaves (PersonalDataAccess: append-only, no foreign key to the school) do not stop a reset;
  *   (9) A DATABASE WITH A REAL SCHOOL: where the demo school is not there, it is not made, by `db:seed` or by `--reset` or in a dry run, and
  *       nothing is created; where it is there it is reset as before and the real school beside it is untouched. A school with nobody in
- *       it, and one whose people are all at the names reserved for examples, are not a real school.
+ *       it, and one whose people are all at the names reserved for examples, or all pseudonymised (`pseudonym.invalid`), are not a real school;
+ *  (10) THE HÖGSTADIUM SEED'S RESET (prisma/seed-hogstadium.ts, the review of #405, L-5) deletes the school with its slug only when every
+ *       person in it is at the seed's own domain: a school with a person at a real address is refused and is the same row for row, a school
+ *       of the right people under another name is refused, and a school that is not there is not an error;
+ *  (11) `db:seed` without --reset says "Use --reset" only of a school that --reset would reset (L-7): of a school that is not the demo
+ *       school it says NOT RESET, with the reason, and writes nothing;
+ *  (12) THE COMMAND ITSELF: `prisma/seed-hogstadium.ts --reset` run as the operator runs it, not its functions. What (10) holds is the
+ *       judgement; what an operator meets is the script that calls it: a school with a person at a real address is refused, the exit code
+ *       is 1 and the school is the same row for row, and a school of the seed's own people is deleted and made again.
  *
  * It needs a database with no school that has a person at a real address when it starts (the CI database holds made-up schools only: the
  * seed's, the RLS fixtures' and the probes'), because (7) makes a demo school where there is none, which is what (9) shows a real school
@@ -37,13 +45,17 @@
  *
  * It drops every school it made.
  */
+import { spawnSync } from 'node:child_process';
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { createPgAdapter } from '../../src/database/pool-config';
 import { type DemoSpec } from '../../src/demo-school/demo-guard';
-import { resetDemoSchool, describeResult } from '../../prisma/demo-reset';
+import { resetDemoSchool, describeResult, describeExistingDemoSchool, deleteSeedSchool, judgeSeedDatabase } from '../../prisma/demo-reset';
 import { createDemoSchool } from '../../prisma/demo-school';
+import { spawnSync as spawnTheSeed } from 'node:child_process';
+import { join as joinPath } from 'node:path';
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -530,14 +542,215 @@ async function main(): Promise<void> {
       });
     }
 
-    await check('(9) a school with nobody in it, and schools whose people are all at the names reserved for examples, are not a real school', async () => {
+    await check('(9) a school with nobody in it, schools whose people are all at the names reserved for examples, and a school whose people are all pseudonymised, are not a real school', async () => {
+      // Each kind is made here, not assumed from what the database holds: the demo school is made beside all three and nothing stops it.
       const empty = await owner.school.create({ data: { name: `Probe tom ${tag}`, slug: `probe-empty-db9-${tag}`, timezone: 'Europe/Stockholm' } });
       created.push(empty.id);
+      const reserved = await owner.school.create({ data: { name: `Probe reserverad ${tag}`, slug: `probe-reserved-db9-${tag}`, timezone: 'Europe/Stockholm' } });
+      created.push(reserved.id);
+      await person(reserved.id, `lärare-${tag}@skola.example.org`);
+      await person(reserved.id, `rektor-${tag}@kommun.test`);
+      // What gallring leaves of a person (DEPLOYMENT §37): `.invalid` is reserved, so the school is not a real one to the guard.
+      const pseudonymised = await owner.school.create({ data: { name: `Probe pseudonymiserad ${tag}`, slug: `probe-pseudonymised-db9-${tag}`, timezone: 'Europe/Stockholm' } });
+      created.push(pseudonymised.id);
+      await person(pseudonymised.id, `pseudonym-${randomUUID()}@pseudonym.invalid`);
+      const before = await Promise.all([empty.id, reserved.id, pseudonymised.id].map((id) => snapshot(id)));
+
       const made = specOf('db9c');
       const result = await resetDemoSchool(owner, { spec: made });
       assert.equal(result.kind, 'CREATED');
       if (result.kind === 'CREATED') created.push(result.schoolId);
+      assert.deepEqual(await Promise.all([empty.id, reserved.id, pseudonymised.id].map((id) => snapshot(id))), before, 'the three are as they were');
     });
+
+    // (10b) THE HÖGSTADIUM SEED ASKS THE SAME IN EVERY PATH, as a command: in a database that holds a school with a person at a real address it makes
+    // nothing (NOT SEEDED, exit 1), and without --reset it says NOT RESET of a school --reset would refuse, not the advice that ends in it.
+    await check('(10) `seed-hogstadium.ts` as a command: NOT SEEDED in a database with a real school, NOT RESET (not "Use --reset") of a school with a real person, and nothing written', async () => {
+      const slug = 'hogstadieskolan';
+      assert.equal(await owner.school.count({ where: { slug } }), 0, `the slug is the seed's own: nothing else in this database has it`);
+      const seed = (args: string[]): { status: number | null; out: string } => {
+        const result = spawnTheSeed(joinPath(__dirname, '../../node_modules/.bin/ts-node'), ['--transpile-only', 'prisma/seed-hogstadium.ts', ...args], {
+          cwd: joinPath(__dirname, '../..'),
+          env: { ...process.env, DIRECT_URL: requiredEnv('PROBE_OWNER_URL'), DATABASE_URL: requiredEnv('PROBE_OWNER_URL') },
+          encoding: 'utf8',
+          timeout: 300_000,
+        });
+        return { status: result.status, out: `${result.stdout}${result.stderr}` };
+      };
+
+      // A database with a real school: the seed makes no school, for a plain run and for --reset alike.
+      const real = await owner.school.create({ data: { name: `Probe riktig ${tag}`, slug: `probe-real-hs-${tag}`, timezone: 'Europe/Stockholm' } });
+      created.push(real.id);
+      cleanupNow.push(real.id);
+      await person(real.id, `rektor-${tag}@skola.stockholm.se`);
+      assert.deepEqual(await judgeSeedDatabase(owner), { code: 'DATABASE_HAS_A_REAL_SCHOOL', count: 1 }, 'the guard sees the real school');
+      for (const args of [[], ['--reset']]) {
+        const run = seed(args);
+        assert.equal(run.status, 1, `exit code 1 where the database has a real school (${args.join(' ') || 'no flag'}): ${run.out}`);
+        assert.match(run.out, /NOT SEEDED\. Databasen har 1 skola med personer på riktiga adresser/);
+        assert.doesNotMatch(run.out, /rektor|stockholm/, 'the command names no address');
+        assert.equal(await owner.school.count({ where: { slug } }), 0, 'and nothing was made');
+      }
+      await dropNow();
+      assert.equal(await judgeSeedDatabase(owner), null, 'a database of made-up schools only may have it');
+
+      // A school of the seed's own people, with a real person in it: a plain run says NOT RESET, not the advice, and writes nothing.
+      const school = await owner.school.create({ data: { name: 'Högstadieskolan', slug, timezone: 'Europe/Stockholm' } });
+      created.push(school.id);
+      cleanupNow.push(school.id);
+      await person(school.id, 'admin@hogstadieskolan.example.com', { role: 'SCHOOL_ADMIN' });
+      await person(school.id, `rektor-${tag}@skola.stockholm.se`);
+      const before = await snapshot(school.id);
+      const refused = seed([]);
+      assert.equal(refused.status, 1, `exit code 1: ${refused.out}`);
+      assert.match(refused.out, /NOT RESET\. 1 person i skolan har en adress som inte slutar på @hogstadieskolan\.example\.com/);
+      assert.doesNotMatch(refused.out, /Use --reset/, 'no advice that ends in a refusal');
+      assert.deepEqual(await snapshot(school.id), before, 'nothing was written');
+      assert.deepEqual(await deleteSeedSchool(owner, { slug, name: 'Högstadieskolan', domain: 'hogstadieskolan.example.com' }, { write: false }), {
+        kind: 'REFUSED',
+        schoolId: school.id,
+        refusal: { code: 'PEOPLE_OUTSIDE_THE_DEMO', count: 1 },
+      });
+
+      // The real person goes: a plain run gives the advice and exits 0, and a dry run says the school may be deleted, and does not.
+      await owner.user.deleteMany({ where: { schoolId: school.id, email: { contains: '@skola.stockholm.se' } } });
+      const plain = seed([]);
+      assert.equal(plain.status, 0, plain.out);
+      assert.match(plain.out, /Use --reset to recreate it\./);
+      assert.deepEqual(await deleteSeedSchool(owner, { slug, name: 'Högstadieskolan', domain: 'hogstadieskolan.example.com' }, { write: false }), { kind: 'MAY_BE_DELETED', schoolId: school.id });
+      assert.ok(await exists(school.id), 'a dry run deletes nothing');
+    }).finally(dropNow);
+
+    // (10) the högstadium seed's reset
+    await check('(10) the högstadium seed deletes the school with its slug only when every person in it is at the seed\'s domain', async () => {
+      const { spec, schoolId } = await demoSchool('h10');
+      const other = await demoSchool('h10o');
+
+      // A person at a real address: refused, and the school is the one it was, row for row. Another school is not touched either way.
+      await person(schoolId, `rektor-${tag}@skola.stockholm.se`);
+      const [before, beforeOther] = await Promise.all([snapshot(schoolId), snapshot(other.schoolId)]);
+      const refused = await deleteSeedSchool(owner, spec);
+      assert.equal(refused.kind, 'REFUSED');
+      if (refused.kind === 'REFUSED') {
+        assert.equal(refused.schoolId, schoolId);
+        assert.deepEqual(refused.refusal, { code: 'PEOPLE_OUTSIDE_THE_DEMO', count: 1 });
+      }
+      assert.ok(await exists(schoolId), 'the school is still there');
+      assert.deepEqual(await snapshot(schoolId), before, 'row for row');
+
+      // The right people under another name: the school is judged by its name too.
+      await owner.user.deleteMany({ where: { schoolId, email: { contains: '@skola.stockholm.se' } } });
+      const renamed = await deleteSeedSchool(owner, { ...spec, name: `Ett annat namn ${tag}` });
+      assert.deepEqual(renamed.kind === 'REFUSED' ? renamed.refusal : null, { code: 'NOT_THE_DEMO_SCHOOL' });
+      assert.ok(await exists(schoolId));
+
+      // The seed's own school, as it is made: deleted, and only it.
+      const deleted = await deleteSeedSchool(owner, spec);
+      assert.deepEqual(deleted, { kind: 'DELETED', schoolId });
+      assert.equal(await exists(schoolId), false, 'the school is gone');
+      assert.deepEqual(await snapshot(other.schoolId), beforeOther, 'another school, row for row');
+
+      // A school that is not there is not an error: the seed makes it.
+      assert.deepEqual(await deleteSeedSchool(owner, spec), { kind: 'ABSENT' });
+    });
+
+    // (10b) a person added at the same time, to the högstadium seed's school: the lock deleteSeedSchool takes is what this holds
+    await check('(10) a person who commits while the högstadium seed\'s school is being deleted is seen, not deleted unseen: the deletion waits for the lock, reads the person and refuses', async () => {
+      const { spec, schoolId } = await demoSchool('h10c');
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let inserted!: () => void;
+      const insertedRow = new Promise<void>((resolve) => {
+        inserted = resolve;
+      });
+      // The person is inserted in a transaction that stays open: it holds a share lock on the school's row.
+      cleanupNow.push(schoolId);
+      const adding = owner.$transaction(async (tx) => {
+        await tx.user.create({ data: { schoolId, authId: randomUUID(), role: 'TEACHER', firstName: 'Real', lastName: 'Person', email: `rektor-${tag}@kommun.example.org` } });
+        inserted();
+        await held;
+      });
+      await insertedRow;
+      const deleting = deleteSeedSchool(owner, spec);
+      let settled = false;
+      void deleting.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      assert.equal(settled, false, 'the deletion waits for the person\'s transaction');
+      release();
+      await adding;
+      const result = await deleting;
+      // Without the lock on the school's row the facts are read before the person commits, the school passes, and the delete (which waits for the
+      // person's share lock and then cascades to the person's row) takes a person nobody saw: DELETED, and the person gone.
+      assert.deepEqual(result.kind === 'REFUSED' ? result.refusal : null, { code: 'PEOPLE_OUTSIDE_THE_DEMO', count: 1 }, 'refused: the person committed first and is seen');
+      assert.ok(await exists(schoolId), 'the school is still there');
+      assert.equal(await owner.user.count({ where: { schoolId, email: `rektor-${tag}@kommun.example.org` } }), 1, 'and so is the person');
+    }).finally(dropNow);
+
+    // (11) what db:seed says of a school that is there
+    await check('(11) db:seed says "Use --reset" of the demo school and NOT RESET, with nothing written, of a school that is not', async () => {
+      const { spec, schoolId } = await demoSchool('s11');
+      const demo = await describeExistingDemoSchool(owner, schoolId, spec);
+      assert.equal(demo.refused, false);
+      assert.match(demo.text, /^Demo school already exists \(.+\)\. Use --reset to recreate it\.$/);
+
+      await person(schoolId, `rektor-${tag}@kommun.example.org.evil.se`);
+      const before = await snapshot(schoolId);
+      const real = await describeExistingDemoSchool(owner, schoolId, spec);
+      assert.equal(real.refused, true);
+      assert.match(real.text, /^NOT RESET\. 1 person i skolan har en adress som inte slutar på @/);
+      assert.doesNotMatch(real.text, /Use --reset/, 'no advice that ends in a refusal');
+      assert.doesNotMatch(real.text, /rektor|evil/, 'the text names no address');
+      assert.deepEqual(await snapshot(schoolId), before, 'nothing was written');
+    });
+
+    // (12) the command, not its functions
+    await check('(12) `seed-hogstadium.ts --reset` as a command: refused with exit 1 and nothing written for a school with a real person, deleted and made again for a school of its own people', async () => {
+      const slug = 'hogstadieskolan';
+      const domain = 'hogstadieskolan.example.com';
+      assert.equal(await owner.school.count({ where: { slug } }), 0, `the slug is the seed's own: nothing else in this database has it`);
+      const run = (): { status: number | null; out: string } => {
+        const result = spawnSync(join(__dirname, '../../node_modules/.bin/ts-node'), ['--transpile-only', 'prisma/seed-hogstadium.ts', '--reset'], {
+          cwd: join(__dirname, '../..'),
+          env: { ...process.env, DIRECT_URL: requiredEnv('PROBE_OWNER_URL'), DATABASE_URL: requiredEnv('PROBE_OWNER_URL') },
+          encoding: 'utf8',
+          timeout: 300_000,
+        });
+        return { status: result.status, out: `${result.stdout}${result.stderr}` };
+      };
+
+      const school = await owner.school.create({ data: { name: 'Högstadieskolan', slug, timezone: 'Europe/Stockholm' } });
+      created.push(school.id);
+      cleanupNow.push(school.id);
+      await person(school.id, `admin@${domain}`, { role: 'SCHOOL_ADMIN' });
+      await person(school.id, `rektor-${tag}@skola.stockholm.se`);
+      const before = await snapshot(school.id);
+      const refused = run();
+      assert.equal(refused.status, 1, `exit code 1 on a refusal: ${refused.out}`);
+      assert.match(refused.out, /NOT RESET\. 1 person i skolan har en adress som inte slutar på @hogstadieskolan\.example\.com/);
+      assert.doesNotMatch(refused.out, /rektor|stockholm/, 'the command names no address');
+      assert.ok(await exists(school.id), 'the school is still there');
+      assert.deepEqual(await snapshot(school.id), before, 'row for row');
+
+      // The real person goes: what is left is the seed's own school, and the command deletes it and makes it again.
+      await owner.user.deleteMany({ where: { schoolId: school.id, email: { contains: '@skola.stockholm.se' } } });
+      const again = run();
+      assert.equal(again.status, 0, `exit code 0 for the seed's own school: ${again.out}`);
+      assert.match(again.out, /Deleted the högstadium school\./);
+      assert.equal(await exists(school.id), false, 'the old school is gone');
+      const made = await owner.school.findUnique({ where: { slug } });
+      assert.ok(made, 'and a new one is there');
+      created.push(made.id);
+      assert.ok((await owner.user.count({ where: { schoolId: made.id } })) > 400, 'with its people');
+    }).finally(dropNow);
   } finally {
     for (const id of created.reverse()) {
       await owner.school.delete({ where: { id } }).catch(() => undefined);

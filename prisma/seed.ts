@@ -32,7 +32,7 @@
 import { PrismaClient } from '@prisma/client';
 import { createPgAdapter } from '../src/database/pool-config';
 import { DEMO } from '../src/demo-school/demo-guard';
-import { describeResult, resetDemoSchool } from './demo-reset';
+import { describeExistingDemoSchool, describeResult, resetDemoSchool } from './demo-reset';
 
 const databaseUrl = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -49,7 +49,10 @@ async function main(): Promise<void> {
   const reset = process.argv.includes('--reset');
   const existing = await prisma.school.findUnique({ where: { slug: DEMO.slug } });
   if (existing && !reset) {
-    console.log(`Demo school already exists (${existing.id}). Use --reset to recreate it.`);
+    // Judged before it is said: a school with the demo's slug that is not the demo school is refused by --reset, and is not told to use it.
+    const said = await describeExistingDemoSchool(prisma, existing.id);
+    console.log(said.text);
+    if (said.refused) process.exitCode = 1;
     return;
   }
   const result = await resetDemoSchool(prisma);
