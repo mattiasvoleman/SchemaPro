@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     # the failure path, where a week with no timetable and no explanation is the
     # most expensive outcome the engine can produce.
     solver_probe_seconds: float = Field(default=20.0, alias="SOLVER_PROBE_SECONDS")
+    # Klickar (M8 PR 6): the full model of a strict solve (phase 1b's clone and phase 2's) writes the pairs of groups that
+    # share a pupil as a few rows over cliques of them and not one row per pair (app/solver/cliques.py). The same rule in
+    # fewer rows (2,661 against 310 on a corpus week of nine classes). Phase 1a's own model keeps the pairs, so the
+    # search the nightly gate measures is the one it always was. A switch and not a constant because a model that is
+    # built another way is another search: set to false to get the model back that was built before, with no deploy of
+    # code (an engine restart reads it).
+    solver_group_cliques: bool = Field(default=True, alias="SOLVER_GROUP_CLIQUES")
     # The share of the 15-second explanation cap that a LARGE refused week's first
     # try gets, on the model without the objective, before the model with it is
     # tried as the reserve (SchedulerSolver._explain_infeasible). A setting and

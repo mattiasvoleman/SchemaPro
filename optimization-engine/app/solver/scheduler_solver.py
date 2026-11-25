@@ -57,7 +57,7 @@ from app.solver.relaxation import (
     upper_bound,
 )
 from app.solver.servings import allowed_starts
-from app.solver import staged
+from app.solver import cliques, staged
 from app.solver.stage_clock import StageClock
 from app.schemas.schedule import (
     PlaceLimits,
@@ -1673,6 +1673,7 @@ class SchedulerSolver:
         use_assumptions: bool,
         include_objective: bool = True,
         relax: Relax | None = None,
+        by_cliques: bool = False,
     ) -> tuple[
         cp_model.CpModel,
         AssumptionRegistry,
@@ -1681,6 +1682,10 @@ class SchedulerSolver:
         dict[tuple[UUID, int], cp_model.IntVar],
     ]:
         """Construct the CP-SAT model.
+
+        `by_cliques` posts the pairs of groups that share a pupil as rows over cliques of them (`_add_group_no_overlap`,
+        app/solver/cliques.py): the same rule in fewer rows. Only the full model of a strict solve is built so; every
+        other build, phase 1a's satisfaction model among them, keeps one row per pair.
 
         `relax` is Bästa möjliga schema's: when given, the rules on the list in
         app/solver/relaxation.py are built as priced rows (a slack at the
@@ -1730,7 +1735,7 @@ class SchedulerSolver:
         add_pins(model, registry, decisions, rooms, self._grid)
         self._add_capacity_constraints(model, registry, decisions, rooms)
         self._add_teacher_no_overlap(model, decisions)
-        self._add_group_no_overlap(model, decisions, request.group_conflicts)
+        self._add_group_no_overlap(model, decisions, request.group_conflicts, by_cliques=by_cliques)
         room_plan = self._add_room_allocation(
             model,
             decisions,
@@ -6296,6 +6301,7 @@ class SchedulerSolver:
         rooms = request.rooms
         model, _, decisions, room_plan, lunch_full = self._build_model(
             request, use_assumptions=False, include_objective=True,
+            by_cliques=self._settings.solver_group_cliques,
         )
         feas_model, _, feas_decisions, feas_plan, lunch_feas = self._build_model(
             request, use_assumptions=False, include_objective=False,
@@ -12657,6 +12663,8 @@ class SchedulerSolver:
         model: cp_model.CpModel,
         decisions: list[LessonDecision],
         group_conflicts: list[tuple[UUID, UUID]] | None = None,
+        *,
+        by_cliques: bool = False,
     ) -> None:
         """One student group is one set of students: no overlapping lessons.
 
@@ -12694,6 +12702,11 @@ class SchedulerSolver:
         BOTH LAYERS ONCE PER WEEK THE PUPILS HAVE (week_parts), as the
         teacher's: 7A's slöjd udda veckor and hemkunskap jämna veckor share an
         hour, and nothing of 7A's every week may sit beside either.
+
+        `by_cliques` WRITES THE SECOND LAYER AS FEWER ROWS (M8 PR 6, app/solver/cliques.py): a NoOverlap over the lessons of
+        a CLIQUE of the pair graph (groups that all pair, two and two) says exactly what its pairs say, so a cover of the
+        relation by cliques is the same rule. Nothing a pair does not say is said: a path (A–B, B–C) is two rows, since A and
+        C may sit at once.
         """
         grouped: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
@@ -12706,6 +12719,14 @@ class SchedulerSolver:
                     model.AddNoOverlap(
                         [pupil_padded_of(model, decision) for decision in part],
                     )
+
+        if by_cliques:
+            for clique in cliques.cover(list(group_conflicts or []), set(grouped)):
+                combined = [decision for group_id in clique for decision in grouped[group_id]]
+                for _, part in week_parts(combined, _parity):
+                    if len(part) > 1:
+                        model.AddNoOverlap([pupil_padded_of(model, decision) for decision in part])
+            return
 
         for first_id, second_id in group_conflicts or []:
             if first_id == second_id:
