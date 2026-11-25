@@ -15,28 +15,33 @@
 import { useLocale, useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { conflictRows, type ConflictNames } from "@/lib/conflict-rows";
+import { conflictRows, type ConflictNames, type ConflictRules } from "@/lib/conflict-rows";
 import type { ConflictHit } from "@/lib/conflicts";
 import { problemSentence } from "@/lib/problem-codes";
 import type { MasterLesson } from "@/lib/types";
 
 export interface ConflictListProps extends ConflictNames {
   open: boolean;
+  /** The page's weekly rows and year spans: with them a closed hour is said by whose it is, as a refused save says it. */
+  rules?: ConflictRules;
   onOpenChange: (open: boolean) => void;
   conflictMap: ReadonlyMap<string, readonly ConflictHit[]>;
   lessonById: ReadonlyMap<string, MasterLesson>;
-  /** Opens Justera lektion for the lesson. */
-  onGo: (lessonId: string) => void;
+  /**
+   * Opens Justera lektion for the lesson. Absent for a reader (Läsbehörighet): the page gives a profile that changes nothing no
+   * editor, from the grid or from here, so the list is then only read.
+   */
+  onGo?: (lessonId: string) => void;
 }
 
-export function ConflictList({ open, onOpenChange, conflictMap, lessonById, group, subject, onGo }: ConflictListProps) {
+export function ConflictList({ open, rules, onOpenChange, conflictMap, lessonById, group, subject, onGo }: ConflictListProps) {
   const t = useTranslations("timetable");
   const tCommon = useTranslations("common");
   const tDays = useTranslations("days");
   // The weekdays of the catalogue start with a capital, and in Swedish a day in the middle of a sentence does not.
   const locale = useLocale();
   const dayName = (day: number) => (locale === "sv" ? tDays(String(day)).toLocaleLowerCase("sv") : tDays(String(day)));
-  const rows = open ? conflictRows(conflictMap, lessonById, { group, subject }) : [];
+  const rows = open ? conflictRows(conflictMap, lessonById, { group, subject }, rules) : [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -61,9 +66,11 @@ export function ConflictList({ open, onOpenChange, conflictMap, lessonById, grou
                       end: lesson.endTime.slice(0, 5),
                     })}
                   </p>
-                  <Button variant="outline" size="sm" onClick={() => onGo(lesson.id)}>
-                    {t("conflictListGo")}
-                  </Button>
+                  {onGo ? (
+                    <Button variant="outline" size="sm" onClick={() => onGo(lesson.id)} data-writes="SCHEMALAGGNING DRIFT">
+                      {t("conflictListGo")}
+                    </Button>
+                  ) : null}
                 </div>
                 <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-destructive">
                   {reasons.map((reason, index) => (

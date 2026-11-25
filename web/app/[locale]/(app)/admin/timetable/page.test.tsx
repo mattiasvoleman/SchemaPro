@@ -44,6 +44,8 @@ const state = vi.hoisted(() => ({
   yearsLoading: false,
   /** The year's timplansposter: only their blockId is read here (Block i schemat). */
   requirements: [] as unknown[],
+  /** The weekly rows that close an hour (resource availability), as useConstraints reads them. */
+  constraints: [] as unknown[],
   /** GROUPS and PEOPLE unless a row adds to them; null between tests. */
   groups: null as unknown[] | null,
   people: null as unknown[] | null,
@@ -156,7 +158,7 @@ vi.mock("@/lib/queries", () => ({
     state.askedFor.requirements = yearId;
     return { data: state.requirements };
   },
-  useConstraints: () => ({ data: [] }),
+  useConstraints: () => ({ data: state.constraints }),
   useGroupMemberships: () => ({ data: state.memberships }),
   useFrameTimes: () => ({ data: [] }),
   useLunchSettings: () => ({ data: state.lunchSettings }),
@@ -642,6 +644,7 @@ beforeEach(() => {
   state.askedFor = {};
   state.yearsLoading = false;
   state.requirements = [];
+  state.constraints = [];
   state.groups = null;
   state.people = null;
   state.rooms = null;
@@ -1457,6 +1460,39 @@ describe("a refusal of the one judge, and the krocklista (E1)", () => {
     await user.click(buttons[0]!);
     // The list closes and Justera lektion opens for the lesson.
     expect(await screen.findByText("timetable.editTitle")).toBeTruthy();
+  });
+
+  it("says whose hour a weekly row closes, from the page's own rows: the teacher's, as a refused save says it", async () => {
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00")];
+    state.constraints = [
+      { id: "c-1", resourceType: "TEACHER", userId: "t-1", roomId: null, studentGroupId: null, minGradeLevel: null, maxGradeLevel: null, dayOfWeek: 1, date: null, startTime: "07:00", endTime: "12:00", type: "UNAVAILABLE", reason: null },
+    ];
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await user.click(await screen.findByRole("button", { name: "timetable.conflictListOpen" }));
+    const list = await screen.findByRole("dialog");
+    // The echo of the catalogue's sentence: reason, schools, resource.
+    expect(within(list).getByText(/^common\.codes\.MASTER_LESSON_REFUSED\(AVAILABILITY\|\|TEACHER\|/)).toBeTruthy();
+  });
+});
+
+describe("the krocklista for a reader (Läsbehörighet)", () => {
+  /*
+   * The page gives a profile that changes nothing no editor: a click on a card opens none ("gives a reader the grid to read"). The list
+   * says what clashes to that profile as well, and must not open Justera lektion from its rows.
+   */
+  it("says what clashes, and has no way to Justera lektion from its rows", async () => {
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), lesson("l-b", "s-sl", "g-51", "08:00")];
+    const user = userEvent.setup();
+    render(
+      <ProfileProvider profile={{} as Profile} school={null} readOnly>
+        <TimetablePage />
+      </ProfileProvider>,
+    );
+    await user.click(await screen.findByRole("button", { name: "timetable.conflictListOpen" }));
+    const list = await screen.findByRole("dialog");
+    expect(within(list).getAllByText(/^common\.codes\.MASTER_LESSON_REFUSED\(TEACHER/)).toHaveLength(2);
+    expect(within(list).queryByRole("button", { name: "timetable.conflictListGo" })).toBeNull();
   });
 });
 

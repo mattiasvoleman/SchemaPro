@@ -83,6 +83,20 @@ describe("the krocklista", () => {
     expect(onGo).toHaveBeenCalledWith("b");
   });
 
+  it("has no way to open a lesson for a reader: the list is then only read", () => {
+    draw({ onGo: undefined });
+    expect(screen.queryByRole("button", { name: "Öppna" })).toBeNull();
+    // What it says is all there.
+    expect(screen.getAllByText(/Läraren har redan/)).toHaveLength(2);
+  });
+
+  it("marks the way to a lesson as a write, so that a profile without the area is not shown it", () => {
+    draw();
+    for (const button of screen.getAllByRole("button", { name: "Öppna" })) {
+      expect(button.getAttribute("data-writes")).toBe("SCHEMALAGGNING DRIFT");
+    }
+  });
+
   it("says there is nothing to list for a week with no clash, and draws nothing while closed", () => {
     draw({ conflictMap: new Map() });
     expect(screen.getByText("Inga konflikter i schemat.")).toBeTruthy();

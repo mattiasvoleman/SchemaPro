@@ -1,5 +1,6 @@
-import type { ConflictHit } from "@/lib/conflicts";
-import type { MasterLesson } from "@/lib/types";
+import { closingConstraints, toPlacement, type ConflictHit } from "@/lib/conflicts";
+import type { GradeSpan } from "@/lib/grade-span";
+import type { AvailabilityConstraint, MasterLesson } from "@/lib/types";
 
 /*
  * THE KROCKLISTA'S ROWS: every lesson of the grundschema that stands against a rule, and what it stands against, from what the page already
@@ -46,18 +47,48 @@ function otherOf(other: MasterLesson | undefined, names: ConflictNames): Record<
   };
 }
 
-function reasonOf(hit: ConflictHit, lessonById: ReadonlyMap<string, MasterLesson>, names: ConflictNames): ConflictReason {
+/** Whether the two lessons are held by a class in common, as the judge reads it: either's own class or an extra class. */
+const sharesAClass = (a: MasterLesson, b: MasterLesson): boolean => {
+  const held = new Set([a.studentGroupId, ...a.extraGroupIds]);
+  return [b.studentGroupId, ...b.extraGroupIds].some((id) => held.has(id));
+};
+
+/** What the judge calls the rule of a weekly row: the resource it closes, or GRADE_RULE for a rule on whole årskurser. */
+const closedBy = (row: AvailabilityConstraint | undefined): Record<string, string> =>
+  row === undefined
+    ? { reason: "AVAILABILITY" }
+    : row.resourceType === "GRADE_LEVEL"
+      ? { reason: "GRADE_RULE" }
+      : { reason: "AVAILABILITY", resource: row.resourceType === "TEACHER" ? "TEACHER" : row.resourceType === "ROOM" ? "ROOM" : "GROUP" };
+
+function reasonOf(
+  hit: ConflictHit,
+  lesson: MasterLesson,
+  closing: AvailabilityConstraint | undefined,
+  lessonById: ReadonlyMap<string, MasterLesson>,
+  names: ConflictNames,
+): ConflictReason {
   const other = hit.otherLessonId === undefined ? undefined : lessonById.get(hit.otherLessonId);
   switch (hit.kind) {
     case "TEACHER":
     case "ROOM":
     case "GROUP":
-      return { kind: hit.kind, values: { reason: hit.kind, ...otherOf(other, names), ...(hit.pupilBufferOnly ? { pupilTime: 1 } : {}) } };
+      // A clash of classes with no class in common (pupils they share, or named ones) is the judge's PUPILS, as the judge tells it
+      // (src/calendar/lesson-judge.ts clashRefusalOf), and its sentence is not the one for the class itself.
+      return {
+        kind: hit.kind,
+        values: {
+          reason: hit.kind === "GROUP" && other && !sharesAClass(lesson, other) ? "PUPILS" : hit.kind,
+          ...otherOf(other, names),
+          ...(hit.pupilBufferOnly ? { pupilTime: 1 } : {}),
+        },
+      };
     case "AVAILABILITY":
+      // The grid says a closed hour as one kind; the row that closed it says whose it is, and a year rule is the judge's GRADE_RULE.
+      // With no rules to ask (`rules` left out), the sentence for "some resource of the lesson" (the sentence's `other`).
+      return { kind: hit.kind, values: closedBy(closing) };
     case "FRAME":
     case "LUNCH":
-      // The grid says a closed hour as one kind, whether it is the teacher's, the room's, the class's or a year's: the sentence for
-      // "some resource of the lesson" is the one with no resource named (the sentence's `other`).
       return { kind: hit.kind, values: { reason: hit.kind } };
     case "ROOM_LOCK":
       return { kind: hit.kind, values: null };
@@ -65,10 +96,17 @@ function reasonOf(hit: ConflictHit, lessonById: ReadonlyMap<string, MasterLesson
 }
 
 /** The lessons that stand against a rule, in the week's order (day, then clock, then name), each with its reasons in the grid's order. */
+/** What the grid's weekly rows are read against, to say whose hour an AVAILABILITY hit closes: the page's own constraints and year spans. */
+export interface ConflictRules {
+  constraints: AvailabilityConstraint[];
+  gradeSpanOf?: Map<string, GradeSpan>;
+}
+
 export function conflictRows(
   conflictMap: ReadonlyMap<string, readonly ConflictHit[]>,
   lessonById: ReadonlyMap<string, MasterLesson>,
   names: ConflictNames,
+  rules?: ConflictRules,
 ): ConflictRow[] {
   const rows: ConflictRow[] = [];
   for (const [id, hits] of conflictMap) {
@@ -77,9 +115,12 @@ export function conflictRows(
     // A clash with the same lesson found twice (the grid reads one clash as one hit, but a lesson can clash with two) is told once each.
     const seen = new Set<string>();
     const reasons: ConflictReason[] = [];
+    // The grid pushes one AVAILABILITY hit for each row that closes the hour, in the rows' order: the n-th hit is the n-th row.
+    const closing = rules ? closingConstraints(toPlacement(lesson), rules.constraints, rules.gradeSpanOf) : [];
+    let closed = 0;
     for (const hit of hits) {
-      const reason = reasonOf(hit, lessonById, names);
-      const key = `${reason.kind}|${hit.otherLessonId ?? ""}|${hit.pupilBufferOnly ? 1 : 0}`;
+      const reason = reasonOf(hit, lesson, hit.kind === "AVAILABILITY" ? closing[closed++] : undefined, lessonById, names);
+      const key = `${reason.kind}|${hit.otherLessonId ?? ""}|${hit.pupilBufferOnly ? 1 : 0}|${JSON.stringify(reason.values)}`;
       if (seen.has(key)) continue;
       seen.add(key);
       reasons.push(reason);

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildGroupConflictMap, toPlacement, validatePlacement, type ConflictKind, type LunchOf, type Meal } from "./conflicts";
+import { buildGroupConflictMap, detectConflicts, toPlacement, validatePlacement, type ConflictKind, type LunchOf, type Meal } from "./conflicts";
+import { conflictRows } from "./conflict-rows";
 import { buildGradeSpans } from "./grade-span";
-import { minutesOfClock } from "./requirement-placement-text";
+import { clockOfMinutes, minutesOfClock } from "./requirement-placement-text";
 import { cases, constraintsOf, framesOf, groupsOf, lessonsOf, worlds, type Case, type World } from "./lesson-judge-world";
 
 /**
@@ -130,5 +131,36 @@ describe("the grid's drag control, against the judge of a hand edit", () => {
     }
     expect(counts.bothRefuse).toBe(cases.filter((entry) => entry.verdict.reasons.some((reason) => KIND[reason] !== null)).length);
     expect(counts.bothHold + Object.keys(MIRROR_STRICTER).length).toBe(cases.filter((entry) => entry.verdict.ok).length);
+  });
+});
+
+describe("the krocklista, against the judge", () => {
+  /*
+   * The list says each reason in the sentence of the refusal of a save (common.codes.MASTER_LESSON_REFUSED), so it must say the reason
+   * the judge gives for the same lesson in the same place. Each refused case is laid out as the week would stand after the drop, the grid
+   * reads its clashes (detectConflicts), and the list's reasons for the dragged lesson must hold every reason the judge gave. The list
+   * may say more (the judge gives one of the board's three rules, the grid every one that holds), and never less or another.
+   */
+  it.each(cases.filter((entry) => !entry.verdict.ok).map((entry) => [entry.name, entry] as const))("%s", (_name, testCase) => {
+    const page = pages[testCase.world]!;
+    const dropped = page.lessons.map((lesson) => {
+      if (lesson.id !== testCase.drag.lesson) return lesson;
+      const length = minutesOfClock(lesson.endTime.slice(0, 5)) - minutesOfClock(lesson.startTime.slice(0, 5));
+      return {
+        ...lesson,
+        dayOfWeek: testCase.drag.day,
+        startTime: `${testCase.drag.start}:00`,
+        endTime: `${clockOfMinutes(minutesOfClock(testCase.drag.start) + length)}:00`,
+      };
+    });
+    const map = detectConflicts(dropped, page.constraints, page.studentGroupOf, page.groupConflictMap, page.gradeSpanOf, page.frames, page.lunchOf);
+    const rows = conflictRows(map, new Map(dropped.map((lesson) => [lesson.id, lesson])), { group: (id) => id, subject: (id) => id }, {
+      constraints: page.constraints,
+      gradeSpanOf: page.gradeSpanOf,
+    });
+    const said = new Set((rows.find((row) => row.lesson.id === testCase.drag.lesson)?.reasons ?? []).map((reason) => reason.values?.["reason"]));
+    // The school day is no conflict the grid marks or the list names: a lesson a file brought to a Saturday stands there (låt stå), and what
+    // the judge refuses is only putting one there.
+    for (const reason of testCase.verdict.reasons.filter((entry) => entry !== "SCHOOL_DAY")) expect(said, `the judge says ${reason}`).toContain(reason);
   });
 });

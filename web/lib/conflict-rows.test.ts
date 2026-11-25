@@ -4,6 +4,7 @@ import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import type { ProblemLookup } from "@/lib/api-error-text";
 import { detectConflicts } from "@/lib/conflicts";
+import type { AvailabilityConstraint } from "@/lib/types";
 import { problemSentence } from "@/lib/problem-codes";
 import type { MasterLesson } from "@/lib/types";
 import { conflictRows, type ConflictNames } from "./conflict-rows";
@@ -95,6 +96,70 @@ describe("the rows of the krocklista", () => {
       "Tiden ligger på klassens lunch.",
       "Läraren, salen eller klassen är markerad som inte tillgänglig då.",
       null,
+    ]);
+  });
+
+  describe("a closed hour, said by whose it is (the judge's own words)", () => {
+    const row = (overrides: Partial<AvailabilityConstraint>): AvailabilityConstraint => ({
+      id: "c",
+      resourceType: "TEACHER",
+      userId: "anna",
+      roomId: null,
+      studentGroupId: null,
+      minGradeLevel: null,
+      maxGradeLevel: null,
+      dayOfWeek: 1,
+      date: null,
+      startTime: "09:00",
+      endTime: "12:00",
+      type: "UNAVAILABLE",
+      reason: null,
+      ...overrides,
+    });
+    const own = lesson("own", { teacherId: "anna", roomId: "r1" });
+    const said = (constraints: AvailabilityConstraint[], spans?: Map<string, { min: number; max: number }>) => {
+      const map = detectConflicts([own], constraints, undefined, undefined, spans as never);
+      return conflictRows(map, new Map([["own", own]]), names, { constraints, gradeSpanOf: spans as never })[0]!.reasons.map((reason) =>
+        problemSentence("MASTER_LESSON_REFUSED", reason.values, swedish),
+      );
+    };
+
+    it("says the teacher's, the room's and the class's own row for what it is, one sentence for each row that closes the hour", () => {
+      expect(
+        said([
+          row({ id: "t" }),
+          row({ id: "r", resourceType: "ROOM", userId: null, roomId: "r1" }),
+          row({ id: "g", resourceType: "STUDENT_GROUP", userId: null, studentGroupId: "7A" }),
+        ]),
+      ).toEqual(["Läraren är markerad som inte tillgänglig då.", "Salen är markerad som inte tillgänglig då.", "Klassen är markerad som inte tillgänglig då."]);
+    });
+
+    it("says a rule on whole årskurser as the judge does: the time is closed to the year", () => {
+      const year = row({ id: "y", resourceType: "GRADE_LEVEL", userId: null, minGradeLevel: 7, maxGradeLevel: 7 });
+      expect(said([year], new Map([["7A", { min: 7, max: 7 }]]))).toEqual(["Tiden är stängd för klassens årskurs."]);
+    });
+
+    it("says the general sentence when it is not told the rows", () => {
+      const map = detectConflicts([own], [row({ id: "t" })]);
+      const reasons = conflictRows(map, new Map([["own", own]]), names)[0]!.reasons;
+      expect(reasons.map((reason) => problemSentence("MASTER_LESSON_REFUSED", reason.values, swedish))).toEqual([
+        "Läraren, salen eller klassen är markerad som inte tillgänglig då.",
+      ]);
+    });
+  });
+
+  it("says a clash of classes that share no class as the pupils', and a clash of one class as the class's", () => {
+    // 8B's lesson and 7A's: no class in common, so what they share is pupils. An extra class in common makes it the class's.
+    const sameClass = lesson("c", { subjectId: "Ke", studentGroupId: "8B", extraGroupIds: ["7A"], startTime: "10:30:00", endTime: "11:30:00" });
+    const all = new Map([a, b, sameClass].map((entry) => [entry.id, entry]));
+    const rows = conflictRows(
+      new Map([["a", [{ kind: "GROUP" as const, otherLessonId: "b" }, { kind: "GROUP" as const, otherLessonId: "c" }]]]),
+      all,
+      names,
+    );
+    expect(rows[0]!.reasons.map((reason) => problemSentence("MASTER_LESSON_REFUSED", reason.values, swedish))).toEqual([
+      "Elever i klassen är också med i en annan grupp som har Kemi med 8B, måndag 10:30–11:30.",
+      "Klassen har redan Kemi med 8B, måndag 10:30–11:30.",
     ]);
   });
 

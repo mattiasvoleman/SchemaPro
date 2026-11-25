@@ -1522,15 +1522,20 @@ export default function TimetablePage() {
           <Suspense fallback={null}>
             <ConflictList
               open={conflictsOpen}
+              rules={{ constraints: constraints ?? [], gradeSpanOf }}
               onOpenChange={setConflictsOpen}
               conflictMap={conflictMap}
               lessonById={lessonById}
               group={(id) => groupById.get(id)?.name ?? ""}
               subject={(id) => subjectById.get(id)?.name ?? ""}
-              onGo={(lessonId) => {
-                setConflictsOpen(false);
-                openEditor(lessonId);
-              }}
+              onGo={
+                readOnly
+                  ? undefined
+                  : (lessonId) => {
+                      setConflictsOpen(false);
+                      openEditor(lessonId);
+                    }
+              }
             />
           </Suspense>
         )}
