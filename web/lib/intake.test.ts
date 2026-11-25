@@ -31,6 +31,9 @@ const gatewayYearBound = [...(/YEAR_BOUND_AREAS[^=]*= \[([\s\S]*?)\];/.exec(GATE
 describe("what this test reads of the gateway", () => {
   it("is every gap, area and found-count (a parse that finds nothing would pass everything below)", () => {
     expect(gatewayGaps.length).toBeGreaterThan(15);
+    // Every definition line, not only the ones the strict shape above reads: a gap written with another key, or on two lines, is a gap this file
+    // would otherwise never compare (the texts, the stub's levels and its order all hang on this list).
+    expect(gatewayGaps, "a GAP_DEFINITIONS entry that the parse above does not read").toHaveLength([...GATEWAY.matchAll(/\{ code: '[A-Z_]+', area: /g)].length);
     expect(gatewayAreas).toHaveLength(11);
     expect(Object.keys(gatewayFound)).toEqual(gatewayAreas);
     expect(gatewayYearBound.length).toBeGreaterThan(3);
@@ -151,12 +154,14 @@ describe("the stub's answers to GET /intake", async () => {
       }
     });
 
-    it("waits for the year only in the areas the gateway says belong to a year, and only for a school with none", () => {
+    it("waits for the year in exactly the areas the gateway says belong to a year, and only for a school with none (`waitsForYear: !hasYear && YEAR_BOUND_AREAS.includes(area)`)", () => {
       const view = answer(scenario);
       for (const area of view.areas) {
-        if (!area.waitsForYear) continue;
-        expect(view.year, `${area.area} waits for a year the school has`).toBeNull();
-        expect(gatewayYearBound, area.area).toContain(area.area);
+        if (area.waitsForYear) expect(view.year, `${area.area} waits for a year the school has`).toBeNull();
+        // Both ways: an area the gateway holds back for a school with no year and the stub does not (or the reverse) draws the page's "väntar på läsåret" on one side only.
+        expect(area.waitsForYear, `${area.area}: the stub's waitsForYear for a school ${view.year === null ? "with no year" : "with a year"}`).toBe(
+          view.year === null && gatewayYearBound.includes(area.area),
+        );
       }
     });
 
