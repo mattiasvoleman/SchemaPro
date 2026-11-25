@@ -195,7 +195,7 @@ describe('readStartSource', () => {
 
     const world = (lessons: unknown[], groups: { id: string; predecessorId: string }[]) => ({
       academicYear: {
-        findUnique: jest.fn(async ({ where }: { where: { id: string } }) => (where.id === 'y-prev' ? years.prev : years.this)),
+        findUnique: jest.fn(async ({ where }: { where: { id: string } }): Promise<unknown> => (where.id === 'y-prev' ? years.prev : years.this)),
       },
       studentGroup: { findMany: jest.fn().mockResolvedValue(groups) },
       masterLesson: { findMany: jest.fn().mockResolvedValue(lessons) },
@@ -273,7 +273,7 @@ describe('readStartSource', () => {
         [{ id: 'g-8a', predecessorId: 'g-7a' }],
       );
       // The new year ends before the shifted period begins.
-      tx.academicYear.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      tx.academicYear.findUnique.mockImplementation(async ({ where }: { where: { id: string } }): Promise<unknown> =>
         where.id === 'y-prev' ? years.prev : { ...years.this, endDate: new Date('2027-12-20') },
       );
 
