@@ -321,10 +321,15 @@ describe("a collaborator's change of a few lessons", () => {
     return { ...rest, extraGroups: [{ studentGroupId: "7b" }], participants: [{ studentId: "pupil-1" }] };
   };
   const held = (queryClient: QueryClient) => queryClient.getQueryData<Array<{ id: string; dayOfWeek: number }>>(YEAR)!;
-  const heard = async (socket: ReturnType<typeof makeFakeSocket>, payload: unknown) => {
+  /**
+   * The event is fired, and the page has answered it when `until` holds. A fixed number of turns is not enough: the page loads
+   * the cache module with a dynamic import, which takes as long as the machine takes, and a test that asserts after two turns
+   * asserts before it on a loaded one.
+   */
+  const heard = async (socket: ReturnType<typeof makeFakeSocket>, payload: unknown, until?: () => void) => {
     await waitFor(() => expect(socket.on).toHaveBeenCalledWith("master_timetable_updated", expect.any(Function)));
     act(() => socket.fire("master_timetable_updated", payload));
-    await flush();
+    if (until) await waitFor(until);
     await flush();
   };
 
@@ -335,7 +340,9 @@ describe("a collaborator's change of a few lessons", () => {
     queryClient.setQueryData(YEAR, [lesson("a"), lesson("b"), lesson("c")]);
     const others = held(queryClient).slice(1);
 
-    await heard(socket, { changedAt: "2026-11-25T10:00:00.000Z", lessonIds: ["a"] });
+    await heard(socket, { changedAt: "2026-11-25T10:00:00.000Z", lessonIds: ["a"] }, () =>
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["calendarLessons"] }),
+    );
 
     expect(reads).toEqual([["a"]]);
     expect(held(queryClient).map((l) => [l.id, l.dayOfWeek])).toEqual([["a", 3], ["b", 1], ["c", 1]]);
@@ -355,7 +362,9 @@ describe("a collaborator's change of a few lessons", () => {
     });
     queryClient.setQueryData(YEAR, [lesson("a"), lesson("gone")]);
 
-    await heard(socket, { lessonIds: ["new", "gone"] });
+    await heard(socket, { lessonIds: ["new", "gone"] }, () =>
+      expect(held(queryClient).map((l) => l.id).sort()).toEqual(["a", "new"]),
+    );
 
     expect(held(queryClient).map((l) => l.id).sort()).toEqual(["a", "new"]);
   });
@@ -383,7 +392,7 @@ describe("a collaborator's change of a few lessons", () => {
 
   it("reads the year when there is no list to lay the lessons in", async () => {
     const { socket, invalidate, reads } = await setup();
-    await heard(socket, { lessonIds: ["a"] });
+    await heard(socket, { lessonIds: ["a"] }, () => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["masterLessons"] }));
     expect(reads).toEqual([]);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["masterLessons"] });
   });
@@ -392,7 +401,7 @@ describe("a collaborator's change of a few lessons", () => {
     const { socket, invalidate, queryClient } = await setup({ read: () => ({ data: null, error: { message: "JWT expired" } }) });
     queryClient.setQueryData(YEAR, [lesson("a"), lesson("gone")]);
 
-    await heard(socket, { lessonIds: ["gone"] });
+    await heard(socket, { lessonIds: ["gone"] }, () => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["masterLessons"] }));
 
     // The lesson a failed read did not find is not a lesson somebody removed.
     expect(held(queryClient).map((l) => l.id)).toEqual(["a", "gone"]);
