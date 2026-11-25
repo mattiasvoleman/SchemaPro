@@ -132,12 +132,21 @@ export function invalidReason(head, floor) {
   return null;
 }
 
-const code = (row) => (row.conflictCodes ?? []).filter((c) => /^[A-Z_]+$/.test(c)).join('+') || '-';
+// A code is a word: ENGINE_CODES_LIKE_THIS or, for a refusal the engine raised as an exception, the class's own
+// name (SolverCrashedError). A sentence after it is not one (g394-L-6b: the class name used to print as `(-)`).
+const code = (row) => (row.conflictCodes ?? []).filter((c) => /^[A-Z][A-Za-z0-9_]*$/.test(c)).join('+') || '-';
 
 /** One week's verdict: what happened to it between the floor and this tree. */
 export function compareWeek(head, floor, budget) {
   const ceiling = budget * SEARCHES_PER_SOLVE;
   const name = head.name;
+  // A crash is this tree's whatever the floor did with the week (g394-L-6a: a crash is a week's row and no longer
+  // ends the run, so the verdict is the only place it can be read). A week the floor cannot solve was not covered
+  // by the 'the floor solves it' rule below: the crash went by as 'recoded' and the job stayed green. The floor
+  // having crashed too is the one excuse: a crash both trees have is not this tree's doing.
+  if (head.status === 'ERROR' && floor.status !== 'ERROR' && !solved(floor)) {
+    return { name, kind: 'refused', note: `the floor answers ${floor.status} (${code(floor)}); this tree answers ERROR (${code(head)}): a crash is this tree's, whatever the floor did` };
+  }
   if (solved(floor) && solved(head)) {
     const ratio = head.firstScheduleDeterministic / Math.max(floor.firstScheduleDeterministic, 1e-9);
     const carries = floor.firstScheduleDeterministic >= MIN_FLOOR_WORK;

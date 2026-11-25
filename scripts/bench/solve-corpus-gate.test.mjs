@@ -78,6 +78,15 @@ test('a week the floor solves and this tree refuses fails: a rule got stricter',
   assert.ok(verdict.reasons.some((r) => r.startsWith('n9-m4') && r.includes('INFEASIBLE')));
 });
 
+test('a refusal that the engine raised as an exception is named by its class and not printed as (-)', () => {
+  const crash = week('n9-m4', null, {
+    status: 'REFUSED', conflictCodes: ['SolverCrashedError', 'cp-sat raised IndexError in phase 1b (a sentence is not a code)'],
+  });
+  const verdict = gate([floorRows[0], crash, floorRows[2], floorRows[3]], floorRows);
+  assert.equal(verdict.failed, true);
+  assert.ok(verdict.reasons.some((r) => r.startsWith('n9-m4') && r.includes('REFUSED (SolverCrashedError)')), verdict.reasons.join('\n'));
+});
+
 test('a week lost well inside the budget fails; one lost near the edge does not on its own', () => {
   const clear = [week('n9-m0', null), ...floorRows.slice(1)];
   assert.equal(gate(clear, floorRows).failed, true);
@@ -143,6 +152,21 @@ test('a tree that cannot be handed a week answers ERROR: a failure when it is th
   assert.ok(lost.reasons.some((r) => r.startsWith('n9-m0') && r.includes('ERROR')));
   const gained = gate(floorRows, [error('n9-m0'), ...floorRows.slice(1)]);
   assert.equal(gained.failed, false, gained.lines.join('\n'));
+});
+
+test('a crash of this tree on a week the floor cannot solve fails too: only a crash the floor has as well excuses it', () => {
+  const crash = (name) => week(name, null, { status: 'ERROR', conflictCodes: ['RuntimeError', 'cp-sat raised IndexError in phase 1b'] });
+  const slow = [floorRows[0], floorRows[1], floorRows[2], week('n12-m8', null)];
+  // The floor times out on n12-m8 and this tree crashes on it: it used to pass as 'recoded', deciding nothing.
+  const lost = gate([slow[0], slow[1], slow[2], crash('n12-m8')], slow);
+  assert.equal(lost.failed, true, lost.lines.join('\n'));
+  assert.ok(lost.reasons.some((r) => r.startsWith('n12-m8') && r.includes('ERROR (RuntimeError)') && r.includes('TIMEOUT')), lost.reasons.join('\n'));
+  // The floor refuses it (a proof, not a search): the crash is still this tree's.
+  const refusedFloor = gate([floorRows[0], floorRows[1], floorRows[2], crash('n12-m8')], floorRows);
+  assert.equal(refusedFloor.failed, true, refusedFloor.lines.join('\n'));
+  // The floor crashed as well: the same crash in both trees is not this tree's doing.
+  const both = gate([slow[0], slow[1], slow[2], crash('n12-m8')], [slow[0], slow[1], slow[2], crash('n12-m8')]);
+  assert.equal(both.failed, false, both.lines.join('\n'));
 });
 
 test('the same week read differently by the two trees is invalid: a ratio of two weeks says nothing', () => {

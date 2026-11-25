@@ -25,7 +25,12 @@ THE AXES are the ones a school can count itself (SchoolShape):
   M  shared teachers  teachers who stand on two or more parallel groups that
                       take pupils from the same class. This is the engine's own
                       reading (week_load._shared_teachers (a) and (b)), and
-                      `shared_teachers_of` counts it from the request alone.
+                      `shared_teachers_of` counts it from the request alone: over the
+                      WHOLE request, a union. The engine counts per week (a period
+                      times a parity), so for a week with terms the figure here can
+                      be larger than any one of its weeks' (g386-L-5). The tables print this
+                      figure (`facts["sharedTeachers"]`) and only for weeks without terms, where
+                      it is the engine's own.
   G  group_subjects   how many of the year's ten subjects are taught in groups cut
                       across the classes (0 = every subject by class, the earlier
                       benches; the production school ten, Teknik aside)
@@ -619,6 +624,7 @@ def build_week(shape: SchoolShape) -> CorpusWeek:
         "lessons": lessons,
         "groupConflicts": len(pairs),
         "teachers": len(all_teachers),
+        # The union over the request; the engine's own count is per week (see the docstring, M).
         "sharedTeachers": shared_teachers_of(request),
         "sharedTeachersAsked": shape.shared_teachers,
         "groupSubjects": max(shape.group_subjects_of(year) for year in years),

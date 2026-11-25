@@ -2294,7 +2294,9 @@ class TimeoutReport(CamelModel):
     this and from `conflicts`.
     """
 
-    #: From the route's entry to the answer, builds and the probe included.
+    #: From `solve()`'s entry to the answer, builds and the probe included: not from the route's, so the
+    #: parsing of the body and the transfer before `solve()` are not in it. Each figure of the report is
+    #: rounded to a tenth on its own, so the steps' sum can differ from this by up to 0.05 s a step.
     total_seconds: float = Field(alias="totalSeconds", ge=0)
     #: What the search was given, in whole seconds: the same number the TIMEOUT's
     #: summaries call {budget}. Less than the next one when the request's clock
