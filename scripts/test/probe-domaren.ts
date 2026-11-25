@@ -190,7 +190,7 @@ export function generateWorlds(count: number, perWorld: number): { worlds: World
 // A world in a school of its own.
 // ---------------------------------------------------------------------------------------------------------------------
 
-interface Planted {
+export interface Planted {
   school: string;
   year: string;
   caller: AuthenticatedUser;
@@ -203,7 +203,7 @@ interface Planted {
   slot: Map<string, { day: number; start: string; end: string }>;
 }
 
-async function plant(owner: Client, slug: string, world: World): Promise<Planted> {
+export async function plant(owner: Client, slug: string, world: World): Promise<Planted> {
   const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [slug]);
   const school = (await one<{ id: string }>(`INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`, [`${slug}`, slug])).id;

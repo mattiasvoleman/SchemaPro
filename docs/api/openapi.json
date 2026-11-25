@@ -40,6 +40,9 @@
       "name": "BlockPlacements"
     },
     {
+      "name": "BoardTray"
+    },
+    {
       "name": "Calendar"
     },
     {
@@ -3445,6 +3448,64 @@
             "PLANERING"
           ]
         }
+      }
+    },
+    "/api/v1/board-tray": {
+      "get": {
+        "tags": [
+          "BoardTray"
+        ],
+        "operationId": "BoardTrayController_trayOfYear",
+        "parameters": [
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "groupId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
       }
     },
     "/api/v1/calendar-feeds": {

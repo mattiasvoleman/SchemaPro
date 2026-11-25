@@ -44,6 +44,20 @@ a Sunday (`SCHOOL_DAY`, the förläggning's own first question, in its words).
   over real Postgres, with the cases in `src/calendar/__fixtures__/lesson-judge-cases.json` that the web's mirror is held to) and
   `src/calendar/lesson-judge.property.spec.ts` (the other schools' holds and the board's rules over random facts).
 
+## Att lägga: grundschemats bricklåda (E4)
+
+`GET /api/v1/board-tray?academicYearId=…[&groupId=…]` (`src/board-tray/`) svarar med en **bricka** för varje lektion en timplanspost har kvar, räknad som Generera räknar:
+samma funktion (`demandLeftOf`, `post-demand.ts`) genom samma läsning som Förlägg i veckan ritar sina poster med (`boardPostOf`), så att talet på brädet och talet Generera
+skickar är ett. En skillnad, och den är brädets: det som redan står på grundschemat svarar en lektion, också det Generera lagt och ingen låst (Generera raderar det fria före
+sin räkning, brädet visar det stående). En förläggning svarar en lektion och sägs för sig, en parkerad lektion svarar ingen, och en post i ett parallellt block läggs med
+blocket (`blockId`, `cannotPlace: 'BLOCK'`). Ingen person nämns, bara id.
+
+Svaret har `bricks` (den valda klassens, eller årets; längsta lektionerna först i fast ordning, `possibleTimes: null` tills E3:s fråga finns), huvudets tal (`tally`:
+lektioner, lagda, svarade av en förläggning, kvar) och `groups` (kvar per klass, för klassväljaren). En läsning varje administratör får göra.
+
+Hålls av `scripts/test/probe-att-lagga.ts` (mot riktig Postgres: samma tal som Förlägg i veckan, fria och parkerade lektioner, en förläggning, en annan skolas år) och, för hand mot
+en riktig motor, `scripts/test/probe-att-lagga-motor.ts`: brickorna per post är det motorn sedan lägger, och facket är tomt efteråt.
+
 ## Tier 3
 
 - **Minimal-disruption re-optimization** — the gateway sends the current unlocked placements as `previousLessons`; the solver is rewarded (weight `disruption`) for keeping lessons on those slots and warm-started with them as hints. Mid-term re-runs now change as little as possible.
