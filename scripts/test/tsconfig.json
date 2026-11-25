@@ -13,9 +13,9 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false
   },
-  // The demo school's seed and its reset are scripts the probes import and operators run (ts-node --transpile-only): without this a renamed
+  // The demo school's seed and its reset, and the högstadium seed, are scripts the probes import and operators run (ts-node --transpile-only): without this a renamed
   // import or a changed signature in them is a TypeError on the day somebody resets, not a red build.
-  "include": ["./**/*.ts", "../../prisma/seed.ts", "../../prisma/demo-school.ts", "../../prisma/demo-reset.ts"],
+  "include": ["./**/*.ts", "../../prisma/seed.ts", "../../prisma/seed-hogstadium.ts", "../../prisma/demo-school.ts", "../../prisma/demo-reset.ts"],
   // An `exclude` is inherited whole, and the root's leaves out `test` and the specs the
   // probes may import; nothing the includes reach needs leaving out.
   "exclude": []

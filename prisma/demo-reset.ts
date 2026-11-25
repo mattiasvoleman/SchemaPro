@@ -185,6 +185,8 @@ export async function describeExistingDemoSchool(
 export type SeedSchoolDeletion =
   | { kind: 'ABSENT' }
   | { kind: 'DELETED'; schoolId: string }
+  /** A dry run (`write: false`): the school is there and would be deleted. */
+  | { kind: 'MAY_BE_DELETED'; schoolId: string }
   | { kind: 'REFUSED'; schoolId: string; refusal: Refusal };
 
 /**
@@ -193,7 +195,8 @@ export type SeedSchoolDeletion =
  * unique, so a real school that had been given the slug would have been found by `--reset` and deleted with all its data
  * (the review of #405, L-5). A refusal is a return with nothing written.
  */
-export async function deleteSeedSchool(client: PrismaClient, spec: DemoSpec): Promise<SeedSchoolDeletion> {
+export async function deleteSeedSchool(client: PrismaClient, spec: DemoSpec, options: { write?: boolean } = {}): Promise<SeedSchoolDeletion> {
+  const write = options.write ?? true;
   return client.$transaction(
     async (tx) => {
       const found = await tx.$queryRaw<{ id: string; name: string }[]>(Prisma.sql`SELECT "id"::text AS id, "name" FROM "Schools" WHERE "slug" = ${spec.slug} FOR UPDATE`);
@@ -201,11 +204,22 @@ export async function deleteSeedSchool(client: PrismaClient, spec: DemoSpec): Pr
       if (school === undefined) return { kind: 'ABSENT' as const };
       const refusal = judgeDemoSchool(await readFacts(tx, spec, school.id, school.name), spec);
       if (refusal !== null) return { kind: 'REFUSED' as const, schoolId: school.id, refusal };
+      if (!write) return { kind: 'MAY_BE_DELETED' as const, schoolId: school.id };
       await tx.school.delete({ where: { id: school.id } });
       return { kind: 'DELETED' as const, schoolId: school.id };
     },
     { timeout: 120_000, maxWait: 30_000 },
   );
+}
+
+/**
+ * Null when a school of fictional people may be made in the database, as `db:seed` asks it of the demo school where that is not there: no school
+ * of the database has a person at an address outside the names reserved for examples (`judgeDatabase`). The högstadium seed asks it before it
+ * makes anything where its school is not there, so `db:seed:hogstadium` run against a database with a real school (the production database holds
+ * one) adds no school of 450 fictional pupils to it. Nothing is written.
+ */
+export async function judgeSeedDatabase(client: PrismaClient): Promise<Refusal | null> {
+  return client.$transaction(async (tx) => judgeDatabase(await readDatabase(tx)), { timeout: 30_000, maxWait: 30_000 });
 }
 
 /** The sentences a person reads of a result. Counts, never an address and never a name. */

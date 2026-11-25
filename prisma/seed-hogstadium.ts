@@ -28,7 +28,10 @@
  *   npm run db:seed:hogstadium            (--reset to recreate it)
  *
  * Connects via DIRECT_URL (table owner), as the demo seed does; never run it
- * with production credentials. All people are fictional, their authIds random
+ * with production credentials: where its school is not there it makes it only in a
+ * database that holds no school with a person at a real address (NOT SEEDED, exit
+ * 1), and --reset deletes only a school whose every person is at its own domain
+ * (NOT RESET, exit 1; docs/DEPLOYMENT.md §37). All people are fictional, their authIds random
  * and linked to no Supabase user.
  */
 import { randomUUID } from 'node:crypto';
@@ -36,7 +39,7 @@ import { DEFAULT_ROOM_TYPES } from '../src/resources/default-room-types';
 import { createPgAdapter } from '../src/database/pool-config';
 import { refusalText, type DemoSpec } from '../src/demo-school/demo-guard';
 import { PrismaClient } from '@prisma/client';
-import { deleteSeedSchool } from './demo-reset';
+import { deleteSeedSchool, judgeSeedDatabase } from './demo-reset';
 
 const databaseUrl = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -132,6 +135,13 @@ async function main(): Promise<void> {
   const existing = await prisma.school.findUnique({ where: { slug: SCHOOL_SLUG } });
   if (existing) {
     if (!reset) {
+      // Judged before it is said, as `db:seed` does of the demo school: a school that --reset would refuse is not told to use it.
+      const verdict = await deleteSeedSchool(prisma, HOGSTADIUM, { write: false });
+      if (verdict.kind === 'REFUSED') {
+        console.log(`NOT RESET. ${refusalText(verdict.refusal, HOGSTADIUM)}`);
+        process.exitCode = 1;
+        return;
+      }
       console.log(`The högstadium school already exists (${existing.id}). Use --reset to recreate it.`);
       return;
     }
@@ -143,6 +153,15 @@ async function main(): Promise<void> {
       return;
     }
     console.log('Deleted the högstadium school.');
+  } else {
+    // As the demo seed, where its school is not there: a school of fictional people is made only in a database that holds no school with a person
+    // at a real address. The production database holds one; this stops a seed run against it by mistake from adding 450 pupils to it.
+    const stop = await judgeSeedDatabase(prisma);
+    if (stop !== null) {
+      console.log(`NOT SEEDED. ${refusalText(stop, HOGSTADIUM)}`);
+      process.exitCode = 1;
+      return;
+    }
   }
 
   const school = await prisma.school.create({
@@ -324,7 +343,7 @@ async function main(): Promise<void> {
     });
     blocks.push(sprakval.name, elevensVal.name);
 
-    const languageGroups = [];
+    const languageGroups: { id: string }[] = [];
     for (const [name, code, teacher] of SPRAKVAL) {
       const group = await prisma.studentGroup.create({
         data: { schoolId, academicYearId: year.id, name: `${name} ${grade}`, kind: 'TEACHING_GROUP', gradeLevel: grade },
@@ -344,7 +363,7 @@ async function main(): Promise<void> {
       });
       requirements++;
     }
-    const choiceGroups = [];
+    const choiceGroups: { id: string }[] = [];
     for (const [choice, , code] of ELEVENS_VAL) {
       const group = await prisma.studentGroup.create({
         data: { schoolId, academicYearId: year.id, name: `Elevens val ${choice} ${grade}`, kind: 'TEACHING_GROUP', gradeLevel: grade },
