@@ -165,10 +165,16 @@ export function StartedFromNote({ startedFrom }: { startedFrom: StartedFrom }) {
     startedFrom.source === "VERSION" && startedFrom.versionName !== null
       ? t("startNoteSourceNamed", { name: startedFrom.versionName })
       : t(`startNoteSource.${startedFrom.source}`);
-  const reasons = DROP_ORDER.flatMap((reason) => {
-    const count = startedFrom.dropped[reason] ?? 0;
-    return count > 0 ? [t(`startDrop.${reason}`, { count })] : [];
-  });
+  // What could not be used of the schedule: said only when the engine was given it, and counted from the reasons themselves, which add up
+  // to every lesson that was left out (an older engine was given none, and a sentence about lessons it never saw would be about nothing).
+  const reasons =
+    startedFrom.engine === "OLDER"
+      ? []
+      : DROP_ORDER.flatMap((reason) => {
+          const count = startedFrom.dropped[reason] ?? 0;
+          return count > 0 ? [t(`startDrop.${reason}`, { count })] : [];
+        });
+  const droppedTotal = DROP_ORDER.reduce((sum, reason) => sum + (startedFrom.dropped[reason] ?? 0), 0);
   const total = (startedFrom.held ?? 0) + (startedFrom.moved ?? 0) + (startedFrom.laid ?? 0);
   return (
     <div className="max-w-prose space-y-1 text-sm" data-testid="generate-started-from">
@@ -182,7 +188,7 @@ export function StartedFromNote({ startedFrom }: { startedFrom: StartedFrom }) {
       )}
       {reasons.length > 0 ? (
         <p className="text-muted-foreground">
-          {t("startNoteDropped", { count: startedFrom.offered - startedFrom.used, reasons: reasons.join("; ") })}
+          {t("startNoteDropped", { count: droppedTotal, reasons: reasons.join("; ") })}
         </p>
       ) : null}
     </div>

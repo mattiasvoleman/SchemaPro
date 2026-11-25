@@ -299,6 +299,18 @@ describe("what a finished run says of its start", () => {
     expect(note).not.toHaveTextContent("startNoteCounts");
   });
 
+  it("says nothing of lessons that could not be used when the engine that was older was given none of them, though the gateway counted why", async () => {
+    // An engine that refused the field after the schedule had been read: the lessons were counted and left out for reasons, and then none was given.
+    state.job = finished({
+      source: "CURRENT", versionName: null, engine: "OLDER", offered: 40, used: 0, held: null, moved: null, laid: null, dropped: { NO_POST: 5 },
+    });
+    render(<GeneratePage />);
+
+    const note = await screen.findByTestId("generate-started-from");
+    expect(note).toHaveTextContent("generate.startNoteOlder");
+    expect(note).not.toHaveTextContent("startNoteDropped");
+  });
+
   it("does not claim a count for a week the engine laid no timetable for", async () => {
     state.job = finished(
       { source: "CURRENT", versionName: null, engine: "USED", offered: 180, used: 180, held: null, moved: null, laid: null, dropped: {} },
