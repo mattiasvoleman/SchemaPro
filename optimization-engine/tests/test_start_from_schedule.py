@@ -528,3 +528,36 @@ def test_a_search_that_ran_in_two_attempts_is_reported_once_with_its_effort_summ
         ("CLONE", 2.0, None, None),
     ]
 
+
+
+def test_a_driver_at_its_most_attempts_fits_what_the_gateway_keeps_of_a_report() -> None:
+    """Seven attempts (six rounds and the last one), each through every step and both searches: 7 steps and 2 searches, not 40.
+
+    The gateway keeps 12 steps and 6 searches of a report, counted as raw entries, and refuses the whole report beyond it.
+    """
+    clock = StageClock(0.0)
+    now = 0.0
+    clock.enter("START", now)
+    for _attempt in range(staged.MAX_ROUNDS + 1):
+        for stage in ("PRECHECKS", "BUILD", "SITES", "SEARCH_CLEAN"):
+            now += 1.0
+            clock.enter(stage, now)  # type: ignore[arg-type]
+        now += 1.0
+        clock.note_search("CLEAN", now, conflicts=10, branches=20)
+        clock.enter("SEARCH_CLONE", now)
+        now += 1.0
+        clock.note_search("CLONE", now, conflicts=10, branches=20)
+        clock.enter("START", now)
+
+    report = clock.report(
+        now, budget_seconds=5, configured_budget_seconds=5, caller_wait_seconds=None, week_load_cut=False,
+    )
+
+    # a solve begins in its checks, so that is the first step; the order is the order each step first ran in
+    assert [s.stage for s in report.stages] == ["PRECHECKS", "START", "BUILD", "SITES", "SEARCH_CLEAN", "SEARCH_CLONE"]
+    assert [(p.phase, p.conflicts, p.branches) for p in report.search.phases] == [
+        ("CLEAN", 10 * (staged.MAX_ROUNDS + 1), 20 * (staged.MAX_ROUNDS + 1)),
+        ("CLONE", 10 * (staged.MAX_ROUNDS + 1), 20 * (staged.MAX_ROUNDS + 1)),
+    ]
+    assert len(report.stages) <= 12 and len(report.search.phases) <= 6
+    assert round(sum(s.seconds for s in report.stages), 1) == report.total_seconds
