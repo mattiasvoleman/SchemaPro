@@ -41,6 +41,14 @@ const holdMinutes = (time: string): number => {
   return Number(h) * 60 + Number(m);
 };
 
+/** What stands in a landing's way (SwapContext.inTheWay). */
+export interface InTheWay {
+  /** The lessons that hold its teacher, room or class at the new time, each once. */
+  lessons: SwapLesson[];
+  /** The weekly rows that close its teacher, room or class there: the resource each closes. */
+  closures: Array<'TEACHER' | 'ROOM' | 'GROUP'>;
+}
+
 export interface Landing {
   lesson: SwapLesson;
   to: SwapSlot;
@@ -60,6 +68,8 @@ export class SwapContext {
   private readonly board: BoardFacts;
   private readonly holdsByResource = new Map<string, OtherSchoolHold[]>();
   private readonly gapConstraints: GapConstraint[];
+  /** The lessons the school plans that stand nowhere yet (the constructor's `unplaced`). */
+  private readonly unplacedIds: ReadonlySet<string>;
   /**
    * group -> the groups that hold a pupil of it, or null at a school with a
    * replacing group. A class and a teaching group cut across it (språkval,
@@ -71,8 +81,19 @@ export class SwapContext {
    */
   private readonly sharing: ReadonlyMap<string, readonly string[]> | null;
 
-  constructor(readonly data: SwapData) {
-    this.lessonById = new Map(data.lessons.map((lesson) => [lesson.id, lesson]));
+  /**
+   * `unplaced`: lessons that are in the school's plan but stand nowhere yet (E3: a brick the schemaläggare asks the possible times
+   * of). They belong to the pupils' cohorts, the teacher's week and the post's distribution, and each is a unit of its own, but they
+   * occupy nothing and count for nothing until a move lays them somewhere: the figures before a move are the school without them.
+   * Their `dayOfWeek`/`startMinutes`/`endMinutes` are a placeholder nothing reads.
+   */
+  constructor(
+    readonly data: SwapData,
+    options: { unplaced?: readonly SwapLesson[] } = {},
+  ) {
+    const unplaced = options.unplaced ?? [];
+    const everyLesson = [...data.lessons, ...unplaced];
+    this.lessonById = new Map(everyLesson.map((lesson) => [lesson.id, lesson]));
 
     // Pupil buffers per (group, subject), then the widest over a lesson's groups.
     const buffers = new Map<string, { before: number; after: number }>();
@@ -80,7 +101,7 @@ export class SwapContext {
       if (post.minutesBefore === 0 && post.minutesAfter === 0) continue;
       buffers.set(`${post.studentGroupId}:${post.subjectId}`, { before: post.minutesBefore, after: post.minutesAfter });
     }
-    for (const lesson of data.lessons) {
+    for (const lesson of everyLesson) {
       let before = 0;
       let after = 0;
       for (const groupId of [lesson.studentGroupId, ...lesson.extraGroupIds]) {
@@ -150,7 +171,7 @@ export class SwapContext {
     const groupFacts = new Map(
       data.groups.map((group) => [group.id, { halfOfId: group.halfOfId, replacesSubjectId: group.replacesSubjectId }]),
     );
-    this.unitOf = buildUnits(data.lessons, {
+    const placedUnits = buildUnits(data.lessons, {
       blockOf: (lesson) => blockOfPost.get(`${lesson.studentGroupId}:${lesson.subjectId}`) ?? null,
       sameTimesOf: (blockId) => sameTimes.get(blockId) ?? null,
       groupFacts,
@@ -162,13 +183,23 @@ export class SwapContext {
         return false;
       },
     });
+    this.unitOf = new Map([
+      ...placedUnits,
+      ...unplaced.map((lesson): [string, SwapUnit] => [
+        lesson.id,
+        { id: lesson.id, members: [lesson], links: [], slot: { dayOfWeek: lesson.dayOfWeek, startMinutes: lesson.startMinutes, endMinutes: lesson.endMinutes }, locked: false },
+      ]),
+    ]);
+    this.unplacedIds = new Set(unplaced.map((lesson) => lesson.id));
 
     this.soft = this.softMeasure();
   }
 
+
   /** The cohorts, the margins and the rules behind the figures (swap-soft.ts). */
   private softMeasure(): SoftMeasure {
     const { data } = this;
+    const lessons = [...this.lessonById.values()];
     const classes = new Set(data.groups.filter((group) => group.kind === 'CLASS').map((group) => group.id));
     const homeOf = new Map<string, string>();
     for (const row of data.rosters.homeMembers) {
@@ -181,7 +212,7 @@ export class SwapContext {
       groupsOf: data.rosters.groupsByStudent,
       groups: data.groups,
       derivedKeys: [],
-      locks: data.lessons.map((lesson) => ({
+      locks: lessons.map((lesson) => ({
         id: lesson.id,
         groupIds: [lesson.studentGroupId, ...lesson.extraGroupIds],
         subjectId: lesson.subjectId,
@@ -195,7 +226,7 @@ export class SwapContext {
         { minutesBefore: post.minutesBefore, minutesAfter: post.minutesAfter },
       ]),
     );
-    for (const lesson of data.lessons) {
+    for (const lesson of lessons) {
       const margin = lockMarginOf(rows, {
         groupIds: [lesson.studentGroupId, ...lesson.extraGroupIds],
         subjectId: lesson.subjectId,
@@ -203,7 +234,8 @@ export class SwapContext {
       if (margin) margins.set(lesson.id, { before: margin.minutesBefore, after: margin.minutesAfter });
     }
     return buildSoftMeasure({
-      lessons: data.lessons,
+      lessons,
+      absent: this.unplacedIds,
       cohorts: cohorts.map((cohort) => ({
         pupils: cohort.pupils,
         lessonIds: new Set(cohort.fixedLessonIds),
@@ -253,18 +285,38 @@ export class SwapContext {
     return true;
   }
 
-  private freeOfLessons({ lesson, to }: Landing, vacating: ReadonlySet<string>): boolean {
+  private freeOfLessons(landing: Landing, vacating: ReadonlySet<string>): boolean {
+    const way = this.inTheWay(landing, vacating, true);
+    return way.lessons.length === 0 && way.closures.length === 0;
+  }
+
+  /**
+   * What stands in a landing's way: the lessons that hold its teacher, its room or its class (the pupils' own minutes before and
+   * after counted) at the new time, and the weekly rows that close one of them. The one body of the prune: `mayStand` asks
+   * whether it is empty, and the possible times (E3) ask what it holds, so the two can never disagree about a plain overlap.
+   * `firstOnly` stops at the first hit, which is all the prune needs.
+   */
+  inTheWay({ lesson, to }: Landing, vacating: ReadonlySet<string>, firstOnly = false): InTheWay {
+    const way: InTheWay = { lessons: [], closures: [] };
+    const seen = new Set<string>();
+    const hit = (other: SwapLesson): boolean => {
+      if (!seen.has(other.id)) {
+        seen.add(other.id);
+        way.lessons.push(other);
+      }
+      return firstOnly;
+    };
     const day = to.dayOfWeek;
     const meets = (other: SwapLesson) => !vacating.has(other.id) && other.id !== lesson.id && weeksMeet(lesson, other);
     for (const teacherId of [lesson.teacherId, lesson.coTeacherId]) {
       if (teacherId === null) continue;
       for (const other of this.byTeacherDay.get(`${teacherId}|${day}`) ?? []) {
-        if (meets(other) && overlaps(to.startMinutes, to.endMinutes, other.startMinutes, other.endMinutes)) return false;
+        if (meets(other) && overlaps(to.startMinutes, to.endMinutes, other.startMinutes, other.endMinutes) && hit(other)) return way;
       }
     }
     if (lesson.roomId !== null) {
       for (const other of this.byRoomDay.get(`${lesson.roomId}|${day}`) ?? []) {
-        if (meets(other) && overlaps(to.startMinutes, to.endMinutes, other.startMinutes, other.endMinutes)) return false;
+        if (meets(other) && overlaps(to.startMinutes, to.endMinutes, other.startMinutes, other.endMinutes) && hit(other)) return way;
       }
     }
     const own = this.buffer.get(lesson.id);
@@ -282,9 +334,10 @@ export class SwapContext {
               pupilEnd,
               other.startMinutes - (theirs?.before ?? 0),
               other.endMinutes + (theirs?.after ?? 0),
-            )
+            ) &&
+            hit(other)
           ) {
-            return false;
+            return way;
           }
         }
       }
@@ -293,13 +346,20 @@ export class SwapContext {
     const groups = [lesson.studentGroupId, ...lesson.extraGroupIds];
     for (const row of this.data.constraints) {
       if (row.dayOfWeek !== day) continue;
-      const applies =
-        (row.resourceType === 'TEACHER' && row.userId !== null && (row.userId === lesson.teacherId || row.userId === lesson.coTeacherId)) ||
-        (row.resourceType === 'ROOM' && lesson.roomId !== null && row.roomId === lesson.roomId) ||
-        (row.resourceType === 'STUDENT_GROUP' && row.studentGroupId !== null && groups.includes(row.studentGroupId));
-      if (applies && overlaps(to.startMinutes, to.endMinutes, row.startMinutes, row.endMinutes)) return false;
+      const resource =
+        row.resourceType === 'TEACHER' && row.userId !== null && (row.userId === lesson.teacherId || row.userId === lesson.coTeacherId)
+          ? 'TEACHER'
+          : row.resourceType === 'ROOM' && lesson.roomId !== null && row.roomId === lesson.roomId
+            ? 'ROOM'
+            : row.resourceType === 'STUDENT_GROUP' && row.studentGroupId !== null && groups.includes(row.studentGroupId)
+              ? 'GROUP'
+              : null;
+      if (resource !== null && overlaps(to.startMinutes, to.endMinutes, row.startMinutes, row.endMinutes)) {
+        way.closures.push(resource);
+        if (firstOnly) return way;
+      }
     }
-    return true;
+    return way;
   }
 
   // ---------------------------------------------------------------------------
@@ -319,6 +379,13 @@ export class SwapContext {
       boardCodeOf(this.board, groups, to, { startDate: lesson.startDate, endDate: lesson.endDate }) ??
       (this.holdsAt(lesson, to).length > 0 ? 'OTHER_SCHOOL' : null)
     );
+  }
+
+  /** The other schools, by name, whose hold on a lesson's teachers or room a landing sits inside (E3 names the closed stretch with them). */
+  holdSchoolsAt({ lesson, to }: Landing): string[] {
+    const schools = new Set<string>();
+    for (const hold of this.holdsAt(lesson, to)) for (const school of hold.schools) schools.add(school);
+    return [...schools].sort((a, b) => a.localeCompare(b, 'sv'));
   }
 
   /** The other schools' holds that a lesson at `to` would sit inside. */

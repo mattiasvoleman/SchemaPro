@@ -269,3 +269,87 @@ describe('landingsOf', () => {
     ]);
   });
 });
+
+describe('inTheWay: the prune, asked what it holds', () => {
+  it('is empty exactly where mayStand says yes, for every lesson at every half hour of a busy school', () => {
+    let asked = 0;
+    for (const seed of [3, 11]) {
+      const world = makeWorld({ seed });
+      const ctx = new SwapContext(world.data);
+      for (const unit of new Set(ctx.unitOf.values())) {
+        const vacating = new Set(unit.members.map((member) => member.id));
+        for (let day = 1; day <= 5; day++) {
+          for (let start = 450; start <= 780; start += 30) {
+            const to = slot(day, start);
+            const way = ctx.landingsOf(unit, to).map((landing) => ctx.inTheWay(landing, vacating));
+            const free = way.every((entry) => entry.lessons.length === 0 && entry.closures.length === 0);
+            // The world has no frame, meal or hold, so mayStand is the plain overlap and nothing else.
+            expect(ctx.mayStand(unit, to, vacating)).toBe(free);
+            asked += 1;
+          }
+        }
+      }
+    }
+    expect(asked).toBeGreaterThan(500);
+  });
+
+  it('names each lesson in the way once, however many things it holds', () => {
+    const mover = lesson('mover', 'c1', 1, 480, { teacherId: 'T', roomId: 'R' });
+    const all = lesson('all', 'c1', 2, 540, { teacherId: 'T', roomId: 'R' });
+    const other = lesson('other', 'c2', 2, 570, { roomId: 'R' });
+    const ctx = context([mover, all, other]);
+    const landing = ctx.landingsOf(unitOf(ctx, 'mover'), slot(2, 540))[0]!;
+    const way = ctx.inTheWay(landing, new Set(['mover']));
+    expect(way.lessons.map((entry) => entry.id).sort()).toEqual(['all', 'other']);
+    expect(way.closures).toEqual([]);
+    expect(ctx.inTheWay(landing, new Set(['mover']), true).lessons).toHaveLength(1);
+  });
+
+  it('says which resource a weekly row closes', () => {
+    const mover = lesson('mover', 'c1', 1, 480, { teacherId: 'T', roomId: 'R' });
+    const row = (over: Partial<SwapData['constraints'][number]>) => ({
+      resourceType: 'TEACHER',
+      userId: null,
+      roomId: null,
+      studentGroupId: null,
+      minGradeLevel: null,
+      maxGradeLevel: null,
+      dayOfWeek: 3,
+      startMinutes: 540,
+      endMinutes: 600,
+      ...over,
+    });
+    const ctx = context([mover], {
+      constraints: [row({ userId: 'T' }), row({ resourceType: 'ROOM', roomId: 'R' }), row({ resourceType: 'STUDENT_GROUP', studentGroupId: 'c1' })],
+    });
+    const landing = ctx.landingsOf(unitOf(ctx, 'mover'), slot(3, 540))[0]!;
+    expect(ctx.inTheWay(landing, new Set(['mover'])).closures).toEqual(['TEACHER', 'ROOM', 'GROUP']);
+    expect(ctx.inTheWay(landing, new Set(['mover']), true).closures).toEqual(['TEACHER']);
+  });
+});
+
+describe('unplaced lessons: planned, standing nowhere', () => {
+  const brick = lesson('brick', 'c1', 1, 0, { teacherId: 'T', roomId: 'R' });
+
+  it('are a unit of their own, known by id, and in no one’s way', () => {
+    const standing = lesson('standing', 'c1', 2, 540, { teacherId: 'T', roomId: 'R' });
+    const ctx = new SwapContext({ ...base.data, lessons: [standing], posts: [] }, { unplaced: [brick] });
+    expect(ctx.unitOf.get('brick')).toMatchObject({ id: 'brick', members: [brick], links: [], locked: false });
+    expect(ctx.lessonById.get('brick')).toBe(brick);
+    // The placeholder day and clock are nothing anyone reads: the standing lesson is held by nothing at 00:00 Monday.
+    const way = ctx.inTheWay(ctx.landingsOf(unitOf(ctx, 'standing'), slot(1, 0))[0]!, new Set(['standing']));
+    expect(way.lessons).toEqual([]);
+    // The brick itself is held by the standing lesson where it would overlap it: same teacher, room and class.
+    expect(ctx.mayStand(unitOf(ctx, 'brick'), slot(2, 540), new Set(['brick']))).toBe(false);
+    expect(ctx.mayStand(unitOf(ctx, 'brick'), slot(2, 600), new Set(['brick']))).toBe(true);
+  });
+
+  it('leave the school as it was when there are none', () => {
+    const lessons = [lesson('a', 'c1', 1, 480), lesson('b', 'c1', 1, 600)];
+    const plain = new SwapContext({ ...base.data, lessons, posts: [] });
+    const same = new SwapContext({ ...base.data, lessons, posts: [] }, { unplaced: [] });
+    expect([...same.unitOf.keys()]).toEqual([...plain.unitOf.keys()]);
+    const moves = [{ lessonId: 'b', from: slot(1, 600), to: slot(1, 540) }];
+    expect(same.soft.evaluate(moves)).toEqual(plain.soft.evaluate(moves));
+  });
+});
