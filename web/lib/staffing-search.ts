@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
-import { isNetworkFailure } from "@/lib/api-error-text";
+import { isNetworkFailure, ownWords } from "@/lib/api-error-text";
 import type { StaffingProposal } from "@/app/[locale]/(app)/admin/staffing/use-staffing-proposal";
 
 /*
@@ -233,7 +233,7 @@ export type StartProblem =
   | { kind: "OTHER"; message: string; code: string | null; params: Record<string, string | number> | null };
 
 export function classifyStartError(error: unknown): StartProblem {
-  // No answer at all has no sentence of the gateway's: the notice says its general one, as it did for the TypeError this was before.
+  // No answer at all has no sentence of the gateway's: the notice says its general one, with no code to look up.
   if (isNetworkFailure(error)) return { kind: "OTHER", message: "", code: null, params: null };
   if (error instanceof ApiError) {
     if (error.code === STAFFING_SEARCH_ALREADY_RUNNING) return { kind: "ALREADY_RUNNING" };
@@ -242,7 +242,9 @@ export function classifyStartError(error: unknown): StartProblem {
     if (error.code === STAFFING_SEARCH_NO_POSTS) return { kind: "NO_POSTS" };
     if (error.status === 429) return { kind: "THROTTLED" };
     if (error.status === 502 || error.status === 503) return { kind: "UNAVAILABLE" };
-    return { kind: "OTHER", message: error.message, code: error.code ?? null, params: error.params ?? null };
+    // The gateway's own words, when a thrower wrote them for the reader; "" for a log's English ("An unexpected error occurred") and for
+    // a request that got no answer, and the notice says its general sentence then (lib/api-error-text.ts ownWords).
+    return { kind: "OTHER", message: ownWords(error), code: error.code ?? null, params: error.params ?? null };
   }
   return { kind: "OTHER", message: "", code: null, params: null };
 }
@@ -259,7 +261,7 @@ export function classifyProposalError(error: unknown): ProposalProblem {
     if (error.code === STAFFING_SEARCH_GONE) return { kind: "GONE" };
     if (error.code === STAFFING_SEARCH_NOT_DONE) return { kind: "NOT_DONE" };
     if (error.code === STAFFING_SEARCH_NO_PROPOSAL) return { kind: "NO_PROPOSAL" };
-    return { kind: "OTHER", message: error.message };
+    return { kind: "OTHER", message: ownWords(error) };
   }
   return { kind: "OTHER", message: "" };
 }

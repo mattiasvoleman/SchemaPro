@@ -334,6 +334,15 @@ describe("what a refusal is", () => {
       params: { days: 4 },
     });
     expect(classifyStartError(new Error("offline"))).toEqual({ kind: "OTHER", message: "", code: null, params: null });
+    // A 500 with the log's English says nothing the reader can use: the notice's general sentence is what is shown, not "An unexpected error occurred".
+    expect(classifyStartError(new ApiError(500, "An unexpected error occurred. Please try again later."))).toEqual({
+      kind: "OTHER",
+      message: "",
+      code: null,
+      params: null,
+    });
+    // A thrower's Swedish sentence for the reader is kept, with or without a code.
+    expect(classifyStartError(new ApiError(500, "Sökningen kunde inte startas."))).toMatchObject({ kind: "OTHER", message: "Sökningen kunde inte startas." });
     // The failure api.ts names for a request that got no answer is not a refusal with words of the gateway's to show.
     expect(classifyStartError(new ApiError(0, "Failed to fetch", "CLIENT_NETWORK_FAILURE"))).toEqual({
       kind: "OTHER",
@@ -353,7 +362,9 @@ describe("what a refusal is", () => {
   });
 
   it("any other failure of the proposal keeps the gateway's own words", () => {
-    expect(classifyProposalError(new ApiError(500, "Internal"))).toEqual({ kind: "OTHER", message: "Internal" });
+    expect(classifyProposalError(new ApiError(500, "Förslaget kunde inte läsas."))).toEqual({ kind: "OTHER", message: "Förslaget kunde inte läsas." });
+    // The log's English is not a sentence for the reader: the notice says its general one.
+    expect(classifyProposalError(new ApiError(500, "Internal"))).toEqual({ kind: "OTHER", message: "" });
     expect(classifyProposalError("x")).toEqual({ kind: "OTHER", message: "" });
     expect(classifyProposalError(new ApiError(0, "Failed to fetch", "CLIENT_NETWORK_FAILURE"))).toEqual({ kind: "OTHER", message: "" });
   });
