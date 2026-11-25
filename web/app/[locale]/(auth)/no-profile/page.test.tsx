@@ -19,7 +19,8 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: () => undefined
 vi.mock("next-intl/server", () => ({
   getLocale: async () => "sv",
   getTranslations: async (namespace: "auth" | "common") => (key: string, values?: Record<string, string>) => {
-    const text = (sv[namespace] as Record<string, string>)[key] ?? key;
+    // `common` holds a group of sentences of its own (codes), so it is not a flat record of strings as far as the compiler can tell.
+    const text = (sv[namespace] as unknown as Record<string, string>)[key] ?? key;
     return Object.entries(values ?? {}).reduce((out, [name, value]) => out.replace(`{${name}}`, value), text);
   },
 }));
