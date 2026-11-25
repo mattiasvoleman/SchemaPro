@@ -550,6 +550,35 @@ account."*
    user is invited through **Admin → People** (the API sends the Supabase
    invite email automatically).
 
+### 7.2 Pupils and guardians with no address (20270310090000)
+
+A pupil or a guardian can be added **without an e-mail address**. Younger pupils seldom have a school address, and Skola24's pupil file has
+none, so a school should not have to invent one to get them into the register. The person is in every list, in the class lists, in
+attendance and on the timetable (they are rows of `"Users"` like any other, and no reader of those looks at the address); they have **no
+login** until an address is added and the person is invited.
+
+- **What holds it.** `"Users"."email"` is optional. `Users_a_person_with_no_address_has_no_login` (a CHECK) says no row has an
+  `"invitedAt"` without an address, so no road gives a person with no address a login, and none takes the address from a person who
+  has one. `Users_only_a_pupil_or_guardian_has_no_address` says a teacher or an administrator always has one: they are somebody the
+  school invites. The API says the same with words (`ADDRESS_REQUIRED`, `PERSON_HAS_NO_ADDRESS`, `ADDRESS_OF_AN_INVITED_PERSON`);
+  the constraints are what stays if a script or a hand-written `insert` forgets.
+- **Adding one later.** Edit the person (Admin → People) and give an address; the same dialog can send the invitation at once. An
+  address is given to a person with none, or corrected on one who was never invited: a person who was invited has a login with the
+  address it has, and the API refuses to change it from here (409).
+- **Importing.** A pupils' file may leave `epost` empty, or have no such column: the pupils are made with no address, and the report
+  says how many. A pupil with no address is known by first name, last name and class, so a second upload skips them; a later file
+  that has the address gives it to the one pupil of that name in that class (`updated`), and says so when two have the same name and
+  cannot be told apart. The files that name a pupil by address (the guardians' file, the group memberships) cannot name one with none:
+  the guardians' export says how many links it left out, and those links are made on the people page.
+- **Mail.** A notice to a person with no address is in their inbox, which they cannot open yet, and no mail goes. The mass invitation
+  counts them apart (`noAddress`) and invites the rest.
+- **Order of deploy.** Apply the migration before the API that writes an empty address; deploy the API and the web together (an older
+  web that reads a person with `email: null` where it expected text is the one thing that can break). Rolling the migration back
+  needs `ALTER COLUMN "email" SET NOT NULL`, which fails while a person with no address exists: `SELECT count(*) FROM "Users" WHERE
+  "email" IS NULL`.
+- **The Schemavisaren and the iCal feeds** are not logins, and a school shows the timetable to a family through them whether or not
+  the pupil has an address.
+
 ## 8. Mobile app
 
 `mobile/` builds two apps: **Rastra**, for staff and pupils, and **Rastra

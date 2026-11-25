@@ -386,7 +386,10 @@ model User {
   // --- PII (masked at the NestJS gateway, never sent to the AI engine) ---
   firstName String
   lastName  String
-  email     String
+  /// NULL for a pupil or a guardian the school added without an address (20270310090000): the person is in lists, attendance and
+  /// the timetable, and has no login until an address is added and invited. CHECK Users_a_person_with_no_address_has_no_login holds
+  /// it: no row has an invitedAt without an address. The key (schoolId, email) allows many NULLs, as Postgres reads a unique key.
+  email     String?
   phone     String?
   // ----------------------------------------------------------------------
 
