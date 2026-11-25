@@ -4841,6 +4841,12 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "fixedLessons",
         "groupConflicts",
         "previousLessons",
+        # Ett schema som start (M8, PR 4): sent only for a week that has a schedule to
+        # start from, by a gateway that read `startLessons` in GET /api/v1/timing's
+        # `capabilities`; every other payload omits it and is solved as before. An engine
+        # older than this field answers it with a 422 whose one error is extra_forbidden at
+        # ['body', 'startLessons']. See StartedLesson and app/solver/staged.py.
+        "startLessons",
         # Restid i generatorn: sent only when a school's Skolregler turn the
         # walk on and it has a figure; every other payload omits it.
         "siteTravelTimes",

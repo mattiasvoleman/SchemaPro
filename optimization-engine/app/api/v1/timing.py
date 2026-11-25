@@ -10,8 +10,9 @@ from app.timing import TRANSFER_MARGIN_SECONDS, RouteLimits, generation_limits
 
 router = APIRouter(prefix="/api/v1", tags=["timing"])
 
-#: What this engine can be sent that an older one refuses (EngineTiming.capabilities).
-CAPABILITIES = ["deadlineSeconds"]
+#: What this engine can be sent that an older one refuses (EngineTiming.capabilities). `startLessons` (M8, PR 4) is a
+#: field of the generation request: an older engine answers it with a 422, extra_forbidden at ['body', 'startLessons'].
+CAPABILITIES = ["deadlineSeconds", "startLessons"]
 
 
 def engine_timing(settings: Settings) -> EngineTiming:

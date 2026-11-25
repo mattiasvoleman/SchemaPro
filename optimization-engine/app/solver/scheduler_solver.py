@@ -57,6 +57,7 @@ from app.solver.relaxation import (
     upper_bound,
 )
 from app.solver.servings import allowed_starts
+from app.solver import staged
 from app.solver.stage_clock import StageClock
 from app.schemas.schedule import (
     PlaceLimits,
@@ -6115,11 +6116,14 @@ class SchedulerSolver:
         self._stages = StageClock(entered)
         try:
             try:
-                response = (
-                    self._solve_best_effort(request, entered)
-                    if request.relaxation is not None
-                    else self._solve_strict(request, entered)
-                )
+                # A schedule to start from is laid by holding it and letting go of what clashes; Bästa möjliga
+                # schema keeps its own road and leaves the field out (StartedLesson).
+                if request.relaxation is not None:
+                    response = self._solve_best_effort(request, entered)
+                elif request.start_lessons:
+                    response = self._solve_from_start(request, entered)
+                else:
+                    response = self._solve_strict(request, entered)
             except InvalidScheduleInputError as refusal:
                 self._leave_stage()
                 # FÖRLAGDA POSTER, AND THE REFUSALS BEFORE THE MODEL: "locked
@@ -6139,6 +6143,73 @@ class SchedulerSolver:
             self._deadline = None
             self._search_seconds = None
             self._stages = None
+
+    def _solve_from_start(
+        self, request: OptimizeScheduleRequest, entered: float,
+    ) -> OptimizeScheduleResponse:
+        """solve() for a request with `startLessons`: hold the schedule, let go of what clashes, ask again (app/solver/staged.py).
+
+        EACH ATTEMPT IS THE ENGINE'S OWN SOLVE, `_solve_strict`, on a request with the held lessons pinned. One that
+        finds a timetable is the answer (its phase 2 improves it from what it found, the schedule given as the
+        disruption term's `previousLessons`); a TIMEOUT is final (the search had its time); and an INFEASIBLE is read:
+        the held lessons it names as in the way are let go, and the week is asked again. A refusal that names none and has
+        something free widens to the held lessons one step from what is free (staged.neighbours), and one that names none
+        and has nothing free is the week's own refusal and is returned as it is. After MAX_ROUNDS, or with nothing
+        held, the last attempt holds nothing and is the ordinary solve with the schedule as a hint.
+
+        A PIN THE WEEK'S FRAME CANNOT HOLD is refused before the model (`PLACED_LESSON_OUTSIDE_FRAME` and the others),
+        naming its requirement in the params; that requirement is let go and the week asked again, so that a schedule
+        from a year with other frames is not a refusal of the whole week.
+
+        THE STEPS: `START` is this method's own time (reading the schedule, deciding what to let go of); each attempt
+        enters the engine's own steps again, and the report sums the ones that come back (StageClock.report), so
+        however many attempts there were the report is a list of each step once.
+        """
+        self._enter_stage("START")
+        held = staged.held_places(request)
+        free = staged.with_blocks(request, staged.clashes(request, held)) if held.places else set()
+        logger.info(
+            "start_schedule held=%d clashing=%d dropped=%s [requestId=%s]",
+            len(held.places), len(free), held.dropped or "none", request.request_id,
+        )
+        rounds = 0
+        while True:
+            candidates = set(held.places) - free
+            if rounds >= staged.MAX_ROUNDS or not candidates:
+                # Nothing is held: the ordinary solve, with the schedule as the hint it also is.
+                self._enter_stage("PRECHECKS")
+                logger.info("start_schedule rounds=%d held=0 [requestId=%s]", rounds, request.request_id)
+                return self._solve_strict(staged.attempt(request, held, set(held.places)), entered)
+            rounds += 1
+            self._enter_stage("PRECHECKS")
+            try:
+                response = self._solve_strict(staged.attempt(request, held, free), entered)
+            except InvalidScheduleInputError as refusal:
+                named = staged.named_by_refusal(refusal.params, candidates)
+                if not named:
+                    raise
+                self._enter_stage("START")
+                free |= staged.with_blocks(request, named)
+                logger.info(
+                    "start_schedule round=%d refused=%s let_go=%d [requestId=%s]",
+                    rounds, refusal.code, len(named), request.request_id,
+                )
+                continue
+            if response.status != "INFEASIBLE":
+                logger.info(
+                    "start_schedule rounds=%d held=%d let_go=%d status=%s [requestId=%s]",
+                    rounds, len(candidates), len(free), response.status, request.request_id,
+                )
+                return response
+            self._enter_stage("START")
+            named = staged.in_the_way(response.conflicts, candidates) or staged.neighbours(request, free, candidates)
+            if not named:
+                # The week's own refusal: nothing held was in the way and nothing is free to widen from.
+                return response
+            free |= staged.with_blocks(request, named)
+            logger.info(
+                "start_schedule round=%d infeasible let_go=%d [requestId=%s]", rounds, len(free), request.request_id,
+            )
 
     def _solve_strict(
         self, request: OptimizeScheduleRequest, entered: float,
