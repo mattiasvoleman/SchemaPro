@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { contactFromEnv, DIGG_REPORT_URL, statement, TEMPLATE, toMarkdown } from "./statement";
@@ -83,6 +83,38 @@ describe("tillgänglighetsredogörelsen", () => {
 
   it("names Schemavisaren in its scope", () => {
     expect(JSON.stringify(intro)).toContain("Schemavisaren");
+  });
+
+  describe("the public page Pseudonymisera en fil (/pseudonymisera)", () => {
+    const WEB = path.resolve(__dirname, "../../..");
+    const testing = sections.find((section) => section.heading === "Hur vi har testat tjänsten")!;
+    const bullets = testing.blocks.flatMap((block) => (block.kind === "ul" ? block.items.map((item) => item.map((part) => (typeof part === "string" ? part : part.text)).join("")) : []));
+    const mentions = (text: string) => text.includes("Pseudonymisera en fil");
+
+    it("is in the scope: it is public, and the scope sentence says so", () => {
+      const scope = intro.map((block) => JSON.stringify(block)).find((text) => text.includes("Redogörelsen gäller"))!;
+      expect(mentions(scope)).toBe(true);
+      expect(scope).toContain("utan inloggning");
+    });
+
+    it("is said to be checked with axe only while the page has an axe spec that runs in the accessibility project", () => {
+      // The statement says the page is scanned with axe, empty, with a file and with a result, in both languages: that holds while this spec does.
+      const spec = readFileSync(path.join(WEB, "e2e/pseudonymiserare.a11y.spec.ts"), "utf8");
+      expect(spec).toContain("/sv/pseudonymisera");
+      expect(spec).toContain("/en/pseudonymisera");
+      expect(readFileSync(path.join(WEB, "playwright.config.ts"), "utf8")).toContain("(a11y|a11y-app|aria)");
+      const axe = bullets.find((bullet) => bullet.startsWith("Automatisk granskning med verktyget axe"))!;
+      expect(mentions(axe)).toBe(true);
+    });
+
+    it("is said to have no saved comparison of what assistive technology is told, and has none", () => {
+      // The statement says so while no accessibility-tree baseline is kept for it: a baseline added later makes the sentence untrue, and this fails.
+      const baselines = readdirSync(path.join(WEB, "e2e/aria-baselines"));
+      expect(baselines.filter((name) => /pseudonym/i.test(name))).toEqual([]);
+      expect(readFileSync(path.join(WEB, "e2e/aria.spec.ts"), "utf8")).not.toMatch(/pseudonymisera/i);
+      const aria = bullets.find((bullet) => bullet.startsWith("Granskning av vad hjälpmedel får veta"))!;
+      expect(aria).toMatch(/Pseudonymisera en fil har ingen sådan sparad jämförelse/);
+    });
   });
 
   it("says what is not done yet: the recorded screen-reader test, and the app", () => {

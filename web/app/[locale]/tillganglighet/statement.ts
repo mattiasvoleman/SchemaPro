@@ -40,8 +40,8 @@ export const DIGG_REPORT_URL =
 
 /** When the self-assessment below was made. */
 export const ASSESSED = "14 oktober 2026";
-/** The statement's own last change: the product's new name, 2026-10-17. */
-export const UPDATED = "18 oktober 2026";
+/** The statement's own last change: the public page Pseudonymisera en fil, in its scope and in how it is tested, 2026-11-24. */
+export const UPDATED = "24 november 2026";
 
 export const TITLE = "Tillgänglighetsredogörelse för Rastra Schema";
 
@@ -85,7 +85,7 @@ export function statement(contact: Contact): { intro: Block[]; sections: Section
       `${contact.organisation ? `${contact.organisation} står bakom Rastra Schema, skolans` : "Rastra Schema är skolans"} tjänst för schema, närvaro och frånvaro. Vi vill att så många som möjligt ska kunna använda tjänsten. Den här redogörelsen beskriver hur Rastra Schema uppfyller lagen om tillgänglighet till digital offentlig service, vilka tillgänglighetsproblem vi känner till och hur du kan rapportera brister till oss så att vi kan åtgärda dem.`,
     ),
     p(
-      "Redogörelsen gäller webbtjänsten Rastra Schema: inloggningen, alla sidor för skolans administratörer, lärare, elever och vårdnadshavare, och Schemavisaren, där skolan delar sitt publicerade schema med en länk. Den gäller inte mobilappen, som ännu inte finns i App Store eller Google Play. Appen får en egen redogörelse när den publiceras där.",
+      "Redogörelsen gäller webbtjänsten Rastra Schema: inloggningen, alla sidor för skolans administratörer, lärare, elever och vårdnadshavare, Schemavisaren, där skolan delar sitt publicerade schema med en länk, och sidan Pseudonymisera en fil, som är öppen för alla utan inloggning och tar bort personuppgifter ur en fil i den egna webbläsaren. Den gäller inte mobilappen, som ännu inte finns i App Store eller Google Play. Appen får en egen redogörelse när den publiceras där.",
     ),
   ];
   const missing = p(
@@ -188,10 +188,10 @@ export function statement(contact: Contact): { intro: Block[]; sections: Section
         p("Vi har gjort en självskattning (intern testning) av Rastra Schema:"),
         ul(
           [
-            "Automatisk granskning med verktyget axe mot WCAG 2.1 nivå A och AA av varje sida i tjänsten: inloggningen, alla sidor för administratörer, lärare, elever och vårdnadshavare (som var och en av rollerna), Schemavisaren och den här redogörelsen, i dator- och mobilbredd och i ljust och mörkt tema (Schemavisaren har bara det ljusa). Granskningen körs vid varje ändring av tjänsten. Den granskar sidorna som de ser ut när de har laddats, och dessutom huvudmenyn på mobil och notismenyn öppna. Andra dialogrutor och menyer som öppnas med ett klick granskas inte automatiskt; de ingår i skärmläsartestet, som återstår.",
+            "Automatisk granskning med verktyget axe mot WCAG 2.1 nivå A och AA av varje sida i tjänsten: inloggningen, alla sidor för administratörer, lärare, elever och vårdnadshavare (som var och en av rollerna), Schemavisaren, sidan Pseudonymisera en fil (tom, med en fil tillagd och med ett resultat på skärmen) och den här redogörelsen, i dator- och mobilbredd och i ljust och mörkt tema (Schemavisaren har bara det ljusa). Granskningen körs vid varje ändring av tjänsten. Den granskar sidorna som de ser ut när de har laddats, och dessutom huvudmenyn på mobil och notismenyn öppna. Andra dialogrutor och menyer som öppnas med ett klick granskas inte automatiskt; de ingår i skärmläsartestet, som återstår.",
           ],
           [
-            "Granskning av vad hjälpmedel får veta om de viktigaste sidorna (namn, roller, rubriker och meddelanden), med sparade jämförelser som visar varje ändring.",
+            "Granskning av vad hjälpmedel får veta om de viktigaste sidorna (namn, roller, rubriker och meddelanden), med sparade jämförelser som visar varje ändring. Sidan Pseudonymisera en fil har ingen sådan sparad jämförelse.",
           ],
           ["Tester av tangentbordsanvändning, synligt fokus och kontrast för inloggningen och schemaläggningen."],
           ["Ett manus för testet med skärmläsare, med vad som ska höras i varje steg för de fyra rollerna. Själva testet återstår (se ovan)."],
