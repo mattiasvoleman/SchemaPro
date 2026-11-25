@@ -17,7 +17,10 @@ tests that replace `scheduler_solver.time` go on steering all of it.
 
 THE STEPS ARE CONTIGUOUS. `enter` closes the step in progress at `now` and opens
 the next one at the same instant, so no time falls between two of them and the
-steps cover the solve from its entry (not the route's) to the answer. Each
+steps cover the solve from its entry (not the route's) to the answer. A step that
+comes back, as every one does when a solve is asked again (M8's `START`: a week laid
+from a schedule that exists, attempt after attempt), is ONE entry in the report, in the
+place it first ran, with the seconds summed (`report`). Each
 figure is rounded to a tenth on its own (`_seconds`), so the rounded seconds
 add up to the rounded total only to within 0.05 s a step. A step the solve skipped has no entry,
 and a step entered twice is summed (a best-effort solve's phase 1a runs once,
@@ -41,6 +44,13 @@ def _seconds(value: float) -> float:
     return round(max(0.0, value), 1)
 
 
+def _added(first: int | None, second: int | None) -> int | None:
+    """The effort of two runs of one search: None only where neither run could be read."""
+    if first is None and second is None:
+        return None
+    return (first or 0) + (second or 0)
+
+
 class StageClock:
     """One solve's steps and the searches' effort, from the moment it was entered."""
 
@@ -52,13 +62,23 @@ class StageClock:
         # attributes could be read half changed. A solve begins in its checks.
         self._open: tuple[TimeoutStageName, float] | None = ("PRECHECKS", entered)
         self._phases: list[TimeoutSearchPhase] = []
+        # Where `finish` closed the last step, until the next `enter` takes it over: a solve that is asked again after
+        # its answer was built (an INFEASIBLE attempt's explanation is) has nothing open in between.
+        self._finished_at: float | None = None
 
     # -- the solve's side -----------------------------------------------------
 
     def enter(self, stage: TimeoutStageName, now: float) -> None:
-        """Close the step in progress at `now` and open `stage` at the same instant."""
+        """Close the step in progress at `now` and open `stage` at the same instant.
+
+        NO TIME FALLS BETWEEN TWO STEPS, also where `finish` closed the last one and the solve went on: the seconds
+        since then (the explanation of a refused attempt, which `_leave_stage` takes out of every step so that a
+        ceiling that falls in it names none) belong to the step that follows, and not to nobody. A step list that
+        adds up to less than the total says so to no reader (the card of a TIMEOUT)."""
+        began = self._finished_at if self._open is None and self._finished_at is not None else now
         self._close(now)
-        self._open = (stage, now)
+        self._finished_at = None
+        self._open = (stage, began)
 
     def note_search(
         self,
@@ -85,8 +105,10 @@ class StageClock:
         )
 
     def finish(self, now: float) -> None:
-        """Close the step in progress: the solve is over."""
-        self._close(now)
+        """Close the step in progress: the solve is over, or an attempt's answer is in and its explanation is next."""
+        if self._open is not None:
+            self._close(now)
+            self._finished_at = now
 
     def report(
         self,
@@ -106,9 +128,9 @@ class StageClock:
             caller_wait_seconds=caller_wait_seconds,
             stages=[
                 TimeoutStage(stage=stage, seconds=_seconds(seconds))
-                for stage, seconds in self._done
+                for stage, seconds in self._summed()
             ],
-            search=TimeoutSearch(solutions=0, phases=list(self._phases)),
+            search=TimeoutSearch(solutions=0, phases=self._summed_phases()),
             week_load_cut=week_load_cut,
         )
 
@@ -127,6 +149,38 @@ class StageClock:
         return stage, _seconds(now - since), _seconds(now - self.entered)
 
     # -- internal -------------------------------------------------------------
+
+    def _summed(self) -> list[tuple[TimeoutStageName, float]]:
+        """The steps done, a step that came back (the attempts of a solve that starts from a schedule) summed into its first place.
+
+        The order is the order each step first ran in and the sum of the seconds is the solve's, so the report is the
+        same list as before for a solve whose steps run once each, and a solve with many attempts still carries
+        each step once (the gateway keeps twelve entries of a report, g458 L-3)."""
+        totals: dict[TimeoutStageName, float] = {}
+        for stage, seconds in self._done:
+            totals[stage] = totals.get(stage, 0.0) + seconds
+        return list(totals.items())
+
+    def _summed_phases(self) -> list[TimeoutSearchPhase]:
+        """The searches that came back without a timetable, a search that ran again summed into its first place.
+
+        An attempt of a solve that starts from a schedule can end refused after a search that was cut short, and the
+        next attempt searches again: the report says each search once, with the effort of all its runs (the gateway
+        keeps six entries of a report, g458 L-3). Effort a run could not count (None) is left out of the sum, and
+        is None only where no run could count it, as for a search that was never read."""
+        merged: dict[TimeoutPhaseName, TimeoutSearchPhase] = {}
+        for phase in self._phases:
+            seen = merged.get(phase.phase)
+            if seen is None:
+                merged[phase.phase] = phase
+                continue
+            merged[phase.phase] = TimeoutSearchPhase(
+                phase=phase.phase,
+                seconds=_seconds(seen.seconds + phase.seconds),
+                conflicts=_added(seen.conflicts, phase.conflicts),
+                branches=_added(seen.branches, phase.branches),
+            )
+        return list(merged.values())
 
     def _close(self, now: float) -> None:
         opened = self._open

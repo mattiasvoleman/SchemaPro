@@ -1269,6 +1269,27 @@ class PreviousLesson(CamelModel):
     start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
 
 
+class StartedLesson(CamelModel):
+    """Ett schema som start (M9, M8 PR 4): one lesson of a schedule the week is to START from.
+
+    A schedule that already exists (last year's base schedule, a schedule read in from another program, an earlier
+    run) is given as the lessons it laid: the requirement, the weekday and the start and end. The engine holds them
+    where they are (as pinned lessons, app/solver/staged.py), lets go of what clashes with THIS week, and lays the
+    rest: a week that resembles the schedule is laid by changing the few lessons that no longer fit instead of by
+    searching for all of them.
+
+    WHAT IT IS NOT: a lock (a locked lesson is a fact about the school: this lesson stays) and not a hint (a hint
+    only says where the search starts looking). It holds a lesson only until the week shows that it cannot stay.
+    The end is the lesson's length: a requirement with lessons of several lengths takes each entry for the place of
+    its own length, which a start alone could not say. No room: the engine hands out rooms as it always has.
+    """
+
+    requirement_id: UUID4 = Field(alias="requirementId")
+    day_of_week: DayOfWeek = Field(alias="dayOfWeek")
+    start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+
+
 class ObjectiveWeights(CamelModel):
     """Per-request objective weights (override server defaults when set)."""
 
@@ -1713,6 +1734,21 @@ class OptimizeScheduleRequest(CamelModel):
     previous_lessons: list[PreviousLesson] = Field(
         default_factory=list,
         alias="previousLessons",
+        max_length=5000,
+    )
+    #: Ett schema som start (M9, M8 PR 4): a schedule the week starts from, one entry per lesson it laid. Held where
+    #: it is, with what clashes with this week let go and the rest laid (StartedLesson, app/solver/staged.py). None
+    #: (absent, or null) is every request before it, byte for byte: the solve is the one it was, and the request's
+    #: JSON is too (a default of `[]` would put a key into every corpus week's digest, tests/test_school_corpus_pins.py).
+    #: Entries for requirements the week no longer has, for a requirement that already has lessons pinned by the
+    #: school, for a split lesson and for a lesson whose length no place of its requirement has are left out. A
+    #: Bästa möjliga schema run (`relaxation`) reads the field only where nothing in the week is priced
+    #: (relaxation.prices_anything): the mode is then the strict solve and starts from the schedule like any other.
+    #: A week with something priced is laid by the relaxed solve, which does not read the field. The gateway sends it
+    #: only for a week that has a schedule to start from.
+    start_lessons: list[StartedLesson] | None = Field(
+        default=None,
+        alias="startLessons",
         max_length=5000,
     )
     #: Restid i generatorn: the walk between the school's skolområden, sent
@@ -2240,12 +2276,15 @@ class ConflictAnalysis(CamelModel):
 #: time spent in each (app/solver/stage_clock.py):
 #: `PRECHECKS`: the request's own checks, the arithmetic verdicts, the lunch
 #: stage and the year's week load, which all run before a model is built.
+#: `START`: reading the schedule a week is to start from and deciding which of its lessons
+#: stay (staged.py), and what the solve does between two attempts at laying the week on it. The other steps of an attempt keep their
+#: own names, and a step that comes back is one entry (StageClock.report sums it).
 #: `BUILD`: the two models. `SITES`: the walk's planned-sites search (a school
 #: that keeps Restid i generatorn). `SEARCH_CLEAN` and `SEARCH_CLONE`: phase 1a
 #: and 1b, the two satisfaction searches (the clone's setup counts with its
 #: search). `PROBE`: the timeout probe that names a rule which does not fit.
 TimeoutStageName = Literal[
-    "PRECHECKS", "BUILD", "SITES", "SEARCH_CLEAN", "SEARCH_CLONE", "PROBE",
+    "PRECHECKS", "START", "BUILD", "SITES", "SEARCH_CLEAN", "SEARCH_CLONE", "PROBE",
 ]
 
 #: The satisfaction searches that report their effort: phase 1a and phase 1b.

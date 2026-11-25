@@ -326,7 +326,7 @@ def test_timing_says_what_each_route_may_take() -> None:
     assert response.status_code == 200, response.text
     assert response.json() == {
         "version": 1,
-        "capabilities": ["deadlineSeconds"],
+        "capabilities": ["deadlineSeconds", "startLessons"],
         "transferMarginSeconds": 5.0,
         "routes": {
             "optimize": {"budgetSeconds": 180.0, "probeSeconds": 20.0, "headroomSeconds": 30.0, "ceilingSeconds": 230.0},
