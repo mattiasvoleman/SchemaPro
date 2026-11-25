@@ -57,7 +57,7 @@ describe('timeoutReportOf', () => {
     const literalOf = (name: string): string[] => {
       const match = new RegExp(`^${name} = Literal\\[([^\\]]*)\\]`, 'm').exec(schema);
       expect(match).not.toBeNull();
-      return [...match![1]!.matchAll(/"([A-Z_]+)"/g)].map((quoted) => quoted[1]!);
+      return [...match![1]!.matchAll(/"([A-Z][A-Z0-9_]*)"/g)].map((quoted) => quoted[1]!);
     };
 
     // The engine may name a step the gateway does not know (it deploys first): the report skips it. What must hold is
@@ -79,6 +79,17 @@ describe('timeoutReportOf', () => {
       expect(subsequence(TIMEOUT_STAGES, engine)).toBe(true);
       expect(subsequence(ENGINE_STAGES, engine)).toBe(true);
       expect([...ENGINE_STAGES]).toEqual([...TIMEOUT_STAGES]);
+    });
+
+    // The steps the engine names that this gateway skips for now. A name is put here in the engine's own PR (the gateway may
+    // deploy after it, and the page learns the name later) and leaves when TIMEOUT_STAGES has it. It is what keeps a step the
+    // engine has added from going unseen: the check above lets the engine add one, and nothing else would say that the card
+    // still leaves it out.
+    const SKIPPED_FOR_NOW: readonly string[] = [];
+
+    it('names every step of the engine that the gateway does not know, so that none is skipped unseen', () => {
+      const unknown = literalOf('TimeoutStageName').filter((name) => !(TIMEOUT_STAGES as readonly string[]).includes(name));
+      expect(unknown).toEqual([...SKIPPED_FOR_NOW]);
     });
 
     it('can tell a name the engine has added from one it has dropped (the check above has teeth)', () => {
@@ -120,6 +131,42 @@ describe('timeoutReportOf', () => {
       expect(kept?.search.phases).toHaveLength(2);
     });
 
+    it('carries the seconds of what it skipped, so that a page can say that part of the run went to steps it has no name for', () => {
+      const kept = timeoutReportOf(
+        withSteps([
+          { stage: 'PRECHECKS', seconds: 0.4 },
+          { stage: 'YEARS', seconds: 30 },
+          { stage: 'BUILD', seconds: 4 },
+          { stage: 'START', seconds: 12.34 },
+        ]),
+      );
+
+      expect(kept?.otherSeconds).toBe(42.3);
+      // The steps listed and the seconds left out are the engine's steps, whole.
+      const listed = (kept?.stages ?? []).reduce((sum, step) => sum + step.seconds, 0);
+      expect(Math.round((listed + (kept?.otherSeconds ?? 0)) * 10) / 10).toBe(46.7);
+    });
+
+    it('carries no seconds of what it skipped when it skipped nothing, so that a report of known steps is what it was', () => {
+      expect('otherSeconds' in (timeoutReportOf(report()) as object)).toBe(false);
+      expect('otherSeconds' in (timeoutReportOf(withSteps([{ stage: 'YEARS', seconds: 0 }])) as object)).toBe(false);
+    });
+
+    it('keeps the seconds it skipped when its own output is read again, and adds to them', () => {
+      const once = timeoutReportOf(withSteps([{ stage: 'YEARS', seconds: 30 }, { stage: 'BUILD', seconds: 4 }]));
+      expect(once?.otherSeconds).toBe(30);
+      expect(timeoutReportOf(once)).toEqual(once);
+      expect(timeoutReportOf({ ...once, stages: [{ stage: 'START', seconds: 5 }] })?.otherSeconds).toBe(35);
+    });
+
+    it.each([
+      ['seconds that are not a number', 'a while'],
+      ['negative seconds', -1],
+      ['no number at all', null],
+    ])('is a malformed report with %s skipped', (_what, other) => {
+      expect(timeoutReportOf({ ...report(), otherSeconds: other })).toBeNull();
+    });
+
     it('leaves a report of nothing but such steps with no steps and the rest of it', () => {
       const kept = timeoutReportOf(withSteps([{ stage: 'YEARS', seconds: 90 }]));
       expect(kept?.stages).toEqual([]);
@@ -141,6 +188,12 @@ describe('timeoutReportOf', () => {
       ['a name of 41 characters', { stage: 'A'.repeat(41), seconds: 3 }],
     ])('is still a malformed report with %s', (_what, entry) => {
       expect(timeoutReportOf(withSteps([{ stage: 'BUILD', seconds: 4 }, entry]))).toBeNull();
+    });
+
+    it('knows a name of 40 characters for a word, the longest the engine could have written', () => {
+      expect(timeoutReportOf(withSteps([{ stage: 'A'.repeat(40), seconds: 3 }, { stage: 'BUILD', seconds: 4 }]))?.stages).toEqual([
+        { stage: 'BUILD', seconds: 4 },
+      ]);
     });
 
     it('still counts the skipped steps toward the cap on how many a report may carry', () => {

@@ -917,6 +917,8 @@ export interface TimeoutReport {
   /** How long the caller said it waits; null when it did not say. */
   callerWaitSeconds: number | null;
   stages: { stage: "PRECHECKS" | "BUILD" | "SITES" | "SEARCH_CLEAN" | "SEARCH_CLONE" | "PROBE"; seconds: number }[];
+  /** The seconds of steps the gateway has no name for and left out of `stages`: the list adds up to `totalSeconds` less these. Absent when there were none, and from a gateway before it. */
+  otherSeconds?: number;
   search: {
     solutions: number;
     phases: { phase: "CLEAN" | "CLONE"; seconds: number; conflicts: number | null; branches: number | null }[];

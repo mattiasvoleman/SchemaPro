@@ -130,6 +130,44 @@ describe("TimeoutAccount", () => {
     expect(screen.queryByText(new RegExp(`^${NS.replace(".", "\\.")}\\.searchNone`))).toBeNull();
   });
 
+  it("does not say that no search began when the seconds went to steps the gateway has no name for (g458)", () => {
+    // An engine newer than the gateway: its YEARS step (a search) was left out of `stages`, and its seconds are `otherSeconds`.
+    const { container } = render(
+      <TimeoutAccount
+        report={report({
+          totalSeconds: 99.4,
+          stages: [{ stage: "PRECHECKS", seconds: 0.4 }, { stage: "BUILD", seconds: 4 }, { stage: "PROBE", seconds: 5 }],
+          otherSeconds: 90,
+          search: { solutions: 0, phases: [] },
+        })}
+        conflicts={[]}
+      />,
+    );
+
+    expect(screen.queryByText(`${NS}.searchNotRun`)).toBeNull();
+    expect(screen.getByText(`${NS}.otherSteps(90)`)).toBeInTheDocument();
+    expect(screen.getByText(`${NS}.searchOther(90)`)).toBeInTheDocument();
+    // The bar is a picture of the whole run: the probe's 5 s of 99.4 is a twentieth of it, not half.
+    const widths = [...container.querySelectorAll('[aria-hidden="true"].flex > div')].map((bar) => parseFloat((bar as HTMLElement).style.width));
+    expect(widths).toHaveLength(4);
+    expect(widths[2]).toBeCloseTo((5 / 99.4) * 100, 1);
+    expect(widths.reduce((sum, width) => sum + width, 0)).toBeCloseTo(100, 5);
+  });
+
+  it("says a search that did run, and the seconds the gateway has no name for beside it", () => {
+    render(<TimeoutAccount report={report({ otherSeconds: 30 })} conflicts={[]} />);
+
+    expect(screen.getByText(`${NS}.searchNone(2|100)`)).toBeInTheDocument();
+    expect(screen.getByText(`${NS}.searchOther(30)`)).toBeInTheDocument();
+    expect(screen.getByText(`${NS}.otherSteps(30)`)).toBeInTheDocument();
+  });
+
+  it("says nothing of steps it has no name for when there were none", () => {
+    render(<TimeoutAccount report={report()} conflicts={[]} />);
+
+    expect(screen.queryByText(new RegExp(`^${NS.replace(".", "\\.")}\\.(otherSteps|searchOther)`))).toBeNull();
+  });
+
   it("says what the search was given, and against what the engine is set to give it when it was less", () => {
     const { rerender } = render(<TimeoutAccount report={report()} conflicts={[]} />);
     expect(screen.getByText(`${NS}.budget(100)`)).toBeInTheDocument();

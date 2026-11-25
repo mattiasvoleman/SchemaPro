@@ -371,7 +371,8 @@ describe('OptimizationJobsService', () => {
         await service.start(YEAR_ID, testUser());
         await flushBackgroundRun();
 
-        expect(lastWrite().report).toEqual(report);
+        // The step is not stored, its seconds are: the page says that part of the run went to a step it has no name for.
+        expect(lastWrite().report).toEqual({ ...report, otherSeconds: 30 });
       });
     });
 

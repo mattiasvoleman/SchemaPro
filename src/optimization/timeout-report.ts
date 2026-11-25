@@ -16,9 +16,12 @@
  * gateway, and a step it adds (M8's YEARS and START, the second year of the design note's drivers) used to turn
  * every report into null until the gateway followed: the whole account gone for a name (g425, L-2). A step whose
  * name is well formed (a word in capitals) but not in TIMEOUT_STAGES is skipped, and the others are kept in
- * their order. The steps then add up to less than `totalSeconds`, by the skipped step's seconds, and the total
- * is still the engine's: the page says what it knows and does not say what it does not. A step that is not
- * an object, has no readable seconds or a name that is no word is still a malformed report.
+ * their order. The steps then add up to less than `totalSeconds`, by the skipped steps' seconds, and the total
+ * is still the engine's. What was left out is not lost: its seconds are carried as `otherSeconds`, so that the
+ * page can say that part of the run went to steps it has no words for. A step it cannot name may be a search
+ * (M8's YEARS and START are), and a card that listed only the steps it knows would say "no search began" of a run
+ * whose search it skipped. A step that is not an object, has no readable seconds or a name that is no word is
+ * still a malformed report.
  *
  * MEASURED, NEVER A RULE. Nothing here is a limit, and the figures are what the solve's own clock and CP-SAT
  * counted: `conflicts` and `branches` are effort and not progress, and a satisfaction search has no bound, so
@@ -56,7 +59,8 @@ export interface TimeoutReportView {
    * From the solver's entry (`solve()`, after the request is parsed and the thread has started) to the
    * answer, builds and the probe included. Not the route's entry: the wall time of the call can be a
    * few tenths longer, and more for a large body. The total and each step are rounded to a tenth on
-   * their own, so the steps may not add up to it exactly (by up to 0.05 s a step).
+   * their own, so the steps may not add up to it exactly (by up to 0.05 s a step), and by `otherSeconds` when the gateway
+   * skipped a step it has no name for.
    */
   totalSeconds: number;
   /** What the search was given, in whole seconds. */
@@ -66,6 +70,12 @@ export interface TimeoutReportView {
   /** How long the caller said it waits; null when it did not say. */
   callerWaitSeconds: number | null;
   stages: TimeoutStageTime[];
+  /**
+   * The seconds of the steps this gateway has no name for and left out of `stages`; absent when there were none. The steps
+   * above then add up to `totalSeconds` less these, and a page must say so: a step the gateway cannot name may be a search
+   * (M8's YEARS and START are), so "no search began" is a sentence only a report without them can carry.
+   */
+  otherSeconds?: number;
   search: {
     /** A TIMEOUT is the answer of a solve that found none. */
     solutions: number;
@@ -116,15 +126,24 @@ export function timeoutReportOf(value: unknown): TimeoutReportView | null {
   if (!isRecord(value.search) || !Array.isArray(value.search.phases) || value.search.phases.length > MAX_PHASES) return null;
   if (value.weekLoadCut !== undefined && typeof value.weekLoadCut !== 'boolean') return null;
 
+  // What an earlier read of the same report already left out (the stored column is read through this door again).
+  const carried = value.otherSeconds === undefined ? 0 : secondsOf(value.otherSeconds);
+  if (carried === undefined) return null;
+
   const stages: TimeoutStageTime[] = [];
+  let skipped = 0;
   for (const entry of value.stages as unknown[]) {
     if (!isRecord(entry)) return null;
     const seconds = secondsOf(entry.seconds);
     if (typeof entry.stage !== 'string' || !STEP_WORD.test(entry.stage) || seconds === undefined) return null;
-    // A step of the engine's that this gateway does not know yet: not shown, and not a reason to show nothing.
-    if (!(TIMEOUT_STAGES as readonly string[]).includes(entry.stage)) continue;
+    // A step of the engine's that this gateway does not know yet: not named, not a reason to show nothing, and its seconds kept.
+    if (!(TIMEOUT_STAGES as readonly string[]).includes(entry.stage)) {
+      skipped += seconds;
+      continue;
+    }
     stages.push({ stage: entry.stage as TimeoutStage, seconds });
   }
+  const otherSeconds = Math.round((carried + skipped) * 10) / 10;
 
   const phases: TimeoutSearchPhase[] = [];
   for (const entry of value.search.phases as unknown[]) {
@@ -153,6 +172,7 @@ export function timeoutReportOf(value: unknown): TimeoutReportView | null {
     configuredBudgetSeconds,
     callerWaitSeconds: callerWait,
     stages,
+    ...(otherSeconds > 0 ? { otherSeconds } : {}),
     search: { solutions, phases },
     weekLoadCut: value.weekLoadCut === true,
   };
