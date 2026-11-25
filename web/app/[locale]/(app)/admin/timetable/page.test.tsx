@@ -326,7 +326,7 @@ vi.mock("@/components/schedule/selection-bar", async (importOriginal) => {
  * failure is put on the wrapper the page reads, and it is taken away by the page's own reset call, as a new
  * wrapper is: the row sees whether the page asks for one where it caught the failure, and draws from it.
  */
-const brokenPieces = vi.hoisted(() => ({ dialogs: false, panel: false, bar: false }));
+const brokenPieces = vi.hoisted(() => ({ dialogs: false, panel: false, bar: false, versions: false, rooms: false, swaps: false, stubborn: false }));
 vi.mock("./timetable-lazy", async (importOriginal) => {
   const real = await importOriginal<typeof import("./timetable-lazy")>();
   const { lazy } = await import("react");
@@ -334,6 +334,9 @@ vi.mock("./timetable-lazy", async (importOriginal) => {
   const brokenDialogs = { ...real.lessonDialogs, LessonEditDialog: rejects() };
   const brokenPanel = rejects();
   const brokenBar = rejects();
+  const brokenVersions = rejects();
+  const brokenRooms = rejects();
+  const brokenSwaps = rejects();
   return {
     ...real,
     get lessonDialogs() {
@@ -344,6 +347,28 @@ vi.mock("./timetable-lazy", async (importOriginal) => {
     },
     get SelectionBar() {
       return brokenPieces.bar ? brokenBar : real.SelectionBar;
+    },
+    get VersionsDialog() {
+      return brokenPieces.versions ? brokenVersions : real.VersionsDialog;
+    },
+    get RoomOptimizationDialog() {
+      return brokenPieces.rooms ? brokenRooms : real.RoomOptimizationDialog;
+    },
+    get SwapDialog() {
+      return brokenPieces.swaps ? brokenSwaps : real.SwapDialog;
+    },
+    // `stubborn` is a chunk that keeps failing: a new wrapper fails again.
+    resetVersionsDialog() {
+      brokenPieces.versions = brokenPieces.stubborn;
+      real.resetVersionsDialog();
+    },
+    resetRoomOptimizationDialog() {
+      brokenPieces.rooms = brokenPieces.stubborn;
+      real.resetRoomOptimizationDialog();
+    },
+    resetSwapDialog() {
+      brokenPieces.swaps = brokenPieces.stubborn;
+      real.resetSwapDialog();
     },
     resetLessonDialogs() {
       brokenPieces.dialogs = false;
@@ -357,6 +382,17 @@ vi.mock("./timetable-lazy", async (importOriginal) => {
       brokenPieces.bar = false;
       real.resetSelectionBar();
     },
+  };
+});
+
+/*
+ * Byten och flyttar asks the gateway through queries this file does not provide a client for, and no row here is about what it says: it is drawn as
+ * a dialog that says so, which is all the rows that open it (after a piece did not arrive) ask of it.
+ */
+vi.mock("@/components/schedule/swap-dialog", async () => {
+  const { createElement } = await import("react");
+  return {
+    SwapDialog: ({ open }: { open: boolean }) => (open ? createElement("div", { role: "dialog" }, "swapDialogStub") : null),
   };
 });
 
@@ -682,6 +718,10 @@ describe("a piece that did not arrive is fetched again through a new wrapper", (
     brokenPieces.dialogs = false;
     brokenPieces.panel = false;
     brokenPieces.bar = false;
+    brokenPieces.versions = false;
+    brokenPieces.rooms = false;
+    brokenPieces.swaps = false;
+    brokenPieces.stubborn = false;
     // The panel remembers it is open for the tab.
     try {
       sessionStorage.clear();
@@ -738,6 +778,107 @@ describe("a piece that did not arrive is fetched again through a new wrapper", (
     fireEvent.keyDown(container.querySelector('[data-lesson-id="l-slojd"]')!, { key: "Enter", shiftKey: true });
     expect(await screen.findByText("timetable.bulkSelected(1)")).toBeInTheDocument();
     expect(toasts.error).not.toHaveBeenCalled();
+  });
+
+  /*
+   * Versioner, Optimera salar and Byten och flyttar are fetched on their first press, each in a boundary of its own (g381-L-3). A piece that does
+   * not arrive is said, the dialog is closed, the page stands, and the next press fetches through a new wrapper. Before, each stood in a Suspense
+   * alone: the failure climbed to the root and Next's own error screen replaced the page.
+   */
+  describe("a dialog fetched on its first press", () => {
+    const pageStands = () => expect(screen.getByRole("button", { name: "timetable.versions" })).toBeInTheDocument();
+    const openSlojd = () => {
+      const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+      fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+    };
+
+    it("Versioner: says it did not arrive, leaves the page standing, and opens on the next press", async () => {
+      brokenPieces.versions = true;
+      const user = userEvent.setup();
+      render(<TimetablePage />);
+
+      await user.click(screen.getByRole("button", { name: "timetable.versions" }));
+      await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("timetable.dialogLoadFailed"));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(brokenPieces.versions).toBe(false);
+      pageStands();
+      expect(subjectsOnScreen()).toContain("Slöjd");
+
+      await user.click(screen.getByRole("button", { name: "timetable.versions" }));
+      expect(await screen.findByRole("dialog")).toHaveTextContent("timetable.versionsTitle");
+      expect(toasts.error).toHaveBeenCalledTimes(1);
+    });
+
+    it("Optimera salar: says it did not arrive, leaves the page standing, and opens on the next press", async () => {
+      brokenPieces.rooms = true;
+      const user = userEvent.setup();
+      render(<TimetablePage />);
+
+      await fromMoreMenu(user, "timetable.optimizeRooms");
+      await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("timetable.dialogLoadFailed"));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(brokenPieces.rooms).toBe(false);
+      pageStands();
+      expect(subjectsOnScreen()).toContain("Slöjd");
+
+      await fromMoreMenu(user, "timetable.optimizeRooms");
+      expect(await screen.findByRole("dialog")).toHaveTextContent("roomOptimization.title");
+      expect(toasts.error).toHaveBeenCalledTimes(1);
+    });
+
+    it("Byten och flyttar: says it did not arrive, leaves the page standing, and opens on the next press", async () => {
+      brokenPieces.swaps = true;
+      const user = userEvent.setup();
+      render(<TimetablePage />);
+
+      const suggestSwaps = async () => {
+        openSlojd();
+        await user.click(await screen.findByRole("button", { name: "swaps.openButton" }));
+      };
+      await suggestSwaps();
+      await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("timetable.dialogLoadFailed"));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(brokenPieces.swaps).toBe(false);
+      pageStands();
+      expect(subjectsOnScreen()).toContain("Slöjd");
+
+      await suggestSwaps();
+      expect(await screen.findByRole("dialog")).toHaveTextContent("swapDialogStub");
+      expect(toasts.error).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not fetch again behind the school's back when the piece keeps failing: the next attempt waits for a press", async () => {
+      brokenPieces.versions = true;
+      brokenPieces.stubborn = true;
+      const user = userEvent.setup();
+      render(<TimetablePage />);
+
+      await user.click(screen.getByRole("button", { name: "timetable.versions" }));
+      await waitFor(() => expect(toasts.error).toHaveBeenCalledTimes(1));
+      // Time for a loop to show itself: nobody presses, so nothing more is said.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(toasts.error).toHaveBeenCalledTimes(1);
+      pageStands();
+
+      // A press tries again, and says so again.
+      await user.click(screen.getByRole("button", { name: "timetable.versions" }));
+      await waitFor(() => expect(toasts.error).toHaveBeenCalledTimes(2));
+    });
+
+    it("one dialog's failure leaves another, already open, where it is", async () => {
+      // Optimera salar is open and fine; Versioner does not arrive. The failure closes Versioner and nothing else.
+      brokenPieces.versions = true;
+      const user = userEvent.setup();
+      render(<TimetablePage />);
+      await fromMoreMenu(user, "timetable.optimizeRooms");
+      expect(await screen.findByRole("dialog")).toHaveTextContent("roomOptimization.title");
+
+      // The room dialog is modal: the failing press is made past it, as the page does when its own code runs.
+      fireEvent.click(screen.getByRole("button", { name: "timetable.versions", hidden: true }));
+      await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("timetable.dialogLoadFailed"));
+      expect(await screen.findByRole("dialog")).toHaveTextContent("roomOptimization.title");
+    });
   });
 });
 

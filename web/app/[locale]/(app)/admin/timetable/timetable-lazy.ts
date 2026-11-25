@@ -6,10 +6,11 @@ import { lazy } from "react";
  * load does not need is fetched here when it is asked for. React's own lazy(),
  * not next/dynamic — see the first comment below.
  *
- * Three of them are `let`, and exported as live bindings: a lazy() keeps a
+ * Six of them are `let`, and exported as live bindings: a lazy() keeps a
  * rejected fetch for good, so retrying takes a new wrapper, and the page reads
  * the binding again on its next render (resetLessonDialogs, resetLessonTimePanel,
- * resetSelectionBar). Kept at module level between failures so a later visit in
+ * resetSelectionBar, resetRoomOptimizationDialog, resetVersionsDialog,
+ * resetSwapDialog). Kept at module level between failures so a later visit in
  * the same tab renders the already resolved ones without suspending.
  */
 /*
@@ -34,31 +35,47 @@ import { lazy } from "react";
  * selection's bar is drawn once the lessons are read, which they are not at
  * first render either.
  */
-export const RoomOptimizationDialog = lazy(() =>
-  import("@/components/schedule/room-optimization-dialog").then((module) => ({
-    default: module.RoomOptimizationDialog,
-  })),
-);
+const lazyRoomOptimizationDialog = () =>
+  lazy(() =>
+    import("@/components/schedule/room-optimization-dialog").then((module) => ({
+      default: module.RoomOptimizationDialog,
+    })),
+  );
+export let RoomOptimizationDialog = lazyRoomOptimizationDialog();
+/** A fresh wrapper after the fetch failed or the dialog threw while it drew; the page reads the binding again. */
+export function resetRoomOptimizationDialog(): void {
+  RoomOptimizationDialog = lazyRoomOptimizationDialog();
+}
 /*
  * Fetched the first time Versioner is pressed, like the room optimisation
  * dialog above and for its reason: the version diff is most of the dialog's
  * code, and nothing on the grid needs it (see versions-dialog.tsx).
  */
-export const VersionsDialog = lazy(() =>
-  import("@/components/schedule/versions-dialog").then((module) => ({
-    default: module.VersionsDialog,
-  })),
-);
+const lazyVersionsDialog = () =>
+  lazy(() =>
+    import("@/components/schedule/versions-dialog").then((module) => ({
+      default: module.VersionsDialog,
+    })),
+  );
+export let VersionsDialog = lazyVersionsDialog();
+export function resetVersionsDialog(): void {
+  VersionsDialog = lazyVersionsDialog();
+}
 /*
  * Byten och flyttar, fetched the first time "Föreslå byten" is pressed in
  * Justera: the swap search is asked a few times a day and the grid needs none
  * of its code (see swap-dialog.tsx).
  */
-export const SwapDialog = lazy(() =>
-  import("@/components/schedule/swap-dialog").then((module) => ({
-    default: module.SwapDialog,
-  })),
-);
+const lazySwapDialog = () =>
+  lazy(() =>
+    import("@/components/schedule/swap-dialog").then((module) => ({
+      default: module.SwapDialog,
+    })),
+  );
+export let SwapDialog = lazySwapDialog();
+export function resetSwapDialog(): void {
+  SwapDialog = lazySwapDialog();
+}
 /*
  * The lesson dialogs — Lägg till, Justera, Publicera and the shared-move and
  * placement questions after a drag — fetched as one chunk right after the page

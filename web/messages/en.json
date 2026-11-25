@@ -2213,6 +2213,7 @@
     "editSaved": "Lesson updated — {count} calendar lessons moved along",
     "editConflict": "Scheduling conflict",
     "lessonIsPlaced": "The lesson is placed, and Generera writes it again from the placement. Change it in Place in the week (or on its curriculum entry), or for a parallel block with Place lessons … under Blocks on the Curriculum entries page.",
+    "dialogLoadFailed": "The dialog could not be opened. Nothing has changed – try again.",
     "addLesson": "Add lesson",
     "addTitle": "Add lesson",
     "addBody": "Manually place a lesson on the master timetable. It is checked against the rest of the timetable before saving.",
