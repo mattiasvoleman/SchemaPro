@@ -108,6 +108,9 @@ export function useTimetableRealtime(): {
           .then((cache) => cache.readHeard(queryClient, ids, stillCurrent))
           .then(
             (done) => {
+              // What else is kept under the lessons' key beside the year's list (the candidates' map of who owns each lesson,
+              // ["masterLessons", <year>, "origin"]) was read before this change, and the year's read used to bring it along.
+              if (done) void queryClient.invalidateQueries({ queryKey: ["masterLessons"], predicate: (query) => query.queryKey.length > 2 });
               if (done) void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
               else readTheYear();
             },

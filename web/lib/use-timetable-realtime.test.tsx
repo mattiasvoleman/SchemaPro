@@ -392,6 +392,19 @@ describe("a collaborator's change of a few lessons", () => {
     expect(invalidate.mock.calls.filter(([filter]) => filter?.queryKey?.[0] === "masterLessons")).toHaveLength(3);
   });
 
+  it("marks the maps kept beside the year's list as read before the change (the candidates' map of who owns each lesson), and leaves the list as it was laid", async () => {
+    const ORIGIN = ["masterLessons", "year-1", "origin"];
+    const { socket, queryClient } = await setup({ read: (ids) => ({ data: ids.map((id) => row(id, { dayOfWeek: 3 })), error: null }) });
+    queryClient.setQueryData(YEAR, [lesson("a")]);
+    queryClient.setQueryData(ORIGIN, [{ ...lesson("a"), isGenerated: true }]);
+
+    await heard(socket, { lessonIds: ["a"] });
+    await waitFor(() => expect(queryClient.getQueryState(ORIGIN)?.isInvalidated).toBe(true));
+
+    expect(queryClient.getQueryState(YEAR)?.isInvalidated).toBe(false);
+    expect(held(queryClient)[0]!.dayOfWeek).toBe(3);
+  });
+
   it("reads the year when there is no list to lay the lessons in", async () => {
     const { socket, invalidate, reads } = await setup();
     await heard(socket, { lessonIds: ["a"] }, () => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["masterLessons"] }));
