@@ -8310,6 +8310,100 @@ def test_a_placed_meal_on_a_reservation_is_refused_by_name() -> None:
     assert refusal.params["what"] == "closed"
 
 
+# ---------------------------------------------------------------------------
+# Undantag med flit (E1b): a lesson the school let stand over the class's meal.
+# ---------------------------------------------------------------------------
+
+
+def _exempt_lock(payload: dict[str, object], start: str, end: str) -> None:
+    """A lock the school let stand over the class's meal on purpose (exemptFromLunch)."""
+    _lock(payload, start, end)
+    payload["fixedLessons"][-1]["exemptFromLunch"] = True  # type: ignore[index]
+
+
+def test_a_lock_the_school_let_stand_over_the_meal_does_not_refuse_the_meal_placed_there() -> None:
+    """The answer yes to "Lägg ändå" on the class's lunch, kept by Generera.
+
+    The meal the school placed at 12:30 and the lesson it locked over 12:30-13:30
+    are two of its own sentences, and _verify_lunch_placements refuses them by
+    name (above). When the school has said the lesson stands over the meal on
+    purpose, that refusal is the school's own answer asked again: the week is
+    solved, the meal is where the school put it, and the lesson is where it
+    locked it.
+    """
+    payload = _placed_payload("12:30")
+    _exempt_lock(payload, "12:30", "13:30")
+
+    response = _solve(payload)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert [lunch.start_time for lunch in response.lunches] == ["12:30:00"]
+
+
+def test_the_exemption_is_for_the_meal_and_never_for_a_reservation_of_the_class() -> None:
+    """Only the class's lunch is let through: a reserved hour is another sentence."""
+    payload = _placed_payload("12:30")
+    _exempt_lock(payload, "12:30", "13:30")
+    payload["constraints"] = [{
+        "id": str(uuid4()),
+        "resourceKind": "STUDENT_GROUP",
+        "resourceId": payload["groups"][0]["id"],  # type: ignore[index]
+        "kind": "UNAVAILABLE",
+        "dayOfWeek": 1,
+        "startTime": "12:30:00",
+        "endTime": "13:00:00",
+    }]
+
+    refusal = _refusal(payload)
+
+    assert refusal.code == "LUNCH_PLACEMENT_COLLIDES"
+    assert refusal.params["what"] == "closed"
+
+
+def test_the_exemption_does_not_move_a_meal_the_solver_places() -> None:
+    """A meal nobody placed is still laid clear of the lock: the exemption lets a PLACED meal stand over it, nothing more."""
+    payload = _placed_payload()
+    _exempt_lock(payload, "11:00", "11:30")
+
+    response = _solve(payload)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert [lunch.start_time for lunch in response.lunches] == ["11:30:00"]
+
+
+def test_a_request_that_names_no_exemption_is_the_request_it_was() -> None:
+    """Absent is false, and false is absent: the same lock answers the same either way, and a lesson without the key is still refused."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+
+    plain = _placed_payload("12:30")
+    _lock(plain, "12:30", "13:30")
+    assert _refusal(plain).code == "LUNCH_PLACEMENT_COLLIDES"
+
+    said_no = _placed_payload("12:30")
+    _lock(said_no, "12:30", "13:30")
+    said_no["fixedLessons"][-1]["exemptFromLunch"] = False  # type: ignore[index]
+    assert _refusal(said_no).code == "LUNCH_PLACEMENT_COLLIDES"
+
+    request = OptimizeScheduleRequest.model_validate(plain)
+    assert request.fixed_lessons[0].exempt_from_lunch is False
+    assert "exemptFromLunch" not in request.fixed_lessons[0].model_dump(by_alias=True, exclude_unset=True)
+
+
+def test_a_lock_outside_the_frame_is_taken_as_a_fact_and_needs_no_exemption() -> None:
+    """The ramtid needs nothing of the engine: a lock may lie outside its class's frame (pins.py: "STRICTER THAN A LOCK").
+
+    The frame of the payload ends 14:00, and the lock runs 13:30-14:30. The week is solved around it, which is the
+    answer yes to "Lägg ändå" on the ramtid: the gateway sends the lesson as the lock it is, and nothing else.
+    """
+    payload = _placed_payload("12:30")
+    _lock(payload, "13:30", "14:30")
+
+    response = _solve(payload)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert [lunch.start_time for lunch in response.lunches] == ["12:30:00"]
+
+
 @pytest.mark.parametrize(
     ("start", "why"),
     [
