@@ -20112,6 +20112,65 @@
         }
       }
     },
+    "/api/v1/schedule-exchange/import/as-version": {
+      "post": {
+        "tags": [
+          "ScheduleExchange"
+        ],
+        "operationId": "ScheduleExchangeController_asVersion",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewImportDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 10,
+          "ttlSeconds": 60
+        }
+      }
+    },
     "/api/v1/schedule-exchange/import/preview": {
       "post": {
         "tags": [

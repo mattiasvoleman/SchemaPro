@@ -30,6 +30,9 @@ vi.mock("@/lib/schedule-exchange", async (importOriginal) => ({
   saveBase64,
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
+}));
 // The post import's dialog has its own tests (components/import/csv-import-dialog.test.tsx); here it is only asked what it was handed.
 vi.mock("@/components/import/lazy-csv-import-dialog", () => ({
   LazyCsvImportDialog: (props: { open: boolean; kinds: string[]; academicYearId?: string | null; source?: { text: string } | { file: File } | null }) =>
@@ -269,6 +272,69 @@ describe("Schema som fil: import", () => {
     expect(screen.getByText("Posten ändrades inte.")).toBeInTheDocument();
     expect(screen.getByText(/Matematik · 7A: 2 × 60 min · Språkval/)).toBeInTheDocument();
     expect(screen.getByText("newBlocks(Språkval)")).toBeInTheDocument();
+  });
+});
+
+describe("Schema som fil: sparat som ett schema att utgå från (Ett schema som start, M9)", () => {
+  const SAVED = { versionId: "v-1", name: "Inläst ur fil: schema.csv", lessonCount: 28, read: 31, unreadable: 0, unresolved: { UNKNOWN_GROUP: 3 } };
+
+  it("saves the file as a version through its own route, with the same body as a preview, and writes nothing else", async () => {
+    post.mockResolvedValue(SAVED);
+    renderPage();
+    await choose(csvFile());
+    await userEvent.setup().click(screen.getByRole("button", { name: "import.saveStart" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledWith("/api/v1/schedule-exchange/import/as-version", {
+      academicYearId: "y1",
+      format: "TABLE_CSV",
+      files: [{ name: "schema.csv", contentBase64: Buffer.from("AAAAAAAAAA").toString("base64") }],
+    });
+  });
+
+  it("says what the version holds, how many rows are left out, and links to Generera for the year", async () => {
+    post.mockResolvedValue(SAVED);
+    renderPage();
+    await choose(csvFile());
+    await userEvent.setup().click(screen.getByRole("button", { name: "import.saveStart" }));
+
+    expect(await screen.findByText("import.savedStart(Inläst ur fil: schema.csv|28|31)")).toBeInTheDocument();
+    expect(screen.getByText("import.savedStartLeftOut(3)")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "import.savedStartLink" })).toHaveAttribute("href", "/admin/generate?year=y1");
+  });
+
+  it("says nothing of left-out rows when every row is in, and never applies a plan", async () => {
+    post.mockResolvedValue({ ...SAVED, lessonCount: 31, unresolved: {} });
+    renderPage();
+    await choose(csvFile());
+    await userEvent.setup().click(screen.getByRole("button", { name: "import.saveStart" }));
+
+    await screen.findByText("import.savedStart(Inläst ur fil: schema.csv|31|31)");
+    expect(screen.queryByText(/savedStartLeftOut/)).toBeNull();
+    expect(post.mock.calls.map(([path]) => path)).toEqual(["/api/v1/schedule-exchange/import/as-version"]);
+  });
+
+  it("is dead until there is a file and a format, as the preview is, and writes for Schemaläggning", async () => {
+    renderPage();
+    const button = screen.getByRole("button", { name: "import.saveStart" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("data-writes", "SCHEMALAGGNING");
+    await choose(csvFile());
+    expect(button).toBeEnabled();
+  });
+
+  it("shows the gateway's own refusal of a file it cannot read, and forgets a saved version when the file is changed", async () => {
+    post.mockResolvedValueOnce(SAVED).mockRejectedValueOnce(new ApiError(400, "Filen går inte att läsa.", "IMPORT_UNREADABLE"));
+    renderPage();
+    await choose(csvFile());
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "import.saveStart" }));
+    await screen.findByText("import.savedStart(Inläst ur fil: schema.csv|28|31)");
+
+    await choose(csvFile("annan.csv"));
+    expect(screen.queryByText(/import\.savedStart\(/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "import.saveStart" }));
+    expect(await screen.findByText(/Filen går inte att läsa/)).toBeInTheDocument();
   });
 });
 

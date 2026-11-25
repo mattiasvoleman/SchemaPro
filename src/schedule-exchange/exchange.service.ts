@@ -8,6 +8,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { enterGrundschemaWrite, publishModeOf, type PublishMode } from '../publication/publish-mode';
 import { lockYearForRegeneration } from '../optimization/regeneration-lock';
 import { MasterLessonsService, type DayLesson } from '../calendar/master-lessons.service';
+import type { VersionLesson } from '../calendar/schedule-versions.service';
 import { ConflictReads } from '../calendar/conflict-reads';
 import { loadRosters, gradeSpanOf } from '../optimization/room-eligibility';
 import { rostersOfYear, type RosterBasis } from '../year-rollover/projected-rosters';
@@ -16,7 +17,7 @@ import { windowKeysOf } from '../common/lunch-window';
 import { recordRead } from '../access-log/access-log';
 import { markedIds } from '../users/person-protections';
 import { redactPersonalNumbers, scrubPersonalNumbers } from './file-safety';
-import { clockOfMinutes, type ExchangeDocument, type ExchangeLesson, type ReadProblem, type TeacherRef, type WeekPattern } from './exchange-model';
+import { clockOfMinutes, type ExchangeDocument, type ExchangeLesson, type ParsedExchange, type ReadProblem, type TeacherRef, type WeekPattern } from './exchange-model';
 import {
   EXCHANGE_FORMATS,
   readUpload,
@@ -89,6 +90,29 @@ export interface ImportPlan {
   notes: string[];
   canApply: boolean;
   fingerprint: string;
+}
+
+/** What saveAsVersion made of a file: the version, how many lessons it holds, and why the rest of the file's rows are not in it. */
+export interface SavedStart {
+  versionId: string;
+  name: string;
+  lessonCount: number;
+  /** Rows the file held that were read as lessons. */
+  read: number;
+  /** Lines of the file that could not be read as a lesson at all. */
+  unreadable: number;
+  /** The rows left out because they name what the year does not have, by the refusal's code (UNKNOWN_GROUP, UNKNOWN_SUBJECT, …). */
+  unresolved: Record<string, number>;
+}
+
+/** The name a version saved from a file starts with: the file's own name follows it. */
+export const START_VERSION_PREFIX = 'Inläst ur fil: ';
+
+/** A file's name as a version's name keeps it: on one line, with a personnummer redacted, and short enough for the 120 characters a name may have. */
+function shortName(name: string | undefined): string {
+  const flat = redactPersonalNumbers(String(name ?? 'schema')).replace(/\s+/g, ' ').trim();
+  const kept = flat.length === 0 ? 'schema' : flat;
+  return kept.length > 80 ? `${kept.slice(0, 80)}…` : kept;
 }
 
 export interface ImportResult {
@@ -260,20 +284,91 @@ export class ScheduleExchangeService {
     return { ...result.written, unchanged: result.plan.summary.unchanged, fingerprint: result.plan.fingerprint };
   }
 
+  /**
+   * A file saved as a version of the year, to start Generera from (Ett schema som start, M9). The lessons of the file are read as a preview
+   * reads them (names to groups, subjects, rooms and teachers), and the ones that resolve are stored as a ScheduleVersion of the machine's
+   * lessons: not locked, and the optimizer's own, so that regeneration treats them as a draft it may replace and a start reads them as one.
+   * It writes nothing of the school's: no lesson, no post, no block, no change log. The clash scan is not run, since a start is held only
+   * until the week shows that it cannot stay, and a lesson that clashes with this year's week is exactly what the engine lets go of.
+   *
+   * What the file named that this year does not have (a class, a subject, a room, a teacher) is counted by the refusal's code, so that a
+   * school can see why a start from a file holds fewer lessons than the file has. A row that names a room or a teacher the school does not
+   * have is not stored without it: the lesson is left out, as the preview refuses it.
+   */
+  async saveAsVersion(
+    dto: { academicYearId: string; format: ExchangeFormat; files: UploadedFile[]; periods?: string },
+    user: AuthenticatedUser,
+  ): Promise<SavedStart> {
+    const parsed = this.parse(dto);
+    return this.prisma.withRls(
+      user,
+      async (tx) => {
+        const loaded = await this.load(tx, dto.academicYearId);
+        const idx = indexContext(loaded.ctx);
+        const lessons: VersionLesson[] = [];
+        const unresolved: Record<string, number> = {};
+        for (const lesson of parsed.lessons) {
+          const r = resolveLesson(lesson, idx, loaded.ctx);
+          if (!('resolved' in r)) {
+            for (const refusal of r.refusals) unresolved[refusal.code] = (unresolved[refusal.code] ?? 0) + 1;
+            continue;
+          }
+          const l = r.resolved;
+          lessons.push({
+            subjectId: l.subject.id,
+            studentGroupId: l.group.id,
+            teacherId: l.teacherIds[0] ?? null,
+            coTeacherId: l.teacherIds[1] ?? null,
+            roomId: l.roomId,
+            dayOfWeek: l.day,
+            startTime: clockOfMinutes(l.startMin),
+            endTime: clockOfMinutes(l.endMin),
+            isLocked: false,
+            isGenerated: true,
+            isParked: false,
+            recurrence: RECURRENCE_OF[l.weeks],
+            startDate: l.from,
+            endDate: l.to,
+            extraGroupIds: l.extraGroups.map((g) => g.id),
+            studentIds: [],
+          });
+        }
+        // The teachers the file named and this read matched are read about, as a preview records them.
+        await recordRead(tx, 'PEOPLE', new Set(lessons.flatMap((lesson) => [lesson.teacherId, lesson.coTeacherId ?? null]).filter((id): id is string => id !== null)), user.channel);
+        const name = `${START_VERSION_PREFIX}${shortName(dto.files[0]?.name)}`;
+        const created = await tx.scheduleVersion.create({
+          data: {
+            schoolId: loaded.schoolId,
+            academicYearId: dto.academicYearId,
+            name,
+            createdById: user.userId ?? null,
+            lessons: lessons as unknown as Prisma.InputJsonValue,
+            lessonCount: lessons.length,
+          },
+          select: { id: true, name: true },
+        });
+        return {
+          versionId: created.id,
+          name: created.name,
+          lessonCount: lessons.length,
+          read: parsed.lessons.length,
+          unreadable: parsed.problems.length,
+          unresolved,
+        };
+      },
+      { timeoutMs: PLAN_TIMEOUT_MS },
+    );
+  }
+
   // -------------------------------------------------------------------------
   // The plan
   // -------------------------------------------------------------------------
 
-  private async plan(
-    tx: PrismaClient,
-    user: AuthenticatedUser,
-    dto: { academicYearId: string; format: ExchangeFormat; files: UploadedFile[]; periods?: string },
-    inApply: boolean,
-  ): Promise<ImportPlan> {
+  /** The upload read as lessons: a refused format, or a file that cannot be read, is a 400 with its code and nothing read of the school. */
+  private parse(dto: { format: ExchangeFormat; files: UploadedFile[]; periods?: string }): ParsedExchange {
     if (!EXCHANGE_FORMATS.includes(dto.format)) throw new BadRequestException('Okänt format.');
-    let parsed;
     try {
-      parsed = readUpload(dto.format, dto.files, dto.periods === undefined ? {} : { periods: dto.periods });
+      return readUpload(dto.format, dto.files, dto.periods === undefined ? {} : { periods: dto.periods });
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
       throw new BadRequestException({
@@ -281,6 +376,15 @@ export class ScheduleExchangeService {
         code: 'IMPORT_UNREADABLE',
       });
     }
+  }
+
+  private async plan(
+    tx: PrismaClient,
+    user: AuthenticatedUser,
+    dto: { academicYearId: string; format: ExchangeFormat; files: UploadedFile[]; periods?: string },
+    inApply: boolean,
+  ): Promise<ImportPlan> {
+    const parsed = this.parse(dto);
     const loaded = await this.load(tx, dto.academicYearId);
     const basis = await this.rostersOf(tx, user, loaded);
     const { ctx } = loaded;
