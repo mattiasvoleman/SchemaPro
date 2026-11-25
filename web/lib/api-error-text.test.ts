@@ -125,6 +125,43 @@ describe("apiErrorText", () => {
     });
   });
 
+  describe("a refusal with a code, whose sentence is still the filter's own log", () => {
+    // What the body parser's refusals become when the gateway gives each a code of its own (REQUEST_BODY_TOO_LARGE, REQUEST_BODY_NOT_JSON
+    // and REQUEST_ENCODING_UNSUPPORTED): the English `detail` stays, and it is not a sentence for a reader with or without the code.
+    it.each([
+      [
+        413,
+        "The request body is too large. Split the import into smaller files and upload them one at a time.",
+        "REQUEST_BODY_TOO_LARGE",
+        "Det som skickades är för stort. Dela upp det i mindre delar och försök igen.",
+        "What was sent is too large. Split it into smaller parts and try again.",
+      ],
+      [
+        400,
+        "The request body is not valid JSON.",
+        "REQUEST_BODY_NOT_JSON",
+        "Förfrågan kunde inte behandlas. Ladda om sidan och försök igen.",
+        "The request could not be processed. Reload the page and try again.",
+      ],
+      [
+        415,
+        "The request body uses an unsupported content encoding.",
+        "REQUEST_ENCODING_UNSUPPORTED",
+        "Förfrågan kunde inte behandlas. Ladda om sidan och försök igen.",
+        "The request could not be processed. Reload the page and try again.",
+      ],
+    ])("says a coded %i in both languages instead of %j", (status, detail, code, svText, enText) => {
+      expect(apiErrorText(apiError(status, detail, code), swedish)).toBe(svText);
+      expect(apiErrorText(apiError(status, detail, code), english)).toBe(enText);
+      // Nothing of it is left for a classifier to show as the gateway's own words.
+      expect(ownWords(apiError(status, detail, code))).toBe("");
+    });
+
+    it("still leaves a coded refusal whose thrower worded it as it is", () => {
+      expect(apiErrorText(apiError(409, "Rummet är dubbelbokat.", "ROOM_CLASH_X"), swedish)).toBe("Rummet är dubbelbokat.");
+    });
+  });
+
   describe("what it leaves as it is", () => {
     it("a refusal the gateway named, whose thrower worded it", () => {
       // 404 and 429 too: a code means a sentence written for the reader, or one a page words itself from the code.
@@ -228,5 +265,31 @@ describe("fieldProblem", () => {
     expect(fieldProblem(apiError(400, "x", undefined, ["Nivån kan vara högst 1500 timmar."]), "level", swedish)).toBeUndefined();
     expect(fieldProblem(apiError(409, "Rummet är dubbelbokat."), "name", swedish)).toBeUndefined();
     expect(fieldProblem(undefined, "name", swedish)).toBeUndefined();
+  });
+});
+
+describe("the status a general sentence is picked by", () => {
+  it("says a 500 with an English sentence of nobody's writing as the general sentence, like a 502 and a 503", () => {
+    for (const status of [500, 501, 502, 503, 504]) {
+      expect(apiErrorText(apiError(status, "Engine unreachable."), swedish)).toBe("Något gick fel hos oss. Försök igen om en stund.");
+      expect(apiErrorText(apiError(status, "Engine unreachable."), english)).toBe("Something went wrong on our side. Try again in a moment.");
+    }
+  });
+
+  it("says a bare 415, 413 and 409 (the status as a sentence) as the general sentence of the status", () => {
+    expect(apiErrorText(apiError(415, "Unsupported Media Type"), swedish)).toBe("Förfrågan kunde inte behandlas. Ladda om sidan och försök igen.");
+    expect(apiErrorText(apiError(415, "HTTP 415"), english)).toBe("The request could not be processed. Reload the page and try again.");
+    expect(apiErrorText(apiError(413, "Payload Too Large"), swedish)).toBe("Det som skickades är för stort. Dela upp det i mindre delar och försök igen.");
+    expect(apiErrorText(apiError(409, "Conflict"), english)).toBe(
+      "Something with the same details already exists, or someone else has changed it. Reload the page and try again.",
+    );
+  });
+});
+
+describe("fieldProblem, where a property has more than one sentence", () => {
+  it("draws the first sentence the gateway gave for the property, as the toast lists it first", () => {
+    const refused = apiError(400, "x", undefined, ["name should not be empty", "name must be a string"]);
+    expect(fieldProblem(refused, "name", swedish)).toBe("Får inte vara tomt.");
+    expect(fieldProblem(apiError(400, "x", undefined, ["name must be a string", "name should not be empty"]), "name", swedish)).toBe("Måste vara en text.");
   });
 });

@@ -101,3 +101,18 @@ describe("fieldSentence", () => {
     expect(fieldSentence(readValidation("Nivån kan vara högst 1500 timmar."), swedish)).toBe("Nivån kan vara högst 1500 timmar.");
   });
 });
+
+describe("readValidation, where a sentence only looks like one for a property", () => {
+  it("takes `property: sentence` only at the start of the sentence, so a colon later in a free sentence names no field", () => {
+    expect(readValidation("Nivån kan vara högst 1500 timmar: se skolans regler.").field).toBeNull();
+    expect(readValidation("Perioden är fel, rätta start: slutet ligger före.").field).toBeNull();
+    expect(readValidation("minutesPerWeek: minst 1 minut per vecka.").field).toBe("minutesPerWeek");
+  });
+
+  it("takes `each value in` only at the start, as class-validator writes it, and not behind a path Nest put before it", () => {
+    // A nested list's sentence reaches the web as `items.0.each value in ids must be a UUID` (Nest prefixes the parent path to the message):
+    // it is not read as one about every value, and is shown as it came.
+    expect(readValidation("items.0.each value in ids must be a UUID")).toMatchObject({ each: false, field: null, phrase: null });
+    expect(readValidation("each value in ids must be a UUID")).toMatchObject({ each: true, field: "ids" });
+  });
+});

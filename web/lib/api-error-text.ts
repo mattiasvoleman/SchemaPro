@@ -146,11 +146,13 @@ export function generalKey(error: unknown): ProblemKey | null {
   const { status, code } = error as Error & Problem;
   if (typeof status !== "number") return null;
   if (code === NETWORK_FAILURE) return "problemNetwork";
-  if (typeof code === "string") return null;
   if (validationOf(error).length > 0) return null;
   const sentence = error.message.trim();
+  // The filter's own sentences are a log's whatever code they carry: the body parser's 413, 415 and unreadable JSON are given codes
+  // (REQUEST_BODY_TOO_LARGE and the others) and keep their English `detail`, which a code-first rule would show to the reader as it is.
   const logged = GATEWAY_LOG[sentence];
   if (logged) return logged;
+  if (typeof code === "string") return null;
   if (status === 401) return "problemSignedOut";
   // A status and nothing else to say: the general sentence of the status, where there is one.
   if (sentence === "" || BARE_STATUS.test(sentence)) return BY_STATUS[status] ?? (status >= 500 ? "problemServer" : null);
