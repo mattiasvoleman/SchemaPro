@@ -304,6 +304,11 @@ class CorpusWeek:
     shape: SchoolShape
     request: OptimizeScheduleRequest
     facts: dict[str, object]
+    #: The pupils' lists of groups, one entry for each DISTINCT list a pupil has (the class and its
+    #: groups). The engine never sees a pupil, only the pairs of groups that share one; this is
+    #: what the pairs were made from, kept for the measurements of M8 (benchmarks/m8_paths.py) that
+    #: ask what a row per pupil list would be against a row per pair. Not part of the request.
+    cohorts: tuple[frozenset[uuid.UUID], ...] = ()
 
 
 def _order_pupils(pupils: int, per_class: int, mixing: float, rng: random.Random) -> list[int]:
@@ -624,7 +629,11 @@ def build_week(shape: SchoolShape) -> CorpusWeek:
         "termRequirements": sum(1 for r in request.requirements if getattr(r, "periods", None) is not None),
         "blockedRequirements": sum(1 for r in request.requirements if r.block_id is not None),
     }
-    return CorpusWeek(name=shape.name(), shape=shape, request=request, facts=facts)
+    cohorts = tuple(sorted(
+        {frozenset(uuid.UUID(group) for group in groups) for groups in memberships},
+        key=lambda cohort: sorted(str(group) for group in cohort),
+    ))
+    return CorpusWeek(name=shape.name(), shape=shape, request=request, facts=facts, cohorts=cohorts)
 
 
 def shared_teacher_ids_of(request: OptimizeScheduleRequest) -> set[uuid.UUID]:
