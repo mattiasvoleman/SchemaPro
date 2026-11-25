@@ -57,7 +57,9 @@ function withNumbers(code: string, params: Record<string, string | number>): Rec
   for (const name of named) {
     const value = params[name];
     // A figure already sent as a number (a gateway that one day does) is its own twin.
-    const number = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value.replace(",", ".")) : Number.NaN;
+    // A space for the thousands (Swedish writes "1 122,5", with a no-break space when it is Intl that writes it) is no part of the figure.
+    const number =
+      typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value.replace(/[\s\u00a0\u202f]/g, "").replace(",", ".")) : Number.NaN;
     if (Number.isFinite(number)) read[`${name}Number`] = number;
   }
   return read;

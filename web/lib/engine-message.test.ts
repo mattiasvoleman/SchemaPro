@@ -228,6 +228,10 @@ describe("STAFF_TEACHER_OVER_SCOPE: the hours a reader reads", () => {
     // catalogue and in the spec on the gateway's side that renders it; the gateway sends text.
     expect(render(english, { role: "TEACHER", hours: 602.5, limit: 600 })).toContain("would get 602.5 hours");
     expect(render(english, { role: "TEACHER", hours: "602,5", limit: 600 })).toContain("highest level of 600 hours");
+    // A figure of four digits is where a number and its text part: the plain argument writes 1122.5, the twin 1,122.5. (602.5 reads the same either
+    // way, so the two lines above held before the twin too.)
+    expect(render(english, { role: "TEACHER", hours: 1122.5, limit: 1100 })).toContain("would get 1,122.5 hours");
+    expect(render(english, { role: "TEACHER", hours: 1122.5, limit: 1100 })).toContain("highest level of 1,100 hours");
   });
 
   it("shows the engine's English, not 'NaN', for a figure that is not a number", () => {
