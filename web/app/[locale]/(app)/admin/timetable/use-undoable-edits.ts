@@ -51,10 +51,8 @@ export function useUndoableEdits(inputs: {
       } else if (error instanceof ApiError && error.code === "MASTER_LESSON_REFUSED") {
         // The one judge's no (src/calendar/lesson-judge.ts): the reason and the other lesson's class, subject, day and
         // time, in the reader's language and from the catalogue, so "Schemakonflikt" in front would only say it twice.
-        // A block's card names the member it is about; the sentence alone would not say which lesson it was.
-        const sentence = apiErrorText(error, tCommon);
-        const member = error.params?.["requirement"];
-        toast.error(typeof member === "string" ? `${member}: ${sentence}` : sentence);
+        // A block's card names the member it is about (lib/problem-codes.ts says it, as it does for a swap's apply).
+        toast.error(apiErrorText(error, tCommon));
       } else if (error instanceof ApiError && error.status === 409) {
         toast.error(`${t("editConflict")}: ${apiErrorText(error, tCommon)}`);
       } else {

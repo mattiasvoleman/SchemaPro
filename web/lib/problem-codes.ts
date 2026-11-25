@@ -139,7 +139,12 @@ export const PROBLEM_CODES: Readonly<Record<string, readonly string[]>> = {
  * sentence it can fill, so a missing argument never reaches it and the reader never sees its fallback ("common.codes.X").
  */
 export function problemCodeText(error: Error, code: string, t: ProblemLookup): string | undefined {
-  return problemSentence(code, (error as Error & { params?: unknown }).params, t);
+  const params = (error as Error & { params?: unknown }).params;
+  const sentence = problemSentence(code, params, t);
+  // A refusal of several lessons at once (a swap's apply, a block's card) says which of them it is about in `requirement` ("Kemi för 8B"):
+  // the sentence names only the OTHER lesson, and with no lesson of its own before it would not say which of the moved ones clashes.
+  const member = code === "MASTER_LESSON_REFUSED" && typeof params === "object" && params !== null ? (params as Record<string, unknown>)["requirement"] : undefined;
+  return sentence !== undefined && typeof member === "string" ? `${member}: ${sentence}` : sentence;
 }
 
 /**
