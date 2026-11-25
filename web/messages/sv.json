@@ -2297,6 +2297,7 @@
     "notRun": "{count, plural, one {# ämne} other {# ämnen}} hann inte räknas om inom tiden."
   },
   "boardKeys": {
+    "clash": "Krock",
     "dayPicker": "Visa en dag",
     "dayTab": "{day}: {count, plural, =0 {inga lektioner} one {# lektion} other {# lektioner}}",
     "pickedUp": "Tog upp {lesson}, {day} {from}–{to}. Pilarna flyttar markören, Enter lägger, Esc släpper.",
@@ -2424,7 +2425,7 @@
     "conflictListGo": "Öppna",
     "conflictListEmpty": "Inga konflikter i schemat.",
     "conflictRoomLock": "Salen är låst för ämnet.",
-    "dragHint": "Dra lektioner för att flytta, dra i nederkanten för att ändra längd, klicka på en tom lucka för att lägga till, skift-klicka för flerval. Med tangentbordet: piltangenterna flyttar en lektion 15 minuter eller en dag, Enter öppnar den och skift-Enter väljer den.",
+    "dragHint": "Dra lektioner för att flytta, dra i nederkanten för att ändra längd, klicka på en tom lucka för att lägga till, skift-klicka för flerval. Med tangentbordet: pilarna flyttar fokus mellan lektionerna, Enter öppnar en lektion och skift-Enter väljer den. Mellanslag tar upp en lektion, pilarna flyttar den och Enter lägger den. På en lektion visar ? alla tangenter.",
     "versions": "Versioner",
     "versionsTitle": "Schemaversioner",
     "versionsBody": "Spara namngivna ögonblicksbilder av schemat och återställ när som helst. En säkerhetskopia tas automatiskt före varje återställning.",

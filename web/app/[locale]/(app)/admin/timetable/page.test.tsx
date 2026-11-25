@@ -713,6 +713,12 @@ function subjectsOnScreen(): string[] {
  * render. timetable-split.test.ts shows each reset gives a new wrapper; these show the page asks for it where
  * the failure is caught, and draws from the one it is given (brokenPieces, at the top).
  */
+/** The keyboard of the board is a chunk the grid fetches when it is editable: waits for it, and for its listeners to be put up. */
+async function boardKeysCame() {
+  await waitFor(() => expect(document.querySelector("[data-board-status]")).not.toBeNull());
+  await act(async () => {});
+}
+
 describe("a piece that did not arrive is fetched again through a new wrapper", () => {
   beforeEach(() => {
     toasts.error.mockClear();
@@ -1460,6 +1466,28 @@ describe("a refusal of the one judge, and the krocklista (E1)", () => {
     await user.click(buttons[0]!);
     // The list closes and Justera lektion opens for the lesson.
     expect(await screen.findByText("timetable.editTitle")).toBeTruthy();
+  });
+
+  it("says what a clashing card clashes with in the card's own name and hover, in the sentence the list uses, and says it only once there is a clash", async () => {
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), lesson("l-b", "s-sl", "g-51", "08:00")];
+    render(<TimetablePage />);
+
+    // The words come a moment after the picture: a module fetched when something clashes. The card is drawn as clashing at once.
+    const words = await waitFor(() => {
+      const clashing = [...document.querySelectorAll<HTMLElement>("[data-lesson-id]")].filter((card) => card.textContent?.includes("boardKeys.clash"));
+      expect(clashing).toHaveLength(2);
+      expect(clashing[0]!.textContent).toMatch(/boardKeys\.clash: common\.codes\.MASTER_LESSON_REFUSED\(TEACHER/);
+      return clashing;
+    });
+    // After what the lesson is, in its name, and on the hover.
+    expect(words[0]!.textContent!.indexOf("boardKeys.clash")).toBeGreaterThan(words[0]!.textContent!.indexOf("08:00"));
+    expect(words[0]!.getAttribute("title")).toMatch(/boardKeys\.clash: common\.codes\.MASTER_LESSON_REFUSED\(TEACHER/);
+  });
+
+  it("says nothing of a clash on a card that does not clash", async () => {
+    render(<TimetablePage />);
+    await screen.findAllByRole("button");
+    expect([...document.querySelectorAll("[data-lesson-id]")].some((card) => card.textContent?.includes("boardKeys.clash"))).toBe(false);
   });
 
   it("says whose hour a weekly row closes, from the page's own rows: the teacher's, as a refused save says it", async () => {
@@ -3681,7 +3709,12 @@ describe("a parallel block (Block i schemat)", () => {
     blockApi.patch.mockResolvedValue({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [] });
     showPage();
 
-    fireEvent.keyDown(await card(), { key: "ArrowRight" });
+    // The keyboard of the board (board-keys.tsx): Space takes the card up, an arrow moves the marker, Enter puts it down.
+    const drawn = await card();
+    await boardKeysCame();
+    fireEvent.keyDown(drawn, { key: " " });
+    fireEvent.keyDown(drawn, { key: "ArrowRight" });
+    fireEvent.keyDown(drawn, { key: "Enter" });
     await confirmClasses();
 
     await waitFor(() =>
@@ -4068,7 +4101,10 @@ describe("a parallel block (Block i schemat)", () => {
     const drawn = document.querySelector<HTMLElement>('[data-lesson-id="block:l-sv1"]')!;
 
     drawn.focus();
+    await boardKeysCame();
+    fireEvent.keyDown(drawn, { key: " " });
     fireEvent.keyDown(drawn, { key: "ArrowRight" });
+    fireEvent.keyDown(drawn, { key: "Enter" });
     await confirmClasses();
     await waitFor(() => expect(blockApi.patch).toHaveBeenCalled());
     // The refetch: all three on Tuesday 13:00, one card.

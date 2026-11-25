@@ -20,6 +20,8 @@ type Translator = ReturnType<typeof useTranslations>;
  * tray and the resource boards of the "group by" view.
  */
 export function useTimetableView(inputs: Pick<TimetableReads, "lunchSittings" | "rasts" | "lessons" | "rooms" | "groups"> & Pick<ScheduleEngine, "yearGroups" | "gradeSpanOf" | "rosterIndex" | "groupById" | "pupilBuffers" | "subjectById" | "teacherById" | "roomById" | "conflictMap" | "remoteEditors" | "validateChange" | "teachers"> & {
+  /** What each clashing card says, in words (use-conflict-notes.ts): absent until the module that makes them has come. */
+  conflictNotes?: ReadonlyMap<string, string>;
   t: Translator;
   locale: string;
   tLunch: Translator;
@@ -30,7 +32,7 @@ export function useTimetableView(inputs: Pick<TimetableReads, "lunchSittings" | 
   blockKit: BlockKit | null;
   groupBy: GroupBy;
 }) {
-  const { lunchSittings, rasts, lessons, rooms, groups, yearGroups, gradeSpanOf, rosterIndex, groupById, pupilBuffers, subjectById, teacherById, roomById, conflictMap, remoteEditors, validateChange, teachers, t, locale, tLunch, onlyGroup, groupFilters, teacherFilters, roomFilters, blockKit, groupBy } = inputs;
+  const { lunchSittings, rasts, lessons, rooms, groups, yearGroups, gradeSpanOf, rosterIndex, groupById, pupilBuffers, subjectById, teacherById, roomById, conflictMap, remoteEditors, validateChange, teachers, conflictNotes, t, locale, tLunch, onlyGroup, groupFilters, teacherFilters, roomFilters, blockKit, groupBy } = inputs;
   const groupSections = useMemo(() => {
     const named = (group: { id: string; name: string }) => ({ id: group.id, name: group.name });
     // The schedule on screen is one year's, so its groups are the filter's:
@@ -278,6 +280,7 @@ export function useTimetableView(inputs: Pick<TimetableReads, "lunchSittings" | 
         locked: lesson.isLocked,
         recurrenceNote: recurrenceBadge(lesson, t) ?? undefined,
         conflicted: conflictMap.has(lesson.id),
+        conflictNote: conflictNotes?.get(lesson.id),
         // Hover text only — the rectangle keeps showing the teaching time. A
         // buffer the grid shows nowhere makes the refusal of the next slot look
         // like a bug in the grid.
@@ -305,6 +308,7 @@ export function useTimetableView(inputs: Pick<TimetableReads, "lunchSittings" | 
       teacherById,
       roomById,
       conflictMap,
+      conflictNotes,
       remoteEditors,
       audienceByLesson,
       onlyGroup,

@@ -73,6 +73,7 @@ describe("the timetable page's split", () => {
         "timetable-exports.ts",
         "timetable-helpers.ts",
         "timetable-lazy.ts",
+        "use-conflict-notes.ts",
         "use-lunch-edits.ts",
         "use-schedule-engine.ts",
         "use-timetable-reads.ts",
@@ -101,6 +102,7 @@ describe("the timetable page's split", () => {
     "@/lib/shared-rooms-board",
     "@/lib/pdf",
     "@/lib/ics",
+    "@/lib/conflict-rows",
     "./timetable-exports",
   ];
 
