@@ -158,9 +158,14 @@ export function LessonEditDialog({
   const exempt = draft.exempt ?? [];
   const exemptWords = (rules: readonly ExemptRule[]) => rules.map((rule) => t(`exemptRule${rule}` as never)).join(t("exemptAnd"));
   const refusedRules = verdict && !verdict.placed && verdict.exemptable === true ? exemptableReasons(refusals.map((refusal) => refusal.reason).join(",")) : null;
-  const asksYes = refusedRules !== null && refusedRules.length > 0 && exempt.length === 0;
+  // Asked of every no that is the ramtid or the meal and nothing else, also under a lesson that already has an exemption: it is for the rules
+  // it was given for, and a time that breaks the OTHER rule (or one more) is a no of its own, which the answer yes adds to (never replaces).
+  const asksYes = refusedRules !== null && refusedRules.length > 0;
   const giving = verdict && !verdict.placed && refusals.length === 0 ? EXEMPT_RULES.filter((rule) => verdict.exempted?.includes(rule)) : [];
-  const has = exempt.length > 0 && judged.status !== "checking" && (giving.length > 0 || judged.status === "idle");
+  // The way back is there whenever the answer rests on the draft and no question is on its way. The lock is held on only while an exemption
+  // is given (or not yet judged): a time that breaks nothing named gives none, and then the lock is the reader's own again.
+  const has = exempt.length > 0 && judged.status !== "checking";
+  const holdsLock = exempt.length > 0 && (judged.status !== "done" || giving.length > 0);
   const takeBack = () => onDraftChange({ ...draft, exempt: [], isLocked: lesson?.isLocked ?? false });
 
   return (
@@ -323,7 +328,14 @@ export function LessonEditDialog({
                 variant="outline"
                 size="sm"
                 data-writes="SCHEMALAGGNING DRIFT"
-                onClick={() => onDraftChange({ ...draft, exempt: refusedRules, isLocked: true })}
+                onClick={() =>
+                  onDraftChange({
+                    ...draft,
+                    // What the judge lets through for this time already, and what it refuses and the reader now answers yes to.
+                    exempt: EXEMPT_RULES.filter((rule) => verdict?.exempted?.includes(rule) || refusedRules.includes(rule)),
+                    isLocked: true,
+                  })
+                }
               >
                 {t("exemptYes")}
               </Button>
@@ -344,16 +356,16 @@ export function LessonEditDialog({
                   {t("lockLabel")}
                 </label>
                 <div id="edit-lock-hint" className="text-xs text-muted-foreground">
-                  {exempt.length > 0 ? t("lockHintExempt") : t("lockHint")}
+                  {holdsLock ? t("lockHintExempt") : t("lockHint")}
                 </div>
               </div>
             </div>
             <Switch
               id="edit-lock"
               aria-describedby="edit-lock-hint"
-              checked={draft.isLocked || exempt.length > 0}
+              checked={draft.isLocked || holdsLock}
               // An exemption rests on the lock (the gateway locks the lesson with it, and refuses a request that says the opposite).
-              disabled={exempt.length > 0}
+              disabled={holdsLock}
               onCheckedChange={(isLocked) => onDraftChange({ ...draft, isLocked })}
             />
           </div>

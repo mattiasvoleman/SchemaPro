@@ -294,4 +294,40 @@ describe("Justera lektion puts the question Lägg ändå (Undantag med flit)", (
     expect(lock.getAttribute("aria-checked")).toBe("true");
     expect(lock.hasAttribute("disabled")).toBe(true);
   });
+
+  it("puts the question again under a lesson that has an exemption already, when the time breaks the OTHER rule, and the answer yes adds to it", async () => {
+    // A lesson with an exemption for the ramtid, moved onto the class's lunch: the judge refuses the lunch and lets the ramtid through. The
+    // question is the lunch's, and answering yes must keep what the time is already let through for.
+    post.mockResolvedValue(answer([lunch], { exemptable: true, exempted: ["FRAME"] }));
+    const changed = vi.fn();
+    draw({ ...late, exempt: ["FRAME"], isLocked: true }, true, changed);
+    await settle();
+    // Not said as given while something is still refused: the save would be a no.
+    expect(screen.getByRole("status").textContent).not.toContain("Lektionen läggs ändå");
+    fireEvent.click(screen.getByRole("button", { name: "Lägg ändå" }));
+    expect(changed).toHaveBeenCalledWith({ ...late, exempt: ["FRAME", "LUNCH"], isLocked: true });
+  });
+
+  it("puts the question for the rule the new time breaks, and drops the rule it no longer breaks, under a lesson that had the other one", async () => {
+    post.mockResolvedValue(answer([lunch], { exemptable: true, exempted: [] }));
+    const changed = vi.fn();
+    draw({ ...late, exempt: ["FRAME"], isLocked: true }, true, changed);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Lägg ändå" }));
+    expect(changed).toHaveBeenCalledWith({ ...late, exempt: ["LUNCH"], isLocked: true });
+  });
+
+  it("gives the lock back to the reader when the answer yes no longer rests on anything: a time that breaks nothing is let through with no exemption", async () => {
+    // "Lägg ändå" was pressed, and the time was then changed to one that holds. Nothing is given, so nothing holds the lock on, and the way
+    // back is there (it was neither on the screen nor in the switch before).
+    post.mockResolvedValue(answer([], { exemptable: false, exempted: [] }));
+    const changed = vi.fn();
+    draw({ ...late, exempt: ["FRAME"], isLocked: true }, true, changed);
+    await settle();
+    expect(screen.getByRole("status").textContent).toContain("Kontrollen hittar inget som hindrar");
+    const lock = screen.getByRole("switch", { name: /Lås lektion/ });
+    expect(lock.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Ta tillbaka Lägg ändå" }));
+    expect(changed).toHaveBeenCalledWith({ ...late, exempt: [], isLocked: false });
+  });
 });
