@@ -351,6 +351,9 @@ function parkedAtCommit(base: PrismaService): { prisma: PrismaService; reached: 
         { timeoutMs: 60_000 },
       ),
     queryWithRls: base.queryWithRls.bind(base),
+    // The hand edit says what it changed once it has committed (MasterLessonsService.announce, PrismaService.onCommit): the scope the hook
+    // is put in is the base's own, and the transaction handed to the edit is the base's own, so the base's method is the one to ask.
+    onCommit: base.onCommit.bind(base),
   } as unknown as PrismaService;
   return { prisma, reached: reached.promise, release: () => gate.resolve() };
 }
