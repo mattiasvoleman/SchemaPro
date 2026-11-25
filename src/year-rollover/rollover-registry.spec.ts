@@ -253,6 +253,10 @@ describe('the rollover registry', () => {
     // class's months (Frånvarostatistik, 20270121090000, which stay with the
     // old year's classes).
     const skipped = skippedModels();
+    // The row for MasterLesson is no longer fa4a3d6's byte for byte: Ett schema som start (omgång 15, M9) made last year's lessons a start for
+    // Generera, so its reason no longer says they are not a valid one. It is asserted on its own below, and left out of the pinned list,
+    // whose hash is that of main's list at the commit before M9 with the same entry left out: nothing else moved.
+    const SAID_SINCE = ['MasterLesson'];
     const added = [
       'TeacherDutySlot',
       'TimplanCredit',
@@ -300,9 +304,17 @@ describe('the rollover registry', () => {
     ];
     expect(
       createHash('sha256')
-        .update(JSON.stringify(skipped.filter((entry) => !added.includes(entry.model))))
+        .update(JSON.stringify(skipped.filter((entry) => !added.includes(entry.model) && !SAID_SINCE.includes(entry.model))))
         .digest('hex'),
-    ).toBe('15e270c65904cbdbf7c54b605def4014bb038dc836dd29dae22f91c0b23ad113');
+    ).toBe('823ce3160cace6910f18b6808e628320c302feb63d15fa10d2b8ddd6746e8c95');
+    expect(skipped.filter((entry) => entry.model === 'MasterLesson')).toEqual([
+      {
+        model: 'MasterLesson',
+        reason:
+          'A weekly schedule is generated for the new year’s groups and rooms, so last year’s lessons are not copied as rows, locked ones included. Generera can start from them instead, held where they were under each class’s successor (Utgå från ett schema).',
+        counted: true,
+      },
+    ]);
     expect(skipped.slice(-16)).toEqual([
       expect.objectContaining({ model: 'PublishedLunchSitting', counted: false }),
       expect.objectContaining({ model: 'CancellationBatch', counted: false }),

@@ -211,6 +211,15 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
               groups: result.counts.groups,
               requirements: result.counts.requirements,
             }),
+        {
+          // Ett schema som start (M9): the new year has no schedule yet, and this year's can be where Generera starts. Generera takes the
+          // choice from the link and shows it before anything is run.
+          duration: 15_000,
+          action: {
+            label: t("createdOfferSchedule"),
+            onClick: () => router.push(`/admin/generate?year=${result.academicYear.id}&start=PREVIOUS_YEAR`),
+          },
+        },
       );
       router.push("/admin/years");
     } catch (error) {
