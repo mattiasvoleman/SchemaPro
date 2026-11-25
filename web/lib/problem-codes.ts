@@ -16,6 +16,11 @@ import type { ProblemLookup } from "@/lib/api-error-text";
  *
  * A code a page words itself (its own catalogue, through engineMessage) is that page's: the page asks first, and this is the last
  * resort of the pages that fall back to apiErrorText.
+ *
+ * A name that ends in `?` is one the sentence takes only for some of the cases it stands for. MASTER_LESSON_REFUSED says one of nine
+ * reasons, and the gateway sends the other lesson's class, subject, day and time for a clash and nothing of them for a lunch or a ramtid:
+ * the sentence selects on the reason, and each branch takes what its reason sends. A name left out is passed as "" (a `select` falls to its
+ * `other`, a branch that is not chosen never reads its names), and only the names without a `?` must arrive for the sentence to be said.
  */
 export const PROBLEM_CODES: Readonly<Record<string, readonly string[]>> = {
   ABSENCE_STATS_TOO_SLOW: [],
@@ -67,6 +72,7 @@ export const PROBLEM_CODES: Readonly<Record<string, readonly string[]>> = {
   LESSON_LOG_RANGE: [],
   LESSON_LOG_TOO_LONG: ["max"],
   LESSON_LOG_TOPIC_ONE_LINE: [],
+  MASTER_LESSON_REFUSED: ["reason", "schools?", "resource?", "pupilTime?", "className?", "subjectName?", "day?", "start?", "end?"],
   NOTIFICATION_TYPE_NOT_OFFERED: [],
   NOTIFICATION_TYPE_REQUIRED: [],
   NOT_A_BLOCK_CARD: [],
@@ -127,19 +133,48 @@ export const PROBLEM_CODES: Readonly<Record<string, readonly string[]>> = {
   WORK_RULE_DAY_IS_PLANNED: [],
 };
 
+/** The reasons of a refused hand edit that common.codes.MASTER_LESSON_REFUSED has words for (src/calendar/lesson-judge.ts LessonRefusalReason). */
+const REFUSAL_REASONS: ReadonlySet<string> = new Set(["SCHOOL_DAY", "TEACHER", "ROOM", "GROUP", "PUPILS", "AVAILABILITY", "FRAME", "LUNCH", "GRADE_RULE", "OTHER_SCHOOL"]);
+/** The ones whose sentence names the other lesson, by class, subject, day and time. */
+const NAMES_THE_OTHER_LESSON: ReadonlySet<string> = new Set(["TEACHER", "ROOM", "GROUP", "PUPILS"]);
+
 /**
  * The sentence for a coded problem, or undefined when there is none to give: the code is not listed, or the sentence takes an
  * argument the gateway did not send (or sent as something other than a string or a number). The translator is only asked for a
  * sentence it can fill, so a missing argument never reaches it and the reader never sees its fallback ("common.codes.X").
  */
 export function problemCodeText(error: Error, code: string, t: ProblemLookup): string | undefined {
+  const params = (error as Error & { params?: unknown }).params;
+  const sentence = problemSentence(code, params, t);
+  // A refusal of several lessons at once (a swap's apply, a block's card) says which of them it is about in `requirement` ("Kemi för 8B"):
+  // the sentence names only the OTHER lesson, and with no lesson of its own before it would not say which of the moved ones clashes.
+  const member = code === "MASTER_LESSON_REFUSED" && typeof params === "object" && params !== null ? (params as Record<string, unknown>)["requirement"] : undefined;
+  return sentence !== undefined && typeof member === "string" ? `${member}: ${sentence}` : sentence;
+}
+
+/**
+ * The same from the code and the params themselves, for a sentence that is not an error's: the reasons the judge's read answers with
+ * (POST /master-lessons/judge) are the refusal's own `params`, and are said in the sentence the refusal of a save is.
+ */
+export function problemSentence(code: string, sent: unknown, t: ProblemLookup): string | undefined {
   if (!Object.prototype.hasOwnProperty.call(PROBLEM_CODES, code)) return undefined;
-  const sent = (error as Error & { params?: unknown }).params;
   const values: Record<string, string | number> = {};
-  for (const name of PROBLEM_CODES[code]) {
+  for (const declared of PROBLEM_CODES[code]) {
+    const optional = declared.endsWith("?");
+    const name = optional ? declared.slice(0, -1) : declared;
     const value = typeof sent === "object" && sent !== null ? (sent as Record<string, unknown>)[name] : undefined;
     if (typeof value === "string" || (typeof value === "number" && Number.isFinite(value))) values[name] = value;
+    else if (optional) values[name] = "";
     else return undefined;
+  }
+  // A sentence that chooses on its reason says only the reasons it knows, and the clash of a lesson names the other lesson: a reason this
+  // web has no words for (a newer gateway's), or a clash that came without the lesson it is with, falls to the gateway's own sentence
+  // and not to the sentence's `other` ("Klassen har redan  med , dag  –.").
+  if (code === "MASTER_LESSON_REFUSED") {
+    const reason = values["reason"];
+    if (typeof reason !== "string" || !REFUSAL_REASONS.has(reason)) return undefined;
+    if (NAMES_THE_OTHER_LESSON.has(reason) && values["className"] === "") return undefined;
+    if (reason === "OTHER_SCHOOL" && values["schools"] === "") return undefined;
   }
   return t(`codes.${code}`, PROBLEM_CODES[code].length > 0 ? values : undefined);
 }
