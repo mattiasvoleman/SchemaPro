@@ -2282,9 +2282,10 @@ class ConflictAnalysis(CamelModel):
 #: `BUILD`: the two models. `SITES`: the walk's planned-sites search (a school
 #: that keeps Restid i generatorn). `SEARCH_CLEAN` and `SEARCH_CLONE`: phase 1a
 #: and 1b, the two satisfaction searches (the clone's setup counts with its
-#: search). `PROBE`: the timeout probe that names a rule which does not fit.
+#: search). `YEARS`: the week laid a year at a time between the two (years.py): every step
+#: of it, builds and searches, as one entry. `PROBE`: the timeout probe that names a rule which does not fit.
 TimeoutStageName = Literal[
-    "PRECHECKS", "START", "BUILD", "SITES", "SEARCH_CLEAN", "SEARCH_CLONE", "PROBE",
+    "PRECHECKS", "START", "BUILD", "SITES", "SEARCH_CLEAN", "YEARS", "SEARCH_CLONE", "PROBE",
 ]
 
 #: The satisfaction searches that report their effort: phase 1a and phase 1b.

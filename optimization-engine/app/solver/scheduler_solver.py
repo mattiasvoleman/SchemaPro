@@ -57,7 +57,7 @@ from app.solver.relaxation import (
     upper_bound,
 )
 from app.solver.servings import allowed_starts
-from app.solver import staged
+from app.solver import staged, years
 from app.solver.stage_clock import StageClock
 from app.schemas.schedule import (
     PlaceLimits,
@@ -79,6 +79,7 @@ from app.schemas.schedule import (
     LunchServing,
     OptimizeScheduleRequest,
     OptimizeScheduleResponse,
+    PinnedLesson,
     PreviousLesson,
     Rast,
     ScheduledLesson,
@@ -5356,6 +5357,107 @@ class SchedulerSolver:
     # See _solve_on_planned_sites.
     TRAVEL_PLANNED_SHARE = 0.6
     SITE_PLAN_CAP_SECONDS = 5.0
+    # Årskurs för årskurs (M8 PR 5), the road between phase 1a and 1b: the share of what is left of the budget that all the
+    # years' steps may take together, and the most seconds they may take. Past either the week goes on to phase 1b as it always
+    # did. A third because phase 1b is the search that has found a timetable where 1a had not (the clone), and a week years
+    # lays is laid in a minute: the measured weeks took 1 to 5 deterministic seconds, 27 s of clock on eight cores. See _lay_by_years.
+    YEARS_SHARE = 1.0 / 3.0
+    YEARS_CAP_SECONDS = 90.0
+
+    def _years_solver(self, request: OptimizeScheduleRequest, seconds: float) -> cp_model.CpSolver:
+        """The CpSolver of one year's step (`_lay_by_years`): the generation solver, under a name of its own.
+
+        A STEP IS NOT THE WEEK'S SEARCH. A solution of one year's step is a timetable of a part of the week, and a
+        measurement that took the first solution of any generation solver for the week's first timetable (benchmarks/
+        corpus_measure.py) would stop at the first year. So the steps ask for their solver here, the seed and the workers are
+        the request's as for any generation solve, and what a measurement does with them is its own."""
+        return self._generation_solver(request, seconds)
+
+    def _lay_by_years(
+        self,
+        request: OptimizeScheduleRequest,
+        seconds: float,
+        lunch_hints: dict[tuple[UUID, int], int] | None = None,
+    ) -> list[PreviousLesson] | None:
+        """Lay the week one year at a time, each year held where it was laid; the timetable as hints, None where it did not come.
+
+        THE ROAD BETWEEN PHASE 1a AND 1b (M8 PR 5, app/solver/years.py for the idea and the measurement). The week is cut
+        into its years (`years.units_of`), the one that is hardest to lay first, and each step is the engine's own satisfaction
+        model of the years so far: the ones already laid pinned where they were laid (rooms free), the year being laid free,
+        every later year left out. The last step is the whole week, with every year but the last held, and what it finds is a
+        timetable of the whole week that keeps every rule of the week.
+
+        WHY BETWEEN, AND NOT BEFORE 1a. A week that phase 1a lays is laid exactly as it was: no week the engine lays today
+        takes another road, and the nightly gate (which stops at the first timetable a search finds) measures the same
+        search it always did. What the road costs is phase 1a's whole slice on a week it then lays (at most
+        CLEAN_SAT_CAP_SECONDS, of a budget of many times that), and what it buys is a first timetable for weeks that neither
+        encoding finds in their time.
+
+        NOTHING IS PROVED AND NOTHING IS REFUSED HERE. A step that finds no timetable (in its time, or INFEASIBLE with the
+        years above it held, which says only that those years were a bad place to start), a step the engine refuses to build, or
+        a year whose lessons are not the requirement's places: None, and phase 1b goes on as it would have, on what is left of
+        the budget. `seconds` is all of it, the builds included. What comes back is a hint for phase 1b's model: a complete
+        timetable of starts, so that phase 1b's search begins in a solution of the week and finishes it (the rooms and the
+        meals), where it would have searched for one.
+        """
+        units = years.units_of(request)
+        if units is None:
+            return None
+        self._enter_stage("YEARS")
+        began = time.monotonic()
+        edge = began + seconds
+        by_id = {requirement.id: requirement for requirement in request.requirements}
+        held: dict[UUID, list[PinnedLesson]] = {}
+        laid: list[PreviousLesson] = []
+        logger.info(
+            "years steps=%d requirements=%s budget=%.1f [requestId=%s]",
+            len(units), [len(unit.ids) for unit in units], seconds, request.request_id,
+        )
+        for number, unit in enumerate(units, start=1):
+            step = years.step_request(request, unit.ids, held, f"years-{number}")
+            step_began = time.monotonic()
+            try:
+                model, _, decisions, plan, lunch = self._build_model(step, use_assumptions=False, include_objective=False)
+            except InvalidScheduleInputError as refusal:
+                logger.info("years step=%d/%d refused to build: %s [requestId=%s]", number, len(units), refusal.code, request.request_id)
+                return None
+            # The meals the week's lunch stage settled, for the classes this step has: the same warm start phase 1a's model is
+            # given, and the lessons are searched around meals that have a place.
+            for key, slot in (lunch_hints or {}).items():
+                if key in lunch:
+                    model.AddHint(lunch[key], slot)
+            left = edge - time.monotonic()
+            if left < self.MIN_PHASE_SECONDS:
+                logger.info("years step=%d/%d: no time left for its search [requestId=%s]", number, len(units), request.request_id)
+                return None
+            solver = self._years_solver(step, left)
+            code = _solve_guarded(solver, model, what=f"year step {number}", request_id=request.request_id)
+            logger.info(
+                "years step=%d/%d years=%s free=%d held=%d status=%s seconds=%.1f [requestId=%s]",
+                number, len(units), list(unit.years), len(unit.ids), len(held), solver.StatusName(code),
+                time.monotonic() - step_began, request.request_id,
+            )
+            if code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                return None
+            placed: dict[UUID, list[ScheduledLesson]] = defaultdict(list)
+            for lesson in self._extract_lessons(solver, decisions, step.rooms, plan):
+                if lesson.requirement_id in unit.ids:
+                    placed[lesson.requirement_id].append(lesson)
+            for requirement_id in unit.ids:
+                requirement = by_id[requirement_id]
+                try:
+                    held[requirement_id] = years.held_of(requirement, placed[requirement_id])
+                except ValueError as odd:
+                    logger.warning("years step=%d/%d: %s [requestId=%s]", number, len(units), odd, request.request_id)
+                    return None
+                laid.extend(
+                    PreviousLesson(
+                        requirementId=lesson.requirement_id, dayOfWeek=lesson.day_of_week, startTime=lesson.start_time,
+                    )
+                    for lesson in placed[requirement_id]
+                )
+        logger.info("years laid %d lessons in %.1f s [requestId=%s]", len(laid), time.monotonic() - began, request.request_id)
+        return laid
 
     def _solve_on_planned_sites(
         self,
@@ -6492,9 +6594,31 @@ class SchedulerSolver:
                 return self._timeout_answer(
                     request, _timeout_conflicts(), week_load_cut=bool(week_load_cut),
                 )
+            # ---- phase 1y: the week a year at a time -----------------------
+            # Between the two searches, on a week without the walk (whose planned sites it does not plan) that phase 1a
+            # did not lay: a timetable it finds is the hint phase 1b starts from. See _lay_by_years.
+            laid = (
+                self._lay_by_years(request, min(remaining * self.YEARS_SHARE, self.YEARS_CAP_SECONDS), lunch_hints)
+                if travel is None and remaining >= 2 * self.MIN_PHASE_SECONDS
+                else None
+            )
+            if laid is not None:
+                remaining = _remaining()
+                if remaining < self.MIN_PHASE_SECONDS:
+                    logger.warning(self._timeout_diagnosis(
+                        request, "phase 1a and the years' steps used the whole budget",
+                    ))
+                    return self._timeout_answer(
+                        request, _timeout_conflicts(), week_load_cut=bool(week_load_cut),
+                    )
             self._enter_stage("SEARCH_CLONE")
             clone_model = model.Clone()
             clone_model.ClearObjective()
+            if laid is not None:
+                # The clone inherits the hints the full model's disruption term made (the previous schedule's); a variable
+                # hinted twice is a model CP-SAT rejects, so the years' timetable replaces them.
+                clone_model.ClearHints()
+                self._hint_previous_lessons(clone_model, decisions, laid)
             phase1b = self._generation_solver(request, remaining)
             # Raised, not degraded, when both attempts throw: its UNKNOWN
             # would be the TIMEOUT below. See _solve_guarded.

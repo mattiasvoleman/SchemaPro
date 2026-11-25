@@ -546,7 +546,7 @@ def test_the_report_is_optional_in_the_published_response_schema() -> None:
     assert {"TimeoutReport", "TimeoutStage", "TimeoutSearch", "TimeoutSearchPhase"} <= set(schemas)
     assert set(schemas["TimeoutReport"]["required"]) == {"totalSeconds", "budgetSeconds", "configuredBudgetSeconds", "stages", "search"}
     assert schemas["TimeoutStage"]["properties"]["stage"]["enum"] == [
-        "PRECHECKS", "START", "BUILD", "SITES", "SEARCH_CLEAN", "SEARCH_CLONE", "PROBE",
+        "PRECHECKS", "START", "BUILD", "SITES", "SEARCH_CLEAN", "YEARS", "SEARCH_CLONE", "PROBE",
     ]
 
 
