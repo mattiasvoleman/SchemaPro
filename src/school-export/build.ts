@@ -261,11 +261,12 @@ export async function buildArchive(zip: StreamingZip, ctx: BuildContext, audit: 
           FROM "Users" WHERE "schoolId" = ${ctx.schoolId}::uuid`,
     );
     const others = everyone.filter((user) => !idSet.has(user.id));
-    const strangers = isolate ? new Set(others.map((user) => user.id)) : undefined;
+    const strangerIds: ReadonlySet<string> = new Set(others.map((user) => user.id));
+    const strangers = isolate ? strangerIds : undefined;
     const strangerTerms = new TermIndex(termsOf(others.filter((user) => isolate || user.role === 'STUDENT' || user.role === 'GUARDIAN')));
     const rules: CellRules = { markedOut: new Set(markedOut), markedTerms: ctx.markedTerms, strangers, strangerTerms };
     for (const table of ctx.tables) {
-      const rows = await ctx.read((tx) => readTable(tx, ctx.schoolId, table, ids));
+      const rows = await ctx.read((tx) => readTable(tx, ctx.schoolId, table, ids, strangerIds));
       if (rows.length === 0) continue;
       const columns = Object.keys(rows[0]!);
       // The rows of a table that is about a pupil, where the pupil is not one asked for, keep the act and lose the pupil.

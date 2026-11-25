@@ -233,7 +233,9 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   GuardianStudentHistory: dump(['guardianId', 'studentId', 'unlinkedById'], 'GUARDIANS'),
   PersonProtectionEvents: dump(['userId', 'actorId']),
   IntegrationApiKeys: dump(['createdById']),
-  OptimizationJobs: dump(['actorId']),
+  // A run keeps teacher ids in json too: subjectIds in its conflicts, notes and the params of its summary and its failure, and teacherIds
+  // and resourceIds in the analysis that offers changes (the review of #385, L-9). Read as StaffingSearchRuns' checkpoint is.
+  OptimizationJobs: dump(['actorId'], 'PEOPLE', [], ['conflicts', 'notes', 'suggestions', 'conflictSummaryParams', 'errorParams']),
   ScheduleCandidateRuns: dump(['createdById']),
   // Lärarval F3 (20270227090000): who asked for a search, and the moves it kept (a lead's teacher id, in json) for a day.
   StaffingSearchRuns: dump(['createdById'], 'PEOPLE', [], ['checkpoint']),
@@ -331,7 +333,14 @@ const identifier = (name: string): Prisma.Sql => Prisma.raw(`"${name.replace(/"/
 const SECRET = /token|secret|password|hash|apikey|claimedby/i;
 
 /** The rows of `file.table` that are the persons' `ids`, as the table has them (column order kept). */
-export async function readTable(tx: PrismaClient, schoolId: string, file: TableFile, ids: readonly string[]): Promise<Array<Record<string, unknown>>> {
+export async function readTable(
+  tx: PrismaClient,
+  schoolId: string,
+  file: TableFile,
+  ids: readonly string[],
+  /** The school's other users: the ids of them that a json column names are not written (see narrowToPersons). */
+  strangers: ReadonlySet<string> = new Set(),
+): Promise<Array<Record<string, unknown>>> {
   const list = Prisma.sql`${[...ids]}::uuid[]`;
   const conditions: Prisma.Sql[] = [
     ...file.dump.columns.map((column) => Prisma.sql`t.${identifier(column)} = ANY(${list})`),
@@ -348,7 +357,49 @@ export async function readTable(tx: PrismaClient, schoolId: string, file: TableF
                 WHERE ${WITHOUT_SCHOOL_COLUMN.has(file.table) ? Prisma.sql`true` : Prisma.sql`t."schoolId" = ${schoolId}::uuid`}
                   AND (${Prisma.join(conditions, ' OR ')})`,
   );
-  return rows.map((row) => JSON.parse(row.j) as Record<string, unknown>);
+  const asked = new Set(ids.map((id) => id.toLowerCase()));
+  return rows.map((row) => {
+    const parsed = JSON.parse(row.j) as Record<string, unknown>;
+    // A column that holds json is read by the persons it names (`inside`), and one run's json names a whole school: a row is in the
+    // extract because the person is in it, and the others in it are theirs and not the extract's (GDPR art. 15.4).
+    for (const column of file.dump.inside ?? []) {
+      if (column in parsed) parsed[column] = narrowToPersons(parsed[column], asked, strangers);
+    }
+    return parsed;
+  });
+}
+
+const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A json value of a row that names persons, as the persons asked for may be given it: the entries of a list that name one of them, and
+ * in every entry only them. A Generera run keeps the unkept wishes, the limits and the walks of every teacher of the school in one
+ * column (subjectIds), the analysis of the run keeps the teachers of its caps (teacherIds): the extract of one teacher named in it must
+ * not carry the others' entries, or the others' ids (a colleague's limit on teaching in a row is HR data that the page shows only to
+ * a reader with HR-läs). A list of ids loses the school's other users' ids; a list of entries keeps those that name a person asked
+ * for; an id of a stranger on its own is written "(annan person)". Anything else is as it was.
+ */
+export function narrowToPersons(value: unknown, asked: ReadonlySet<string>, strangers: ReadonlySet<string>): unknown {
+  const mentionsAsked = (entry: unknown): boolean => {
+    const text = JSON.stringify(entry).toLowerCase();
+    for (const id of asked) if (text.includes(id)) return true;
+    return false;
+  };
+  const walk = (node: unknown): unknown => {
+    if (typeof node === 'string') return UUID_TEXT.test(node) && strangers.has(node.toLowerCase()) ? '(annan person)' : node;
+    if (Array.isArray(node)) {
+      if (node.length > 0 && node.every((entry) => typeof entry === 'string')) {
+        return node.filter((entry: string) => !(UUID_TEXT.test(entry) && strangers.has(entry.toLowerCase())));
+      }
+      if (node.some((entry) => entry !== null && typeof entry === 'object')) return node.filter(mentionsAsked).map(walk);
+      return node;
+    }
+    if (node !== null && typeof node === 'object') {
+      return Object.fromEntries(Object.entries(node as Record<string, unknown>).map(([key, entry]) => [key, walk(entry)]));
+    }
+    return node;
+  };
+  return walk(value);
 }
 
 /** What a dumped cell must not carry. */

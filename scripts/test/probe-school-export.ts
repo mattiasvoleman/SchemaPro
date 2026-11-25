@@ -54,6 +54,8 @@
  *   (k-o)  the history that keeps a person without a key to Users (a guardian link that was
  *          cut, who set a mark) is in the extract, and the catalogue holds no person column
  *          without a key that the extract has not decided;
+ *   (k-r)  a teacher named only in the json of a Generera run is in her extract with her own entries of it and a
+ *          colleague's note about a limit on teaching in a row is not;
  *   (k-p)  a lesson held by someone who is neither teacher nor administrator by role is in the
  *          grundschema with the holder named, and with a protected holder it is without them in
  *          every file of the school's export, said in the README, the manifest and the order.
@@ -901,6 +903,41 @@ async function main(): Promise<void> {
       const guardianLines = csvLines(guardianWithChild.files.get('data/samtycken.csv'));
       assert.equal(guardianLines.length - 1, 1, "the guardian's extract with the child holds the guardian's one answer");
       assert.equal(guardianLines[1]!.split(';')[4], 'false');
+    });
+
+    await check('(k-r) a teacher named only in the json of a Generera run is in her extract with her own entries, and a colleague\'s limit on teaching in a row is not', async () => {
+      // The review of #431: the extract reads a run by the json that names the person (OptimizationJobs.notes, conflicts, ...), and a run
+      // names the school. The limit on teaching in a row is HR data, shown by the page only to a reader with HR-läs (work-days.ts), and what a
+      // colleague's extract is handed to the colleague with must not carry it (GDPR art. 15.4).
+      const colleague = await owner.user.create({
+        data: { schoolId: a.schoolId, authId: randomUUID(), role: 'TEACHER', firstName: 'Kollega', lastName: 'EfternamnA', email: `kollega@${a.slug}.example.com` },
+      });
+      const note = (code: string, who: string, params: Record<string, number>) => ({
+        category: 'AVAILABILITY', code, params, message: 'a sentence', resourceNames: [], subjectIds: [who],
+      });
+      const run = await owner.optimizationJob.create({
+        data: {
+          schoolId: a.schoolId, academicYearId: a.yearId, actorId: a.admins.FULL.userId!, status: 'SUCCEEDED', solverStatus: 'INFEASIBLE',
+          notes: [note('TEACHER_FREE_DAY_WISH_NOT_KEPT', a.teacher, { day: 3 }), note('TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT', colleague.id, { day: 4, minutes: 180 })],
+          conflicts: [{ ...note('TEACHER_TRAVEL_CANNOT_BE_KEPT', colleague.id, { day: 2 }), subjectIds: [colleague.id, a.teacher] }],
+        },
+      });
+      cleanup.push(async () => void (await owner.optimizationJob.deleteMany({ where: { id: run.id } })));
+      cleanup.push(async () => void (await owner.user.deleteMany({ where: { id: colleague.id } })));
+
+      const mine = await extractZip(a.admins.FULL, a.teacher, false);
+      const lines = csvLines(mine.files.get('data/person/optimizationjobs.csv'));
+      assert.equal(lines.length - 1, 1, 'the run that names her only in its json is in her extract');
+      const text = lines.join('\n');
+      assert.ok(text.includes('TEACHER_FREE_DAY_WISH_NOT_KEPT') && text.includes(a.teacher), 'her own wish is');
+      assert.ok(text.includes('TEACHER_TRAVEL_CANNOT_BE_KEPT'), 'the walk that names her is');
+      assert.ok(!text.includes('TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT'), "a colleague's limit on teaching in a row is not");
+      assert.ok(!text.includes(colleague.id), "the colleague's id is in no cell");
+
+      const theirs = await extractZip(a.admins.FULL, colleague.id, false);
+      const theirText = csvLines(theirs.files.get('data/person/optimizationjobs.csv')).join('\n');
+      assert.ok(theirText.includes('TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT') && theirText.includes(colleague.id), "the colleague's own extract has their note");
+      assert.ok(!theirText.includes('TEACHER_FREE_DAY_WISH_NOT_KEPT'), "and not hers");
     });
 
     await check('(k-j) only those who decide ask for one, and only about their own school', async () => {
