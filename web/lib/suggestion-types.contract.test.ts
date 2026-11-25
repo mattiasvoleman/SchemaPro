@@ -52,18 +52,37 @@ const ALIASES: [RegExp, string][] = [
 ];
 const asWeb = (type: string): string => ALIASES.reduce((text, [from, to]) => text.replace(from, to), type.replace(/\s+/g, ""));
 
+/**
+ * What differs between the gateway's list and the web's, as the sentence a failing build is mended from. The gateway adds a rule, a proof, a
+ * failure or a field and the web has none for it (an additive change, which is how the gateway is allowed to move): the sentence names it and
+ * says where it goes, so that the diff below it is not the only thing read.
+ */
+function missingAndExtra(what: string, web: readonly string[], gateway: readonly string[]): string {
+  const missing = gateway.filter((name) => !web.includes(name));
+  const extra = web.filter((name) => !gateway.includes(name));
+  return [
+    missing.length > 0 ? `the gateway has ${missing.join(", ")} (${what}) that web/lib/suggestion-types.ts lacks: add it there, and give the card a sentence for it` : "",
+    extra.length > 0 ? `web/lib/suggestion-types.ts has ${extra.join(", ")} (${what}) that the gateway has not` : "",
+    missing.length === 0 && extra.length === 0 ? `${what}: the same names in another order` : "",
+  ]
+    .filter((line) => line !== "")
+    .join("; ");
+}
+
 describe("what this test reads (a parse that finds nothing would pass everything below)", () => {
+  // These numbers are the parse's, and they move when the gateway adds a name: the tests below say which name, and these only that the count moved.
+  const COUNT = "the count moved: update it here when the name is added to web/lib/suggestion-types.ts (the tests below say which name)";
   it("finds every set and every field it compares", () => {
-    expect(gatewayList(GATEWAY_INTERFACE, "SUGGESTION_RULES")).toHaveLength(5);
-    expect(gatewayList(GATEWAY_INTERFACE, "SUGGESTION_PROOFS")).toHaveLength(3);
-    expect(gatewayList(GATEWAY_INTERFACE, "SUGGEST_VERDICTS")).toHaveLength(4);
-    expect(gatewayList(GATEWAY, "SUGGESTION_STATES")).toHaveLength(3);
-    expect(gatewayList(GATEWAY, "SUGGESTION_FAILURES")).toHaveLength(5);
-    expect(webUnion("SuggestionRule")).toHaveLength(5);
-    expect(fields(GATEWAY, "StoredChange").size).toBe(13);
-    expect(fields(GATEWAY, "SuggestionsStored").size).toBe(11);
-    expect(fields(WEB, "SuggestionChange").size).toBe(13);
-    expect(fields(WEB, "Suggestions").size).toBe(11);
+    expect(gatewayList(GATEWAY_INTERFACE, "SUGGESTION_RULES"), COUNT).toHaveLength(5);
+    expect(gatewayList(GATEWAY_INTERFACE, "SUGGESTION_PROOFS"), COUNT).toHaveLength(3);
+    expect(gatewayList(GATEWAY_INTERFACE, "SUGGEST_VERDICTS"), COUNT).toHaveLength(4);
+    expect(gatewayList(GATEWAY, "SUGGESTION_STATES"), COUNT).toHaveLength(3);
+    expect(gatewayList(GATEWAY, "SUGGESTION_FAILURES"), COUNT).toHaveLength(5);
+    expect(webUnion("SuggestionRule"), COUNT).toHaveLength(5);
+    expect(fields(GATEWAY, "StoredChange").size, COUNT).toBe(13);
+    expect(fields(GATEWAY, "SuggestionsStored").size, COUNT).toBe(11);
+    expect(fields(WEB, "SuggestionChange").size, COUNT).toBe(13);
+    expect(fields(WEB, "Suggestions").size, COUNT).toBe(11);
   });
 });
 
@@ -73,8 +92,8 @@ describe("the closed sets the card has a sentence for", () => {
     ["the proofs", webUnion("SuggestionProof"), gatewayList(GATEWAY_INTERFACE, "SUGGESTION_PROOFS")],
     ["the verdicts", webUnion("SuggestionVerdict"), gatewayList(GATEWAY_INTERFACE, "SUGGEST_VERDICTS")],
     ["the failures", webUnion("SuggestionsFailure"), gatewayList(GATEWAY, "SUGGESTION_FAILURES")],
-  ])("%s are the gateway's, in its order", (_name, web, gateway) => {
-    expect(web).toEqual(gateway);
+  ])("%s are the gateway's, in its order", (name, web, gateway) => {
+    expect(web, missingAndExtra(name, web, gateway)).toEqual(gateway);
   });
 
   it("the states are the gateway's", () => {
@@ -95,7 +114,8 @@ describe("the fields of a change", () => {
   });
 
   it("has the gateway's names, and no other", () => {
-    expect([...fields(WEB, "SuggestionChange").keys()].sort()).toEqual([...gatewayView.keys()].sort());
+    const web = [...fields(WEB, "SuggestionChange").keys()];
+    expect(web.sort(), missingAndExtra("fields of a change", web, [...gatewayView.keys()])).toEqual([...gatewayView.keys()].sort());
   });
 
   it.each([...gatewayView.keys()])("%s has the type the gateway declares", (field) => {
@@ -111,7 +131,8 @@ describe("the fields of the answer", () => {
   });
 
   it("has the gateway's names, and no other", () => {
-    expect([...fields(WEB, "Suggestions").keys()].sort()).toEqual([...gateway.keys()].sort());
+    const web = [...fields(WEB, "Suggestions").keys()];
+    expect(web.sort(), missingAndExtra("fields of the answer", web, [...gateway.keys()])).toEqual([...gateway.keys()].sort());
   });
 
   it.each([...gateway.keys()])("%s has the type the gateway declares", (field) => {
