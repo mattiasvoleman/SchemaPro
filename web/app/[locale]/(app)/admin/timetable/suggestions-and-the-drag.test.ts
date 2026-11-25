@@ -1,7 +1,8 @@
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { toPlacement } from "@/lib/conflicts";
-import { constraintsOf, framesOf, groupsOf, lessonsOf, sittingsOf, worlds, type World } from "@/lib/lesson-judge-world";
+import { cases, constraintsOf, framesOf, groupsOf, lessonsOf, sittingsOf, worlds, type World } from "@/lib/lesson-judge-world";
+import { minutesOfClock } from "@/lib/requirement-placement-text";
 import { suggestPlacements } from "@/lib/placement-search";
 import { useScheduleEngine } from "./use-schedule-engine";
 
@@ -105,5 +106,24 @@ describe("the times offered after a refused drop, in the worlds of the judge's f
   it("(control) are refused times when the search is asked as the page used to ask it: the worlds do reach the gap", () => {
     const { refusedOffers } = survey("before");
     expect(refusedOffers.length).toBeGreaterThan(20);
+  });
+});
+
+describe("the page's own drag control (validateChange of useScheduleEngine), against the judge's verdicts (E1, Klart (d))", () => {
+  /*
+   * lib/lesson-judge-mirror.contract.test.ts holds validatePlacement to the fallfil with the arguments validateChange gives it, written out
+   * there by hand. A validateChange that stopped handing validatePlacement the ramtid, the year's spans, the class's meals or the weekly
+   * rows left that test green, and the drag the milder for it. This asks the control the page calls itself, for every case of the file:
+   * where the judge refuses it refuses, and where the judge lets through it lets through.
+   */
+  const engines = worlds.map((world) => engineOf(world));
+
+  it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (_name, testCase) => {
+    const engine = engines[testCase.world]!;
+    const lesson = engine.lessonById.get(testCase.drag.lesson)!;
+    const length = minutesOfClock(lesson.endTime) - minutesOfClock(lesson.startTime);
+    const startMinutes = minutesOfClock(testCase.drag.start);
+    const lets = engine.validateChange(lesson.id, { dayOfWeek: testCase.drag.day, startMinutes, endMinutes: startMinutes + length });
+    expect(lets, testCase.verdict.reasons.join(",")).toBe(testCase.verdict.ok);
   });
 });
