@@ -1894,6 +1894,7 @@
       "causeTitle": "Likely cause",
       "cause": {
         "RULES_MEASURED": "{count, plural, one {One rule} other {# rules}} made the week solvable when relaxed in a short run (the rows under Detected conflicts). It is a measurement and no proof.",
+        "PROBE_CHANGED_WEEK": "{count, plural, one {One probe} other {# probes}} that changes the week instead of relaxing a rule made it solvable in a short run (the rows under Detected conflicts say what was changed). It is a measurement and no proof.",
         "TIGHT_WEEK": "The week is tight. The year's lessons, the margins between them and the lunch breaks need at least this much of the frame times:",
         "SHORT_CLOCK": "The search was given {budget, number} s of the {configured, number} s the engine is set to give it, because the preparation took time.",
         "SHORT_CLOCK_WAIT": "The search was given {budget, number} s of the {configured, number} s the engine is set to give it. The service waited {wait, number} s for the answer.",
@@ -1907,6 +1908,7 @@
       "nextTitle": "Next step",
       "next": {
         "RULES_MEASURED": "Relax the rule the rows under Detected conflicts point out, and run again.",
+        "PROBE_CHANGED_WEEK": "Read the rows under Detected conflicts: they say what the probe changed in the week. It is not a rule to relax but a change to the basis.",
         "TIGHT_WEEK": "Free time in those years: a teacher of their own for each parallel group and block, or widen the frame times. Another run on the same basis gives the same answer.",
         "SHORT_CLOCK": "Run again: this run was given less time than the engine usually has. If it repeats, contact whoever runs the service.",
         "SLOW_SETUP": "If you have an earlier timetable, raise Schedule stability so the engine starts from it. Otherwise Best possible timetable can give a timetable with deviations.",

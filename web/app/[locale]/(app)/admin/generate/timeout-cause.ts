@@ -8,6 +8,8 @@ import type { ConflictDetail, TimeoutReport } from "@/lib/queries";
  * which says HOW it is known:
  *
  *   RULES_MEASURED  a rule, switched off, let the week solve in a short probe: measured, not proved
+ *   PROBE_CHANGED_WEEK  a probe that changes the week without lifting a rule (a teacher of its own on each shared group, the placed
+ *                   lessons released) let it solve in a short probe: measured, not proved, and not a rule to relax
  *   TIGHT_WEEK      the year's least week is PROVED to be at least this part of its frame time: a lower bound
  *   SHORT_CLOCK     the search was given less than the engine is set to give it: a fact about this run
  *   SLOW_SETUP      the checks and the model builds took a large part of the run: a fact about this run
@@ -32,6 +34,7 @@ export interface TightYear {
 
 export type TimeoutCause =
   | { kind: "RULES_MEASURED"; count: number }
+  | { kind: "PROBE_CHANGED_WEEK"; count: number }
   | { kind: "TIGHT_WEEK"; years: TightYear[] }
   | { kind: "SHORT_CLOCK"; budgetSeconds: number; configuredBudgetSeconds: number; callerWaitSeconds: number | null }
   | { kind: "SLOW_SETUP"; setupSeconds: number; totalSeconds: number }
@@ -60,9 +63,14 @@ const SETUP_STAGES: readonly string[] = ["PRECHECKS", "BUILD"];
 // the walk's search ran: "En sökning pågick i sammanlagt 30 s" under 60 s and 30 s.
 const SEARCH_STAGES: readonly string[] = ["SITES", "SEARCH_CLEAN", "SEARCH_CLONE"];
 
-/** How many searches ran and for how long, counted from the same steps the list above the sentence shows. */
+/**
+ * How many searches ran and for how long, counted from the same steps the list above the sentence shows. A search step that took no time
+ * is not a search that ran: the walk's step is entered before the engine knows whether it has the seconds for the search (it returns at
+ * once when the clock leaves under a second after the builds, and the report then reads "SITES 0 s" with no solve at all), and a sentence
+ * that said "En sökning pågick i sammanlagt 0 s" of it would say a search began where "Ingen sökning hann börja" is the truth.
+ */
 export function searchesOf(report: TimeoutReport): { count: number; seconds: number } {
-  const searches = report.stages.filter((stage) => SEARCH_STAGES.includes(stage.stage));
+  const searches = report.stages.filter((stage) => SEARCH_STAGES.includes(stage.stage) && stage.seconds > 0);
   return {
     count: searches.length,
     seconds: Math.round(searches.reduce((sum, stage) => sum + stage.seconds, 0) * 10) / 10,
@@ -115,11 +123,26 @@ function measuredRulesOf(conflicts: readonly ConflictDetail[]): number {
   return conflicts.filter((row) => row.category === "TIMEOUT_PROBE" && (row.code ?? "").startsWith("PROBE_SOLVED_WITHOUT_")).length;
 }
 
+/**
+ * The probes that solved the week by changing it and not by lifting a rule (`PROBE_SOLVED_WITH_…`): the engine's own summary counts them
+ * among "the rules" it names, and the rows under the card say what each changed, so a card that said "no cause could be measured" for a
+ * week only such a probe solved would say less than the engine measured. Said as what they are, apart from the rules.
+ */
+function changedWeekProbesOf(conflicts: readonly ConflictDetail[]): number {
+  return conflicts.filter((row) => {
+    const code = row.code ?? "";
+    return row.category === "TIMEOUT_PROBE" && code.startsWith("PROBE_SOLVED_") && !code.startsWith("PROBE_SOLVED_WITHOUT_");
+  }).length;
+}
+
 export function timeoutAccountOf(report: TimeoutReport, conflicts: readonly ConflictDetail[]): TimeoutAccount {
   const causes: TimeoutCause[] = [];
 
   const rules = measuredRulesOf(conflicts);
   if (rules > 0) causes.push({ kind: "RULES_MEASURED", count: rules });
+
+  const changed = changedWeekProbesOf(conflicts);
+  if (changed > 0) causes.push({ kind: "PROBE_CHANGED_WEEK", count: changed });
 
   const years = tightYearsOf(conflicts);
   if (years.length > 0) causes.push({ kind: "TIGHT_WEEK", years });

@@ -84,17 +84,28 @@ describe("the rules a probe found", () => {
   // "Lätta på regeln" are not true of either, and the rows under the card say what each found.
   const NOT_RULES = ["PROBE_SOLVED_WITH_OWN_TEACHERS_AND_BLOCK", "PROBE_SOLVED_WITH_PLACEMENTS_RELEASED"];
 
-  it.each(NOT_RULES)("does not count %s, which is a probe of another kind and not a rule", (code) => {
-    expect(timeoutAccountOf(report(), [solved(code)]).causes).toEqual([{ kind: "NOTHING_FOUND" }]);
+  it.each(NOT_RULES)("does not count %s as a rule, but says it as the probe it is: a measurement that the week solved, never 'no cause'", (code) => {
+    // The engine's own summary names such a probe among "the rules" it found and the rows under the card carry its sentence, so a card
+    // that said "No cause could be measured" for a week only this probe solved would contradict both.
+    expect(timeoutAccountOf(report(), [solved(code)]).causes).toEqual([{ kind: "PROBE_CHANGED_WEEK", count: 1 }]);
   });
 
-  it("counts the rules among probes of both kinds and nothing else", () => {
+  it("counts the rules and the probes that change the week apart, among probes of both kinds", () => {
     const account = timeoutAccountOf(report(), [
       solved("PROBE_SOLVED_WITH_OWN_TEACHERS_AND_BLOCK"),
       solved("PROBE_SOLVED_WITHOUT_CHANGEOVER"),
       solved("PROBE_SOLVED_WITH_PLACEMENTS_RELEASED"),
     ]);
-    expect(account.causes).toEqual([{ kind: "RULES_MEASURED", count: 1 }]);
+    expect(account.causes).toEqual([
+      { kind: "RULES_MEASURED", count: 1 },
+      { kind: "PROBE_CHANGED_WEEK", count: 2 },
+    ]);
+  });
+
+  it("is not moved by a row that is a probe's summary or another kind of row", () => {
+    const summary: ConflictDetail = { category: "TIMEOUT_PROBE", code: "PROBE_NOTHING_HELPED", message: "x", params: {}, resourceNames: [] };
+    const elsewhere: ConflictDetail = { category: "REQUIREMENT_DEMAND", code: "PROBE_SOLVED_WITH_PLACEMENTS_RELEASED", message: "x", params: {}, resourceNames: [] };
+    expect(timeoutAccountOf(report(), [summary, elsewhere]).causes).toEqual([{ kind: "NOTHING_FOUND" }]);
   });
 
   it("counts every probe the engine says by 'without' and none of the two it says by 'with', whatever the engine's catalogue holds", () => {
@@ -104,8 +115,9 @@ describe("the rules a probe found", () => {
     expect(probes.length).toBeGreaterThan(15);
     expect(probes.filter((code) => !code.startsWith("PROBE_SOLVED_WITHOUT_")).sort()).toEqual([...NOT_RULES].sort());
     for (const code of probes) {
-      const counted = timeoutAccountOf(report(), [solved(code)]).causes[0]!.kind === "RULES_MEASURED";
-      expect(counted, code).toBe(!NOT_RULES.includes(code));
+      // Every probe the engine can send is said as one of the two, and never as neither.
+      const kind = timeoutAccountOf(report(), [solved(code)]).causes[0]!.kind;
+      expect(kind, code).toBe(NOT_RULES.includes(code) ? "PROBE_CHANGED_WEEK" : "RULES_MEASURED");
     }
   });
 });
@@ -134,6 +146,18 @@ describe("the searches that ran", () => {
     expect(searchesOf(none)).toEqual({ count: 0, seconds: 0 });
   });
 
+  it("does not count a search step that took no time: the walk's step is entered, and the engine leaves it at once, when the builds ate the clock", () => {
+    // Measured on the engine's own solve with a clock that leaves 0.2 s after two builds of 4.9 s and the walk kept: the stages are
+    // PRECHECKS 0, BUILD 9.8, SITES 0, PROBE 0, CP-SAT was never called, and `search.phases` is empty.
+    const eaten = report({
+      stages: [{ stage: "PRECHECKS", seconds: 0 }, { stage: "BUILD", seconds: 9.8 }, { stage: "SITES", seconds: 0 }, { stage: "PROBE", seconds: 0 }],
+      search: { solutions: 0, phases: [] },
+    });
+    expect(searchesOf(eaten)).toEqual({ count: 0, seconds: 0 });
+    // And one that ran is counted beside it: SITES 0 s and a first search of 0.6 s are one search.
+    expect(searchesOf(stages(["SITES", 0], ["SEARCH_CLEAN", 0.6]))).toEqual({ count: 1, seconds: 0.6 });
+  });
+
   it("rounds the sum to a tenth, as the list's own figures are", () => {
     expect(searchesOf(stages(["SITES", 0.1], ["SEARCH_CLEAN", 0.2])).seconds).toBe(0.3);
   });
@@ -160,6 +184,10 @@ describe("the threshold the week load counts against", () => {
     expect(weekLoadThresholdOf([notCounted(null)])).toBeNull();
     expect(weekLoadThresholdOf([notCounted({ percent: "85" })])).toBeNull();
     expect(weekLoadThresholdOf([notCounted({ percent: Number.NaN })])).toBeNull();
+  });
+
+  it("is a threshold of 0 when the row says 0: a number is a number, and only a missing one is none", () => {
+    expect(weekLoadThresholdOf([notCounted({ seconds: 4, percent: 0 })])).toBe(0);
   });
 });
 

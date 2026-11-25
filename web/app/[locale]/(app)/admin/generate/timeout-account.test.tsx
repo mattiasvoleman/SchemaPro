@@ -115,6 +115,21 @@ describe("TimeoutAccount", () => {
     expect(screen.getByText(`${NS}.searchNone(1|60)`)).toBeInTheDocument();
   });
 
+  it("says that no search began when the walk's step took no time and nothing else searched", () => {
+    render(
+      <TimeoutAccount
+        report={report({
+          stages: [{ stage: "BUILD", seconds: 9.8 }, { stage: "SITES", seconds: 0 }, { stage: "PROBE", seconds: 0 }],
+          search: { solutions: 0, phases: [] },
+        })}
+        conflicts={[]}
+      />,
+    );
+
+    expect(screen.getByText(`${NS}.searchNotRun`)).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(`^${NS.replace(".", "\\.")}\\.searchNone`))).toBeNull();
+  });
+
   it("says what the search was given, and against what the engine is set to give it when it was less", () => {
     const { rerender } = render(<TimeoutAccount report={report()} conflicts={[]} />);
     expect(screen.getByText(`${NS}.budget(100)`)).toBeInTheDocument();
@@ -162,6 +177,12 @@ describe("TimeoutAccount", () => {
     rerender(<TimeoutAccount report={report({ weekLoadCut: true })} conflicts={[notCounted()]} />);
     expect(screen.getByText(`${NS}.weekLoadCutPlain`)).toBeInTheDocument();
     expect(screen.queryByText(new RegExp(`^${NS.replace(".", "\\.")}\\.weekLoadCut\\(`))).toBeNull();
+  });
+
+  it("writes the threshold of a row that says 0 as 0, and not as a row with no figure", () => {
+    render(<TimeoutAccount report={report({ weekLoadCut: true })} conflicts={[notCounted(0)]} />);
+    expect(screen.getByText(`${NS}.weekLoadCut(0)`)).toBeInTheDocument();
+    expect(screen.queryByText(`${NS}.weekLoadCutPlain`)).toBeNull();
   });
 
   it("says nothing of a cut count that did not happen", () => {
@@ -295,10 +316,10 @@ describe("the texts a school reads", () => {
 
   it("has every cause, in both languages, with a sentence and a next step", () => {
     for (const messages of [sv, en]) {
-      for (const kind of ["RULES_MEASURED", "TIGHT_WEEK", "SHORT_CLOCK", "SLOW_SETUP", "NOTHING_FOUND"]) {
+      for (const kind of ["RULES_MEASURED", "PROBE_CHANGED_WEEK", "TIGHT_WEEK", "SHORT_CLOCK", "SLOW_SETUP", "NOTHING_FOUND"]) {
         expect(typeof (texts(messages).next as Record<string, unknown>)[kind]).toBe("string");
       }
-      for (const kind of ["RULES_MEASURED", "TIGHT_WEEK", "SHORT_CLOCK", "SHORT_CLOCK_WAIT", "SLOW_SETUP", "NOTHING_FOUND"]) {
+      for (const kind of ["RULES_MEASURED", "PROBE_CHANGED_WEEK", "TIGHT_WEEK", "SHORT_CLOCK", "SHORT_CLOCK_WAIT", "SLOW_SETUP", "NOTHING_FOUND"]) {
         expect(typeof (texts(messages).cause as Record<string, unknown>)[kind]).toBe("string");
       }
     }

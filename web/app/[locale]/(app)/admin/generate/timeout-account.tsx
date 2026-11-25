@@ -144,6 +144,8 @@ function CauseText({ cause }: { cause: TimeoutCause }) {
   switch (cause.kind) {
     case "RULES_MEASURED":
       return <>{t("cause.RULES_MEASURED", { count: cause.count })}</>;
+    case "PROBE_CHANGED_WEEK":
+      return <>{t("cause.PROBE_CHANGED_WEEK", { count: cause.count })}</>;
     case "TIGHT_WEEK":
       return (
         <>
