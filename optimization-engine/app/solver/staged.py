@@ -110,7 +110,15 @@ def held_places(request: OptimizeScheduleRequest) -> Held:
     for requirement_id, given in entries.items():
         requirement = by_id[requirement_id]
         waiting: dict[int, list[StartedLesson]] = defaultdict(list)
+        listed: set[tuple[int, str, str]] = set()
         for entry in sorted(given, key=lambda e: (e.day_of_week, e.start_time)):
+            # THE SAME LESSON TWICE is one lesson (a schedule that lists a lesson once for each term does): a requirement
+            # has no two lessons at one time, and the second entry would be held on the requirement's next place, which
+            # the week refuses with nobody to blame but that requirement, one requirement a round.
+            if (entry.day_of_week, entry.start_time, entry.end_time) in listed:
+                held.drop("the same lesson twice")
+                continue
+            listed.add((entry.day_of_week, entry.start_time, entry.end_time))
             waiting[_minutes(entry.end_time) - _minutes(entry.start_time)].append(entry)
         row: list[PinnedLesson | None] = []
         for length in requirement.lesson_minutes():
@@ -174,9 +182,14 @@ def with_blocks(request: OptimizeScheduleRequest, ids: set[UUID]) -> set[UUID]:
 def clashes(request: OptimizeScheduleRequest, held: Held) -> set[UUID]:
     """The held requirements that sit on something they may not sit on in THIS week.
 
-    Pairs of lessons that overlap and may not: the same teacher; the same group, or two groups that share a pupil
-    (`groupConflicts`); a teacher's reservation. Both of a clashing pair are named, since which of two should move is
-    the solver's to say. A lesson only clashes with one that runs in a week of its own (periods and parity)."""
+    Pairs of lessons that overlap and may not: the same teacher (the co-teacher too); the same group, or two groups that
+    share a pupil (`groupConflicts`); a requirement's own lessons; a reservation of a teacher, a class or a span of years
+    (a room's is the model's: the lesson goes to another room). Both of a clashing pair are named, since which of two
+    should move is the solver's to say. A lesson only clashes with one that runs in a week of its own (periods and
+    parity).
+
+    WHAT IS NOT NAMED HERE COSTS A ROUND each (an INFEASIBLE proof, its explanation and a build), and after MAX_ROUNDS the
+    whole schedule is let go: six reservations of a class that the schedule's lessons sit in were enough (g460)."""
     by_id = {requirement.id: requirement for requirement in request.requirements}
     weeks = {requirement_id: weeks_of(by_id[requirement_id]) for requirement_id in held.places}
     lessons: dict[UUID, list[tuple[int, int, int]]] = {}
@@ -210,8 +223,8 @@ def clashes(request: OptimizeScheduleRequest, held: Held) -> set[UUID]:
     groups: dict[UUID, list[UUID]] = defaultdict(list)
     for requirement_id in held.places:
         requirement = by_id[requirement_id]
-        if requirement.teacher_id is not None:
-            teachers[requirement.teacher_id].append(requirement_id)
+        for teacher in {requirement.teacher_id, requirement.co_teacher_id} - {None}:
+            teachers[teacher].append(requirement_id)  # type: ignore[index]
         groups[pupil_key_of(requirement)].append(requirement_id)
     for requirement_ids in teachers.values():
         collide(requirement_ids)
@@ -221,14 +234,28 @@ def clashes(request: OptimizeScheduleRequest, held: Held) -> set[UUID]:
         if first != second and first in groups and second in groups:
             collide(groups[first], groups[second])
 
+    # A requirement against itself: two of its places at one time (a schedule that holds one lesson twice).
+    for requirement_id, own in lessons.items():
+        if any(overlap(a, b) for index, a in enumerate(own) for b in own[index + 1:]):
+            out.add(requirement_id)
+
     for constraint in request.constraints:
-        if (
-            constraint.kind != "UNAVAILABLE" or str(constraint.resource_kind) != "TEACHER"
-            or constraint.day_of_week is None or constraint.date is not None or constraint.resource_id not in teachers
-        ):
+        if constraint.kind != "UNAVAILABLE" or constraint.day_of_week is None or constraint.date is not None:
+            continue
+        kind = str(constraint.resource_kind)
+        if kind == "TEACHER":
+            reached = teachers.get(constraint.resource_id, [])
+        elif kind == "STUDENT_GROUP":
+            # The class space: a reservation on 7A keeps out every lesson filed under 7A (scheduler_solver._decisions_for_constraint).
+            reached = [i for i in held.places if by_id[i].student_group_id == constraint.resource_id]
+        elif kind == "GRADE_LEVEL":
+            from app.solver.scheduler_solver import _grade_span_overlaps
+
+            reached = [i for i in held.places if _grade_span_overlaps(constraint, by_id[i])]
+        else:
             continue
         window = (int(constraint.day_of_week), _minutes(str(constraint.start_time)), _minutes(str(constraint.end_time)))
-        for requirement_id in teachers[constraint.resource_id]:
+        for requirement_id in reached:
             if any(overlap(lesson, window) for lesson in lessons[requirement_id]):
                 out.add(requirement_id)
     return out

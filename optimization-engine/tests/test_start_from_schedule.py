@@ -148,13 +148,15 @@ def test_what_cannot_be_held_is_left_out_and_counted() -> None:
 
     assert set(held.places) == {plain.id}
     assert len([p for p in held.places[plain.id] if p is not None]) == plain.lessons_per_week
-    # the plain requirement has three places and five entries (two extra), and the fourth requirement's
-    # one entry has no place of its length: three entries that no place takes
+    # the plain requirement has three places and five entries, the last three of them the same lesson (the same
+    # day and time, the entry the test repeats): two of those are the lesson twice, and the fourth requirement's
+    # one entry has no place of its length, the one entry that no place takes
     assert held.dropped == {
         "the week has no such requirement": 1,
         "the school pinned this requirement": 1,
         "a split lesson": 1,
-        "more entries than places of that length": 3,
+        "the same lesson twice": 2,
+        "more entries than places of that length": 1,
     }
 
 
