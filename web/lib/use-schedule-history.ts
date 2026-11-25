@@ -22,6 +22,12 @@ export interface HistoryEntry {
   label: string;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
+  /**
+   * Whether an error of `undo` is the gateway's final no (the judge refused to put the lesson back, E1): then the step is dropped, stays
+   * as it is and cannot be redone, and the next undo takes the step before it. Left on top, a refusal that is the same every time would
+   * shut every older step behind it. Absent, or false for the error (the network, a 5xx): the step stays on top for a retry.
+   */
+  refusedUndo?: (error: unknown) => boolean;
 }
 
 export interface ScheduleHistory {
@@ -58,6 +64,9 @@ export function useScheduleHistory(): ScheduleHistory {
       undoStack.current.pop();
       redoStack.current.push(entry);
       return entry;
+    } catch (error) {
+      if (entry.refusedUndo?.(error)) undoStack.current.pop();
+      throw error;
     } finally {
       busy.current = false;
       refresh();

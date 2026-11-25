@@ -2345,7 +2345,7 @@
     "lockHint": "Locked lessons survive regeneration — the optimizer plans around them.",
     "undo": "Undo",
     "redo": "Redo",
-    "undoRefused": "This cannot be undone. {why} The lesson stays where it is.",
+    "undoRefused": "This cannot be undone. {why} The lesson stays where it is, and the next Undo takes the step before it.",
     "undone": "Change undone",
     "redone": "Change redone",
     "conflictCount": "{count, plural, =1 {1 conflict} other {# conflicts}}",

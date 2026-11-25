@@ -236,16 +236,20 @@ describe("undoing a move away from a place the judge let stand", () => {
 
     updateLesson.mutateAsync.mockRejectedValueOnce(lunch());
     await act(async () => void (await view.result.current.edits.doUndo()));
-    expect(toasts.error).toHaveBeenLastCalledWith("Det går inte att ångra. Tiden ligger på klassens lunch. Lektionen ligger kvar där den är.");
-    // The entry is kept: the lesson did not move, and the step is there to try again.
-    expect(view.result.current.history.canUndo).toBe(true);
+    expect(toasts.error).toHaveBeenLastCalledWith("Det går inte att ångra. Tiden ligger på klassens lunch. Lektionen ligger kvar där den är, och nästa Ångra tar steget före.");
+    // The step is dropped: the lesson did not move, the refusal is the same every time, and the steps before it are not shut behind it
+    // (E1b). It is not on the redo stack either: it was not undone.
+    expect(view.result.current.history.canUndo).toBe(false);
+    expect(view.result.current.history.canRedo).toBe(false);
 
+    // The same on Ctrl+Z, for the next step.
+    await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 3 })));
     updateLesson.mutateAsync.mockRejectedValueOnce(lunch());
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true }));
     });
     await vi.waitFor(() => expect(toasts.error).toHaveBeenCalledTimes(2));
-    expect(toasts.error).toHaveBeenLastCalledWith("Det går inte att ångra. Tiden ligger på klassens lunch. Lektionen ligger kvar där den är.");
+    expect(toasts.error).toHaveBeenLastCalledWith("Det går inte att ångra. Tiden ligger på klassens lunch. Lektionen ligger kvar där den är, och nästa Ångra tar steget före.");
   });
 
   it("says it in English for an English reader", async () => {
@@ -253,7 +257,7 @@ describe("undoing a move away from a place the judge let stand", () => {
     await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 2 })));
     updateLesson.mutateAsync.mockRejectedValueOnce(lunch());
     await act(async () => void (await view.result.current.edits.doUndo()));
-    expect(toasts.error).toHaveBeenLastCalledWith("This cannot be undone. The time is on the class's lunch. The lesson stays where it is.");
+    expect(toasts.error).toHaveBeenLastCalledWith("This cannot be undone. The time is on the class's lunch. The lesson stays where it is, and the next Undo takes the step before it.");
   });
 
   it("says it of a clash too, which is what an undo meets when somebody else has taken the place since", async () => {
@@ -263,7 +267,7 @@ describe("undoing a move away from a place the judge let stand", () => {
       new ApiError(409, "x", "MASTER_LESSON_REFUSED", { reason: "TEACHER", reasons: "TEACHER", className: "8B", subjectName: "Kemi", day: 1, start: "13:10", end: "14:10" }),
     );
     await act(async () => void (await view.result.current.edits.doUndo()));
-    expect(toasts.error).toHaveBeenLastCalledWith("Det går inte att ångra. Läraren har redan Kemi med 8B, måndag 13:10–14:10. Lektionen ligger kvar där den är.");
+    expect(toasts.error).toHaveBeenLastCalledWith("Det går inte att ångra. Läraren har redan Kemi med 8B, måndag 13:10–14:10. Lektionen ligger kvar där den är, och nästa Ångra tar steget före.");
   });
 
   it("does not say the lesson stays when what was undone was not a move: a redo, a create, a delete, a move refused as it is made", async () => {
