@@ -1946,6 +1946,8 @@ export interface InvitationResult {
 export interface BulkInvitationReport {
   sent: number;
   alreadyRegistered: number;
+  /** People with no address to send to (Personer utan e-postadress); absent from a gateway older than the web. */
+  noAddress?: number;
   errors: { userId: string; message: string }[];
 }
 

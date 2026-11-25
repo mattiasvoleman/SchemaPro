@@ -112,6 +112,8 @@ const REFUSED_BODY = "One or more fields failed validation.";
  * not listed as a tjänstefördelning warning.
  */
 const WITHOUT_CLASS = "IMPORT_STUDENT_WITHOUT_CLASS";
+/** The same for a pupil created with no address (Personer utan e-postadress): counted in a sentence of its own. */
+const WITHOUT_ADDRESS = "IMPORT_STUDENT_WITHOUT_ADDRESS";
 
 const NO_TEMPLATES: MappingTemplate[] = [];
 
@@ -130,6 +132,8 @@ interface FilePreview {
   legacyEncoding: string | null;
   /** Pupils of a students file with an empty klass cell, who are created without a class. */
   withoutClass: number;
+  /** Pupils of a students file with an empty epost cell, who are created with no address and so no login. */
+  withoutAddress: number;
   /** What the school may want to look at before importing, by row; none of it stops the import. */
   warnings: FileWarning[];
 }
@@ -243,7 +247,7 @@ export function CsvImportDialog({
   const preview = useMemo<FilePreview | null>(() => {
     if (reading === null) return null;
     if (reading.state === "problem") {
-      return { fileName: reading.name, headers: [], previewRows: [], rows: [], errors: [{ row: 0, message: reading.problem }], rowNumbers: [], legacyEncoding: null, withoutClass: 0, warnings: [] };
+      return { fileName: reading.name, headers: [], previewRows: [], rows: [], errors: [{ row: 0, message: reading.problem }], rowNumbers: [], legacyEncoding: null, withoutClass: 0, withoutAddress: 0, warnings: [] };
     }
     if (mapping === null) return null;
     const { applied } = mapping;
@@ -276,6 +280,7 @@ export function CsvImportDialog({
       ...(mapped.columns ? { columns: mapped.columns } : {}),
       legacyEncoding: reading.encoding,
       withoutClass: kind === "students" ? mapped.rows.filter((row) => row.className === null).length : 0,
+      withoutAddress: kind === "students" ? mapped.rows.filter((row) => row.email === null).length : 0,
       warnings,
     };
   }, [reading, mapping, kind]);
@@ -284,7 +289,8 @@ export function CsvImportDialog({
 
   const missingYear = IMPORT_NEEDS_YEAR[kind] && targetYear === null;
   const createdWithoutClass = (report?.warnings ?? []).filter((warning) => warning.code === WITHOUT_CLASS).length;
-  const staffingWarnings = (report?.warnings ?? []).filter((warning) => warning.code !== WITHOUT_CLASS);
+  const createdWithoutAddress = (report?.warnings ?? []).filter((warning) => warning.code === WITHOUT_ADDRESS).length;
+  const staffingWarnings = (report?.warnings ?? []).filter((warning) => warning.code !== WITHOUT_CLASS && warning.code !== WITHOUT_ADDRESS);
 
   /**
    * The sentence an admin has to read before they draw the wrong conclusion
@@ -394,6 +400,9 @@ export function CsvImportDialog({
                 list that looks like one would send the admin to fix a file
                 that landed. A refused row is in the errors above instead.
               */}
+              {createdWithoutAddress > 0 ? (
+                <p className="text-sm text-foreground">{t("createdWithoutAddress", { count: createdWithoutAddress })}</p>
+              ) : null}
               {createdWithoutClass > 0 ? (
                 <p className="text-sm text-foreground">
                   {t("createdWithoutClass", { count: createdWithoutClass })}
@@ -530,6 +539,9 @@ export function CsvImportDialog({
                     <p className="text-sm text-foreground">
                       {t("withoutClass", { count: preview.withoutClass })}
                     </p>
+                  ) : null}
+                  {preview.withoutAddress > 0 ? (
+                    <p className="text-sm text-foreground">{t("withoutAddress", { count: preview.withoutAddress })}</p>
                   ) : null}
                   {preview.warnings.length > 0 ? (
                     <div className="space-y-1">

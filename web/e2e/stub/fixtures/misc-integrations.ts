@@ -207,7 +207,7 @@ export const PROVISIONING: ProvisioningPerson[] = [
     role: "TEACHER",
     firstName: TEACHERS.eva.firstName,
     lastName: TEACHERS.eva.lastName,
-    email: TEACHERS.eva.email,
+    email: TEACHERS.eva.email!,
     studentGroup: null,
   },
 ];

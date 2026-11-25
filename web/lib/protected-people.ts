@@ -30,6 +30,11 @@ export interface HeldOutFile {
   content: string | null;
   heldOut: number;
   unit?: "people" | "links";
+  /**
+   * Links left out of a guardians file because the pupil or the guardian has no address to name them by (Personer utan e-postadress),
+   * counted apart from the protected. Absent from a gateway older than the web.
+   */
+  withoutAddress?: number;
 }
 
 /** The school's marked persons, read now. */

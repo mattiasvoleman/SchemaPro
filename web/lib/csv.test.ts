@@ -572,6 +572,26 @@ describe("mapTeacherRows", () => {
 });
 
 describe("mapStudentRows", () => {
+  // Personer utan e-postadress (20270310090000): the address is not something a pupil's file must give.
+  it("reads an empty epost cell as a pupil with no address, posting email null and never an empty string", () => {
+    const csv = "fornamn;efternamn;epost;klass\r\nAlma;Berg;;7A\r\nNoah;Ek;noah@example.com;7A\r\n";
+    const result = mapStudentRows(parseCsv(csv));
+    expect(result.errors).toEqual([]);
+    expect(result.rows.map((row) => row.email)).toEqual([null, "noah@example.com"]);
+  });
+
+  it("takes a file with no epost column at all: every pupil is one with no address", () => {
+    const result = mapStudentRows(parseCsv("fornamn;efternamn;klass\r\nAlma;Berg;7A\r\nNoah;Ek;7B\r\n"));
+    expect(result.errors).toEqual([]);
+    expect(result.rows.map((row) => [row.firstName, row.email])).toEqual([["Alma", null], ["Noah", null]]);
+  });
+
+  it("still judges an address that is filled in: a typo is the row's error", () => {
+    const result = mapStudentRows(parseCsv("fornamn;efternamn;epost;klass\r\nAlma;Berg;alma@;7A\r\n"));
+    expect(result.rows).toEqual([]);
+    expect(result.errors).toEqual([{ row: 2, message: expect.stringContaining("epost") }]);
+  });
+
   it("requires klass and reports it when missing", () => {
     const csv = "fornamn;efternamn;epost\r\nAlma;Berg;a@example.com\r\n";
     const result = mapStudentRows(parseCsv(csv));

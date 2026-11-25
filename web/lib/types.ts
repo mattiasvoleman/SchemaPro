@@ -359,7 +359,11 @@ export interface Person {
   role: UserRole;
   firstName: string;
   lastName: string;
-  email: string;
+  /**
+   * null for a pupil or a guardian the school added without an address (Personer utan e-postadress): in the lists, attendance and
+   * timetable, with no login until an address is added and the person is invited. A gateway older than the web sends a string.
+   */
+  email: string | null;
   phone: string | null;
   isActive: boolean;
   /**

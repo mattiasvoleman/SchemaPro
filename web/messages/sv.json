@@ -986,6 +986,11 @@
     "invitationsSent": "{sent} inbjudningar skickade. {skipped} hade redan konto.",
     "invitationsFailed": "{count} inbjudningar kunde inte skickas.",
     "inviteAll": "Bjud in {count} ej inbjudna",
+    "noAddress": "Ingen adress",
+    "noLogin": "Ingen inloggning",
+    "emailOptionalHint": "Frivillig för elever och vårdnadshavare. Utan adress syns personen i listor, närvaro och schema, men kan inte logga in förrän en adress finns.",
+    "withoutAddressNote": "{count, plural, one {# person utan adress kan inte bjudas in} other {# personer utan adress kan inte bjudas in}}",
+    "addressGivenAndInvited": "Adressen är sparad och inbjudan skickad.",
     "homeClassLabel": "Klass",
     "teachingGroupsLabel": "Undervisningsgrupper",
     "noTeachingGroups": "Eleven ingår inte i någon undervisningsgrupp.",
@@ -4070,6 +4075,7 @@
     "guardiansNotice": "En rad är en koppling mellan en vårdnadshavare och en elev: elevens e-postadress står i kolumnen elev_epost, och eleven måste finnas och vara aktiv. En vårdnadshavare som inte finns skapas utan inbjudan. En som finns får bara kopplingen, så namn och telefon ändras inte.",
     "noGuardianLinks": "Det finns inga kopplingar mellan vårdnadshavare och elever att exportera.",
     "keptProtected": "{count, plural, one {En person i filen har skyddad identitet. Den finns med, eftersom den som tar emot filen ska ha alla, så hantera filen därefter.} other {# personer i filen har skyddad identitet. De finns med, eftersom den som tar emot filen ska ha alla, så hantera filen därefter.}}",
+    "withoutAddressLinks": "{count, plural, one {# koppling finns inte i filen, eftersom eleven eller vårdnadshavaren saknar e-postadress och filen namnger personer med den.} other {# kopplingar finns inte i filen, eftersom eleven eller vårdnadshavaren saknar e-postadress och filen namnger personer med den.}} Kopplingarna finns kvar under Personer.",
     "heldOut": {
       "people": "{count, plural, =0 {Ingen hölls utanför filen: ingen av dem är markerad med skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} one {En person med skyddad identitet hölls utanför filen, och varje rad som nämner personen. Den som har skyddad identitet men inte är markerad under Personer finns med.} other {# personer med skyddad identitet hölls utanför filen, och varje rad som nämner någon av dem. Den som har skyddad identitet men inte är markerad under Personer finns med.}}",
       "links": "{count, plural, =0 {Ingen koppling hölls utanför filen: ingen elev eller vårdnadshavare i den är markerad med skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} one {En koppling hölls utanför filen, eftersom eleven eller vårdnadshavaren har skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} other {# kopplingar hölls utanför filen, eftersom eleven eller vårdnadshavaren har skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.}}"
@@ -4087,6 +4093,8 @@
     "readAs": "Filen är inte UTF-8 och lästes som {encoding}. Kontrollera att å, ä och ö ser rätt ut i förhandsvisningen.",
     "withoutClass": "{count, plural, one {# elev har ingen klass i filen och skapas utan klass.} other {# elever har ingen klass i filen och skapas utan klass.}} Importen kan inte ge dem en klass i efterhand, så fyll i klass i filen om det inte är meningen.",
     "createdWithoutClass": "{count, plural, one {# elev skapades utan klass.} other {# elever skapades utan klass.}} Ge dem en klass under Personer.",
+    "withoutAddress": "{count, plural, one {# elev har ingen e-postadress i filen och skapas utan inloggning.} other {# elever har ingen e-postadress i filen och skapas utan inloggning.}} De syns i listor, närvaro och schema. En senare fil med adressen lägger den på eleven med samma förnamn, efternamn och klass.",
+    "createdWithoutAddress": "{count, plural, one {# elev skapades utan e-postadress.} other {# elever skapades utan e-postadress.}} De kan inte bjudas in förrän en adress finns: ge dem en under Personer, eller läs in en fil med adresserna.",
     "rejectedByServer": "Servern tog inte emot filen, eftersom en cell har ett värde som inte går att spara. Inget importerades. Jämför filen med mallen."
   },
   "grades": {

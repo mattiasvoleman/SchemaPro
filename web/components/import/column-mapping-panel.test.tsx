@@ -62,12 +62,13 @@ const pupilsTemplate = (): MappingTemplate => ({
 });
 
 describe("a Skola24 description in the column panel", () => {
-  it("is applied by itself on the exact documented headers, and says what it cannot give Rastra's import", () => {
+  it("is applied by itself on the exact documented headers, and names no gap: a pupils' file with no address is one the import takes", () => {
     const { state } = renderPanel("students", PUPILS);
     expect(screen.getByText(/^format\.recognised\(/)).toBeInTheDocument();
-    expect(screen.getByText("format.gap(1|fields.students.email)")).toBeInTheDocument();
+    // Personer utan e-postadress: the address is no field the pupils' import needs, so the file's lack of one is no gap.
+    expect(screen.queryByText(/^format\.gap\(/)).not.toBeInTheDocument();
     expect(state().assignment).toEqual([null, "lastName", "firstName", "className"]);
-    expect(state().applied.problems).toEqual([{ code: "MISSING_REQUIRED", field: "email" }]);
+    expect(state().applied.problems).toEqual([]);
     // Skola24's page gives the pupils' columns in no one order, so there is no header row to ask about.
     expect(screen.queryByLabelText("format.header.label")).not.toBeInTheDocument();
   });

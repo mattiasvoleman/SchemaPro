@@ -60,7 +60,7 @@ type Row = readonly [id: string, header: string, required?: true];
 
 /** For the eleven CSV kinds, in the template's column order: id, the template's header, and whether the importer needs it. */
 const CSV_ROWS: Record<CsvKind, readonly Row[]> = {
-  students: [["firstName", "fornamn", true], ["lastName", "efternamn", true], ["email", "epost", true], ["phone", "telefon"], ["className", "klass", true]],
+  students: [["firstName", "fornamn", true], ["lastName", "efternamn", true], ["email", "epost"], ["phone", "telefon"], ["className", "klass", true]],
   guardians: [["firstName", "fornamn", true], ["lastName", "efternamn", true], ["email", "epost", true], ["phone", "telefon"], ["studentEmail", "elev_epost", true]],
   teachers: [
     ["firstName", "fornamn", true],
