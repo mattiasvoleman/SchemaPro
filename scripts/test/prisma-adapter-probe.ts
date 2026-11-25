@@ -9178,12 +9178,12 @@ async function draftChecks(owner: Client, api: PrismaService): Promise<void> {
     recipientsForLessons: async () => [],
     notifyUsers: async () => undefined,
   } as unknown as NotificationsService;
-  const announced: Array<{ schoolId: string; draft: boolean }> = [];
+  const announced: Array<{ schoolId: string; draft: boolean; lessonIds?: readonly string[] }> = [];
   const lessons = new MasterLessonsService(
     api,
     {
-      notifyMasterTimetableChanged: (schoolId: string, options?: { draft?: boolean }) =>
-        announced.push({ schoolId, draft: options?.draft === true }),
+      notifyMasterTimetableChanged: (schoolId: string, options?: { draft?: boolean; lessonIds?: readonly string[] }) =>
+        announced.push({ schoolId, draft: options?.draft === true, lessonIds: options?.lessonIds }),
     } as unknown as RealtimeService,
     silent,
   );
@@ -9231,7 +9231,9 @@ async function draftChecks(owner: Client, api: PrismaService): Promise<void> {
     await check('(pub-b) a draft edit and a draft delete move no published row and no teacher figure (B2)', async () => {
       const moved = await lessons.update(school.monday, { dayOfWeek: 2 }, school.admin);
       assert.deepEqual([moved.propagatedLessons, moved.removedCalendarLessons], [0, 0]);
-      assert.deepEqual(announced.at(-1), { schoolId: school.schoolId, draft: true });
+      // Said once the transaction has committed, on a later turn (PrismaService.onCommit), and with the lesson it changed.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.deepEqual(announced.at(-1), { schoolId: school.schoolId, draft: true, lessonIds: [school.monday] });
       const removed = await lessons.remove(school.wednesday, school.admin);
       assert.equal(removed.removedCalendarLessons, 0);
       // The deleted lesson's published rows are kept, their key nulled, and recorded.
@@ -9317,7 +9319,8 @@ async function draftChecks(owner: Client, api: PrismaService): Promise<void> {
       assert.equal(back.publishMode, 'DIRECT');
       const moved = await lessons.update(school.monday, { startTime: '09:00', endTime: '10:00' }, school.admin);
       assert.ok(moved.propagatedLessons > 30);
-      assert.deepEqual(announced.at(-1), { schoolId: school.schoolId, draft: false });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.deepEqual(announced.at(-1), { schoolId: school.schoolId, draft: false, lessonIds: [school.monday] });
     });
 
     await check('(pub-b) a restore in DRAFT keeps a vikarie through adoption, and writes no twin', async () => {
