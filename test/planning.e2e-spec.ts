@@ -6660,6 +6660,8 @@ describe('Planning surface (e2e)', () => {
         startDate: null,
         endDate: null,
         subject: { name: 'Matematik' },
+        // What the judge calls the lesson by when a clash names it (lesson-judge.ts).
+        studentGroup: { name: 'Ma8 grupp 1' },
         extraGroups: [],
         participants: [],
       });
@@ -6668,7 +6670,7 @@ describe('Planning surface (e2e)', () => {
         .set('x-test-user', admin())
         .send({ academicYearId: yearB, subjectId: IDS.sv, studentGroupId: inB('8A'), dayOfWeek: 1, startTime: '08:00', endTime: '09:00' })
         .expect(409);
-      expect(JSON.stringify(lesson.body)).toContain('Students of this group already have Matematik in this slot.');
+      expect(lesson.body).toMatchObject({ code: 'MASTER_LESSON_REFUSED', params: { reason: 'PUPILS', className: 'Ma8 grupp 1', subjectName: 'Matematik', day: 1, start: '08:00', end: '09:00' } });
       // The active year itself is never refused for it.
       await request(http())
         .post('/api/v1/optimization/rooms/proposal')
@@ -6817,6 +6819,8 @@ describe('Planning surface (e2e)', () => {
         startDate: null,
         endDate: null,
         subject: { name },
+        // What the judge calls the lesson by when a clash names it (lesson-judge.ts).
+        studentGroup: { name: world.rows['studentGroup']!.find((group) => group['id'] === studentGroupId)!['name'] as string },
         extraGroups: [],
         participants: [],
       });
@@ -6832,7 +6836,7 @@ describe('Planning surface (e2e)', () => {
 
       // Before the activation: 8A's coming pupils meet Ma8's p7a1.
       const spring = await drag(dragged, 1).expect(409);
-      expect(JSON.stringify(spring.body)).toContain('Students of this group already have Matematik in this slot.');
+      expect(spring.body).toMatchObject({ code: 'MASTER_LESSON_REFUSED', params: { reason: 'PUPILS', className: 'Ma8 grupp 1', subjectName: 'Matematik', day: 1, start: '08:00', end: '09:00' } });
       // Where nobody is, it lands, and goes back.
       await drag(dragged, 4).expect(200);
       await drag(dragged, 2).expect(200);

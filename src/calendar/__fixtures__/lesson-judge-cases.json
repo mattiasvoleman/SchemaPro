@@ -1,0 +1,8806 @@
+{
+ "readme": [
+  "The cases of the judge of a hand edit (src/calendar/lesson-judge.ts): each is a small world (worlds[n]), one lesson of it dragged to a new day and clock (drag, the lesson keeps its length), and the verdict the real judge gives it.",
+  "WRITTEN BY scripts/test/probe-domaren.ts (DOMAREN_WRITE=1 npx ts-node --transpile-only scripts/test/probe-domaren.ts), which asks the läsande frågan, a swap's judge and the förläggning's judge of every case over real Postgres and requires them to agree before it writes. Do not edit by hand.",
+  "verdict.reasons: every reason the hand edit finds, the heaviest first (TEACHER, ROOM, GROUP, PUPILS, AVAILABILITY, then FRAME, LUNCH, GRADE_RULE). web/lib/lesson-judge-mirror.contract.test.ts holds the web's mirror of the clash rule to them: never milder, for the rules it has.",
+  "Every lesson of a world stands where it was laid, whether or not it stands against a frame, a meal or a closure (låt stå), and every meal is the school's own. Lessons are laid clear of one another; OTHER_SCHOOL is not here (it needs a huvudman)."
+ ],
+ "worlds": [
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T4",
+     "room": "R1",
+     "day": 4,
+     "start": "09:15",
+     "minutes": 60
+    },
+    {
+     "key": "L2",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T1",
+     "day": 5,
+     "start": "12:40",
+     "minutes": 60
+    },
+    {
+     "key": "L3",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T2",
+     "day": 5,
+     "start": "11:00",
+     "minutes": 60
+    },
+    {
+     "key": "L4",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R2",
+     "day": 3,
+     "start": "14:25",
+     "minutes": 45
+    },
+    {
+     "key": "L5",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T4",
+     "day": 3,
+     "start": "14:15",
+     "minutes": 60
+    },
+    {
+     "key": "L6",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R3",
+     "day": 1,
+     "start": "10:15",
+     "minutes": 40
+    },
+    {
+     "key": "L7",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T4",
+     "day": 1,
+     "start": "14:10",
+     "minutes": 40,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L8",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T4",
+     "room": "R1",
+     "day": 1,
+     "start": "13:00",
+     "minutes": 45
+    },
+    {
+     "key": "L9",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T3",
+     "room": "R3",
+     "day": 1,
+     "start": "13:05",
+     "minutes": 60
+    },
+    {
+     "key": "L10",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T3",
+     "room": "R1",
+     "day": 2,
+     "start": "08:40",
+     "minutes": 60,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L11",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 4,
+     "start": "12:45",
+     "minutes": 45
+    },
+    {
+     "key": "L12",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T2",
+     "day": 2,
+     "start": "11:15",
+     "minutes": 45,
+     "recurrence": "ODD_WEEKS"
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      8
+     ],
+     "day": 3,
+     "start": "08:00",
+     "end": "09:00"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      8
+     ],
+     "day": 3,
+     "start": "12:15",
+     "end": "13:15"
+    },
+    {
+     "kind": "room",
+     "key": "R3",
+     "day": 2,
+     "start": "10:15",
+     "end": "11:15"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      9
+     ],
+     "day": 4,
+     "start": "11:45",
+     "end": "12:45"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "14:30"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "7A",
+     "day": 2,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "7A",
+     "day": 4,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "7A",
+     "day": 5,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "8B",
+     "day": 1,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 1,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "12:00",
+     "end": "12:45"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R2",
+     "day": 4,
+     "start": "10:10",
+     "minutes": 45
+    },
+    {
+     "key": "L2",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 3,
+     "start": "10:05",
+     "minutes": 40
+    },
+    {
+     "key": "L3",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T4",
+     "day": 3,
+     "start": "12:10",
+     "minutes": 60
+    },
+    {
+     "key": "L4",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R2",
+     "day": 1,
+     "start": "10:35",
+     "minutes": 60
+    },
+    {
+     "key": "L5",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T1",
+     "day": 5,
+     "start": "14:35",
+     "minutes": 50
+    },
+    {
+     "key": "L6",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T3",
+     "day": 4,
+     "start": "09:00",
+     "minutes": 40
+    },
+    {
+     "key": "L7",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T2",
+     "day": 5,
+     "start": "08:15",
+     "minutes": 60
+    },
+    {
+     "key": "L8",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R1",
+     "day": 1,
+     "start": "13:00",
+     "minutes": 50
+    },
+    {
+     "key": "L9",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T4",
+     "room": "R1",
+     "day": 5,
+     "start": "11:30",
+     "minutes": 40
+    },
+    {
+     "key": "L10",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T4",
+     "room": "R1",
+     "day": 1,
+     "start": "09:10",
+     "minutes": 45
+    },
+    {
+     "key": "L11",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R1",
+     "day": 1,
+     "start": "10:35",
+     "minutes": 50
+    },
+    {
+     "key": "L12",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T4",
+     "room": "R2",
+     "day": 3,
+     "start": "14:05",
+     "minutes": 45
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      8
+     ],
+     "day": 1,
+     "start": "12:30",
+     "end": "13:30"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      8
+     ],
+     "day": 2,
+     "start": "10:00",
+     "end": "11:00"
+    },
+    {
+     "kind": "room",
+     "key": "R2",
+     "day": 4,
+     "start": "08:15",
+     "end": "09:15"
+    },
+    {
+     "kind": "room",
+     "key": "R3",
+     "day": 4,
+     "start": "13:15",
+     "end": "14:15"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "14:30"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 4,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "7A",
+     "day": 5,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 5,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "9C",
+     "day": 1,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "11:30",
+     "end": "12:15"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T3",
+     "coTeacher": "T2",
+     "day": 5,
+     "start": "11:30",
+     "minutes": 40
+    },
+    {
+     "key": "L2",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 1,
+     "start": "11:45",
+     "minutes": 50
+    },
+    {
+     "key": "L3",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R2",
+     "day": 2,
+     "start": "09:20",
+     "minutes": 40
+    },
+    {
+     "key": "L4",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R3",
+     "day": 3,
+     "start": "11:45",
+     "minutes": 50
+    },
+    {
+     "key": "L5",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T1",
+     "room": "R2",
+     "day": 3,
+     "start": "08:35",
+     "minutes": 45
+    },
+    {
+     "key": "L6",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 1,
+     "start": "08:30",
+     "minutes": 60
+    },
+    {
+     "key": "L7",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R1",
+     "day": 1,
+     "start": "10:15",
+     "minutes": 50
+    },
+    {
+     "key": "L8",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 3,
+     "start": "10:15",
+     "minutes": 45
+    },
+    {
+     "key": "L9",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T1",
+     "day": 3,
+     "start": "14:10",
+     "minutes": 60
+    },
+    {
+     "key": "L10",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T3",
+     "day": 3,
+     "start": "12:55",
+     "minutes": 40
+    },
+    {
+     "key": "L11",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R1",
+     "day": 3,
+     "start": "12:45",
+     "minutes": 60
+    },
+    {
+     "key": "L12",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 1,
+     "start": "09:35",
+     "minutes": 50
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      9
+     ],
+     "day": 3,
+     "start": "13:15",
+     "end": "14:15"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      9
+     ],
+     "day": 5,
+     "start": "12:30",
+     "end": "13:30"
+    },
+    {
+     "kind": "room",
+     "key": "R2",
+     "day": 5,
+     "start": "10:15",
+     "end": "11:15"
+    },
+    {
+     "kind": "class",
+     "key": "9C",
+     "day": 4,
+     "start": "10:00",
+     "end": "11:00"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "16:00"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "7A",
+     "day": 4,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "8B",
+     "day": 1,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 2,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 5,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "9C",
+     "day": 1,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 5,
+     "start": "11:30",
+     "end": "12:15"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T2",
+     "coTeacher": "T4",
+     "room": "R2",
+     "day": 1,
+     "start": "10:20",
+     "minutes": 60
+    },
+    {
+     "key": "L2",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T3",
+     "coTeacher": "T2",
+     "day": 5,
+     "start": "11:45",
+     "minutes": 45
+    },
+    {
+     "key": "L3",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T1",
+     "room": "R2",
+     "day": 5,
+     "start": "14:55",
+     "minutes": 45,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L4",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T2",
+     "coTeacher": "T1",
+     "day": 1,
+     "start": "08:45",
+     "minutes": 60
+    },
+    {
+     "key": "L5",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R3",
+     "day": 3,
+     "start": "14:55",
+     "minutes": 50
+    },
+    {
+     "key": "L6",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 4,
+     "start": "13:00",
+     "minutes": 50
+    },
+    {
+     "key": "L7",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R3",
+     "day": 5,
+     "start": "09:25",
+     "minutes": 50
+    },
+    {
+     "key": "L8",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 3,
+     "start": "12:40",
+     "minutes": 45
+    },
+    {
+     "key": "L9",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T4",
+     "day": 1,
+     "start": "13:30",
+     "minutes": 45
+    },
+    {
+     "key": "L10",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T3",
+     "day": 3,
+     "start": "08:45",
+     "minutes": 40
+    },
+    {
+     "key": "L11",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T4",
+     "day": 2,
+     "start": "12:00",
+     "minutes": 45
+    },
+    {
+     "key": "L12",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 2,
+     "start": "08:50",
+     "minutes": 45
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      8
+     ],
+     "day": 3,
+     "start": "11:15",
+     "end": "12:15"
+    },
+    {
+     "kind": "class",
+     "key": "9C",
+     "day": 5,
+     "start": "08:45",
+     "end": "09:45"
+    },
+    {
+     "kind": "teacher",
+     "key": "T1",
+     "day": 1,
+     "start": "09:15",
+     "end": "10:15"
+    },
+    {
+     "kind": "room",
+     "key": "R3",
+     "day": 3,
+     "start": "13:00",
+     "end": "14:00"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "16:00"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "7A",
+     "day": 2,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "7A",
+     "day": 4,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "7A",
+     "day": 5,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "8B",
+     "day": 1,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "9C",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "9C",
+     "day": 3,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "9C",
+     "day": 5,
+     "start": "12:00",
+     "end": "12:45"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R2",
+     "day": 5,
+     "start": "13:00",
+     "minutes": 40,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L2",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 3,
+     "start": "13:45",
+     "minutes": 60,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L3",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 1,
+     "start": "12:35",
+     "minutes": 45
+    },
+    {
+     "key": "L4",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T3",
+     "room": "R1",
+     "day": 1,
+     "start": "11:00",
+     "minutes": 50,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L5",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T2",
+     "day": 2,
+     "start": "12:10",
+     "minutes": 45
+    },
+    {
+     "key": "L6",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T1",
+     "coTeacher": "T3",
+     "room": "R2",
+     "day": 3,
+     "start": "11:30",
+     "minutes": 50,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L7",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 1,
+     "start": "11:40",
+     "minutes": 60
+    },
+    {
+     "key": "L8",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R1",
+     "day": 3,
+     "start": "11:10",
+     "minutes": 60
+    },
+    {
+     "key": "L9",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R1",
+     "day": 4,
+     "start": "13:40",
+     "minutes": 45
+    },
+    {
+     "key": "L10",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 5,
+     "start": "08:10",
+     "minutes": 45
+    },
+    {
+     "key": "L11",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 4,
+     "start": "10:15",
+     "minutes": 60
+    },
+    {
+     "key": "L12",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R1",
+     "day": 3,
+     "start": "08:30",
+     "minutes": 45
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "room",
+     "key": "R2",
+     "day": 5,
+     "start": "12:00",
+     "end": "13:00"
+    },
+    {
+     "kind": "room",
+     "key": "R1",
+     "day": 3,
+     "start": "08:30",
+     "end": "09:30"
+    },
+    {
+     "kind": "teacher",
+     "key": "T2",
+     "day": 5,
+     "start": "09:45",
+     "end": "10:45"
+    },
+    {
+     "kind": "room",
+     "key": "R1",
+     "day": 4,
+     "start": "09:30",
+     "end": "10:30"
+    }
+   ],
+   "frames": [],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 2,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "8B",
+     "day": 1,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "8B",
+     "day": 5,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "9C",
+     "day": 1,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "9C",
+     "day": 3,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "9C",
+     "day": 5,
+     "start": "11:15",
+     "end": "12:00"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T1",
+     "room": "R3",
+     "day": 1,
+     "start": "08:50",
+     "minutes": 45
+    },
+    {
+     "key": "L2",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T1",
+     "room": "R2",
+     "day": 3,
+     "start": "14:40",
+     "minutes": 50
+    },
+    {
+     "key": "L3",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 5,
+     "start": "11:00",
+     "minutes": 60
+    },
+    {
+     "key": "L4",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 4,
+     "start": "10:55",
+     "minutes": 45
+    },
+    {
+     "key": "L5",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T1",
+     "day": 2,
+     "start": "08:25",
+     "minutes": 45
+    },
+    {
+     "key": "L6",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T4",
+     "room": "R2",
+     "day": 2,
+     "start": "13:00",
+     "minutes": 50
+    },
+    {
+     "key": "L7",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 4,
+     "start": "10:30",
+     "minutes": 40,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L8",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T4",
+     "room": "R2",
+     "day": 2,
+     "start": "10:45",
+     "minutes": 50
+    },
+    {
+     "key": "L9",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 5,
+     "start": "13:35",
+     "minutes": 60
+    },
+    {
+     "key": "L10",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 3,
+     "start": "14:40",
+     "minutes": 60
+    },
+    {
+     "key": "L11",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T4",
+     "room": "R1",
+     "day": 4,
+     "start": "14:30",
+     "minutes": 50,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L12",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T4",
+     "day": 5,
+     "start": "13:10",
+     "minutes": 40,
+     "recurrence": "ODD_WEEKS"
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      9
+     ],
+     "day": 3,
+     "start": "08:30",
+     "end": "09:30"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      8
+     ],
+     "day": 1,
+     "start": "09:15",
+     "end": "10:15"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      8
+     ],
+     "day": 3,
+     "start": "11:45",
+     "end": "12:45"
+    },
+    {
+     "kind": "teacher",
+     "key": "T1",
+     "day": 1,
+     "start": "11:15",
+     "end": "12:15"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "16:00"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 2,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "8B",
+     "day": 2,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 5,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "9C",
+     "day": 5,
+     "start": "12:00",
+     "end": "12:45"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R2",
+     "day": 4,
+     "start": "13:05",
+     "minutes": 60
+    },
+    {
+     "key": "L2",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 2,
+     "start": "14:50",
+     "minutes": 50,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L3",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 2,
+     "start": "08:15",
+     "minutes": 40
+    },
+    {
+     "key": "L4",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 2,
+     "start": "09:00",
+     "minutes": 40
+    },
+    {
+     "key": "L5",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 2,
+     "start": "10:35",
+     "minutes": 40
+    },
+    {
+     "key": "L6",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 3,
+     "start": "10:10",
+     "minutes": 50
+    },
+    {
+     "key": "L7",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T4",
+     "room": "R2",
+     "day": 1,
+     "start": "09:55",
+     "minutes": 60
+    },
+    {
+     "key": "L8",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R1",
+     "day": 1,
+     "start": "12:05",
+     "minutes": 60
+    },
+    {
+     "key": "L9",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T1",
+     "day": 3,
+     "start": "13:20",
+     "minutes": 40
+    },
+    {
+     "key": "L10",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T2",
+     "day": 4,
+     "start": "08:30",
+     "minutes": 50,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L11",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T3",
+     "day": 2,
+     "start": "12:00",
+     "minutes": 60
+    },
+    {
+     "key": "L12",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T1",
+     "day": 1,
+     "start": "11:05",
+     "minutes": 45
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "teacher",
+     "key": "T4",
+     "day": 5,
+     "start": "12:30",
+     "end": "13:30"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      8
+     ],
+     "day": 4,
+     "start": "12:45",
+     "end": "13:45"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      9
+     ],
+     "day": 1,
+     "start": "12:30",
+     "end": "13:30"
+    },
+    {
+     "kind": "class",
+     "key": "9C",
+     "day": 2,
+     "start": "08:45",
+     "end": "09:45"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "15:00"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "7A",
+     "day": 2,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 1,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "8B",
+     "day": 2,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 5,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "9C",
+     "day": 3,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "9C",
+     "day": 5,
+     "start": "11:15",
+     "end": "12:00"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T1",
+     "day": 2,
+     "start": "09:35",
+     "minutes": 40,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L2",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T2",
+     "day": 3,
+     "start": "09:05",
+     "minutes": 60
+    },
+    {
+     "key": "L3",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R3",
+     "day": 4,
+     "start": "13:05",
+     "minutes": 50,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L4",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 5,
+     "start": "09:25",
+     "minutes": 45
+    },
+    {
+     "key": "L5",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 2,
+     "start": "12:15",
+     "minutes": 45
+    },
+    {
+     "key": "L6",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T2",
+     "day": 4,
+     "start": "09:15",
+     "minutes": 60
+    },
+    {
+     "key": "L7",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T3",
+     "day": 5,
+     "start": "12:55",
+     "minutes": 60
+    },
+    {
+     "key": "L8",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T4",
+     "day": 3,
+     "start": "10:15",
+     "minutes": 50
+    },
+    {
+     "key": "L9",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T1",
+     "day": 1,
+     "start": "09:15",
+     "minutes": 45
+    },
+    {
+     "key": "L10",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R3",
+     "day": 5,
+     "start": "11:35",
+     "minutes": 40
+    },
+    {
+     "key": "L11",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 3,
+     "start": "14:20",
+     "minutes": 60
+    },
+    {
+     "key": "L12",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R1",
+     "day": 5,
+     "start": "12:15",
+     "minutes": 50
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "class",
+     "key": "9C",
+     "day": 5,
+     "start": "11:45",
+     "end": "12:45"
+    },
+    {
+     "kind": "teacher",
+     "key": "T3",
+     "day": 3,
+     "start": "12:15",
+     "end": "13:15"
+    },
+    {
+     "kind": "teacher",
+     "key": "T2",
+     "day": 2,
+     "start": "11:45",
+     "end": "12:45"
+    },
+    {
+     "kind": "teacher",
+     "key": "T2",
+     "day": 1,
+     "start": "14:00",
+     "end": "15:00"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "16:00"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "7A",
+     "day": 5,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "9C",
+     "day": 1,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "9C",
+     "day": 3,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "9C",
+     "day": 5,
+     "start": "11:00",
+     "end": "11:45"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 5,
+     "start": "10:45",
+     "minutes": 50
+    },
+    {
+     "key": "L2",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 4,
+     "start": "15:00",
+     "minutes": 40
+    },
+    {
+     "key": "L3",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 1,
+     "start": "11:05",
+     "minutes": 40
+    },
+    {
+     "key": "L4",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R2",
+     "day": 2,
+     "start": "13:05",
+     "minutes": 45
+    },
+    {
+     "key": "L5",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R2",
+     "day": 4,
+     "start": "08:25",
+     "minutes": 40
+    },
+    {
+     "key": "L6",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R2",
+     "day": 3,
+     "start": "08:05",
+     "minutes": 50
+    },
+    {
+     "key": "L7",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T4",
+     "day": 1,
+     "start": "08:00",
+     "minutes": 50
+    },
+    {
+     "key": "L8",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R3",
+     "day": 1,
+     "start": "14:50",
+     "minutes": 60
+    },
+    {
+     "key": "L9",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T1",
+     "room": "R3",
+     "day": 3,
+     "start": "13:30",
+     "minutes": 60
+    },
+    {
+     "key": "L10",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 3,
+     "start": "09:05",
+     "minutes": 45
+    },
+    {
+     "key": "L11",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T2",
+     "day": 1,
+     "start": "11:15",
+     "minutes": 45,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L12",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R2",
+     "day": 5,
+     "start": "10:10",
+     "minutes": 40
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      8
+     ],
+     "day": 3,
+     "start": "13:00",
+     "end": "14:00"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      8
+     ],
+     "day": 5,
+     "start": "12:45",
+     "end": "13:45"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      9
+     ],
+     "day": 1,
+     "start": "13:15",
+     "end": "14:15"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      9
+     ],
+     "day": 5,
+     "start": "09:00",
+     "end": "10:00"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "14:30"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "7A",
+     "day": 2,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "7A",
+     "day": 4,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "8B",
+     "day": 1,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 1,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 3,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "11:30",
+     "end": "12:15"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T3",
+     "coTeacher": "T2",
+     "room": "R3",
+     "day": 3,
+     "start": "13:00",
+     "minutes": 60
+    },
+    {
+     "key": "L2",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 4,
+     "start": "09:50",
+     "minutes": 50
+    },
+    {
+     "key": "L3",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T4",
+     "coTeacher": "T1",
+     "day": 2,
+     "start": "14:30",
+     "minutes": 60
+    },
+    {
+     "key": "L4",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R1",
+     "day": 4,
+     "start": "14:20",
+     "minutes": 60
+    },
+    {
+     "key": "L5",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 3,
+     "start": "10:20",
+     "minutes": 40
+    },
+    {
+     "key": "L6",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T4",
+     "day": 5,
+     "start": "09:50",
+     "minutes": 50
+    },
+    {
+     "key": "L7",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 4,
+     "start": "08:35",
+     "minutes": 40
+    },
+    {
+     "key": "L8",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R3",
+     "day": 2,
+     "start": "09:40",
+     "minutes": 50
+    },
+    {
+     "key": "L9",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T2",
+     "room": "R1",
+     "day": 2,
+     "start": "09:00",
+     "minutes": 40
+    },
+    {
+     "key": "L10",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T2",
+     "room": "R2",
+     "day": 4,
+     "start": "13:15",
+     "minutes": 60
+    },
+    {
+     "key": "L11",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R3",
+     "day": 1,
+     "start": "14:25",
+     "minutes": 60
+    },
+    {
+     "key": "L12",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T2",
+     "coTeacher": "T3",
+     "room": "R3",
+     "day": 1,
+     "start": "10:25",
+     "minutes": 40
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "class",
+     "key": "7A",
+     "day": 4,
+     "start": "09:15",
+     "end": "10:15"
+    },
+    {
+     "kind": "class",
+     "key": "7A",
+     "day": 5,
+     "start": "11:30",
+     "end": "12:30"
+    },
+    {
+     "kind": "class",
+     "key": "7A",
+     "day": 4,
+     "start": "11:00",
+     "end": "12:00"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      9
+     ],
+     "day": 1,
+     "start": "12:15",
+     "end": "13:15"
+    }
+   ],
+   "frames": [],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 5,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "9C",
+     "day": 3,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 5,
+     "start": "12:00",
+     "end": "12:45"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T1",
+     "room": "R2",
+     "day": 5,
+     "start": "11:20",
+     "minutes": 50
+    },
+    {
+     "key": "L2",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R1",
+     "day": 4,
+     "start": "11:50",
+     "minutes": 45
+    },
+    {
+     "key": "L3",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T2",
+     "day": 2,
+     "start": "10:35",
+     "minutes": 45,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L4",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T1",
+     "day": 5,
+     "start": "09:05",
+     "minutes": 60
+    },
+    {
+     "key": "L5",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T4",
+     "day": 1,
+     "start": "14:20",
+     "minutes": 50
+    },
+    {
+     "key": "L6",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T1",
+     "room": "R2",
+     "day": 3,
+     "start": "14:35",
+     "minutes": 60
+    },
+    {
+     "key": "L7",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 2,
+     "start": "08:35",
+     "minutes": 40,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L8",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T3",
+     "day": 5,
+     "start": "14:50",
+     "minutes": 45
+    },
+    {
+     "key": "L9",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R1",
+     "day": 5,
+     "start": "11:20",
+     "minutes": 40
+    },
+    {
+     "key": "L10",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R1",
+     "day": 5,
+     "start": "13:40",
+     "minutes": 60,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L11",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 3,
+     "start": "13:40",
+     "minutes": 40,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L12",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T4",
+     "room": "R1",
+     "day": 4,
+     "start": "13:50",
+     "minutes": 45
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      9
+     ],
+     "day": 1,
+     "start": "12:30",
+     "end": "13:30"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      9
+     ],
+     "day": 2,
+     "start": "11:30",
+     "end": "12:30"
+    },
+    {
+     "kind": "class",
+     "key": "7A",
+     "day": 2,
+     "start": "10:30",
+     "end": "11:30"
+    },
+    {
+     "kind": "class",
+     "key": "8B",
+     "day": 4,
+     "start": "09:00",
+     "end": "10:00"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "15:00"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "8B",
+     "day": 2,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 5,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "9C",
+     "day": 3,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "9C",
+     "day": 5,
+     "start": "12:00",
+     "end": "12:45"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R3",
+     "day": 4,
+     "start": "12:05",
+     "minutes": 45,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L2",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T3",
+     "coTeacher": "T1",
+     "room": "R2",
+     "day": 3,
+     "start": "09:25",
+     "minutes": 40
+    },
+    {
+     "key": "L3",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 4,
+     "start": "10:00",
+     "minutes": 40
+    },
+    {
+     "key": "L4",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 2,
+     "start": "09:20",
+     "minutes": 50,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L5",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R3",
+     "day": 4,
+     "start": "14:00",
+     "minutes": 45
+    },
+    {
+     "key": "L6",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T4",
+     "day": 2,
+     "start": "13:30",
+     "minutes": 40
+    },
+    {
+     "key": "L7",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 3,
+     "start": "10:30",
+     "minutes": 50
+    },
+    {
+     "key": "L8",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T3",
+     "room": "R3",
+     "day": 1,
+     "start": "12:50",
+     "minutes": 40
+    },
+    {
+     "key": "L9",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T3",
+     "coTeacher": "T2",
+     "day": 3,
+     "start": "12:15",
+     "minutes": 40
+    },
+    {
+     "key": "L10",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T1",
+     "day": 1,
+     "start": "14:55",
+     "minutes": 40
+    },
+    {
+     "key": "L11",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T2",
+     "day": 5,
+     "start": "10:05",
+     "minutes": 50
+    },
+    {
+     "key": "L12",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T2",
+     "room": "R1",
+     "day": 4,
+     "start": "12:20",
+     "minutes": 50,
+     "recurrence": "EVEN_WEEKS"
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      8
+     ],
+     "day": 4,
+     "start": "09:30",
+     "end": "10:30"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      9
+     ],
+     "day": 3,
+     "start": "09:45",
+     "end": "10:45"
+    },
+    {
+     "kind": "room",
+     "key": "R3",
+     "day": 4,
+     "start": "08:30",
+     "end": "09:30"
+    },
+    {
+     "kind": "room",
+     "key": "R3",
+     "day": 5,
+     "start": "09:15",
+     "end": "10:15"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "14:30"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "7A",
+     "day": 4,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "7A",
+     "day": 5,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "8B",
+     "day": 1,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "9C",
+     "day": 3,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "11:15",
+     "end": "12:00"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 2,
+     "start": "14:50",
+     "minutes": 60
+    },
+    {
+     "key": "L2",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 3,
+     "start": "12:15",
+     "minutes": 45,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L3",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 1,
+     "start": "11:55",
+     "minutes": 45
+    },
+    {
+     "key": "L4",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R3",
+     "day": 5,
+     "start": "08:05",
+     "minutes": 50
+    },
+    {
+     "key": "L5",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T1",
+     "room": "R3",
+     "day": 4,
+     "start": "10:25",
+     "minutes": 45
+    },
+    {
+     "key": "L6",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T2",
+     "room": "R2",
+     "day": 5,
+     "start": "14:25",
+     "minutes": 40
+    },
+    {
+     "key": "L7",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T2",
+     "day": 3,
+     "start": "13:25",
+     "minutes": 60
+    },
+    {
+     "key": "L8",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 2,
+     "start": "10:45",
+     "minutes": 45
+    },
+    {
+     "key": "L9",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R1",
+     "day": 3,
+     "start": "11:00",
+     "minutes": 40,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L10",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T4",
+     "room": "R1",
+     "day": 2,
+     "start": "08:10",
+     "minutes": 45
+    },
+    {
+     "key": "L11",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T2",
+     "day": 3,
+     "start": "08:25",
+     "minutes": 45
+    },
+    {
+     "key": "L12",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T1",
+     "day": 4,
+     "start": "13:00",
+     "minutes": 50
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      9
+     ],
+     "day": 3,
+     "start": "12:45",
+     "end": "13:45"
+    },
+    {
+     "kind": "teacher",
+     "key": "T3",
+     "day": 5,
+     "start": "12:30",
+     "end": "13:30"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      8
+     ],
+     "day": 5,
+     "start": "10:15",
+     "end": "11:15"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      8
+     ],
+     "day": 2,
+     "start": "13:00",
+     "end": "14:00"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "15:00"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "7A",
+     "day": 2,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "7A",
+     "day": 4,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "7A",
+     "day": 5,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "8B",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "8B",
+     "day": 2,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "8B",
+     "day": 5,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 1,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "9C",
+     "day": 5,
+     "start": "11:30",
+     "end": "12:15"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T2",
+     "coTeacher": "T1",
+     "room": "R1",
+     "day": 5,
+     "start": "09:20",
+     "minutes": 50
+    },
+    {
+     "key": "L2",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 3,
+     "start": "12:00",
+     "minutes": 50,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L3",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T4",
+     "room": "R2",
+     "day": 2,
+     "start": "08:10",
+     "minutes": 60
+    },
+    {
+     "key": "L4",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T2",
+     "coTeacher": "T1",
+     "room": "R1",
+     "day": 1,
+     "start": "14:15",
+     "minutes": 60
+    },
+    {
+     "key": "L5",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R3",
+     "day": 4,
+     "start": "14:20",
+     "minutes": 40
+    },
+    {
+     "key": "L6",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T1",
+     "day": 2,
+     "start": "09:45",
+     "minutes": 40
+    },
+    {
+     "key": "L7",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T1",
+     "coTeacher": "T4",
+     "day": 4,
+     "start": "09:45",
+     "minutes": 60,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L8",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 2,
+     "start": "14:30",
+     "minutes": 60
+    },
+    {
+     "key": "L9",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 3,
+     "start": "13:35",
+     "minutes": 60
+    },
+    {
+     "key": "L10",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T2",
+     "day": 3,
+     "start": "08:10",
+     "minutes": 50
+    },
+    {
+     "key": "L11",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 4,
+     "start": "08:25",
+     "minutes": 50
+    },
+    {
+     "key": "L12",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 4,
+     "start": "12:20",
+     "minutes": 60
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "class",
+     "key": "8B",
+     "day": 4,
+     "start": "10:15",
+     "end": "11:15"
+    },
+    {
+     "kind": "room",
+     "key": "R1",
+     "day": 5,
+     "start": "10:30",
+     "end": "11:30"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      9
+     ],
+     "day": 2,
+     "start": "13:45",
+     "end": "14:45"
+    },
+    {
+     "kind": "room",
+     "key": "R3",
+     "day": 1,
+     "start": "13:00",
+     "end": "14:00"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "15:00"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "7A",
+     "day": 2,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "7A",
+     "day": 4,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "7A",
+     "day": 5,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "8B",
+     "day": 2,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 1,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "9C",
+     "day": 3,
+     "start": "12:00",
+     "end": "12:45"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 2,
+     "start": "10:55",
+     "minutes": 45
+    },
+    {
+     "key": "L2",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T3",
+     "day": 5,
+     "start": "14:00",
+     "minutes": 60
+    },
+    {
+     "key": "L3",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T4",
+     "day": 4,
+     "start": "11:15",
+     "minutes": 40
+    },
+    {
+     "key": "L4",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T2",
+     "coTeacher": "T4",
+     "room": "R1",
+     "day": 5,
+     "start": "09:20",
+     "minutes": 40
+    },
+    {
+     "key": "L5",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 4,
+     "start": "12:10",
+     "minutes": 50
+    },
+    {
+     "key": "L6",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T2",
+     "day": 3,
+     "start": "09:10",
+     "minutes": 50
+    },
+    {
+     "key": "L7",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T1",
+     "day": 1,
+     "start": "11:15",
+     "minutes": 45
+    },
+    {
+     "key": "L8",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T2",
+     "room": "R1",
+     "day": 2,
+     "start": "11:50",
+     "minutes": 50
+    },
+    {
+     "key": "L9",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T3",
+     "room": "R3",
+     "day": 1,
+     "start": "11:25",
+     "minutes": 60,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L10",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R2",
+     "day": 2,
+     "start": "14:00",
+     "minutes": 45,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L11",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T4",
+     "coTeacher": "T3",
+     "room": "R1",
+     "day": 3,
+     "start": "14:05",
+     "minutes": 50
+    },
+    {
+     "key": "L12",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T1",
+     "room": "R2",
+     "day": 2,
+     "start": "11:20",
+     "minutes": 45
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      8
+     ],
+     "day": 3,
+     "start": "12:30",
+     "end": "13:30"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      8
+     ],
+     "day": 3,
+     "start": "12:15",
+     "end": "13:15"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      8
+     ],
+     "day": 2,
+     "start": "14:00",
+     "end": "15:00"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      9
+     ],
+     "day": 3,
+     "start": "13:45",
+     "end": "14:45"
+    }
+   ],
+   "frames": [],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 2,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "7A",
+     "day": 4,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "7A",
+     "day": 5,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "8B",
+     "day": 2,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "8B",
+     "day": 5,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "11:30",
+     "end": "12:15"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T1",
+     "day": 1,
+     "start": "13:00",
+     "minutes": 50
+    },
+    {
+     "key": "L2",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R2",
+     "day": 5,
+     "start": "10:30",
+     "minutes": 45
+    },
+    {
+     "key": "L3",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T3",
+     "day": 5,
+     "start": "10:10",
+     "minutes": 50,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L4",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T2",
+     "room": "R3",
+     "day": 2,
+     "start": "14:35",
+     "minutes": 50,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L5",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T4",
+     "coTeacher": "T3",
+     "day": 3,
+     "start": "12:00",
+     "minutes": 50
+    },
+    {
+     "key": "L6",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R2",
+     "day": 2,
+     "start": "10:50",
+     "minutes": 45
+    },
+    {
+     "key": "L7",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 2,
+     "start": "09:05",
+     "minutes": 45
+    },
+    {
+     "key": "L8",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 5,
+     "start": "13:00",
+     "minutes": 50,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L9",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 1,
+     "start": "11:20",
+     "minutes": 45
+    },
+    {
+     "key": "L10",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T1",
+     "day": 5,
+     "start": "08:55",
+     "minutes": 60
+    },
+    {
+     "key": "L11",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 1,
+     "start": "11:30",
+     "minutes": 60
+    },
+    {
+     "key": "L12",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R1",
+     "day": 5,
+     "start": "12:00",
+     "minutes": 60
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      9
+     ],
+     "day": 3,
+     "start": "08:00",
+     "end": "09:00"
+    },
+    {
+     "kind": "class",
+     "key": "7A",
+     "day": 1,
+     "start": "12:30",
+     "end": "13:30"
+    },
+    {
+     "kind": "class",
+     "key": "8B",
+     "day": 5,
+     "start": "09:00",
+     "end": "10:00"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      8
+     ],
+     "day": 1,
+     "start": "13:30",
+     "end": "14:30"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "15:00"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "7A",
+     "day": 4,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "7A",
+     "day": 5,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "8B",
+     "day": 5,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 3,
+     "start": "11:30",
+     "end": "12:15"
+    },
+    {
+     "class": "9C",
+     "day": 5,
+     "start": "11:00",
+     "end": "11:45"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T4",
+     "coTeacher": "T2",
+     "room": "R3",
+     "day": 4,
+     "start": "10:35",
+     "minutes": 60
+    },
+    {
+     "key": "L2",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R2",
+     "day": 1,
+     "start": "14:35",
+     "minutes": 60
+    },
+    {
+     "key": "L3",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T1",
+     "day": 2,
+     "start": "09:10",
+     "minutes": 40
+    },
+    {
+     "key": "L4",
+     "class": "8B",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R1",
+     "day": 3,
+     "start": "10:40",
+     "minutes": 45
+    },
+    {
+     "key": "L5",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 2,
+     "start": "08:25",
+     "minutes": 40
+    },
+    {
+     "key": "L6",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T4",
+     "coTeacher": "T2",
+     "day": 1,
+     "start": "08:30",
+     "minutes": 40,
+     "recurrence": "ODD_WEEKS"
+    },
+    {
+     "key": "L7",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 3,
+     "start": "14:35",
+     "minutes": 60
+    },
+    {
+     "key": "L8",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R2",
+     "day": 4,
+     "start": "09:30",
+     "minutes": 50
+    },
+    {
+     "key": "L9",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T3",
+     "day": 3,
+     "start": "14:20",
+     "minutes": 40
+    },
+    {
+     "key": "L10",
+     "class": "9C",
+     "subject": "En",
+     "teacher": "T1",
+     "room": "R3",
+     "day": 2,
+     "start": "12:00",
+     "minutes": 60
+    },
+    {
+     "key": "L11",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T4",
+     "day": 2,
+     "start": "10:55",
+     "minutes": 60
+    },
+    {
+     "key": "L12",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T3",
+     "coTeacher": "T2",
+     "room": "R1",
+     "day": 5,
+     "start": "08:40",
+     "minutes": 45
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      8
+     ],
+     "day": 3,
+     "start": "14:00",
+     "end": "15:00"
+    },
+    {
+     "kind": "room",
+     "key": "R3",
+     "day": 4,
+     "start": "13:30",
+     "end": "14:30"
+    },
+    {
+     "kind": "room",
+     "key": "R3",
+     "day": 2,
+     "start": "09:45",
+     "end": "10:45"
+    },
+    {
+     "kind": "grade",
+     "grades": [
+      8,
+      9
+     ],
+     "day": 3,
+     "start": "11:45",
+     "end": "12:45"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "15:00"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 2,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "8B",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "8B",
+     "day": 2,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "8B",
+     "day": 3,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "8B",
+     "day": 5,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 3,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "9C",
+     "day": 4,
+     "start": "11:15",
+     "end": "12:00"
+    }
+   ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv",
+    "En"
+   ],
+   "lessons": [
+    {
+     "key": "L1",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 5,
+     "start": "13:50",
+     "minutes": 40
+    },
+    {
+     "key": "L2",
+     "class": "9C",
+     "subject": "Ma",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 4,
+     "start": "13:30",
+     "minutes": 40
+    },
+    {
+     "key": "L3",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 4,
+     "start": "09:30",
+     "minutes": 50
+    },
+    {
+     "key": "L4",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T1",
+     "room": "R2",
+     "day": 2,
+     "start": "10:55",
+     "minutes": 45
+    },
+    {
+     "key": "L5",
+     "class": "7A",
+     "subject": "Ma",
+     "teacher": "T2",
+     "room": "R1",
+     "day": 1,
+     "start": "11:25",
+     "minutes": 40
+    },
+    {
+     "key": "L6",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T4",
+     "room": "R3",
+     "day": 4,
+     "start": "12:45",
+     "minutes": 60
+    },
+    {
+     "key": "L7",
+     "class": "8B",
+     "subject": "Ma",
+     "teacher": "T1",
+     "room": "R1",
+     "day": 3,
+     "start": "08:50",
+     "minutes": 50,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L8",
+     "class": "8B",
+     "subject": "En",
+     "teacher": "T2",
+     "day": 3,
+     "start": "14:25",
+     "minutes": 60
+    },
+    {
+     "key": "L9",
+     "class": "7A",
+     "subject": "En",
+     "teacher": "T3",
+     "room": "R2",
+     "day": 3,
+     "start": "08:50",
+     "minutes": 60
+    },
+    {
+     "key": "L10",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T1",
+     "day": 5,
+     "start": "10:40",
+     "minutes": 60,
+     "recurrence": "EVEN_WEEKS"
+    },
+    {
+     "key": "L11",
+     "class": "9C",
+     "subject": "Sv",
+     "teacher": "T4",
+     "room": "R1",
+     "day": 1,
+     "start": "08:45",
+     "minutes": 40
+    },
+    {
+     "key": "L12",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T1",
+     "room": "R3",
+     "day": 5,
+     "start": "12:40",
+     "minutes": 40
+    }
+   ],
+   "unavailable": [
+    {
+     "kind": "grade",
+     "grades": [
+      7,
+      9
+     ],
+     "day": 5,
+     "start": "12:00",
+     "end": "13:00"
+    },
+    {
+     "kind": "room",
+     "key": "R3",
+     "day": 4,
+     "start": "12:15",
+     "end": "13:15"
+    },
+    {
+     "kind": "class",
+     "key": "7A",
+     "day": 3,
+     "start": "12:30",
+     "end": "13:30"
+    },
+    {
+     "kind": "room",
+     "key": "R3",
+     "day": 1,
+     "start": "12:15",
+     "end": "13:15"
+    }
+   ],
+   "frames": [
+    {
+     "grades": [
+      7,
+      9
+     ],
+     "start": "08:00",
+     "end": "15:00"
+    }
+   ],
+   "meals": [
+    {
+     "class": "7A",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "7A",
+     "day": 3,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "7A",
+     "day": 5,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "8B",
+     "day": 1,
+     "start": "11:00",
+     "end": "11:45"
+    },
+    {
+     "class": "8B",
+     "day": 2,
+     "start": "11:15",
+     "end": "12:00"
+    },
+    {
+     "class": "8B",
+     "day": 4,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 1,
+     "start": "11:45",
+     "end": "12:30"
+    },
+    {
+     "class": "9C",
+     "day": 2,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 3,
+     "start": "12:00",
+     "end": "12:45"
+    },
+    {
+     "class": "9C",
+     "day": 5,
+     "start": "11:45",
+     "end": "12:30"
+    }
+   ]
+  }
+ ],
+ "cases": [
+  {
+   "name": "w0-d0: L2 to day 5 at 13:55",
+   "world": 0,
+   "drag": {
+    "lesson": "L2",
+    "day": 5,
+    "start": "13:55"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w0-d1: L5 to day 1 at 08:05",
+   "world": 0,
+   "drag": {
+    "lesson": "L5",
+    "day": 1,
+    "start": "08:05"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w0-d2: L12 to day 5 at 11:50",
+   "world": 0,
+   "drag": {
+    "lesson": "L12",
+    "day": 5,
+    "start": "11:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER"
+    ]
+   }
+  },
+  {
+   "name": "w0-d3: L4 to day 4 at 14:20",
+   "world": 0,
+   "drag": {
+    "lesson": "L4",
+    "day": 4,
+    "start": "14:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w0-d4: L8 to day 5 at 08:05",
+   "world": 0,
+   "drag": {
+    "lesson": "L8",
+    "day": 5,
+    "start": "08:05"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w0-d5: L11 to day 2 at 10:55",
+   "world": 0,
+   "drag": {
+    "lesson": "L11",
+    "day": 2,
+    "start": "10:55"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w0-d6: L12 to day 5 at 12:20",
+   "world": 0,
+   "drag": {
+    "lesson": "L12",
+    "day": 5,
+    "start": "12:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w0-d7: L6 to day 4 at 11:55",
+   "world": 0,
+   "drag": {
+    "lesson": "L6",
+    "day": 4,
+    "start": "11:55"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w0-d8: L9 to day 3 at 10:35",
+   "world": 0,
+   "drag": {
+    "lesson": "L9",
+    "day": 3,
+    "start": "10:35"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w0-d9: L7 to day 4 at 12:15",
+   "world": 0,
+   "drag": {
+    "lesson": "L7",
+    "day": 4,
+    "start": "12:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP",
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w0-d10: L11 to day 2 at 16:15",
+   "world": 0,
+   "drag": {
+    "lesson": "L11",
+    "day": 2,
+    "start": "16:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w0-d11: L12 to day 3 at 14:40",
+   "world": 0,
+   "drag": {
+    "lesson": "L12",
+    "day": 3,
+    "start": "14:40"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "GROUP",
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w0-d12: L7 to day 5 at 11:05",
+   "world": 0,
+   "drag": {
+    "lesson": "L7",
+    "day": 5,
+    "start": "11:05"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w0-d13: L1 to day 4 at 08:55",
+   "world": 0,
+   "drag": {
+    "lesson": "L1",
+    "day": 4,
+    "start": "08:55"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w1-d0: L12 to day 4 at 08:15",
+   "world": 1,
+   "drag": {
+    "lesson": "L12",
+    "day": 4,
+    "start": "08:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "AVAILABILITY"
+    ]
+   }
+  },
+  {
+   "name": "w1-d1: L3 to day 5 at 09:50",
+   "world": 1,
+   "drag": {
+    "lesson": "L3",
+    "day": 5,
+    "start": "09:50"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w1-d2: L9 to day 5 at 15:25",
+   "world": 1,
+   "drag": {
+    "lesson": "L9",
+    "day": 5,
+    "start": "15:25"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w1-d3: L11 to day 3 at 12:05",
+   "world": 1,
+   "drag": {
+    "lesson": "L11",
+    "day": 3,
+    "start": "12:05"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w1-d4: L8 to day 1 at 15:55",
+   "world": 1,
+   "drag": {
+    "lesson": "L8",
+    "day": 1,
+    "start": "15:55"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w1-d5: L1 to day 1 at 08:40",
+   "world": 1,
+   "drag": {
+    "lesson": "L1",
+    "day": 1,
+    "start": "08:40"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w1-d6: L11 to day 2 at 11:30",
+   "world": 1,
+   "drag": {
+    "lesson": "L11",
+    "day": 2,
+    "start": "11:30"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w1-d7: L1 to day 4 at 12:40",
+   "world": 1,
+   "drag": {
+    "lesson": "L1",
+    "day": 4,
+    "start": "12:40"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w1-d8: L3 to day 3 at 09:20",
+   "world": 1,
+   "drag": {
+    "lesson": "L3",
+    "day": 3,
+    "start": "09:20"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w1-d9: L7 to day 2 at 12:00",
+   "world": 1,
+   "drag": {
+    "lesson": "L7",
+    "day": 2,
+    "start": "12:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w1-d10: L5 to day 5 at 11:35",
+   "world": 1,
+   "drag": {
+    "lesson": "L5",
+    "day": 5,
+    "start": "11:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w1-d11: L8 to day 4 at 13:00",
+   "world": 1,
+   "drag": {
+    "lesson": "L8",
+    "day": 4,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w1-d12: L8 to day 1 at 16:30",
+   "world": 1,
+   "drag": {
+    "lesson": "L8",
+    "day": 1,
+    "start": "16:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w1-d13: L5 to day 2 at 14:30",
+   "world": 1,
+   "drag": {
+    "lesson": "L5",
+    "day": 2,
+    "start": "14:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w2-d0: L2 to day 4 at 08:10",
+   "world": 2,
+   "drag": {
+    "lesson": "L2",
+    "day": 4,
+    "start": "08:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w2-d1: L2 to day 3 at 11:20",
+   "world": 2,
+   "drag": {
+    "lesson": "L2",
+    "day": 3,
+    "start": "11:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "ROOM",
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w2-d2: L12 to day 2 at 16:15",
+   "world": 2,
+   "drag": {
+    "lesson": "L12",
+    "day": 2,
+    "start": "16:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w2-d3: L6 to day 2 at 13:35",
+   "world": 2,
+   "drag": {
+    "lesson": "L6",
+    "day": 2,
+    "start": "13:35"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w2-d4: L12 to day 5 at 14:30",
+   "world": 2,
+   "drag": {
+    "lesson": "L12",
+    "day": 5,
+    "start": "14:30"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w2-d5: L11 to day 3 at 15:10",
+   "world": 2,
+   "drag": {
+    "lesson": "L11",
+    "day": 3,
+    "start": "15:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w2-d6: L7 to day 4 at 15:30",
+   "world": 2,
+   "drag": {
+    "lesson": "L7",
+    "day": 4,
+    "start": "15:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w2-d7: L4 to day 4 at 11:25",
+   "world": 2,
+   "drag": {
+    "lesson": "L4",
+    "day": 4,
+    "start": "11:25"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w2-d8: L8 to day 3 at 12:40",
+   "world": 2,
+   "drag": {
+    "lesson": "L8",
+    "day": 3,
+    "start": "12:40"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "GROUP",
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w2-d9: L5 to day 4 at 16:30",
+   "world": 2,
+   "drag": {
+    "lesson": "L5",
+    "day": 4,
+    "start": "16:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w2-d10: L12 to day 2 at 12:50",
+   "world": 2,
+   "drag": {
+    "lesson": "L12",
+    "day": 2,
+    "start": "12:50"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w2-d11: L1 to day 1 at 09:10",
+   "world": 2,
+   "drag": {
+    "lesson": "L1",
+    "day": 1,
+    "start": "09:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "TEACHER"
+    ]
+   }
+  },
+  {
+   "name": "w2-d12: L8 to day 5 at 09:10",
+   "world": 2,
+   "drag": {
+    "lesson": "L8",
+    "day": 5,
+    "start": "09:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w2-d13: L8 to day 5 at 11:40",
+   "world": 2,
+   "drag": {
+    "lesson": "L8",
+    "day": 5,
+    "start": "11:40"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w3-d0: L3 to day 3 at 12:45",
+   "world": 3,
+   "drag": {
+    "lesson": "L3",
+    "day": 3,
+    "start": "12:45"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w3-d1: L11 to day 3 at 11:30",
+   "world": 3,
+   "drag": {
+    "lesson": "L11",
+    "day": 3,
+    "start": "11:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w3-d2: L5 to day 2 at 12:25",
+   "world": 3,
+   "drag": {
+    "lesson": "L5",
+    "day": 2,
+    "start": "12:25"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w3-d3: L1 to day 5 at 14:10",
+   "world": 3,
+   "drag": {
+    "lesson": "L1",
+    "day": 5,
+    "start": "14:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "ROOM",
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w3-d4: L5 to day 1 at 10:50",
+   "world": 3,
+   "drag": {
+    "lesson": "L5",
+    "day": 1,
+    "start": "10:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w3-d5: L12 to day 1 at 16:05",
+   "world": 3,
+   "drag": {
+    "lesson": "L12",
+    "day": 1,
+    "start": "16:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w3-d6: L8 to day 1 at 15:40",
+   "world": 3,
+   "drag": {
+    "lesson": "L8",
+    "day": 1,
+    "start": "15:40"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w3-d7: L3 to day 1 at 14:35",
+   "world": 3,
+   "drag": {
+    "lesson": "L3",
+    "day": 1,
+    "start": "14:35"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w3-d8: L9 to day 5 at 10:05",
+   "world": 3,
+   "drag": {
+    "lesson": "L9",
+    "day": 5,
+    "start": "10:05"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w3-d9: L3 to day 1 at 15:30",
+   "world": 3,
+   "drag": {
+    "lesson": "L3",
+    "day": 1,
+    "start": "15:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w3-d10: L9 to day 2 at 08:55",
+   "world": 3,
+   "drag": {
+    "lesson": "L9",
+    "day": 2,
+    "start": "08:55"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w3-d11: L12 to day 1 at 10:30",
+   "world": 3,
+   "drag": {
+    "lesson": "L12",
+    "day": 1,
+    "start": "10:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w3-d12: L3 to day 2 at 12:25",
+   "world": 3,
+   "drag": {
+    "lesson": "L3",
+    "day": 2,
+    "start": "12:25"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w3-d13: L11 to day 2 at 09:40",
+   "world": 3,
+   "drag": {
+    "lesson": "L11",
+    "day": 2,
+    "start": "09:40"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w4-d0: L7 to day 4 at 11:35",
+   "world": 4,
+   "drag": {
+    "lesson": "L7",
+    "day": 4,
+    "start": "11:35"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w4-d1: L9 to day 2 at 08:30",
+   "world": 4,
+   "drag": {
+    "lesson": "L9",
+    "day": 2,
+    "start": "08:30"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w4-d2: L6 to day 2 at 14:10",
+   "world": 4,
+   "drag": {
+    "lesson": "L6",
+    "day": 2,
+    "start": "14:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w4-d3: L7 to day 2 at 11:15",
+   "world": 4,
+   "drag": {
+    "lesson": "L7",
+    "day": 2,
+    "start": "11:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w4-d4: L10 to day 3 at 11:30",
+   "world": 4,
+   "drag": {
+    "lesson": "L10",
+    "day": 3,
+    "start": "11:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w4-d5: L4 to day 5 at 14:15",
+   "world": 4,
+   "drag": {
+    "lesson": "L4",
+    "day": 5,
+    "start": "14:15"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w4-d6: L7 to day 4 at 11:00",
+   "world": 4,
+   "drag": {
+    "lesson": "L7",
+    "day": 4,
+    "start": "11:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "ROOM"
+    ]
+   }
+  },
+  {
+   "name": "w4-d7: L12 to day 2 at 10:35",
+   "world": 4,
+   "drag": {
+    "lesson": "L12",
+    "day": 2,
+    "start": "10:35"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w4-d8: L8 to day 4 at 14:20",
+   "world": 4,
+   "drag": {
+    "lesson": "L8",
+    "day": 4,
+    "start": "14:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "ROOM"
+    ]
+   }
+  },
+  {
+   "name": "w4-d9: L1 to day 1 at 13:15",
+   "world": 4,
+   "drag": {
+    "lesson": "L1",
+    "day": 1,
+    "start": "13:15"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w4-d10: L1 to day 5 at 15:50",
+   "world": 4,
+   "drag": {
+    "lesson": "L1",
+    "day": 5,
+    "start": "15:50"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w4-d11: L9 to day 5 at 12:25",
+   "world": 4,
+   "drag": {
+    "lesson": "L9",
+    "day": 5,
+    "start": "12:25"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w4-d12: L3 to day 4 at 09:45",
+   "world": 4,
+   "drag": {
+    "lesson": "L3",
+    "day": 4,
+    "start": "09:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "AVAILABILITY"
+    ]
+   }
+  },
+  {
+   "name": "w4-d13: L10 to day 2 at 08:40",
+   "world": 4,
+   "drag": {
+    "lesson": "L10",
+    "day": 2,
+    "start": "08:40"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w5-d0: L12 to day 3 at 08:45",
+   "world": 5,
+   "drag": {
+    "lesson": "L12",
+    "day": 3,
+    "start": "08:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w5-d1: L11 to day 1 at 15:30",
+   "world": 5,
+   "drag": {
+    "lesson": "L11",
+    "day": 1,
+    "start": "15:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w5-d2: L9 to day 3 at 11:40",
+   "world": 5,
+   "drag": {
+    "lesson": "L9",
+    "day": 3,
+    "start": "11:40"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w5-d3: L4 to day 5 at 08:45",
+   "world": 5,
+   "drag": {
+    "lesson": "L4",
+    "day": 5,
+    "start": "08:45"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w5-d4: L4 to day 2 at 09:10",
+   "world": 5,
+   "drag": {
+    "lesson": "L4",
+    "day": 2,
+    "start": "09:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w5-d5: L10 to day 5 at 12:30",
+   "world": 5,
+   "drag": {
+    "lesson": "L10",
+    "day": 5,
+    "start": "12:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w5-d6: L3 to day 3 at 12:25",
+   "world": 5,
+   "drag": {
+    "lesson": "L3",
+    "day": 3,
+    "start": "12:25"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w5-d7: L5 to day 2 at 15:30",
+   "world": 5,
+   "drag": {
+    "lesson": "L5",
+    "day": 2,
+    "start": "15:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w5-d8: L11 to day 1 at 16:30",
+   "world": 5,
+   "drag": {
+    "lesson": "L11",
+    "day": 1,
+    "start": "16:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w5-d9: L7 to day 1 at 15:00",
+   "world": 5,
+   "drag": {
+    "lesson": "L7",
+    "day": 1,
+    "start": "15:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w5-d10: L2 to day 4 at 13:15",
+   "world": 5,
+   "drag": {
+    "lesson": "L2",
+    "day": 4,
+    "start": "13:15"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w5-d11: L7 to day 2 at 13:10",
+   "world": 5,
+   "drag": {
+    "lesson": "L7",
+    "day": 2,
+    "start": "13:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w5-d12: L11 to day 2 at 09:55",
+   "world": 5,
+   "drag": {
+    "lesson": "L11",
+    "day": 2,
+    "start": "09:55"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w5-d13: L6 to day 4 at 16:10",
+   "world": 5,
+   "drag": {
+    "lesson": "L6",
+    "day": 4,
+    "start": "16:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w6-d0: L2 to day 2 at 09:05",
+   "world": 6,
+   "drag": {
+    "lesson": "L2",
+    "day": 2,
+    "start": "09:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "ROOM",
+     "AVAILABILITY"
+    ]
+   }
+  },
+  {
+   "name": "w6-d1: L5 to day 5 at 08:00",
+   "world": 6,
+   "drag": {
+    "lesson": "L5",
+    "day": 5,
+    "start": "08:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w6-d2: L10 to day 2 at 11:20",
+   "world": 6,
+   "drag": {
+    "lesson": "L10",
+    "day": 2,
+    "start": "11:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP",
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w6-d3: L10 to day 5 at 11:20",
+   "world": 6,
+   "drag": {
+    "lesson": "L10",
+    "day": 5,
+    "start": "11:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w6-d4: L1 to day 3 at 13:00",
+   "world": 6,
+   "drag": {
+    "lesson": "L1",
+    "day": 3,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w6-d5: L12 to day 4 at 10:00",
+   "world": 6,
+   "drag": {
+    "lesson": "L12",
+    "day": 4,
+    "start": "10:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w6-d6: L10 to day 5 at 14:20",
+   "world": 6,
+   "drag": {
+    "lesson": "L10",
+    "day": 5,
+    "start": "14:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w6-d7: L9 to day 1 at 08:55",
+   "world": 6,
+   "drag": {
+    "lesson": "L9",
+    "day": 1,
+    "start": "08:55"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w6-d8: L5 to day 4 at 09:00",
+   "world": 6,
+   "drag": {
+    "lesson": "L5",
+    "day": 4,
+    "start": "09:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w6-d9: L10 to day 2 at 14:30",
+   "world": 6,
+   "drag": {
+    "lesson": "L10",
+    "day": 2,
+    "start": "14:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w6-d10: L2 to day 2 at 12:20",
+   "world": 6,
+   "drag": {
+    "lesson": "L2",
+    "day": 2,
+    "start": "12:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER"
+    ]
+   }
+  },
+  {
+   "name": "w6-d11: L1 to day 3 at 16:00",
+   "world": 6,
+   "drag": {
+    "lesson": "L1",
+    "day": 3,
+    "start": "16:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w6-d12: L10 to day 2 at 09:45",
+   "world": 6,
+   "drag": {
+    "lesson": "L10",
+    "day": 2,
+    "start": "09:45"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w6-d13: L1 to day 5 at 09:15",
+   "world": 6,
+   "drag": {
+    "lesson": "L1",
+    "day": 5,
+    "start": "09:15"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w7-d0: L2 to day 2 at 10:30",
+   "world": 7,
+   "drag": {
+    "lesson": "L2",
+    "day": 2,
+    "start": "10:30"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w7-d1: L4 to day 5 at 09:20",
+   "world": 7,
+   "drag": {
+    "lesson": "L4",
+    "day": 5,
+    "start": "09:20"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w7-d2: L7 to day 5 at 11:15",
+   "world": 7,
+   "drag": {
+    "lesson": "L7",
+    "day": 5,
+    "start": "11:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w7-d3: L9 to day 3 at 08:25",
+   "world": 7,
+   "drag": {
+    "lesson": "L9",
+    "day": 3,
+    "start": "08:25"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w7-d4: L12 to day 5 at 11:55",
+   "world": 7,
+   "drag": {
+    "lesson": "L12",
+    "day": 5,
+    "start": "11:55"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "AVAILABILITY"
+    ]
+   }
+  },
+  {
+   "name": "w7-d5: L3 to day 1 at 12:45",
+   "world": 7,
+   "drag": {
+    "lesson": "L3",
+    "day": 1,
+    "start": "12:45"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w7-d6: L3 to day 4 at 12:40",
+   "world": 7,
+   "drag": {
+    "lesson": "L3",
+    "day": 4,
+    "start": "12:40"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w7-d7: L9 to day 1 at 09:15",
+   "world": 7,
+   "drag": {
+    "lesson": "L9",
+    "day": 1,
+    "start": "09:15"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w7-d8: L9 to day 5 at 15:35",
+   "world": 7,
+   "drag": {
+    "lesson": "L9",
+    "day": 5,
+    "start": "15:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w7-d9: L3 to day 2 at 10:25",
+   "world": 7,
+   "drag": {
+    "lesson": "L3",
+    "day": 2,
+    "start": "10:25"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w7-d10: L11 to day 4 at 09:30",
+   "world": 7,
+   "drag": {
+    "lesson": "L11",
+    "day": 4,
+    "start": "09:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w7-d11: L2 to day 5 at 11:35",
+   "world": 7,
+   "drag": {
+    "lesson": "L2",
+    "day": 5,
+    "start": "11:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w7-d12: L2 to day 1 at 15:30",
+   "world": 7,
+   "drag": {
+    "lesson": "L2",
+    "day": 1,
+    "start": "15:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w7-d13: L6 to day 3 at 09:20",
+   "world": 7,
+   "drag": {
+    "lesson": "L6",
+    "day": 3,
+    "start": "09:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w8-d0: L9 to day 4 at 15:25",
+   "world": 8,
+   "drag": {
+    "lesson": "L9",
+    "day": 4,
+    "start": "15:25"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "ROOM",
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w8-d1: L11 to day 1 at 13:50",
+   "world": 8,
+   "drag": {
+    "lesson": "L11",
+    "day": 1,
+    "start": "13:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w8-d2: L2 to day 5 at 08:05",
+   "world": 8,
+   "drag": {
+    "lesson": "L2",
+    "day": 5,
+    "start": "08:05"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w8-d3: L11 to day 1 at 10:25",
+   "world": 8,
+   "drag": {
+    "lesson": "L11",
+    "day": 1,
+    "start": "10:25"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w8-d4: L5 to day 1 at 08:45",
+   "world": 8,
+   "drag": {
+    "lesson": "L5",
+    "day": 1,
+    "start": "08:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w8-d5: L12 to day 2 at 08:55",
+   "world": 8,
+   "drag": {
+    "lesson": "L12",
+    "day": 2,
+    "start": "08:55"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w8-d6: L4 to day 1 at 12:10",
+   "world": 8,
+   "drag": {
+    "lesson": "L4",
+    "day": 1,
+    "start": "12:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w8-d7: L1 to day 1 at 08:35",
+   "world": 8,
+   "drag": {
+    "lesson": "L1",
+    "day": 1,
+    "start": "08:35"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w8-d8: L12 to day 4 at 13:30",
+   "world": 8,
+   "drag": {
+    "lesson": "L12",
+    "day": 4,
+    "start": "13:30"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w8-d9: L3 to day 3 at 16:30",
+   "world": 8,
+   "drag": {
+    "lesson": "L3",
+    "day": 3,
+    "start": "16:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w8-d10: L2 to day 2 at 14:55",
+   "world": 8,
+   "drag": {
+    "lesson": "L2",
+    "day": 2,
+    "start": "14:55"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w8-d11: L8 to day 3 at 09:40",
+   "world": 8,
+   "drag": {
+    "lesson": "L8",
+    "day": 3,
+    "start": "09:40"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "ROOM"
+    ]
+   }
+  },
+  {
+   "name": "w8-d12: L12 to day 5 at 10:20",
+   "world": 8,
+   "drag": {
+    "lesson": "L12",
+    "day": 5,
+    "start": "10:20"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w8-d13: L8 to day 4 at 13:20",
+   "world": 8,
+   "drag": {
+    "lesson": "L8",
+    "day": 4,
+    "start": "13:20"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w9-d0: L1 to day 3 at 15:30",
+   "world": 9,
+   "drag": {
+    "lesson": "L1",
+    "day": 3,
+    "start": "15:30"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w9-d1: L11 to day 5 at 12:40",
+   "world": 9,
+   "drag": {
+    "lesson": "L11",
+    "day": 5,
+    "start": "12:40"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w9-d2: L8 to day 2 at 13:55",
+   "world": 9,
+   "drag": {
+    "lesson": "L8",
+    "day": 2,
+    "start": "13:55"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w9-d3: L6 to day 4 at 16:15",
+   "world": 9,
+   "drag": {
+    "lesson": "L6",
+    "day": 4,
+    "start": "16:15"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w9-d4: L1 to day 1 at 16:00",
+   "world": 9,
+   "drag": {
+    "lesson": "L1",
+    "day": 1,
+    "start": "16:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w9-d5: L4 to day 3 at 08:40",
+   "world": 9,
+   "drag": {
+    "lesson": "L4",
+    "day": 3,
+    "start": "08:40"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w9-d6: L10 to day 2 at 08:00",
+   "world": 9,
+   "drag": {
+    "lesson": "L10",
+    "day": 2,
+    "start": "08:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w9-d7: L1 to day 2 at 12:20",
+   "world": 9,
+   "drag": {
+    "lesson": "L1",
+    "day": 2,
+    "start": "12:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w9-d8: L1 to day 5 at 09:10",
+   "world": 9,
+   "drag": {
+    "lesson": "L1",
+    "day": 5,
+    "start": "09:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w9-d9: L7 to day 2 at 11:50",
+   "world": 9,
+   "drag": {
+    "lesson": "L7",
+    "day": 2,
+    "start": "11:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w9-d10: L10 to day 5 at 09:35",
+   "world": 9,
+   "drag": {
+    "lesson": "L10",
+    "day": 5,
+    "start": "09:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w9-d11: L7 to day 3 at 10:50",
+   "world": 9,
+   "drag": {
+    "lesson": "L7",
+    "day": 3,
+    "start": "10:50"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w9-d12: L4 to day 3 at 14:25",
+   "world": 9,
+   "drag": {
+    "lesson": "L4",
+    "day": 3,
+    "start": "14:25"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w9-d13: L7 to day 2 at 11:10",
+   "world": 9,
+   "drag": {
+    "lesson": "L7",
+    "day": 2,
+    "start": "11:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w10-d0: L2 to day 1 at 13:00",
+   "world": 10,
+   "drag": {
+    "lesson": "L2",
+    "day": 1,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w10-d1: L12 to day 1 at 10:40",
+   "world": 10,
+   "drag": {
+    "lesson": "L12",
+    "day": 1,
+    "start": "10:40"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w10-d2: L10 to day 5 at 13:10",
+   "world": 10,
+   "drag": {
+    "lesson": "L10",
+    "day": 5,
+    "start": "13:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w10-d3: L8 to day 4 at 11:15",
+   "world": 10,
+   "drag": {
+    "lesson": "L8",
+    "day": 4,
+    "start": "11:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP",
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w10-d4: L6 to day 1 at 15:05",
+   "world": 10,
+   "drag": {
+    "lesson": "L6",
+    "day": 1,
+    "start": "15:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP",
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w10-d5: L1 to day 2 at 10:15",
+   "world": 10,
+   "drag": {
+    "lesson": "L1",
+    "day": 2,
+    "start": "10:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "AVAILABILITY"
+    ]
+   }
+  },
+  {
+   "name": "w10-d6: L6 to day 1 at 12:05",
+   "world": 10,
+   "drag": {
+    "lesson": "L6",
+    "day": 1,
+    "start": "12:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w10-d7: L3 to day 2 at 12:30",
+   "world": 10,
+   "drag": {
+    "lesson": "L3",
+    "day": 2,
+    "start": "12:30"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w10-d8: L9 to day 2 at 13:25",
+   "world": 10,
+   "drag": {
+    "lesson": "L9",
+    "day": 2,
+    "start": "13:25"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w10-d9: L12 to day 5 at 09:45",
+   "world": 10,
+   "drag": {
+    "lesson": "L12",
+    "day": 5,
+    "start": "09:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w10-d10: L5 to day 1 at 10:45",
+   "world": 10,
+   "drag": {
+    "lesson": "L5",
+    "day": 1,
+    "start": "10:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w10-d11: L8 to day 5 at 11:25",
+   "world": 10,
+   "drag": {
+    "lesson": "L8",
+    "day": 5,
+    "start": "11:25"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "GROUP",
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w10-d12: L1 to day 5 at 10:20",
+   "world": 10,
+   "drag": {
+    "lesson": "L1",
+    "day": 5,
+    "start": "10:20"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w10-d13: L6 to day 4 at 16:15",
+   "world": 10,
+   "drag": {
+    "lesson": "L6",
+    "day": 4,
+    "start": "16:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w11-d0: L3 to day 1 at 12:05",
+   "world": 11,
+   "drag": {
+    "lesson": "L3",
+    "day": 1,
+    "start": "12:05"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w11-d1: L5 to day 4 at 15:35",
+   "world": 11,
+   "drag": {
+    "lesson": "L5",
+    "day": 4,
+    "start": "15:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w11-d2: L4 to day 1 at 15:55",
+   "world": 11,
+   "drag": {
+    "lesson": "L4",
+    "day": 1,
+    "start": "15:55"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w11-d3: L12 to day 2 at 09:35",
+   "world": 11,
+   "drag": {
+    "lesson": "L12",
+    "day": 2,
+    "start": "09:35"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w11-d4: L4 to day 1 at 12:20",
+   "world": 11,
+   "drag": {
+    "lesson": "L4",
+    "day": 1,
+    "start": "12:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "ROOM"
+    ]
+   }
+  },
+  {
+   "name": "w11-d5: L9 to day 4 at 11:05",
+   "world": 11,
+   "drag": {
+    "lesson": "L9",
+    "day": 4,
+    "start": "11:05"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w11-d6: L11 to day 3 at 16:15",
+   "world": 11,
+   "drag": {
+    "lesson": "L11",
+    "day": 3,
+    "start": "16:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w11-d7: L12 to day 2 at 12:15",
+   "world": 11,
+   "drag": {
+    "lesson": "L12",
+    "day": 2,
+    "start": "12:15"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w11-d8: L3 to day 1 at 12:00",
+   "world": 11,
+   "drag": {
+    "lesson": "L3",
+    "day": 1,
+    "start": "12:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w11-d9: L11 to day 1 at 14:45",
+   "world": 11,
+   "drag": {
+    "lesson": "L11",
+    "day": 1,
+    "start": "14:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w11-d10: L3 to day 5 at 12:30",
+   "world": 11,
+   "drag": {
+    "lesson": "L3",
+    "day": 5,
+    "start": "12:30"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w11-d11: L7 to day 5 at 08:55",
+   "world": 11,
+   "drag": {
+    "lesson": "L7",
+    "day": 5,
+    "start": "08:55"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w11-d12: L7 to day 2 at 10:25",
+   "world": 11,
+   "drag": {
+    "lesson": "L7",
+    "day": 2,
+    "start": "10:25"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w11-d13: L9 to day 5 at 09:50",
+   "world": 11,
+   "drag": {
+    "lesson": "L9",
+    "day": 5,
+    "start": "09:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w12-d0: L9 to day 1 at 11:25",
+   "world": 12,
+   "drag": {
+    "lesson": "L9",
+    "day": 1,
+    "start": "11:25"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP",
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w12-d1: L9 to day 3 at 13:10",
+   "world": 12,
+   "drag": {
+    "lesson": "L9",
+    "day": 3,
+    "start": "13:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w12-d2: L11 to day 4 at 11:15",
+   "world": 12,
+   "drag": {
+    "lesson": "L11",
+    "day": 4,
+    "start": "11:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w12-d3: L3 to day 5 at 14:45",
+   "world": 12,
+   "drag": {
+    "lesson": "L3",
+    "day": 5,
+    "start": "14:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "ROOM",
+     "GROUP",
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w12-d4: L6 to day 4 at 12:10",
+   "world": 12,
+   "drag": {
+    "lesson": "L6",
+    "day": 4,
+    "start": "12:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w12-d5: L5 to day 5 at 09:45",
+   "world": 12,
+   "drag": {
+    "lesson": "L5",
+    "day": 5,
+    "start": "09:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w12-d6: L9 to day 2 at 12:15",
+   "world": 12,
+   "drag": {
+    "lesson": "L9",
+    "day": 2,
+    "start": "12:15"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w12-d7: L8 to day 4 at 11:30",
+   "world": 12,
+   "drag": {
+    "lesson": "L8",
+    "day": 4,
+    "start": "11:30"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w12-d8: L8 to day 4 at 12:10",
+   "world": 12,
+   "drag": {
+    "lesson": "L8",
+    "day": 4,
+    "start": "12:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w12-d9: L11 to day 3 at 13:35",
+   "world": 12,
+   "drag": {
+    "lesson": "L11",
+    "day": 3,
+    "start": "13:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER"
+    ]
+   }
+  },
+  {
+   "name": "w12-d10: L11 to day 1 at 08:45",
+   "world": 12,
+   "drag": {
+    "lesson": "L11",
+    "day": 1,
+    "start": "08:45"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w12-d11: L11 to day 4 at 10:25",
+   "world": 12,
+   "drag": {
+    "lesson": "L11",
+    "day": 4,
+    "start": "10:25"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w12-d12: L1 to day 5 at 11:10",
+   "world": 12,
+   "drag": {
+    "lesson": "L1",
+    "day": 5,
+    "start": "11:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w12-d13: L12 to day 5 at 13:50",
+   "world": 12,
+   "drag": {
+    "lesson": "L12",
+    "day": 5,
+    "start": "13:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w13-d0: L11 to day 2 at 09:35",
+   "world": 13,
+   "drag": {
+    "lesson": "L11",
+    "day": 2,
+    "start": "09:35"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w13-d1: L4 to day 5 at 13:00",
+   "world": 13,
+   "drag": {
+    "lesson": "L4",
+    "day": 5,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w13-d2: L9 to day 2 at 15:30",
+   "world": 13,
+   "drag": {
+    "lesson": "L9",
+    "day": 2,
+    "start": "15:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w13-d3: L9 to day 2 at 11:05",
+   "world": 13,
+   "drag": {
+    "lesson": "L9",
+    "day": 2,
+    "start": "11:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w13-d4: L6 to day 5 at 16:05",
+   "world": 13,
+   "drag": {
+    "lesson": "L6",
+    "day": 5,
+    "start": "16:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w13-d5: L1 to day 2 at 13:45",
+   "world": 13,
+   "drag": {
+    "lesson": "L1",
+    "day": 2,
+    "start": "13:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w13-d6: L6 to day 4 at 10:55",
+   "world": 13,
+   "drag": {
+    "lesson": "L6",
+    "day": 4,
+    "start": "10:55"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w13-d7: L12 to day 3 at 14:10",
+   "world": 13,
+   "drag": {
+    "lesson": "L12",
+    "day": 3,
+    "start": "14:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP",
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w13-d8: L11 to day 1 at 16:05",
+   "world": 13,
+   "drag": {
+    "lesson": "L11",
+    "day": 1,
+    "start": "16:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w13-d9: L8 to day 5 at 13:00",
+   "world": 13,
+   "drag": {
+    "lesson": "L8",
+    "day": 5,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w13-d10: L12 to day 3 at 16:30",
+   "world": 13,
+   "drag": {
+    "lesson": "L12",
+    "day": 3,
+    "start": "16:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w13-d11: L1 to day 3 at 09:50",
+   "world": 13,
+   "drag": {
+    "lesson": "L1",
+    "day": 3,
+    "start": "09:50"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w13-d12: L12 to day 2 at 10:30",
+   "world": 13,
+   "drag": {
+    "lesson": "L12",
+    "day": 2,
+    "start": "10:30"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w13-d13: L5 to day 4 at 14:50",
+   "world": 13,
+   "drag": {
+    "lesson": "L5",
+    "day": 4,
+    "start": "14:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w14-d0: L4 to day 2 at 15:05",
+   "world": 14,
+   "drag": {
+    "lesson": "L4",
+    "day": 2,
+    "start": "15:05"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w14-d1: L6 to day 3 at 12:55",
+   "world": 14,
+   "drag": {
+    "lesson": "L6",
+    "day": 3,
+    "start": "12:55"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w14-d2: L2 to day 3 at 16:30",
+   "world": 14,
+   "drag": {
+    "lesson": "L2",
+    "day": 3,
+    "start": "16:30"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w14-d3: L10 to day 1 at 08:45",
+   "world": 14,
+   "drag": {
+    "lesson": "L10",
+    "day": 1,
+    "start": "08:45"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w14-d4: L12 to day 1 at 08:00",
+   "world": 14,
+   "drag": {
+    "lesson": "L12",
+    "day": 1,
+    "start": "08:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w14-d5: L5 to day 3 at 12:35",
+   "world": 14,
+   "drag": {
+    "lesson": "L5",
+    "day": 3,
+    "start": "12:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w14-d6: L8 to day 3 at 11:20",
+   "world": 14,
+   "drag": {
+    "lesson": "L8",
+    "day": 3,
+    "start": "11:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w14-d7: L12 to day 4 at 08:55",
+   "world": 14,
+   "drag": {
+    "lesson": "L12",
+    "day": 4,
+    "start": "08:55"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w14-d8: L2 to day 1 at 16:10",
+   "world": 14,
+   "drag": {
+    "lesson": "L2",
+    "day": 1,
+    "start": "16:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w14-d9: L10 to day 4 at 10:10",
+   "world": 14,
+   "drag": {
+    "lesson": "L10",
+    "day": 4,
+    "start": "10:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w14-d10: L6 to day 2 at 14:50",
+   "world": 14,
+   "drag": {
+    "lesson": "L6",
+    "day": 2,
+    "start": "14:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w14-d11: L9 to day 3 at 09:20",
+   "world": 14,
+   "drag": {
+    "lesson": "L9",
+    "day": 3,
+    "start": "09:20"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w14-d12: L10 to day 1 at 10:50",
+   "world": 14,
+   "drag": {
+    "lesson": "L10",
+    "day": 1,
+    "start": "10:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w14-d13: L5 to day 3 at 13:05",
+   "world": 14,
+   "drag": {
+    "lesson": "L5",
+    "day": 3,
+    "start": "13:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w15-d0: L6 to day 3 at 08:50",
+   "world": 15,
+   "drag": {
+    "lesson": "L6",
+    "day": 3,
+    "start": "08:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w15-d1: L4 to day 1 at 09:45",
+   "world": 15,
+   "drag": {
+    "lesson": "L4",
+    "day": 1,
+    "start": "09:45"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w15-d2: L7 to day 4 at 08:15",
+   "world": 15,
+   "drag": {
+    "lesson": "L7",
+    "day": 4,
+    "start": "08:15"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w15-d3: L10 to day 1 at 14:20",
+   "world": 15,
+   "drag": {
+    "lesson": "L10",
+    "day": 1,
+    "start": "14:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w15-d4: L6 to day 5 at 10:10",
+   "world": 15,
+   "drag": {
+    "lesson": "L6",
+    "day": 5,
+    "start": "10:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "ROOM",
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w15-d5: L1 to day 1 at 14:50",
+   "world": 15,
+   "drag": {
+    "lesson": "L1",
+    "day": 1,
+    "start": "14:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w15-d6: L6 to day 3 at 15:30",
+   "world": 15,
+   "drag": {
+    "lesson": "L6",
+    "day": 3,
+    "start": "15:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w15-d7: L4 to day 1 at 13:15",
+   "world": 15,
+   "drag": {
+    "lesson": "L4",
+    "day": 1,
+    "start": "13:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GRADE_RULE"
+    ]
+   }
+  },
+  {
+   "name": "w15-d8: L2 to day 4 at 13:20",
+   "world": 15,
+   "drag": {
+    "lesson": "L2",
+    "day": 4,
+    "start": "13:20"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w15-d9: L8 to day 4 at 10:20",
+   "world": 15,
+   "drag": {
+    "lesson": "L8",
+    "day": 4,
+    "start": "10:20"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w15-d10: L8 to day 5 at 09:05",
+   "world": 15,
+   "drag": {
+    "lesson": "L8",
+    "day": 5,
+    "start": "09:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "GROUP",
+     "AVAILABILITY"
+    ]
+   }
+  },
+  {
+   "name": "w15-d11: L9 to day 1 at 12:45",
+   "world": 15,
+   "drag": {
+    "lesson": "L9",
+    "day": 1,
+    "start": "12:45"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w15-d12: L8 to day 1 at 11:30",
+   "world": 15,
+   "drag": {
+    "lesson": "L8",
+    "day": 1,
+    "start": "11:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w15-d13: L2 to day 2 at 12:10",
+   "world": 15,
+   "drag": {
+    "lesson": "L2",
+    "day": 2,
+    "start": "12:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w16-d0: L1 to day 3 at 12:55",
+   "world": 16,
+   "drag": {
+    "lesson": "L1",
+    "day": 3,
+    "start": "12:55"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w16-d1: L4 to day 3 at 10:25",
+   "world": 16,
+   "drag": {
+    "lesson": "L4",
+    "day": 3,
+    "start": "10:25"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w16-d2: L12 to day 4 at 10:30",
+   "world": 16,
+   "drag": {
+    "lesson": "L12",
+    "day": 4,
+    "start": "10:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w16-d3: L5 to day 2 at 16:05",
+   "world": 16,
+   "drag": {
+    "lesson": "L5",
+    "day": 2,
+    "start": "16:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w16-d4: L8 to day 4 at 08:10",
+   "world": 16,
+   "drag": {
+    "lesson": "L8",
+    "day": 4,
+    "start": "08:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w16-d5: L3 to day 5 at 10:30",
+   "world": 16,
+   "drag": {
+    "lesson": "L3",
+    "day": 5,
+    "start": "10:30"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w16-d6: L9 to day 5 at 16:15",
+   "world": 16,
+   "drag": {
+    "lesson": "L9",
+    "day": 5,
+    "start": "16:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w16-d7: L2 to day 5 at 09:45",
+   "world": 16,
+   "drag": {
+    "lesson": "L2",
+    "day": 5,
+    "start": "09:45"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w16-d8: L12 to day 1 at 08:30",
+   "world": 16,
+   "drag": {
+    "lesson": "L12",
+    "day": 1,
+    "start": "08:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER"
+    ]
+   }
+  },
+  {
+   "name": "w16-d9: L12 to day 4 at 16:00",
+   "world": 16,
+   "drag": {
+    "lesson": "L12",
+    "day": 4,
+    "start": "16:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w16-d10: L10 to day 4 at 14:05",
+   "world": 16,
+   "drag": {
+    "lesson": "L10",
+    "day": 4,
+    "start": "14:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "AVAILABILITY",
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w16-d11: L2 to day 3 at 13:50",
+   "world": 16,
+   "drag": {
+    "lesson": "L2",
+    "day": 3,
+    "start": "13:50"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w16-d12: L8 to day 2 at 08:15",
+   "world": 16,
+   "drag": {
+    "lesson": "L8",
+    "day": 2,
+    "start": "08:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "ROOM",
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w16-d13: L3 to day 3 at 10:15",
+   "world": 16,
+   "drag": {
+    "lesson": "L3",
+    "day": 3,
+    "start": "10:15"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w17-d0: L7 to day 5 at 15:20",
+   "world": 17,
+   "drag": {
+    "lesson": "L7",
+    "day": 5,
+    "start": "15:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w17-d1: L9 to day 1 at 09:25",
+   "world": 17,
+   "drag": {
+    "lesson": "L9",
+    "day": 1,
+    "start": "09:25"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w17-d2: L8 to day 2 at 11:05",
+   "world": 17,
+   "drag": {
+    "lesson": "L8",
+    "day": 2,
+    "start": "11:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w17-d3: L7 to day 5 at 16:20",
+   "world": 17,
+   "drag": {
+    "lesson": "L7",
+    "day": 5,
+    "start": "16:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w17-d4: L8 to day 4 at 09:50",
+   "world": 17,
+   "drag": {
+    "lesson": "L8",
+    "day": 4,
+    "start": "09:50"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w17-d5: L4 to day 5 at 11:15",
+   "world": 17,
+   "drag": {
+    "lesson": "L4",
+    "day": 5,
+    "start": "11:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER"
+    ]
+   }
+  },
+  {
+   "name": "w17-d6: L10 to day 4 at 08:50",
+   "world": 17,
+   "drag": {
+    "lesson": "L10",
+    "day": 4,
+    "start": "08:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w17-d7: L1 to day 4 at 08:25",
+   "world": 17,
+   "drag": {
+    "lesson": "L1",
+    "day": 4,
+    "start": "08:25"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w17-d8: L2 to day 1 at 08:25",
+   "world": 17,
+   "drag": {
+    "lesson": "L2",
+    "day": 1,
+    "start": "08:25"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP"
+    ]
+   }
+  },
+  {
+   "name": "w17-d9: L10 to day 3 at 11:50",
+   "world": 17,
+   "drag": {
+    "lesson": "L10",
+    "day": 3,
+    "start": "11:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "LUNCH"
+    ]
+   }
+  },
+  {
+   "name": "w17-d10: L5 to day 2 at 13:10",
+   "world": 17,
+   "drag": {
+    "lesson": "L5",
+    "day": 2,
+    "start": "13:10"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w17-d11: L6 to day 3 at 14:20",
+   "world": 17,
+   "drag": {
+    "lesson": "L6",
+    "day": 3,
+    "start": "14:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "GROUP",
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w17-d12: L1 to day 2 at 13:50",
+   "world": 17,
+   "drag": {
+    "lesson": "L1",
+    "day": 2,
+    "start": "13:50"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "w17-d13: L3 to day 3 at 08:50",
+   "world": 17,
+   "drag": {
+    "lesson": "L3",
+    "day": 3,
+    "start": "08:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "TEACHER",
+     "ROOM"
+    ]
+   }
+  },
+  {
+   "name": "w0-weekend: L1 to day 6 at 09:15",
+   "world": 0,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "09:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w0-weekend: L1 to day 7 at 09:15",
+   "world": 0,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "09:15"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w1-weekend: L1 to day 6 at 10:10",
+   "world": 1,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "10:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w1-weekend: L1 to day 7 at 10:10",
+   "world": 1,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "10:10"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w2-weekend: L1 to day 6 at 11:30",
+   "world": 2,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "11:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w2-weekend: L1 to day 7 at 11:30",
+   "world": 2,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "11:30"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w3-weekend: L1 to day 6 at 10:20",
+   "world": 3,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "10:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w3-weekend: L1 to day 7 at 10:20",
+   "world": 3,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "10:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w4-weekend: L1 to day 6 at 13:00",
+   "world": 4,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w4-weekend: L1 to day 7 at 13:00",
+   "world": 4,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w5-weekend: L1 to day 6 at 08:50",
+   "world": 5,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "08:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w5-weekend: L1 to day 7 at 08:50",
+   "world": 5,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "08:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w6-weekend: L1 to day 6 at 13:05",
+   "world": 6,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "13:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w6-weekend: L1 to day 7 at 13:05",
+   "world": 6,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "13:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w7-weekend: L1 to day 6 at 09:35",
+   "world": 7,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "09:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w7-weekend: L1 to day 7 at 09:35",
+   "world": 7,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "09:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w8-weekend: L1 to day 6 at 10:45",
+   "world": 8,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "10:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w8-weekend: L1 to day 7 at 10:45",
+   "world": 8,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "10:45"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w9-weekend: L1 to day 6 at 13:00",
+   "world": 9,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w9-weekend: L1 to day 7 at 13:00",
+   "world": 9,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w10-weekend: L1 to day 6 at 11:20",
+   "world": 10,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "11:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w10-weekend: L1 to day 7 at 11:20",
+   "world": 10,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "11:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w11-weekend: L1 to day 6 at 12:05",
+   "world": 11,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "12:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w11-weekend: L1 to day 7 at 12:05",
+   "world": 11,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "12:05"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w12-weekend: L1 to day 6 at 14:50",
+   "world": 12,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "14:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY",
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w12-weekend: L1 to day 7 at 14:50",
+   "world": 12,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "14:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY",
+     "FRAME"
+    ]
+   }
+  },
+  {
+   "name": "w13-weekend: L1 to day 6 at 09:20",
+   "world": 13,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "09:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w13-weekend: L1 to day 7 at 09:20",
+   "world": 13,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "09:20"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w14-weekend: L1 to day 6 at 10:55",
+   "world": 14,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "10:55"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w14-weekend: L1 to day 7 at 10:55",
+   "world": 14,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "10:55"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w15-weekend: L1 to day 6 at 13:00",
+   "world": 15,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w15-weekend: L1 to day 7 at 13:00",
+   "world": 15,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "13:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w16-weekend: L1 to day 6 at 10:35",
+   "world": 16,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "10:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w16-weekend: L1 to day 7 at 10:35",
+   "world": 16,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "10:35"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w17-weekend: L1 to day 6 at 13:50",
+   "world": 17,
+   "drag": {
+    "lesson": "L1",
+    "day": 6,
+    "start": "13:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  },
+  {
+   "name": "w17-weekend: L1 to day 7 at 13:50",
+   "world": 17,
+   "drag": {
+    "lesson": "L1",
+    "day": 7,
+    "start": "13:50"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "SCHOOL_DAY"
+    ]
+   }
+  }
+ ]
+}

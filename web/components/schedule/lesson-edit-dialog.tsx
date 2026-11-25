@@ -16,6 +16,12 @@
  * The draft and every action stay with the page, which opens the dialog from a
  * click on a card and saves through its undo history; they are passed in.
  *
+ * While the fields are filled in, the dialog asks the gateway whether what they
+ * say would be let through (lib/lesson-judgement.ts) and tells the reader the
+ * reasons beside the fields, in the sentence a refused save is told in. Spara
+ * stays allowed: the save is the judge, and the answer of a question is no
+ * reason to hold the reader back (nor is the lack of one).
+ *
  * RecurrenceFields is imported statically here: the whole chunk is already
  * fetched apart from the page, and one fetch beats a second one behind a
  * skeleton.
@@ -23,7 +29,10 @@
 
 import { useTranslations } from "next-intl";
 import { ArrowLeftRight, Copy, Loader2, Lock, ParkingSquare, Trash2 } from "lucide-react";
-import type { LessonRecurrence, Person, Room } from "@/lib/types";
+import type { LessonRecurrence, MasterLesson, Person, Room } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { type MoveRefusal, moveOf, useLessonJudgement } from "@/lib/lesson-judgement";
+import { problemSentence } from "@/lib/problem-codes";
 import { RecurrenceFields } from "@/components/schedule/recurrence-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -63,6 +72,8 @@ export interface LessonEditDraft {
 
 export interface LessonEditDialogProps {
   open: boolean;
+  /** The lesson as it stands, which the fields are compared with to see what they would move; null or absent: nothing is asked. */
+  lesson?: MasterLesson | null;
   /** Called with false when the dialog is dismissed (Escape, outside click, ×). */
   onOpenChange: (open: boolean) => void;
   /** WHICH lesson, for the description; null while nothing is being edited. */
@@ -84,8 +95,22 @@ export interface LessonEditDialogProps {
   none: string;
 }
 
+/** Which of the dialog's fields a refusal is about: the clock and the day, except where it names the room or the teacher. */
+function marksOf(refusals: readonly MoveRefusal[]): { time: boolean; room: boolean; teacher: boolean } {
+  const marks = { time: false, room: false, teacher: false };
+  for (const { reason, params } of refusals) {
+    const resource = reason === "ROOM" ? "ROOM" : reason === "AVAILABILITY" ? params["resource"] : undefined;
+    if (resource === "ROOM") marks.room = true;
+    else if (resource === "TEACHER") marks.teacher = true;
+    else marks.time = true;
+    if (reason === "TEACHER") marks.teacher = true;
+  }
+  return marks;
+}
+
 export function LessonEditDialog({
   open,
+  lesson,
   onOpenChange,
   lessonName,
   draft,
@@ -106,6 +131,20 @@ export function LessonEditDialog({
   const tCommon = useTranslations("common");
   const tDays = useTranslations("days");
   const tSwaps = useTranslations("swaps");
+
+  const judged = useLessonJudgement(open ? lesson : null, draft, none);
+  const verdict = judged.status === "done" ? judged.judgement : null;
+  const refusals = verdict?.refusals ?? [];
+  const marks = marksOf(refusals);
+  // A teacher the fields put on the lesson anew is asked of the staffing policy (behörighet) by the save and not by the judge, which a
+  // school that refuses the unqualified answers 409 to: the "nothing in the way" must not be read as a promise about that.
+  const newTeacher = lesson ? typeof moveOf(lesson, draft, none)?.teacherId === "string" : false;
+  // One field is marked as the reason names it, and says which sentence to read: the status below the fields.
+  const marked = (on: boolean) => ({
+    "aria-invalid": on || undefined,
+    "aria-describedby": on ? "edit-judgement" : undefined,
+  });
+  const markedClass = (on: boolean) => cn(on && "border-destructive");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -134,7 +173,7 @@ export function LessonEditDialog({
               value={draft.dayOfWeek}
               onValueChange={(dayOfWeek) => onDraftChange({ ...draft, dayOfWeek })}
             >
-              <SelectTrigger id="edit-day">
+              <SelectTrigger id="edit-day" {...marked(marks.time)} className={markedClass(marks.time)}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -151,6 +190,8 @@ export function LessonEditDialog({
             <Input
               id="edit-start"
               type="time"
+              {...marked(marks.time)}
+              className={markedClass(marks.time)}
               value={draft.startTime}
               onChange={(e) => onDraftChange({ ...draft, startTime: e.target.value })}
             />
@@ -160,6 +201,8 @@ export function LessonEditDialog({
             <Input
               id="edit-end"
               type="time"
+              {...marked(marks.time)}
+              className={markedClass(marks.time)}
               value={draft.endTime}
               onChange={(e) => onDraftChange({ ...draft, endTime: e.target.value })}
             />
@@ -170,7 +213,7 @@ export function LessonEditDialog({
               value={draft.roomId}
               onValueChange={(roomId) => onDraftChange({ ...draft, roomId })}
             >
-              <SelectTrigger id="edit-room">
+              <SelectTrigger id="edit-room" {...marked(marks.room)} className={markedClass(marks.room)}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -189,7 +232,7 @@ export function LessonEditDialog({
               value={draft.teacherId}
               onValueChange={(teacherId) => onDraftChange({ ...draft, teacherId })}
             >
-              <SelectTrigger id="edit-teacher">
+              <SelectTrigger id="edit-teacher" {...marked(marks.teacher)} className={markedClass(marks.teacher)}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -211,6 +254,42 @@ export function LessonEditDialog({
             }}
             onChange={(next) => onDraftChange({ ...draft, ...next })}
           />
+          {/* What the gateway says of the fields as they stand, before Spara: one live region, always in the tree, so that a
+              screen reader that has it announces the answer when it arrives. The reasons are the refusal's own sentence
+              (common.codes.MASTER_LESSON_REFUSED), with the other lesson named by class, subject, day and time. */}
+          <div
+            id="edit-judgement"
+            role="status"
+            aria-live="polite"
+            // The region is there from the first render and keeps its row (one line, `min-h-5`) whether it is empty, checking or has found
+            // nothing, so that the dialog does not change its height under the reader's hands as the answer comes (granskaren g462, L-5);
+            // only a refusal, which has something to list, makes it taller. A live region that is not in the tree when its words arrive is
+            // not announced either, so it is never taken out.
+            className="col-span-2 min-h-5 text-sm"
+          >
+            {judged.status === "checking" ? (
+              <p className="text-xs text-muted-foreground" aria-hidden="true">
+                {t("judgeChecking")}
+              </p>
+            ) : null}
+            {judged.status === "failed" ? <p className="text-xs text-muted-foreground">{t("judgeFailed")}</p> : null}
+            {verdict?.placed ? <p className="rounded-md border border-destructive/60 px-3 py-2 text-destructive">{t("lessonIsPlaced")}</p> : null}
+            {verdict && !verdict.placed && refusals.length > 0 ? (
+              <div className="rounded-md border border-destructive/60 px-3 py-2 text-destructive">
+                <p className="font-medium">{t("judgeRefused")}</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {refusals.map((refusal, index) => (
+                    <li key={`${refusal.reason}-${index}`}>
+                      {problemSentence("MASTER_LESSON_REFUSED", { reason: refusal.reason, ...refusal.params }, tCommon) ?? refusal.text}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {verdict && !verdict.placed && refusals.length === 0 ? (
+              <p className="text-xs text-muted-foreground">{newTeacher ? `${t("judgeOk")} ${t("judgeOkStaffing")}` : t("judgeOk")}</p>
+            ) : null}
+          </div>
           <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
             <div className="flex items-center gap-2">
               <Lock className="size-4 text-muted-foreground" />

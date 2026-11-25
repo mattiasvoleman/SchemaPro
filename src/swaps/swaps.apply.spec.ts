@@ -187,7 +187,7 @@ describe('SwapsService.apply', () => {
     expect(snapshot).not.toHaveBeenCalled();
   });
 
-  it('refuses a double booking with the clash rule’s own sentence, and writes nothing', async () => {
+  it('refuses a double booking as a hand edit’s refusal is told, MASTER_LESSON_REFUSED, naming the other lesson, and writes nothing', async () => {
     // Two lessons of one teacher whose swap leaves someone else's lesson in the way.
     let found: [SwapLesson, SwapLesson] | null = null;
     const probe = applyTx(world);
@@ -209,7 +209,20 @@ describe('SwapsService.apply', () => {
     const { swaps } = build(world, tx);
     const error = await swaps.apply(body(world, [[a, b], [b, a]]), user).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ConflictException);
-    expect((error as ConflictException).message).toMatch(/already|group|Teacher|Room/);
+    // The code and the flat params a hand edit's refusal carries (lesson-refusal.ts), not a bare sentence: the reason, and the lesson in
+    // the way by class, subject, day and clock.
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'MASTER_LESSON_REFUSED',
+      params: {
+        reason: expect.stringMatching(/^(TEACHER|ROOM|GROUP|PUPILS|AVAILABILITY)$/),
+        requirement: expect.any(String),
+      },
+    });
+    const params = ((error as ConflictException).getResponse() as { params: Record<string, unknown> }).params;
+    if (params['reason'] !== 'AVAILABILITY') {
+      expect(params).toMatchObject({ otherKind: 'LESSON', className: expect.any(String), subjectName: expect.any(String), day: expect.any(Number), start: expect.stringMatching(/^\d\d:\d\d$/), end: expect.stringMatching(/^\d\d:\d\d$/) });
+    }
+    expect((error as ConflictException).message).toEqual(expect.stringContaining(String(params['requirement'])));
     expect(written).toHaveLength(0);
   });
 

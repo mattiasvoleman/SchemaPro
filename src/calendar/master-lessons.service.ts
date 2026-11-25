@@ -10,7 +10,6 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { weeksCanOverlap } from './lesson-recurrence';
 import { meetOnlyInClosedWeeks, readClosedWeeks } from './school-weeks';
-import type { ConflictReads } from './conflict-reads';
 import type { LessonRecurrence } from '@prisma/client';
 import { RealtimeService } from '../realtime/realtime.service';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -74,6 +73,10 @@ import { EMPTY_SITE_MAP, hasTravel, readSiteMap, type SiteMap } from '../common/
 import { travelWarningsOf, type TravelDayLesson, type TravelWarning } from './travel-warnings';
 import { shareBreaches, shareWarning, type ShareWarning } from './share-warnings';
 import { storedSharesOf } from '../resources/requirement-shares';
+import { judgeLessons, type JudgedCandidate, type LessonJudgement, type MoveJudgement } from './lesson-judge';
+import { lessonRefusalText, lessonRefusedConflict } from './lesson-refusal';
+import type { JudgeLessonsDto } from './dto/judge-lessons.dto';
+import { ConflictReads } from './conflict-reads';
 
 export interface MasterLessonConflict {
   kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
@@ -403,6 +406,8 @@ export class MasterLessonsService {
           schoolId: true,
           isActive: true,
           predecessorId: true,
+          // The numbering the board's rules are read in (lesson-judge.ts), from the statement that reads the year anyway.
+          gradeNumbering: true,
           // Lärarens dag: whether the new lesson's teachers have a day limit
           // or a limit for teaching in a row on their post of this year,
           // counted inside this statement (teacherDayWarnings).
@@ -457,21 +462,15 @@ export class MasterLessonsService {
         throw new BadRequestException('startTime must be before endTime.');
       }
 
-      const conflicts = await this.findConflicts(
+      // The one judge (lesson-judge.ts): the clash rule, and the board's and the other schools'
+      // rules a swap and a förläggning are held to. A new lesson stands nowhere yet, so every rule is asked.
+      const [verdict] = await judgeLessons(
         tx,
-        rosters,
-        {
-          id: null,
-          academicYearId: dto.academicYearId,
-          studentGroupId: dto.studentGroupId,
-          subjectId: dto.subjectId,
-        },
-        candidate,
+        this,
+        { academicYearId: dto.academicYearId, schoolId: year.schoolId, basis: rosters, gradeNumbering: year.gradeNumbering },
+        [{ lesson: { id: null, studentGroupId: dto.studentGroupId, subjectId: dto.subjectId }, candidate }],
       );
-      if (conflicts.length > 0) {
-        const unique = [...new Set(conflicts.map((conflict) => conflict.message))];
-        throw new ConflictException(unique.join(' '));
-      }
+      if (!verdict!.ok) throw lessonRefusedConflict([{ verdict: verdict! }]);
 
       const created = await tx.masterLesson.create({
         data: {
@@ -561,6 +560,146 @@ export class MasterLessonsService {
       this.logger.log(`Master lesson created manually [lesson=${created.id}]`);
       this.announce(year.schoolId, mode);
       return { ...result, warnings };
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // The läsande frågan
+  // ---------------------------------------------------------------------
+
+  /**
+   * Whether one or more tänkta drag would be let through, said the way the
+   * write says no, and nothing written (E1). The moves are judged TOGETHER, as
+   * one move: each lesson is held against the week with the others out of where
+   * they stand and laid where they would go, as a block's card and a swap are
+   * (`excludeIds`, and `alongside` read per candidate DAY, because a set that
+   * moves lessons to several days has a mover on another day beside none of
+   * them: swaps.service.ts clashesOf). Each answer is the verdict of the
+   * PATCH that would follow, "låt stå" included, so a dialog that asks while
+   * its fields are filled in is never stricter or milder than its save.
+   */
+  async judgeMoves(dto: JudgeLessonsDto, user: AuthenticatedUser): Promise<LessonJudgement> {
+    return this.prisma.withRls(user, async (tx) => {
+      const ids = dto.moves.map((move) => move.lessonId);
+      if (new Set(ids).size !== ids.length) throw new BadRequestException('moves: a lesson is named twice.');
+      const lessons = await tx.masterLesson.findMany({
+        where: { id: { in: ids } },
+        select: {
+          ...LESSON_SELECT,
+          fromPlacement: true,
+          subject: { select: { name: true } },
+          school: {
+            select: {
+              id: true,
+              _count: {
+                select: { academicYears: { where: { AND: [SETTLED_CURRENT, { masterLessons: { some: { id: ids[0] } } }] } } },
+              },
+            },
+          },
+        },
+      });
+      if (lessons.length !== ids.length) throw new NotFoundException('Master lesson not found.');
+      const leader = lessons[0]!;
+      if (lessons.some((lesson) => lesson.academicYearId !== leader.academicYearId)) {
+        throw new BadRequestException('moves: the lessons are not of one läsår.');
+      }
+      const rosters = await rostersOfYear(tx, user, leader.academicYearId, {
+        settledCurrent: leader.school._count.academicYears > 0,
+      });
+
+      const byId = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+      const planned = dto.moves.map((move) => {
+        const lesson = byId.get(move.lessonId)!;
+        const candidate = {
+          dayOfWeek: move.dayOfWeek ?? lesson.dayOfWeek,
+          startMinutes: move.startTime !== undefined ? toMinutes(parseTimeString(move.startTime)) : toMinutes(lesson.startTime),
+          endMinutes: move.endTime !== undefined ? toMinutes(parseTimeString(move.endTime)) : toMinutes(lesson.endTime),
+          teacherId: move.teacherId !== undefined ? move.teacherId : lesson.teacherId,
+          coTeacherId: move.coTeacherId !== undefined ? move.coTeacherId : lesson.coTeacherId,
+          roomId: move.roomId !== undefined ? move.roomId : lesson.roomId,
+          extraGroupIds: [
+            ...new Set(move.extraGroupIds !== undefined ? move.extraGroupIds : lesson.extraGroups.map((entry) => entry.studentGroupId)),
+          ].filter((groupId) => groupId !== lesson.studentGroupId),
+          studentIds: move.studentIds !== undefined ? move.studentIds : lesson.participants.map((entry) => entry.studentId),
+          recurrence: move.recurrence ?? lesson.recurrence,
+          startDate: move.startDate !== undefined ? parseDateOrNull(move.startDate) : lesson.startDate,
+          endDate: move.endDate !== undefined ? parseDateOrNull(move.endDate) : lesson.endDate,
+        };
+        const was: JudgedCandidate = {
+          dayOfWeek: lesson.dayOfWeek,
+          startMinutes: toMinutes(lesson.startTime),
+          endMinutes: toMinutes(lesson.endTime),
+          teacherId: lesson.teacherId,
+          coTeacherId: lesson.coTeacherId,
+          roomId: lesson.roomId,
+          extraGroupIds: lesson.extraGroups.map((entry) => entry.studentGroupId),
+          recurrence: lesson.recurrence,
+          startDate: lesson.startDate,
+          endDate: lesson.endDate,
+        };
+        // A lesson set aside occupies nothing, and one edited on the tray asks nothing of where it was.
+        const parking = move.isParked === true;
+        // ... and neither does one that is on the tray and stays there: its remembered place is no place the others may not take.
+        const occupies = !parking && !(lesson.isParked && move.isParked !== false);
+        const stands = lesson.isParked ? (move.isParked === false ? null : candidate) : was;
+        const landing: DayLesson = {
+          id: lesson.id,
+          teacherId: candidate.teacherId,
+          coTeacherId: candidate.coTeacherId,
+          roomId: candidate.roomId,
+          studentGroupId: lesson.studentGroupId,
+          subjectId: lesson.subjectId,
+          startTime: new Date(Date.UTC(1970, 0, 1, 0, candidate.startMinutes)),
+          endTime: new Date(Date.UTC(1970, 0, 1, 0, candidate.endMinutes)),
+          recurrence: candidate.recurrence,
+          startDate: candidate.startDate,
+          endDate: candidate.endDate,
+          subject: lesson.subject,
+          extraGroups: candidate.extraGroupIds.map((studentGroupId) => ({ studentGroupId })),
+          participants: candidate.studentIds.map((studentId) => ({ studentId })),
+        };
+        let placed = false;
+        if (lesson.fromPlacement) {
+          try {
+            assertPlacedLessonStands(lesson, candidate);
+          } catch {
+            placed = true;
+          }
+        }
+        if (candidate.startMinutes >= candidate.endMinutes) throw new BadRequestException('startTime must be before endTime.');
+        return { lesson, candidate, stands, landing, parking, occupies, placed };
+      });
+
+      const judged = planned.flatMap((entry, index) => (entry.parking || entry.placed ? [] : [index]));
+      const verdicts = await judgeLessons(
+        tx,
+        this,
+        { academicYearId: leader.academicYearId, schoolId: leader.school.id, basis: rosters },
+        judged.map((index) => {
+          const { lesson, candidate, stands } = planned[index]!;
+          return {
+            lesson: { id: lesson.id, studentGroupId: lesson.studentGroupId, subjectId: lesson.subjectId },
+            candidate,
+            stands,
+            excludeIds: ids,
+            // The others as they would stand, and only the ones that land on this candidate's own day.
+            alongside: planned
+              .filter((other, otherIndex) => otherIndex !== index && other.occupies && other.candidate.dayOfWeek === candidate.dayOfWeek)
+              .map((other) => other.landing),
+          };
+        }),
+        { reads: new ConflictReads() },
+      );
+      const moves: MoveJudgement[] = planned.map((entry, index) => {
+        const verdict = verdicts[judged.indexOf(index)];
+        return {
+          lessonId: entry.lesson.id,
+          ok: !entry.placed && (verdict ? verdict.ok : true),
+          ...(entry.placed ? { placed: true as const } : {}),
+          refusals: (verdict?.refusals ?? []).map((refusal) => ({ ...refusal, text: lessonRefusalText(refusal) })),
+        };
+      });
+      return { ok: moves.every((move) => move.ok), moves };
     });
   }
 
@@ -670,26 +809,43 @@ export class MasterLessonsService {
       // while B is still there. Everything else, including putting a parked
       // lesson back, is a placement and is checked like one.
       const parking = dto.isParked === true;
-      const conflicts = parking
-        ? []
-        : await this.findConflicts(
-            tx,
-            rosters,
+      if (!parking) {
+        // LÅT STÅ (lesson-judge.ts): the board's and the other schools' rules are asked of what the edit moves, so a
+        // lesson that already stands against one of them may be given another room or lock. A lesson put back from
+        // the tray stands nowhere, and is asked everything; one edited while it stays on the tray occupies nothing,
+        // and its remembered place is asked nothing.
+        const was: JudgedCandidate = {
+          dayOfWeek: lesson.dayOfWeek,
+          startMinutes: toMinutes(lesson.startTime),
+          endMinutes: toMinutes(lesson.endTime),
+          teacherId: lesson.teacherId,
+          coTeacherId: lesson.coTeacherId,
+          roomId: lesson.roomId,
+          extraGroupIds: lesson.extraGroups.map((entry) => entry.studentGroupId),
+          recurrence: lesson.recurrence,
+          startDate: lesson.startDate,
+          endDate: lesson.endDate,
+        };
+        const [verdict] = await judgeLessons(
+          tx,
+          this,
+          { academicYearId: lesson.academicYearId, schoolId: lesson.school.id, basis: rosters },
+          [
             {
-              id: lesson.id,
-              academicYearId: lesson.academicYearId,
-              studentGroupId: lesson.studentGroupId,
-              // No PATCH moves a lesson to another subject, so the stored one is
-              // the one whose requirement carries the buffer.
-              subjectId: lesson.subjectId,
+              lesson: {
+                id: lesson.id,
+                studentGroupId: lesson.studentGroupId,
+                // No PATCH moves a lesson to another subject, so the stored one is
+                // the one whose requirement carries the buffer.
+                subjectId: lesson.subjectId,
+              },
+              candidate,
+              stands: lesson.isParked ? (dto.isParked === false ? null : candidate) : was,
             },
-            candidate,
-          );
-      if (conflicts.length > 0) {
-        // The exception filter forwards `message` as the problem detail, so
-        // the conflict list is folded into it for the UI to display.
-        const unique = [...new Set(conflicts.map((conflict) => conflict.message))];
-        throw new ConflictException(unique.join(' '));
+          ],
+        );
+        // The exception filter forwards `message` as the problem detail, and a code with flat params beside it.
+        if (!verdict!.ok) throw lessonRefusedConflict([{ verdict: verdict! }]);
       }
 
       /*
@@ -1247,18 +1403,17 @@ export class MasterLessonsService {
         settledCurrent: leader.school._count.academicYears > 0,
       });
       const placed: DayLesson[] = moving.map((lesson) => ({ ...lesson, startTime, endTime }));
-      const refusals: string[] = [];
-      for (const [index, lesson] of moving.entries()) {
-        const conflicts = await this.findConflicts(
-          tx,
-          rosters,
-          {
-            id: lesson.id,
-            academicYearId: lesson.academicYearId,
-            studentGroupId: lesson.studentGroupId,
-            subjectId: lesson.subjectId,
-          },
-          {
+      // The one judge (lesson-judge.ts), asked of the card as one move: every member held to the clash rule with
+      // the card's movers out of where they stood and laid where they go, and to the board's and the other schools'
+      // rules at the day and clock they land on. A card dropped where it stood moves nothing, and is asked nothing
+      // of the board.
+      const verdicts = await judgeLessons(
+        tx,
+        this,
+        { academicYearId: leader.academicYearId, schoolId: leader.school.id, basis: rosters },
+        moving.map((lesson, index) => ({
+          lesson: { id: lesson.id, studentGroupId: lesson.studentGroupId, subjectId: lesson.subjectId },
+          candidate: {
             dayOfWeek: dto.dayOfWeek,
             startMinutes: toMinutes(startTime),
             endMinutes: toMinutes(endTime),
@@ -1271,14 +1426,28 @@ export class MasterLessonsService {
             startDate: lesson.startDate,
             endDate: lesson.endDate,
           },
-          { excludeIds: movingIds, alongside: placed.slice(index + 1) },
-        );
-        const name = requirementName(lesson.subject.name, lesson.studentGroup.name);
-        refusals.push(...conflicts.map((conflict) => `${name}: ${conflict.message}`));
-      }
-      if (refusals.length > 0) {
-        throw new ConflictException([...new Set(refusals)].join(' '));
-      }
+          stands: {
+            dayOfWeek: lesson.dayOfWeek,
+            startMinutes: toMinutes(lesson.startTime),
+            endMinutes: toMinutes(lesson.endTime),
+            teacherId: lesson.teacherId,
+            coTeacherId: lesson.coTeacherId,
+            roomId: lesson.roomId,
+            extraGroupIds: lesson.extraGroups.map((entry) => entry.studentGroupId),
+            recurrence: lesson.recurrence,
+            startDate: lesson.startDate,
+            endDate: lesson.endDate,
+          },
+          excludeIds: movingIds,
+          alongside: placed.slice(index + 1),
+        })),
+      );
+      const refused = moving.flatMap((lesson, index) =>
+        verdicts[index]!.ok
+          ? []
+          : [{ requirement: requirementName(lesson.subject.name, lesson.studentGroup.name), verdict: verdicts[index]! }],
+      );
+      if (refused.length > 0) throw lessonRefusedConflict(refused);
 
       const { count } = await tx.masterLesson.updateMany({
         where: {
