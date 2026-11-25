@@ -1,11 +1,22 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { ApiError, api } from "@/lib/api";
 import type { MasterLesson } from "@/lib/types";
 import { useCreateMasterLesson, useDeleteMasterLesson, useUpdateMasterLesson } from "./queries";
-import { addLesson, lessonFieldsOf, patchLesson, putBack, removeLesson } from "./master-lesson-cache";
+import {
+  addLesson,
+  lessonFieldsOf,
+  lessonOfRow,
+  MASTER_LESSON_SELECT,
+  patchLesson,
+  putBack,
+  putLesson,
+  removeLesson,
+} from "./master-lesson-cache";
 
 vi.mock("@/utils/supabase/client", () => ({ createClient: () => ({ from: vi.fn() }) }));
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -106,6 +117,24 @@ describe("the year's lesson lists in the cache", () => {
     putBack(queryClient, remembered);
     expect(held()[0]!.dayOfWeek).toBe(1);
     expect(held()[1]!.isLocked).toBe(true);
+  });
+
+  it("does not put an older lesson over one a colleague's change has laid since the write was asked for", () => {
+    const { queryClient, held } = harness();
+    // Asked for: the card stands on Tuesday. A colleague moves the same lesson to Thursday, and the page reads it (use-timetable-realtime.ts).
+    const remembered = patchLesson(queryClient, "a", { dayOfWeek: 2 });
+    putLesson(queryClient, lesson("a", { dayOfWeek: 4 }));
+    // Then the write is refused: the lesson is where the database has it, and the refusal changed nothing of that.
+    putBack(queryClient, remembered);
+    expect(held()[0]!.dayOfWeek).toBe(4);
+  });
+
+  it("does not put a removed lesson back over what a colleague's change has laid in its place", () => {
+    const { queryClient, held } = harness();
+    const remembered = removeLesson(queryClient, "a");
+    putLesson(queryClient, lesson("a", { dayOfWeek: 4 }));
+    putBack(queryClient, remembered);
+    expect(held().filter((l) => l.id === "a").map((l) => l.dayOfWeek)).toEqual([4]);
   });
 
   it("puts a removed lesson back, and a lesson the gateway made in its year", () => {
@@ -252,5 +281,30 @@ describe("a lesson moved, made or removed stands in the grid before the year is 
       await done.catch(() => undefined);
     });
     expect(held().map((l) => l.id).sort()).toEqual(["a", "b"]);
+  });
+});
+
+describe("what a collaborator's change is read as", () => {
+  it("is read with the columns the year is read with (queries.ts cannot import this module, so the two are held equal here)", () => {
+    const source = readFileSync(resolve(process.cwd(), "lib/queries.ts"), "utf8");
+    const yearRead = /\.from\("MasterLessons"\)\s*\.select\(\s*"([^"]+)"/.exec(source);
+    expect(yearRead).not.toBeNull();
+    expect(MASTER_LESSON_SELECT).toBe(yearRead![1]);
+  });
+
+  it("lays a row as the list holds it: the groups and the pupils as ids", () => {
+    const { extraGroupIds: _g, studentIds: _s, ...rest } = lesson("a");
+    expect(
+      lessonOfRow({ ...rest, extraGroups: [{ studentGroupId: "7b" }, { studentGroupId: "7c" }], participants: [{ studentId: "p1" }] }),
+    ).toEqual({ ...lesson("a"), extraGroupIds: ["7b", "7c"], studentIds: ["p1"] });
+  });
+
+  it("puts a lesson in the place it had, or at the end, in its own year's list only", () => {
+    const { queryClient, held } = harness();
+    queryClient.setQueryData(["masterLessons", "year-2"], [lesson("a", { academicYearId: "year-2" })]);
+    putLesson(queryClient, lesson("a", { dayOfWeek: 4 }));
+    putLesson(queryClient, lesson("c"));
+    expect(held().map((l) => [l.id, l.dayOfWeek])).toEqual([["a", 4], ["b", 3], ["c", 1]]);
+    expect(queryClient.getQueryData<MasterLesson[]>(["masterLessons", "year-2"])![0]!.dayOfWeek).toBe(1);
   });
 });

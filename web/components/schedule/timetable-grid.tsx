@@ -61,6 +61,15 @@ export interface TimetableLesson {
   /** What `share` means, spelled out for a reader who cannot see the badge. */
   shareLabel?: string;
   /**
+   * A MARK on the card, in words: the place for one that says why the lesson stands as it does (E1b, "Undantag med flit": a lesson
+   * put on the lunch or outside the frame time on purpose). Drawn in the card's corner, among the badges, as a word and not only a
+   * colour; `markLabel` is what a screen reader is told in its place ("Undantag: ramtiden"), and is read after the lesson's name.
+   * Nothing is drawn, and the card is what it was, when there is none. The slot is where; what a mark looks like is the one that
+   * sets it, and the grid is told nothing but the words, so that a card is drawn again only when the words change.
+   */
+  mark?: string;
+  markLabel?: string;
+  /**
    * The minutes the PUPILS are occupied outside this lesson, already worded by
    * the page — ombyte before idrotten, dusch and ombyte after it.
    *
@@ -623,6 +632,16 @@ const LessonCard = memo(function LessonCard({
               className="rounded bg-warning/25 px-1 text-[9px] font-semibold text-foreground"
             >
               {lesson.remoteEditor}
+            </span>
+          ) : null}
+          {lesson.mark ? (
+            <span
+              data-lesson-mark
+              title={lesson.markLabel}
+              className="rounded border border-foreground/40 px-1 text-[9px] font-semibold uppercase tracking-wide text-foreground"
+            >
+              {lesson.mark}
+              <span className="sr-only">{lesson.markLabel ? ` ${lesson.markLabel}` : ""}</span>
             </span>
           ) : null}
           {lesson.conflicted ? (

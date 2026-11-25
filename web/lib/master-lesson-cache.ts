@@ -1,5 +1,6 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import type { MasterLesson } from "@/lib/types";
+import { createClient } from "@/utils/supabase/client";
 
 /**
  * The year's lesson lists in the query cache, patched one lesson at a time.
@@ -36,7 +37,13 @@ const FIELDS = [
 export type LessonPatch = Partial<Pick<MasterLesson, (typeof FIELDS)[number]>>;
 
 /** A lesson as a list held it, kept so that a refused write can put it back. */
-export type Remembered = Array<{ key: QueryKey; id: string; row: MasterLesson | undefined }>;
+export type Remembered = Array<{
+  key: QueryKey;
+  id: string;
+  row: MasterLesson | undefined;
+  /** The row the write laid in its place, when it laid one: the lesson is put back only while this is still what the list holds. */
+  wrote?: MasterLesson;
+}>;
 
 function yearLists(queryClient: QueryClient): Array<[QueryKey, MasterLesson[]]> {
   return queryClient
@@ -95,10 +102,11 @@ export function patchLesson(queryClient: QueryClient, id: string, fields: Lesson
     const at = lessons.findIndex((lesson) => lesson.id === id);
     if (at === -1) continue;
     const row = lessons[at]!;
-    remembered.push({ key, id, row });
     const next = lessons.slice();
     next[at] = patched(row, fields);
     queryClient.setQueryData(key, next);
+    // What the list holds now, which the query client may have shared structurally and so is not always the object handed in.
+    remembered.push({ key, id, row, wrote: queryClient.getQueryData<MasterLesson[]>(key)?.[at] });
   }
   return remembered;
 }
@@ -133,7 +141,7 @@ export function removeLesson(queryClient: QueryClient, id: string): Remembered {
  * was would take that with it.
  */
 export function putBack(queryClient: QueryClient, remembered: Remembered | undefined): void {
-  for (const { key, id, row } of remembered ?? []) {
+  for (const { key, id, row, wrote } of remembered ?? []) {
     const lessons = queryClient.getQueryData<MasterLesson[]>(key);
     if (!lessons || !row) continue;
     const at = lessons.findIndex((lesson) => lesson.id === id);
@@ -141,6 +149,9 @@ export function putBack(queryClient: QueryClient, remembered: Remembered | undef
       queryClient.setQueryData(key, [...lessons, row]);
       continue;
     }
+    // The lesson stands there, and is not what the write laid: a colleague's change was read since (readHeard), or the year was.
+    // That is the lesson as the database holds it, and the refusal of this write does not change what somebody else did.
+    if (lessons[at] !== wrote) continue;
     const next = lessons.slice();
     next[at] = row;
     queryClient.setQueryData(key, next);
@@ -209,4 +220,75 @@ export function answered(
   // (this writer's own socket too) before it commits it: that read may have seen the week as it was, and lands after what has
   // just been put in. It is begun again, after the commit.
   return (context as Context | undefined)?.reading || yearIsBeingRead(queryClient) ? "read" : "keep";
+}
+
+// ---------------------------------------------------------------------------
+// A collaborator's change (lib/use-timetable-realtime.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * The columns of a lesson the year's list reads, with its extra groups and its pupils. The same string as
+ * `useMasterLessons` in lib/queries.ts reads, which cannot import this module (it would then be part of every route
+ * that shares that one, which is what loading this module late is for): a contract test holds the two equal.
+ */
+export const MASTER_LESSON_SELECT =
+  "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)";
+
+type LessonRow = Omit<MasterLesson, "extraGroupIds" | "studentIds"> & {
+  extraGroups: Array<{ studentGroupId: string }>;
+  participants: Array<{ studentId: string }>;
+};
+
+/** A row as the list holds it: the groups and the pupils as ids, as `useMasterLessons` lays them. */
+export function lessonOfRow({ extraGroups, participants, ...lesson }: LessonRow): MasterLesson {
+  return {
+    ...lesson,
+    extraGroupIds: extraGroups.map((entry) => entry.studentGroupId),
+    studentIds: participants.map((entry) => entry.studentId),
+  };
+}
+
+/** A lesson as it now is, in its year's list: in the place it had, or at the end of it. */
+export function putLesson(queryClient: QueryClient, lesson: MasterLesson): void {
+  for (const [key, lessons] of yearLists(queryClient)) {
+    if (key[1] !== lesson.academicYearId) continue;
+    const at = lessons.findIndex((held) => held.id === lesson.id);
+    if (at === -1) {
+      queryClient.setQueryData(key, [...lessons, lesson]);
+      continue;
+    }
+    const next = lessons.slice();
+    next[at] = lesson;
+    queryClient.setQueryData(key, next);
+  }
+}
+
+/**
+ * Somebody else changed these lessons: read just them, and lay what is there in the lists, and take out what is not (a lesson
+ * somebody removed). The rows are read under this reader's own row-level security, as the year is, so the event gave nothing away.
+ *
+ * Says whether it did. False means the lists are to be read as before: no list is held to patch, the read failed, or a read of
+ * the year is on its way (it began before this change and would land on top of it). Nothing is patched in those cases.
+ */
+export async function readHeard(
+  queryClient: QueryClient,
+  ids: readonly string[],
+  current: (id: string) => boolean = () => true,
+): Promise<boolean> {
+  if (yearLists(queryClient).length === 0) return false;
+  const { data, error } = await createClient().from("MasterLessons").select(MASTER_LESSON_SELECT).in("id", [...ids]);
+  if (error || !Array.isArray(data)) return false;
+  // A read of the year that began before this change would land on top of it, with the lessons as they stood when it
+  // began, and nothing would mend them. The year is read again instead: the caller's invalidation stops the read on its
+  // way and starts another.
+  if (yearIsBeingRead(queryClient)) return false;
+  const found = new Set<string>();
+  for (const row of data as unknown as LessonRow[]) {
+    found.add(row.id);
+    // `current`: whether no later event has named the lesson since this read was asked for. A read that is answered after
+    // the later one would put the lesson as it stood before.
+    if (current(row.id)) putLesson(queryClient, lessonOfRow(row));
+  }
+  for (const id of ids) if (!found.has(id) && current(id)) removeLesson(queryClient, id);
+  return true;
 }

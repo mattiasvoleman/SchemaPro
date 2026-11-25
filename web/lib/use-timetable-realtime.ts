@@ -34,6 +34,18 @@ const socketSchool = (): { school?: string } => {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
+/**
+ * Up to this many lessons are read one by one; a change of more is the year read again. The ids go in the address of one read,
+ * and the gateway names at most 200: a list that long is not cheaper than the year, and 50 ids are 2 KB of address.
+ */
+const READ_ONE_BY_ONE_MAX = 50;
+
+/** The lesson ids of an event that names a few lessons, or null: no ids, too many, or something else (an older gateway sends none). */
+function fewLessons(ids: unknown): string[] | null {
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > READ_ONE_BY_ONE_MAX) return null;
+  return ids.every((id) => typeof id === "string") ? (ids as string[]) : null;
+}
+
 export function useTimetableRealtime(): {
   peers: TimetablePeer[];
   setEditing: (editingLessonId: string | null) => void;
@@ -46,6 +58,9 @@ export function useTimetableRealtime(): {
     if (!API_BASE_URL) return undefined;
     let cancelled = false;
     let socket: Socket | null = null;
+    // The event that last named each lesson: a read asked for by an earlier one must not lay a lesson over the later one's.
+    let heardCount = 0;
+    const lastNamedBy = new Map<string, number>();
 
     void (async () => {
       const supabase = createClient();
@@ -67,16 +82,41 @@ export function useTimetableRealtime(): {
       socket.on("timetable_presence", (payload: { peers?: TimetablePeer[] }) => {
         setPeers(payload.peers ?? []);
       });
-      socket.on("master_timetable_updated", () => {
-        void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });
-        // A regeneration replaces the year's sittings in the same transaction
-        // as its lessons, and this broadcast is how the grid learns the run has
-        // landed. Refreshing the lessons and not the meal is exactly the screen
-        // that was reported: new lessons at once, the rasts (client-derived)
-        // at once, and last run's lunch — or none — until a reload.
-        void queryClient.invalidateQueries({ queryKey: ["lunch-sittings"] });
-        void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
-        void queryClient.invalidateQueries({ queryKey: ["scheduleVersions"] });
+      socket.on("master_timetable_updated", (payload?: { lessonIds?: unknown }) => {
+        const readTheYear = () => {
+          void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });
+          // A regeneration replaces the year's sittings in the same transaction
+          // as its lessons, and this broadcast is how the grid learns the run has
+          // landed. Refreshing the lessons and not the meal is exactly the screen
+          // that was reported: new lessons at once, the rasts (client-derived)
+          // at once, and last run's lunch — or none — until a reload.
+          void queryClient.invalidateQueries({ queryKey: ["lunch-sittings"] });
+          void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
+          void queryClient.invalidateQueries({ queryKey: ["scheduleVersions"] });
+        };
+        const ids = fewLessons(payload?.lessonIds);
+        if (!ids) return readTheYear();
+        // A change of a few lessons: read just those and lay them in the list, as the person's own write is laid
+        // (lib/master-lesson-cache.ts). A change the gateway did not name, or a read that does not come, is the year as before.
+        const heard = (heardCount += 1);
+        for (const id of ids) lastNamedBy.set(id, heard);
+        const stillCurrent = (id: string) => lastNamedBy.get(id) === heard;
+        const forget = () => {
+          for (const id of ids) if (lastNamedBy.get(id) === heard) lastNamedBy.delete(id);
+        };
+        void import("@/lib/master-lesson-cache")
+          .then((cache) => cache.readHeard(queryClient, ids, stillCurrent))
+          .then(
+            (done) => {
+              // What else is kept under the lessons' key beside the year's list (the candidates' map of who owns each lesson,
+              // ["masterLessons", <year>, "origin"]) was read before this change, and the year's read used to bring it along.
+              if (done) void queryClient.invalidateQueries({ queryKey: ["masterLessons"], predicate: (query) => query.queryKey.length > 2 });
+              if (done) void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
+              else readTheYear();
+            },
+            readTheYear,
+          )
+          .finally(forget);
       });
       // Announce presence (no lesson open yet).
       socket.emit("timetable:presence", { editingLessonId: null });
