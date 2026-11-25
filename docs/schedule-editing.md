@@ -44,6 +44,32 @@ a Sunday (`SCHOOL_DAY`, the förläggning's own first question, in its words).
   over real Postgres, with the cases in `src/calendar/__fixtures__/lesson-judge-cases.json` that the web's mirror is held to) and
   `src/calendar/lesson-judge.property.spec.ts` (the other schools' holds and the board's rules over random facts).
 
+## Possible times (Möjliga tider, E3)
+
+`POST /api/v1/master-lessons/possible-times` answers "where can this lesson stand, and which time is best?" without writing anything. It
+is the scheduler's door, as the judge is, and it names one subject: `lessonId` (a lesson that exists; a lesson on the tray is a brick) or
+`brick` (a lesson that does not exist yet: group, subject, minutes, and what is known of teacher, room, extra groups, pupils and weeks).
+Optional: `days` (Monday to Friday), `from` and `to` (the board's visible day, 07:00–18:00), `stepMinutes` (5) and `limit` (12, at most 40).
+
+- **Every start of the week gets one answer.** `STANDS` (where the lesson stands now), `CLOSED` (a rule shuts the stretch whatever else
+  is there: `FRAME`, `LUNCH`, `GRADE_RULE`, `OTHER_SCHOOL` with the schools' names, or `AVAILABILITY` with the resource it closes),
+  `FREE` and `CHANGE` (the judge lets it through, `CHANGE` when the room had to be another), `IN_THE_WAY` (exactly one lesson that is free
+  to move holds the stretch, named by class, subject, day and clock in `blockers`) and `CROWDED` (several, or a locked one, hold it; the run
+  says how many). Starts are returned as runs of one answer per day.
+- **The order is the written cost.** Each time the judge accepts is costed with the swap search's own soft measure (the pupils' and the
+  teachers' idle minutes, the subject's distribution, the teacher's day), plus the school's wishes (`PREFERRED_FREE` breaks, `PREFERRED_BUSY`
+  meets) and a small price for another room. `options` are the best `limit`, best first, with `rank`, the figures before and after, the
+  wishes and the room each lesson of the unit would stand in. A tie goes to the earlier time.
+- **The judge has the last word.** The query prunes in memory (the swap search's snapshot, one read of the year) and asks `judgeLessons`
+  about what survives, in the order of the cost, for 1.2 s at most; a time it had no time for is not painted (`stats.truncated`). A time is
+  never called free that the judge refuses, and the prune never loses one the judge lets through.
+- **A brick** stands nowhere: it is in its pupils' cohorts, its teacher's week and its post's distribution, but counts for nothing until a
+  time lays it, so the figures before are the school without it. A parallel block's brick is placed on its own.
+- **Never an undantag.** A time that needs one (E1b) is not offered; the query holds every rule.
+- **Held in place by** `src/calendar/possible-times.spec.ts` (the prune against a brute force, the order against a count by hand),
+  `possible-times.service.spec.ts` and `scripts/test/probe-mojliga-tider.ts` (every start of the week of every lesson of the judge's fall
+  file, over real Postgres: the judge and the query must agree).
+
 ## Tier 3
 
 - **Minimal-disruption re-optimization** — the gateway sends the current unlocked placements as `previousLessons`; the solver is rewarded (weight `disruption`) for keeping lessons on those slots and warm-started with them as hints. Mid-term re-runs now change as little as possible.
