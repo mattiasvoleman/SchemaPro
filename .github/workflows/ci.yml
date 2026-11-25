@@ -431,6 +431,18 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-domaren.ts
 
+      # Möjliga tider (E3): the query that says where a lesson can stand, held against the judge. Every lesson of the judge's
+      # fall file (src/calendar/__fixtures__/lesson-judge-cases.json), every fifteenth minute of the week, over real Postgres as the
+      # API role: a start the judge lets through is free, a start the query calls free the judge lets through, a closed stretch is
+      # refused by the very rule it names, a lesson said to be in the way is the one the judge names, and the best option is the best
+      # by the swap search's own measure. Then a högstadium with parallel blocks and teaching groups, a unit moved as one and asked
+      # of POST /judge. It drops its schools.
+      - name: Möjliga tider probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-mojliga-tider.ts
+
       # Anslutningarna (incident 2026-11-23): what a long fetch of a school's week does to the rest of the API. The real
       # school's first Generera answered every other request 500 "Unable to start a transaction in the given time" for 26 s
       # and failed ten background jobs' ticks, because Kontrollera veckan's and Generera's first step reads the week in one
