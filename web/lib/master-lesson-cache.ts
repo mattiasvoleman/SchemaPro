@@ -37,7 +37,13 @@ const FIELDS = [
 export type LessonPatch = Partial<Pick<MasterLesson, (typeof FIELDS)[number]>>;
 
 /** A lesson as a list held it, kept so that a refused write can put it back. */
-export type Remembered = Array<{ key: QueryKey; id: string; row: MasterLesson | undefined }>;
+export type Remembered = Array<{
+  key: QueryKey;
+  id: string;
+  row: MasterLesson | undefined;
+  /** The row the write laid in its place, when it laid one: the lesson is put back only while this is still what the list holds. */
+  wrote?: MasterLesson;
+}>;
 
 function yearLists(queryClient: QueryClient): Array<[QueryKey, MasterLesson[]]> {
   return queryClient
@@ -96,10 +102,11 @@ export function patchLesson(queryClient: QueryClient, id: string, fields: Lesson
     const at = lessons.findIndex((lesson) => lesson.id === id);
     if (at === -1) continue;
     const row = lessons[at]!;
-    remembered.push({ key, id, row });
     const next = lessons.slice();
     next[at] = patched(row, fields);
     queryClient.setQueryData(key, next);
+    // What the list holds now, which the query client may have shared structurally and so is not always the object handed in.
+    remembered.push({ key, id, row, wrote: queryClient.getQueryData<MasterLesson[]>(key)?.[at] });
   }
   return remembered;
 }
@@ -134,7 +141,7 @@ export function removeLesson(queryClient: QueryClient, id: string): Remembered {
  * was would take that with it.
  */
 export function putBack(queryClient: QueryClient, remembered: Remembered | undefined): void {
-  for (const { key, id, row } of remembered ?? []) {
+  for (const { key, id, row, wrote } of remembered ?? []) {
     const lessons = queryClient.getQueryData<MasterLesson[]>(key);
     if (!lessons || !row) continue;
     const at = lessons.findIndex((lesson) => lesson.id === id);
@@ -142,6 +149,9 @@ export function putBack(queryClient: QueryClient, remembered: Remembered | undef
       queryClient.setQueryData(key, [...lessons, row]);
       continue;
     }
+    // The lesson stands there, and is not what the write laid: a colleague's change was read since (readHeard), or the year was.
+    // That is the lesson as the database holds it, and the refusal of this write does not change what somebody else did.
+    if (lessons[at] !== wrote) continue;
     const next = lessons.slice();
     next[at] = row;
     queryClient.setQueryData(key, next);
