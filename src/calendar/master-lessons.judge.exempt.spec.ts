@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
@@ -223,5 +223,44 @@ describe('MasterLessonsService: ett undantag med flit', () => {
     dayLessons = [{ ...lessonRecord({ id: OTHER, teacherId: TEACHER, roomId: null, studentGroupId: '00000000-aaaa-4aaa-8aaa-000000000003', startTime: t('14:30'), endTime: t('15:30') }), subject: { name: 'Kemi' }, studentGroup: { name: '8B' } }];
     const clashing = await service.judgeMoves({ moves: [{ lessonId: LESSON, startTime: '14:30', endTime: '15:30' }] }, testUser());
     expect(clashing.moves[0]!.exemptable).toBe(false);
+  });
+
+  // g467 (granskningen): påståenden i PR:en som inget prov höll fast. Varje rad faller mot en mutant av koden (se rapporten).
+
+  it('refuses a request that grants an exemption and takes the lock off in the same breath, on a create as on a PATCH', async () => {
+    tx['masterLesson']!['create']!.mockImplementation(async (args: { data: Row }) => lessonRecord({ ...args.data, id: LESSON, extraGroups: [], participants: [] }));
+    await expect(
+      service.create({ academicYearId: YEAR, subjectId: SUBJECT, studentGroupId: G7A, dayOfWeek: 1, startTime: '14:30', endTime: '15:30', exempt: ['FRAME'], isLocked: false }, testUser()),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx['masterLesson']!['create']).not.toHaveBeenCalled();
+    await expect(service.update(LESSON, { startTime: '14:30', endTime: '15:30', exempt: ['FRAME'], isLocked: false }, testUser())).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx['masterLesson']!['update']).not.toHaveBeenCalled();
+    // Naming a rule the time does not break, with the lock off, is no contradiction: nothing is granted.
+    await service.update(LESSON, { startTime: '09:00', endTime: '10:00', exempt: ['FRAME'], isLocked: false }, testUser());
+    expect(writtenData()).toMatchObject({ exemptFrom: [], isLocked: false });
+  });
+
+  it('gives no exemption to a lesson Generera wrote from a förläggning', async () => {
+    stored = { ...stored, fromPlacement: true };
+    await expect(service.update(LESSON, { exempt: ['FRAME'] }, testUser())).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx['masterLesson']!['update']).not.toHaveBeenCalled();
+  });
+
+  it('answers the lunch and a rule on årskurser together, and an exemption for the lunch leaves the årskurs rule asked (LUNCH is not hidden by, and does not hide, GRADE_RULE)', async () => {
+    // 12:00-13:00 is inside the ramtid, over the class's meal 12:00-12:30 and inside a closed hour for year 7.
+    tx['lunchSitting']!['findMany']!.mockResolvedValue([{ studentGroupId: G7A, dayOfWeek: 1, startTime: t('12:00'), endTime: t('12:30'), startDate: null, endDate: null }]);
+    tx['availabilityConstraint']!['findMany']!.mockImplementation(async (query: { where: Row }) =>
+      query.where['resourceType'] === 'GRADE_LEVEL'
+        ? [{ resourceType: 'GRADE_LEVEL', userId: null, roomId: null, studentGroupId: null, minGradeLevel: 7, maxGradeLevel: 7, dayOfWeek: 1, date: null, startTime: t('12:00'), endTime: t('13:00') }]
+        : [],
+    );
+    const asked = await service.judgeMoves({ moves: [{ lessonId: LESSON, startTime: '12:00', endTime: '13:00' }] }, testUser());
+    expect(asked.moves[0]!.refusals.map((refusal) => refusal.reason)).toEqual(['LUNCH', 'GRADE_RULE']);
+    expect(asked.moves[0]!.exemptable).toBe(false);
+    const lunchExempt = await service.judgeMoves({ moves: [{ lessonId: LESSON, startTime: '12:00', endTime: '13:00', exempt: ['LUNCH'] }] }, testUser());
+    expect(lunchExempt.moves[0]).toMatchObject({ ok: false, exempted: ['LUNCH'] });
+    expect(lunchExempt.moves[0]!.refusals.map((refusal) => refusal.reason)).toEqual(['GRADE_RULE']);
+    const body = await refusal(service.update(LESSON, { startTime: '12:00', endTime: '13:00', exempt: ['LUNCH'] }, testUser()));
+    expect(body.params).toMatchObject({ reason: 'GRADE_RULE', reasons: 'GRADE_RULE' });
   });
 });
