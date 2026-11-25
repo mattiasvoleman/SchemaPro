@@ -261,9 +261,11 @@ export function LessonEditDialog({
             id="edit-judgement"
             role="status"
             aria-live="polite"
-            // Nothing to say is no row of the grid, but the region stays in the tree: a live region that is not there when its
-            // words arrive is not announced. `sr-only` takes it out of the layout and leaves it to the screen reader.
-            className={cn("col-span-2 text-sm", judged.status === "idle" && "sr-only")}
+            // The region is there from the first render and keeps its row (one line, `min-h-5`) whether it is empty, checking or has found
+            // nothing, so that the dialog does not change its height under the reader's hands as the answer comes (granskaren g462, L-5);
+            // only a refusal, which has something to list, makes it taller. A live region that is not in the tree when its words arrive is
+            // not announced either, so it is never taken out.
+            className="col-span-2 min-h-5 text-sm"
           >
             {judged.status === "checking" ? (
               <p className="text-xs text-muted-foreground" aria-hidden="true">

@@ -187,6 +187,27 @@ describe("Justera lektion asks the judge while its fields are filled in", () => 
     expect(screen.getByRole("status").textContent).toBe("Kontrollen svarade inte. Spara prövar ändå.");
   });
 
+  it("keeps its row from the first render, empty, while it checks and when it finds nothing, so that the dialog does not change its height as the answer comes (granskaren g462, L-5)", async () => {
+    let answerNow: (value: LessonJudgement) => void = () => {};
+    post.mockReturnValue(new Promise<LessonJudgement>((resolve) => (answerNow = resolve)));
+    draw({ ...standing, startTime: "13:10", endTime: "14:10" });
+    // Nothing is asked of a lesson as it stands: the region is there, and takes its row, apart from the screen reader's.
+    const reserved = (status: HTMLElement) => status.className.includes("min-h-") && !status.className.includes("sr-only");
+    expect(reserved(screen.getByRole("status"))).toBe(true);
+    await settle();
+    // Checking: the same row holds the line that says so.
+    expect(reserved(screen.getByRole("status"))).toBe(true);
+    await act(async () => answerNow(answer([])));
+    expect(reserved(screen.getByRole("status"))).toBe(true);
+  });
+
+  it("keeps its row for a lesson left as it stands too", async () => {
+    draw(standing);
+    await settle();
+    expect(screen.getByRole("status").className).toContain("min-h-");
+    expect(screen.getByRole("status").className).not.toContain("sr-only");
+  });
+
   it("asks nothing while it is closed", async () => {
     draw({ ...standing, dayOfWeek: "2" }, false);
     await settle();
