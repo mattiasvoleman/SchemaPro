@@ -160,7 +160,9 @@ export function BoardKeys(props: BoardKeysProps) {
       const { t: translate } = live.current;
       setSaid(translate(key, values));
     };
-    const nameOf = (lesson: BoardLesson) => [lesson.title, lesson.subtitle].filter(Boolean).join(" ");
+    // "Matematik 7A": the subject and the class, which is what a person calls a lesson. The card's own text goes on to the teacher and
+    // "Förlagd" ("7A · B. Ek · Förlagd"), and a line that is read aloud after every key does not need them.
+    const nameOf = (lesson: BoardLesson) => [lesson.title, lesson.subtitle?.split(" · ")[0]].filter(Boolean).join(" ");
     const squareOf = (square: Marker) => ({
       day: live.current.tDays(String(square.dayOfWeek)),
       from: clock(square.startMinutes),
