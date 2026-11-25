@@ -381,6 +381,17 @@ describe("a collaborator's change of a few lessons", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["masterLessons"] });
   });
 
+  it("reads the lessons one by one at the cap, and the year only past it", async () => {
+    const { socket, reads, queryClient } = await setup({ read: (ids) => ({ data: ids.map((id) => row(id)), error: null }) });
+    queryClient.setQueryData(YEAR, [lesson("a")]);
+    const atTheCap = Array.from({ length: 50 }, (_, index) => `l${index}`);
+
+    await heard(socket, { lessonIds: atTheCap });
+    await waitFor(() => expect(reads).toHaveLength(1));
+
+    expect(reads[0]).toEqual(atTheCap);
+  });
+
   it("reads the year when it names more lessons than are read one by one, or something that is not ids", async () => {
     const { socket, invalidate, reads, queryClient } = await setup();
     queryClient.setQueryData(YEAR, [lesson("a")]);
