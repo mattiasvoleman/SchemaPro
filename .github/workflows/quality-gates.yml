@@ -6,11 +6,12 @@ name: Quality Gates
 # nightly and on demand rather than on every pull request.
 #
 # The mutation, Lighthouse, solver, solver-corpus and API latency jobs are hard
-# gates: each exits non-zero when its threshold is missed (solver-corpus, when
-# this tree's deterministic work on the corpus's weeks passes the floor's by
-# what scripts/bench/solve-corpus-gate.mjs says it fails on). The mutation gate measures a
-# slice of the API a night, not all of it, against that slice's own floor (see
-# the mutation job). The visual-baselines job,
+# gates: each exits non-zero when its threshold is missed (solver-corpus: when
+# this tree refuses a week the floor solves, loses weeks the floor solves, or
+# does more deterministic work than the floor's on the weeks both solve, by the
+# margins scripts/bench/solve-corpus-gate.mjs names). The mutation gate
+# measures a slice of the API a night, not all of it, against that slice's own
+# floor (see the mutation job). The visual-baselines job,
 # dispatch-only, regenerates the Linux screenshot baselines for review and gates
 # no code. Printed beside the gates and deciding nothing: api-latency's §2
 # milliseconds on every row, its reads' and floor's share of health and its
