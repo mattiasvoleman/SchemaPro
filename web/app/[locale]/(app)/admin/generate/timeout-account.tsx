@@ -36,7 +36,9 @@ const STAGE_CLASS: Record<TimeoutReport["stages"][number]["stage"], string> = {
 export function TimeoutAccount({ report, conflicts }: TimeoutAccountProps) {
   const t = useTranslations("generate.timeoutAccount");
   const account = timeoutAccountOf(report, conflicts);
-  const spent = report.stages.reduce((sum, stage) => sum + stage.seconds, 0);
+  // Steps the gateway has no name for (an engine newer than it): their seconds are said, and no search is said not to have begun for them.
+  const other = report.otherSeconds ?? 0;
+  const spent = report.stages.reduce((sum, stage) => sum + stage.seconds, other);
   // Counted from the steps the list below shows (the walk's search among them), never from `search.phases`, which has no phase for it.
   const searched = searchesOf(report);
   const threshold = weekLoadThresholdOf(conflicts);
@@ -60,6 +62,7 @@ export function TimeoutAccount({ report, conflicts }: TimeoutAccountProps) {
                 style={{ width: `${spent > 0 ? (stage.seconds / spent) * 100 : 0}%` }}
               />
             ))}
+          {other > 0 ? <div className="bg-muted-foreground/20" style={{ width: `${(other / spent) * 100}%` }} /> : null}
         </div>
         <ul className="space-y-0.5 text-sm">
           {report.stages.map((stage) => (
@@ -68,15 +71,25 @@ export function TimeoutAccount({ report, conflicts }: TimeoutAccountProps) {
               <span>{t("stage", { stage: stage.stage, seconds: stage.seconds })}</span>
             </li>
           ))}
+          {other > 0 ? (
+            <li className="flex max-w-prose items-baseline gap-2">
+              <span aria-hidden="true" className="mt-1 inline-block size-2 shrink-0 rounded-sm bg-muted-foreground/20" />
+              <span>{t("otherSteps", { seconds: other })}</span>
+            </li>
+          ) : null}
         </ul>
         <p className="max-w-prose text-sm text-muted-foreground">{t("total", { seconds: report.totalSeconds })}</p>
       </div>
 
       <div className="space-y-1">
         <h4 className="text-sm font-medium">{t("searchTitle")}</h4>
-        <p className="max-w-prose text-sm">
-          {searched.count > 0 ? t("searchNone", { count: searched.count, seconds: searched.seconds }) : t("searchNotRun")}
-        </p>
+        {/* "No search began" is not said of a run whose steps the page cannot all name: one of them may have been the search. */}
+        {searched.count > 0 || other === 0 ? (
+          <p className="max-w-prose text-sm">
+            {searched.count > 0 ? t("searchNone", { count: searched.count, seconds: searched.seconds }) : t("searchNotRun")}
+          </p>
+        ) : null}
+        {other > 0 ? <p className="max-w-prose text-sm">{t("searchOther", { seconds: other })}</p> : null}
         <p className="max-w-prose text-sm text-muted-foreground">
           {report.budgetSeconds < report.configuredBudgetSeconds
             ? t("budgetShort", { budget: report.budgetSeconds, configured: report.configuredBudgetSeconds })
