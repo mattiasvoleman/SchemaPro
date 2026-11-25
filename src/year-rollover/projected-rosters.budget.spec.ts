@@ -121,7 +121,7 @@ function writingNested(world: RolloverWorld): PrismaService {
 }
 
 describe('the active year’s statement budget', () => {
-  it('a master lesson dragged to another day, with its teacher changed: 35 statements (32 before Veckor utan skoldag’s three reads of the year’s lov, 31 before Behörighet som i ett annat ämne, 30 before Schemaförslag’s edit lock, 29 before Halvklasser’s groups read, 28 before the block’s read, 27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
+  it('a master lesson dragged to another day, with its teacher changed: 45 statements (35 before En domare med ord’s board and holds reads, 32 before Veckor utan skoldag’s three reads of the year’s lov, 31 before Behörighet som i ett annat ämne, 30 before Schemaförslag’s edit lock, 29 before Halvklasser’s groups read, 28 before the block’s read, 27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
     const { world, prisma } = school();
     const service = new MasterLessonsService(
       prisma,
@@ -164,6 +164,23 @@ describe('the active year’s statement budget', () => {
       'user.findMany',
       'studentGroupMember.findMany',
       'availabilityConstraint.findMany',
+      // En domare med ord (lesson-judge.ts): a drag is held to the board's and the other schools' rules a swap and a
+      // förläggning are held to. The year's numbering of its stages (a PATCH reads no year row besides), then the
+      // board's facts (swaps/board-rules.ts readBoardFacts): the candidate's group, the ramtider, the class's meals,
+      // the rules on whole årskurser and the pupils whose years say which stage a group is, then the other schools'
+      // holds: the siblings and the loans. Asked only of an edit that moves where the lesson stands (its day, its
+      // clock, its weeks, its classes), and for the holds also one that changes its teacher or room: a lock, a note
+      // or a lesson edited on the tray asks none of them.
+      'academicYear.findUnique',
+      'studentGroup.findMany',
+      'frameTime.findMany',
+      'lunchSitting.findMany',
+      'availabilityConstraint.findMany',
+      'user.findMany',
+      'studentGroupMember.findMany',
+      'user.findMany',
+      '$queryRaw.$queryRaw',
+      'roomLoan.findMany',
       'staffingPolicy.findUnique',
       'teacherSubjectQualification.findMany',
       // Behörighet som i ett annat ämne: the subjects' pointers, read beside the
@@ -195,7 +212,7 @@ describe('the active year’s statement budget', () => {
     ]);
   });
 
-  it('the same drag where the new teacher has a cap and a day limit: 38 statements, three where a rule is (35 before Veckor utan skoldag’s three reads of the year’s lov, 34 before Behörighet som i ett annat ämne, 33 before Schemaförslag’s edit lock)', async () => {
+  it('the same drag where the new teacher has a cap and a day limit: 48 statements, three where a rule is (38 before En domare med ord, 35 before Veckor utan skoldag’s three reads of the year’s lov, 34 before Behörighet som i ett annat ämne, 33 before Schemaförslag’s edit lock)', async () => {
     // What a school that sets Lärarens dag pays on a drag: the teachers' caps,
     // their posts' day limits for the lesson's year, and their week — after
     // the ämnesfördelning's read, before the change log. Anna's week holds
@@ -233,7 +250,7 @@ describe('the active year’s statement budget', () => {
     );
     expect(updated.warnings).toEqual([]);
     const statements = statementsOf(world.calls);
-    expect(statements).toHaveLength(38);
+    expect(statements).toHaveLength(48);
     expect(statements.slice(-5)).toEqual([
       '$queryRaw.$queryRaw',
       'teacherWorkRule.findMany',
@@ -243,7 +260,7 @@ describe('the active year’s statement budget', () => {
     ]);
   });
 
-  it('a master lesson created with a teacher, in a school without a rule: 15 statements, one of them the teacher’s cap (14 before Schemaförslag’s edit lock)', async () => {
+  it('a master lesson created with a teacher, in a school without a rule: 24 statements, one of them the teacher’s cap (15 before En domare med ord’s board and holds reads, 14 before Schemaförslag’s edit lock)', async () => {
     const ROOM = '00000000-0000-4000-8000-0000000000e1';
     // THE ONE STATEMENT A CREATE PAYS FOR LÄRARENS DAG WHERE NO RULE IS SET,
     // pinned because it cannot be carried. A PATCH and a card move count the
@@ -294,6 +311,17 @@ describe('the active year’s statement budget', () => {
       'masterLesson.findMany › extraGroups',
       'masterLesson.findMany › participants',
       'availabilityConstraint.findMany',
+      // En domare med ord: the board's facts and the other schools' holds, as on a drag, but the year's numbering
+      // rides on the statement that reads the year (a create names no lesson to read it with).
+      'studentGroup.findMany',
+      'frameTime.findMany',
+      'lunchSitting.findMany',
+      'availabilityConstraint.findMany',
+      'user.findMany',
+      'studentGroupMember.findMany',
+      'user.findMany',
+      '$queryRaw.$queryRaw',
+      'roomLoan.findMany',
       'masterLesson.create',
       'masterLesson.create › row',
       'masterLesson.create › extraGroups',

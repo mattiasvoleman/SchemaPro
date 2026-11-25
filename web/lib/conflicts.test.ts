@@ -3,6 +3,7 @@ import type { AvailabilityConstraint, MasterLesson, TeachingRequirement } from "
 import {
   buildGroupConflictMap,
   buildPupilBufferMap,
+  closingConstraints,
   conflictKinds,
   detectConflicts,
   pupilBufferOf,
@@ -442,6 +443,25 @@ describe("validatePlacement shared rooms (Delade salar)", () => {
     // A third lesson at 08:30-09:30 puts sixty in the hall at 08:30-09:00.
     const third = makeLesson({ id: "third", roomId: "hall", studentGroupId: "7C", startTime: "08:30", endTime: "09:30" });
     expect([...paint([long, first, third], relation).keys()].sort()).toEqual(["first", "long", "third"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// closingConstraints — the rows behind the AVAILABILITY hits
+// ---------------------------------------------------------------------------
+
+describe("closingConstraints", () => {
+  it("is the rows validatePlacement makes an AVAILABILITY hit of, in the order they are given", () => {
+    const candidate = makePlacement({ teacherId: "t1", roomId: "r1", studentGroupId: "gA" });
+    const rows = [
+      makeConstraint({ id: "elsewhere", userId: "t9" }),
+      makeConstraint({ id: "room", resourceType: "ROOM", userId: null, roomId: "r1" }),
+      makeConstraint({ id: "later", userId: "t1", startTime: "11:00", endTime: "12:00" }),
+      makeConstraint({ id: "teacher", userId: "t1" }),
+      makeConstraint({ id: "oneOff", userId: "t1", date: "2027-01-12" }),
+    ];
+    expect(closingConstraints(candidate, rows).map((row) => row.id)).toEqual(["room", "teacher"]);
+    expect(validatePlacement(candidate, [], rows)).toHaveLength(2);
   });
 });
 

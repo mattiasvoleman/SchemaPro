@@ -36,3 +36,5 @@ export { openSlotsFor, suggestPlacements } from "@/lib/placement-search";
 // The selection's bar rides along too: the page draws it, empty, once its
 // lessons are read, so it is in hand before the first selection.
 export { SelectionBar } from "@/components/schedule/selection-bar";
+// The krocklista (E1) shares the dialog the others carry, and is drawn only once "Visa vilka" is pressed.
+export { ConflictList } from "@/components/schedule/conflict-list";

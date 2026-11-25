@@ -2677,7 +2677,7 @@ async function runChecks(
         lessons.moveBlockCard({ lessonIds: ids, dayOfWeek: 4, startTime: '09:00', endTime: '10:00' }, admin),
         (error: unknown) => {
           assert.ok(error instanceof ConflictException, summarise(error));
-          assert.match(error.message, /Ty7: The group already has/);
+          assert.match(error.message, /Ty7: Klassen har redan /);
           return true;
         },
       );
@@ -4372,7 +4372,7 @@ async function runChecks(
       lessons.create({ academicYearId: targetYearId, subjectId: rull.subjectId, studentGroupId: g8a, dayOfWeek: 1, startTime: '08:00', endTime: '09:00' }, rullAdmin),
       (error: unknown) => {
         assert.ok(error instanceof ConflictException, summarise(error));
-        assert.match(error.message, /Students of this group already have/);
+        assert.match(error.message, /Elever i klassen har redan /);
         return true;
       },
     );
@@ -5784,7 +5784,11 @@ async function runChecks(
           // whether the two can meet only in the weeks of a lov, which is one SELECT of the year's breaks, and
           // (empty here, as in a school with no lov) nothing more; a school with a lov pays two more, the year's
           // days and its groups' years. 'a drag' lands on an hour nobody else has and asks nothing.
-          'PATCH a new teacher': 38,
+          // +2 since En domare med ord (lesson-judge.ts): a PATCH that changes who teaches a lesson asks the other schools'
+          // holds on the new teacher (the siblings of the huvudman and the loans, one SELECT each; a school with neither
+          // stops there). A PATCH that moves nothing asks none of it, and the board's rules only a PATCH that moves where
+          // the lesson stands.
+          'PATCH a new teacher': 40,
           // +1 each since Ämnesfördelning: a drag to another weekday asks the
           // lesson's timplanspost for its distribution rule (one indexed
           // SELECT), and stops there when the post has none, as here. A
@@ -5807,8 +5811,14 @@ async function runChecks(
           // indexed SELECT on CancellationBatches, empty for a school that
           // has made none. A PATCH that moves no row to another day (the new
           // teacher above, a new hour) asks nothing.
-          'PATCH a drag': 25,
-          'PATCH a drag back beside 8A': 30,
+          // +10 each since En domare med ord: a drag is held to the rules a swap and a förläggning are held to. The year's
+          // numbering of its stages (a PATCH reads no year row besides), the board's facts (the candidate's group, the ramtider,
+          // the class's meals, the rules on whole årskurser, and the pupils whose years say which stage the group is: three
+          // reads), and the other schools' holds (the siblings and the loans). The ramtid, the meal and the rule on årskurser
+          // are rows of the school's, so no school is spared them; the roster reads are the stage's years, which the clash
+          // rule's own reads of the same pupils do not carry.
+          'PATCH a drag': 35,
+          'PATCH a drag back beside 8A': 40,
           // +1 since Klassens måltid per del av läsåret (20270209090000): a
           // class has one meal on a DATE, which the table's exclusion
           // constraint says, so the placing reads the class's meals of the
@@ -5862,8 +5872,10 @@ async function runChecks(
           // +1 on both since Schemaförslag (20261125090000): after the year is
           // read, its share of the regeneration lock
           // (app.lock_years_for_grundschema_edit), as on a PATCH.
-          'POST a lesson with a teacher': 18,
-          'POST a lesson without a teacher': 17,
+          // +9 each since En domare med ord: the board's facts and the other schools' holds, as on a drag, the year's numbering
+          // riding on the year's own read (a create names no lesson to read it with).
+          'POST a lesson with a teacher': 27,
+          'POST a lesson without a teacher': 26,
         },
         JSON.stringify(sent, null, 1),
       );
@@ -5879,12 +5891,14 @@ async function runChecks(
         const first = sent[name].find((statement) => !/^(BEGIN|SELECT set_config)/.test(statement));
         assert.match(String(first), /app\.enter_grundschema_write\(\$1::uuid\)/, `${name} began with ${first}`);
       }
-      // A drag reads no läsår row at all: no scan, no relation load. Nor, in
+      // A drag reads no läsår row for the clash rule's roster basis or for a scan of every läsår: the one it reads is the year's numbering of its
+      // stages, by id, for the board's rules (lesson-judge.ts), and nothing else of the year. Nor, in
       // a school without a cap or a day limit, a work rule or a post: the
       // gate rides on the school's statement.
       for (const name of ['PATCH a drag', 'PATCH a drag back beside 8A']) {
         const years = sent[name].filter((statement) => /^SELECT "public"\."AcademicYears"/.test(statement));
-        assert.deepEqual(years, [], `${name} read AcademicYears`);
+        assert.equal(years.length, 1, `${name} read AcademicYears ${years.length} times`);
+        assert.match(years[0]!, /"gradeNumbering"/, `${name} read more of the year than its numbering`);
         const rules = sent[name].filter((statement) => /^SELECT "public"\."(TeacherWorkRules|TeacherEmployments)"/.test(statement));
         assert.deepEqual(rules, [], `${name} read a work rule or a post`);
       }

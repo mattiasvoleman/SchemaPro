@@ -32,7 +32,7 @@ import {
  *   ?                    the list of keys
  *
  * What the page already did with Enter (open the lesson) and Shift+Enter (select it) is left to the grid.
- * Every key that does something is said in the line below the week, a live region, since a screen reader says nothing of
+ * Every key that does something is said in the line below the week, a live region (data-board-status), since a screen reader says nothing of
  * a marker or a lock that is only drawn.
  */
 
@@ -74,6 +74,8 @@ const clock = (minutes: number) =>
   `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
 const ARROWS: ReadonlySet<string> = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+/** The keys that do something other than move (lower-cased): what a held key must not do again and again. */
+const OWNED_BY_THE_BOARD: ReadonlySet<string> = new Set([" ", "m", "l", "p", "delete", "backspace", "enter", "escape"]);
 
 const DAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
 
@@ -197,6 +199,23 @@ export function BoardKeys(props: BoardKeysProps) {
       p.onLessonChange?.(lesson.id, square);
     };
 
+    /**
+     * A lesson that is parked or removed leaves the week, and the focus it has leaves the page with it (to <body>, where the next
+     * key goes to nothing and Tab starts from the top of the page). So the focus is handed on first: to the next lesson of its day,
+     * else the one before, else the nearest of another day. Where the write is refused the lesson stays and keeps its focus.
+     */
+    const focusPassesOn = (id: string) => {
+      const { props: p } = live.current;
+      const others = p.lessons.filter((candidate) => !candidate.duty);
+      const heir =
+        focusAfter(others, id, "ArrowDown") ?? focusAfter(others, id, "ArrowUp") ?? focusAfter(others, id, "ArrowRight") ?? focusAfter(others, id, "ArrowLeft");
+      if (!heir) return;
+      const target = others.find((candidate) => candidate.id === heir);
+      if (p.shownDay !== null && target && target.dayOfWeek !== p.shownDay) p.showDay(target.dayOfWeek);
+      p.setRoving(heir);
+      p.followFocus(heir);
+    };
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.ctrlKey || event.metaKey) return;
       const card = cardOf(event);
@@ -210,6 +229,13 @@ export function BoardKeys(props: BoardKeysProps) {
         event.preventDefault();
         event.stopPropagation();
       };
+
+      // A key held down repeats, and only an arrow (or Home and End) is meant to: a held Space would put down what it took up
+      // and take it up again, a held L would lock and unlock, and Alt+Down would write a length thirty times a second.
+      if (event.repeat && (event.altKey || !(ARROWS.has(key) || key === "Home" || key === "End"))) {
+        if (OWNED_BY_THE_BOARD.has(key.toLowerCase()) || (event.altKey && ARROWS.has(key))) consume();
+        return;
+      }
 
       if (key === "?") {
         consume();
@@ -270,7 +296,7 @@ export function BoardKeys(props: BoardKeysProps) {
         held.current = { id, at: { dayOfWeek: lesson.dayOfWeek, startMinutes: lesson.startMinutes, endMinutes: lesson.endMinutes } };
         p.ghost.set({ ...held.current.at, valid: true });
         p.setPicked(id);
-        say("pickedUp", { lesson: nameOf(lesson) });
+        say("pickedUp", { lesson: nameOf(lesson), ...squareOf(held.current.at) });
         return;
       }
 
@@ -301,10 +327,12 @@ export function BoardKeys(props: BoardKeysProps) {
         } else if (key === "p" || key === "P") {
           consume();
           say("parked", { lesson: nameOf(lesson) });
+          focusPassesOn(id);
           p.onLessonCommand(id, "park");
         } else if (key === "Delete" || key === "Backspace") {
           consume();
           say("removed", { lesson: nameOf(lesson) });
+          focusPassesOn(id);
           p.onLessonCommand(id, "remove");
         }
       }
@@ -332,8 +360,12 @@ export function BoardKeys(props: BoardKeysProps) {
 
   return (
     <div className="mt-2 space-y-2 text-sm">
-      {/* Present before it says anything, which is what makes a screen reader read what is put in it. */}
-      <p role="status" aria-live="polite" aria-atomic="true" className="min-h-5 text-foreground">
+      {/*
+        Present before it says anything, which is what makes a screen reader read what is put in it. A live region and not
+        role="status": a page has the one of its own notices (the lunch notice is a status, and a test and a reader both look for
+        it), and a board says its keys in a line for each grid it draws.
+      */}
+      <p data-board-status aria-live="polite" aria-atomic="true" className="min-h-5 text-foreground">
         {said}
       </p>
       {help ? (

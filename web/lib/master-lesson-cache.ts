@@ -71,14 +71,18 @@ function patched(row: MasterLesson, fields: LessonPatch): MasterLesson {
   return next;
 }
 
+/** Whether a read of a year's list is on its way. */
+function yearIsBeingRead(queryClient: QueryClient): boolean {
+  return queryClient.isFetching({ queryKey: ["masterLessons"], predicate: (query) => query.queryKey.length === 2 }) > 0;
+}
+
 /**
  * Stops the read of the year that is on its way, so that it cannot land on top of what a write has just put on the card:
  * it began before the write and would show the lesson where it was. Says whether there was one, because then the write
  * must be followed by a read (what that read would have brought is not lost).
  */
 export async function holdReadsOfTheYear(queryClient: QueryClient): Promise<boolean> {
-  const reading =
-    queryClient.isFetching({ queryKey: ["masterLessons"], predicate: (query) => query.queryKey.length === 2 }) > 0;
+  const reading = yearIsBeingRead(queryClient);
   if (reading) {
     await queryClient.cancelQueries({ queryKey: ["masterLessons"], predicate: (query) => query.queryKey.length === 2 });
   }
@@ -169,14 +173,19 @@ export async function began(queryClient: QueryClient, kind: Kind, input: unknown
   return { reading, before: patchLesson(queryClient, id, lessonFieldsOf(body)) };
 }
 
-/** The gateway said no: the lesson is back where it was (and only it). */
+/**
+ * The gateway said no: the lesson is back where it was (and only it), and the year is read, because what is put back is what
+ * this write saw and not what the database holds. A second write of the same lesson that began on top of this one saw this one's
+ * square, and a read this write stopped is brought back by nothing else.
+ */
 export function refused(queryClient: QueryClient, context: unknown): void {
   putBack(queryClient, (context as Context | undefined)?.before);
+  void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });
 }
 
 /**
  * The gateway answered. An update's answer is the lesson as it now stands, and is laid over what was asked for; a create's is
- * the lesson, and is put in its list. Says whether the year needs a read besides: only if one was stopped on its way.
+ * the lesson, and is put in its list. Says whether the year needs a read besides: if one was stopped on its way, or one is on its way that may have seen the week before this write.
  */
 export function answered(
   queryClient: QueryClient,
@@ -185,9 +194,22 @@ export function answered(
   input: unknown,
   context: unknown,
 ): "read" | "keep" {
-  if (kind === "update") patchLesson(queryClient, (input as { id: string }).id, lessonFieldsOf(result as object));
+  // The answer is the lesson as the gateway held it when it was written, and a later write of the same lesson that is still on its
+  // way has put the card where that one asks: laying this answer over it would show the card on the earlier square until the
+  // later one is answered. That answer will lay itself.
+  const id = (input as { id?: string } | undefined)?.id;
+  const laterOnItsWay =
+    kind === "update" &&
+    queryClient
+      .getMutationCache()
+      .findAll({ predicate: (mutation) => mutation.state.status === "pending" && (mutation.state.variables as { id?: string } | undefined)?.id === id })
+      .length > 1;
+  if (kind === "update" && !laterOnItsWay) patchLesson(queryClient, (input as { id: string }).id, lessonFieldsOf(result as object));
   if (kind === "create") addLesson(queryClient, { fromPlacement: false, ...(result as object) } as unknown as MasterLesson);
-  return (context as Context | undefined)?.reading ? "read" : "keep";
+  // A read that is on its way now began after this write was asked for, and the gateway announces a change to the school
+  // (this writer's own socket too) before it commits it: that read may have seen the week as it was, and lands after what has
+  // just been put in. It is begun again, after the commit.
+  return (context as Context | undefined)?.reading || yearIsBeingRead(queryClient) ? "read" : "keep";
 }
 
 // ---------------------------------------------------------------------------
