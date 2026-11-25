@@ -244,6 +244,32 @@ describe('NotificationsService', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it('mirrors to the people who have an address and to nobody else: a person with none (Personer utan e-postadress) gets the notice in the inbox', async () => {
+      process.env.RESEND_API_KEY = 'resend-key';
+      process.env.EMAIL_FROM = 'SchemaPro <noreply@schemapro.test>';
+      tx.user.findMany.mockResolvedValue([
+        { id: 'user-1', email: 'anna@school.se' },
+        { id: 'user-2', email: null },
+      ]);
+
+      await expect(
+        inTransaction((c) =>
+          service.notifyUsers(c, {
+            schoolId: SCHOOL_ID,
+            userIds: ['user-1', 'user-2'],
+            type: 'LEAVE_DECIDED',
+            meta: {},
+            email: { subject: 'Decided', body: 'Your leave was approved.' },
+          }),
+        ),
+      ).resolves.toBe(2);
+
+      await flushDelivery();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+      expect((JSON.parse(init.body) as { bcc: string[] }).bcc).toEqual(['anna@school.se']);
+    });
+
     it('mirrors to email after the commit: resolves active recipients in-tx and BCCs their addresses', async () => {
       const warn = jest.spyOn(loggerOf(delivery), 'warn').mockImplementation(() => undefined);
       process.env.RESEND_API_KEY = 'resend-key';

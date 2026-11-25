@@ -643,7 +643,7 @@ describe('Portal and platform surfaces (e2e)', () => {
       // counts that answer whether the role may leave staff at all.
       const USERS: LockedTable = {
         name: 'Users',
-        columns: ['id', 'schoolId', 'role', 'firstName', 'lastName', 'email', 'isActive', 'studentGroupId', 'deactivatedAt', 'pseudonymisedAt', 'adminProfile', 'hrRead', 'teaches'],
+        columns: ['id', 'schoolId', 'role', 'firstName', 'lastName', 'email', 'isActive', 'studentGroupId', 'deactivatedAt', 'pseudonymisedAt', 'adminProfile', 'hrRead', 'teaches', 'invitedAt'],
         lock: 'FOR NO KEY UPDATE',
       };
       Object.assign(harness.tx, {

@@ -406,6 +406,17 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-demo-reset.ts
 
+      # P3 Personer utan e-postadress: a pupil and a guardian the school has no address for are in the register, the class, the roster of
+      # a lesson (and marked there), and the register extract, through the real services under row security, and have no login by any
+      # road: the invitation is 409, the mass invitation counts them apart, the database refuses an invitedAt on their row, a teacher
+      # needs an address, a file of pupils with none is made once and given the address later, and a removal asks the provider nothing.
+      # It makes a school of its own and drops it.
+      - name: People with no address probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-personer-utan-adress.ts
+
       # Byten och flyttar (round 9, G1): a small högstadium with parallel
       # blocks cut across its classes, laid by the fixture, asked for swaps and
       # chains as a scheduler under row security. Every proposal is checked by

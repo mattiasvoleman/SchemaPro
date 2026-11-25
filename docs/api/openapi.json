@@ -31437,6 +31437,7 @@
           "email": {
             "type": "string",
             "format": "email",
+            "nullable": true,
             "maxLength": 254
           },
           "phone": {
@@ -31469,8 +31470,7 @@
         "required": [
           "role",
           "firstName",
-          "lastName",
-          "email"
+          "lastName"
         ]
       },
       "DecideLeaveRequestDto": {
@@ -32413,6 +32413,7 @@
           "email": {
             "type": "string",
             "format": "email",
+            "nullable": true,
             "maxLength": 254
           },
           "phone": {
@@ -32428,8 +32429,7 @@
         },
         "required": [
           "firstName",
-          "lastName",
-          "email"
+          "lastName"
         ]
       },
       "ImportStudentsDto": {
@@ -36646,6 +36646,11 @@
           "lastName": {
             "type": "string",
             "maxLength": 120
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
           },
           "phone": {
             "type": "string",

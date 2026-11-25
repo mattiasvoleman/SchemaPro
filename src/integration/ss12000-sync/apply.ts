@@ -340,7 +340,7 @@ export async function applyChanges(
           where: { schoolId, id: { in: [...new Set(viaAddress.map((change) => str(change.after?.['userLocalId'])).filter((id): id is string => id !== null))] } },
           select: { id: true, email: true },
         })
-    ).map((user) => [user.id, user.email.trim().toLowerCase()] as const),
+    ).flatMap((user) => (user.email === null ? [] : ([[user.id, user.email.trim().toLowerCase()]] as const))),
   );
   const byAddress = (change: StoredChange): string | null => {
     const local = str(change.after?.['userLocalId']);

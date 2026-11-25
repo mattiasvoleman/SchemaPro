@@ -118,7 +118,8 @@ export interface TeacherRow {
   id: string;
   firstName: string;
   lastName: string;
-  email: string;
+  /** A teacher always has one (Users_only_a_pupil_or_guardian_has_no_address); typed as the column is. */
+  email: string | null;
   signature: string | null;
   isActive: boolean;
 }
@@ -364,7 +365,7 @@ export function indexContext(ctx: PlanContext): Indexes {
   }
   for (const t of ctx.teachers) {
     if (t.signature) pushTo(idx.teachersBySignature, normalizeName(t.signature), t);
-    pushTo(idx.teachersByEmail, normalizeName(t.email), t);
+    if (t.email) pushTo(idx.teachersByEmail, normalizeName(t.email), t);
     idx.teachersById.set(t.id, t);
   }
   return idx;

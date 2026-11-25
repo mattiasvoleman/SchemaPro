@@ -46,6 +46,12 @@ import type { BulkUpdateStudentsDto, CreateUserDto, UpdateUserDto } from './dto/
 
 /** A pseudonymised person (gallring, 20261021110000) cannot be made active again. */
 export const USER_IS_PSEUDONYMISED = 'USER_IS_PSEUDONYMISED';
+/** A teacher or an administrator is made, or becomes one, with no address (Personer utan e-postadress). 400. */
+export const ADDRESS_REQUIRED = 'ADDRESS_REQUIRED';
+/** An invitation is asked for a person who has no address to send it to. 409: the person is as they are, and an address is what changes it. */
+export const PERSON_HAS_NO_ADDRESS = 'PERSON_HAS_NO_ADDRESS';
+/** An address is set on a person who was invited: their login has the address it has, and the row follows it. 409. */
+export const ADDRESS_OF_AN_INVITED_PERSON = 'ADDRESS_OF_AN_INVITED_PERSON';
 /** A last working day (`leftOn`) names a person who is, or stays, active. */
 export const USER_LEFT_ON_NEEDS_INACTIVE = 'USER_LEFT_ON_NEEDS_INACTIVE';
 /** A last working day after the school's today. */
@@ -164,7 +170,8 @@ export interface PersonView {
   role: UserRole;
   firstName: string;
   lastName: string;
-  email: string;
+  /** NULL for a pupil or a guardian the school added without an address: in the lists, with no login (Personer utan e-postadress). */
+  email: string | null;
   phone: string | null;
   isActive: boolean;
   studentGroupId: string | null;
@@ -242,6 +249,8 @@ export interface RoleChangeView {
 export interface BulkInvitationReport {
   sent: number;
   alreadyRegistered: number;
+  /** People with no address to send to (Personer utan e-postadress): counted, not errors, as they are nobody's failure. */
+  noAddress: number;
   errors: { userId: string; message: string }[];
 }
 
@@ -340,6 +349,13 @@ export class UsersService {
     if (dto.role === 'SCHOOL_ADMIN') {
       decides(user);
     }
+    // A pupil or a guardian may be added with no address (Personer utan e-postadress): in the lists, with no login. A teacher or
+    // an administrator is somebody the school invites, and the database holds the same (Users_only_a_pupil_or_guardian_has_no_address).
+    const email = dto.email ?? null;
+    if (email === null) {
+      if (!mayHaveNoAddress(dto.role)) throw addressRequired(dto.role);
+      if (dto.sendInvitation) throw hasNoAddress();
+    }
     // Checked before anything is written: a deployment that cannot send mail
     // must not answer "created and invited" having done only the first half.
     if (dto.sendInvitation && !this.supabaseAdmin.isConfigured) {
@@ -373,7 +389,7 @@ export class UsersService {
             hrRead: profile.hrRead,
             firstName: dto.firstName,
             lastName: dto.lastName,
-            email: dto.email,
+            email,
             phone: dto.phone ?? null,
             studentGroupId: dto.role === 'STUDENT' ? (dto.studentGroupId ?? null) : null,
           },
@@ -389,7 +405,8 @@ export class UsersService {
 
     let invite: { authId: string; emailSent: boolean };
     try {
-      invite = await this.mintIdentity(dto.email, created.id);
+      // `sendInvitation` with no address was refused above, so there is one.
+      invite = await this.mintIdentity(email!, created.id);
     } catch (error) {
       // The provider refused, so take the row back: "create and invite" keeps
       // its both-or-neither promise, and the admin's retry is then just
@@ -462,6 +479,11 @@ export class UsersService {
     if (!target) {
       throw new NotFoundException('The requested record does not exist.');
     }
+    // A person with no address has nowhere to be invited: no road gives them a login (Personer utan e-postadress). Said before the
+    // inactive person's answer, because an address is what changes this and a reactivation does not.
+    if (target.email === null) {
+      throw hasNoAddress();
+    }
     // An administrator's login is a decider's to hand out: the invitation
     // can move it to the address the row has now.
     if (target.role === 'SCHOOL_ADMIN') {
@@ -526,6 +548,7 @@ export class UsersService {
     const report: BulkInvitationReport = {
       sent: 0,
       alreadyRegistered: 0,
+      noAddress: 0,
       errors: [],
     };
 
@@ -538,6 +561,10 @@ export class UsersService {
           report.alreadyRegistered += 1;
         }
       } catch (error) {
+        if (isCoded(error, PERSON_HAS_NO_ADDRESS)) {
+          report.noAddress += 1;
+          continue;
+        }
         report.errors.push({
           userId: id,
           message:
@@ -601,9 +628,9 @@ export class UsersService {
         // the role, so a teacher or guardian sitting in a student group is
         // handed the students' read path on that group's lessons.
         const [current] = await tx.$queryRaw<
-          Pick<User, 'role' | 'studentGroupId' | 'pseudonymisedAt' | 'adminProfile' | 'hrRead' | 'teaches' | 'isActive' | 'schoolId'>[]
+          Pick<User, 'role' | 'studentGroupId' | 'pseudonymisedAt' | 'adminProfile' | 'hrRead' | 'teaches' | 'isActive' | 'schoolId' | 'email' | 'invitedAt'>[]
         >`
-          SELECT "role", "studentGroupId", "pseudonymisedAt", "adminProfile", "hrRead", "teaches", "isActive", "schoolId"
+          SELECT "role", "studentGroupId", "pseudonymisedAt", "adminProfile", "hrRead", "teaches", "isActive", "schoolId", "email", "invitedAt"
           FROM "Users"
           WHERE "id" = ${id}::uuid
           FOR NO KEY UPDATE
@@ -624,6 +651,13 @@ export class UsersService {
         // and the class, where it clears): an integration that sends every field must be able to deactivate.
         const stopsAt = dto.leftOn == null ? null : await leftOnInstant(tx, current, { isActive: dto.isActive, leftOn: dto.leftOn }, id);
         const role = dto.role ?? current.role;
+        // Personer utan e-postadress. An address is set on a person who has none, or corrected on one who was never invited; a
+        // person who was invited has a login with the address it has. And the row that results has an address if its role needs one:
+        // a pupil with none does not become a teacher, said here with the way out and not as the database's check.
+        const addressChanges = dto.email !== undefined && dto.email.toLowerCase() !== (current.email ?? '').toLowerCase();
+        if (addressChanges && current.invitedAt !== null) throw addressOfAnInvitedPerson();
+        const address = dto.email ?? current.email;
+        if (address === null && !mayHaveNoAddress(role)) throw addressRequired(role);
         // Roller i skolan: an administrator's row, and anybody's role,
         // profile or HR-läs, are rektor's or a full administrator's to
         // change, as Users_administrators_are_decided holds in the database.
@@ -690,6 +724,7 @@ export class UsersService {
             ...(teachesChanged ? { teaches: dto.teaches } : {}),
             ...(dto.firstName !== undefined ? { firstName: dto.firstName } : {}),
             ...(dto.lastName !== undefined ? { lastName: dto.lastName } : {}),
+            ...(addressChanges ? { email: dto.email } : {}),
             ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
             ...(dto.studentGroupId !== undefined
               ? { studentGroupId: dto.studentGroupId }
@@ -1381,6 +1416,40 @@ async function startPeriodAt(tx: PrismaClient, id: string, stopsAt: Date): Promi
   if (!open) return;
   const startsAt = stopsAt.getTime() < open.recordedAt.getTime() ? stopsAt : open.recordedAt;
   await tx.userDeactivation.updateMany({ where: { userId: id, endsAt: null }, data: { startsAt } });
+}
+
+/** Only a pupil or a guardian may have no address (Users_only_a_pupil_or_guardian_has_no_address). */
+const mayHaveNoAddress = (role: UserRole): boolean => role === 'STUDENT' || role === 'GUARDIAN';
+
+/** Whether an error is an HttpException carrying this `code`: the bulk invitation counts some refusals and reports the rest. */
+function isCoded(error: unknown, code: string): boolean {
+  if (!(error instanceof HttpException)) return false;
+  const body = error.getResponse();
+  return typeof body === 'object' && body !== null && (body as { code?: unknown }).code === code;
+}
+
+function addressRequired(role: UserRole): BadRequestException {
+  const who = role === 'TEACHER' ? 'En lärare' : role === 'SCHOOL_ADMIN' ? 'En administratör' : 'Personen';
+  return new BadRequestException({
+    message: `${who} behöver en e-postadress: det är med den personen bjuds in och loggar in. Bara elever och vårdnadshavare kan läggas upp utan.`,
+    code: ADDRESS_REQUIRED,
+  });
+}
+
+function hasNoAddress(): ConflictException {
+  return new ConflictException({
+    message:
+      'Personen har ingen e-postadress, så det finns ingenstans att skicka inbjudan. Lägg till en adress på personen först. Personen syns i listor, närvaro och schema utan den.',
+    code: PERSON_HAS_NO_ADDRESS,
+  });
+}
+
+function addressOfAnInvitedPerson(): ConflictException {
+  return new ConflictException({
+    message:
+      'Personen är redan inbjuden och har en inloggning med sin adress, så adressen ändras inte härifrån. Ta bort personen och lägg till den igen, eller ändra adressen i skolans personregister om skolan har ett.',
+    code: ADDRESS_OF_AN_INVITED_PERSON,
+  });
 }
 
 /** A pseudonymised person (gallring) stays inactive: update()'s refusal, and the bulk update's per row. */

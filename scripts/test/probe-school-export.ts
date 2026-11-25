@@ -138,7 +138,7 @@ async function makeSchool(owner: Owner, label: 'A' | 'B', tag: string, students:
   for (const profile of PROFILES) {
     const row = await person(`Admin${profile}`, 'SCHOOL_ADMIN', { adminProfile: profile, hrRead: profile === 'FULL' || profile === 'REKTOR' });
     admins[profile] = { authId: row.authId, role: Role.SCHOOL_ADMIN, userId: row.id, schoolId: school.id, adminProfile: profile, hrRead: row.hrRead, channel: 'OTHER' };
-    tokens.push(row.id, row.email);
+    tokens.push(row.id, row.email!);
   }
   const roomType = await owner.roomType.create({ data: { schoolId: school.id, name: `Klassrum ${label}` } });
   const subject = await owner.subject.create({ data: { schoolId: school.id, name: `Matematik ${label}`, code: `MA${label}`, requiredRoomTypeId: roomType.id } });
@@ -149,7 +149,7 @@ async function makeSchool(owner: Owner, label: 'A' | 'B', tag: string, students:
   await owner.teacherEmployment.create({
     data: { schoolId: school.id, userId: teacher.id, academicYearId: year.id, employmentPercent: 100, reductionPercent: 0, contractKind: 'FERIE', signature: `LA${label}` },
   });
-  tokens.push(teacher.id, teacher.email);
+  tokens.push(teacher.id, teacher.email!);
 
   const kids: Built['students'] = [];
   const guardians: Built['guardians'] = [];
@@ -158,8 +158,8 @@ async function makeSchool(owner: Owner, label: 'A' | 'B', tag: string, students:
     const row = await person(`Elev${i}`, 'STUDENT', { studentGroupId: group.id });
     const guardian = await person(`Vardnadshavare${i}`, 'GUARDIAN');
     await owner.guardianStudent.create({ data: { schoolId: school.id, guardianId: guardian.id, studentId: row.id } });
-    kids.push({ id: row.id, email: row.email });
-    guardians.push({ id: guardian.id, email: guardian.email });
+    kids.push({ id: row.id, email: row.email! });
+    guardians.push({ id: guardian.id, email: guardian.email! });
     tokens.push(row.id, guardian.id);
   }
   await owner.studentGroupMember.createMany({ data: kids.map((kid) => ({ schoolId: school.id, studentGroupId: group.id, studentId: kid.id })) });
@@ -318,7 +318,7 @@ async function main(): Promise<void> {
       for (const [name, content] of first.files) {
         const text = content.toString('utf8');
         assert.ok(!text.includes(protectedPupil.id) && !text.includes(protectedPupil.email), `${name} names the protected pupil`);
-        assert.ok(!text.includes(protectedTeacher.id) && !text.includes(protectedTeacher.email), `${name} names the protected teacher`);
+        assert.ok(!text.includes(protectedTeacher.id) && !text.includes(protectedTeacher.email!), `${name} names the protected teacher`);
       }
       const manifest = JSON.parse(first.files.get('manifest.json')!.toString('utf8')) as {
         heldOut: { skyddadIdentitetPersoner: number; kopplingar: number };
@@ -562,7 +562,7 @@ async function main(): Promise<void> {
         const text = content.toString('utf8').toLowerCase();
         for (const other of others) {
           assert.ok(!text.includes(other.id), `${label}: ${name} holds the id of ${other.id}`);
-          assert.ok(!text.includes(other.email.toLowerCase()), `${label}: ${name} holds the address ${other.email}`);
+          assert.ok(!text.includes(other.email!.toLowerCase()), `${label}: ${name} holds the address ${other.email}`);
         }
       }
     };
@@ -715,7 +715,7 @@ async function main(): Promise<void> {
       for (const [name, content] of teacher.files) {
         const text = content.toString('utf8').toLowerCase();
         for (const other of strangers) {
-          for (const needle of [other.id, other.email.toLowerCase(), `${other.firstName} ${other.lastName}`.toLowerCase()]) assert.ok(!text.includes(needle), `${name} holds ${needle} in the teacher's extract`);
+          for (const needle of [other.id, other.email!.toLowerCase(), `${other.firstName} ${other.lastName}`.toLowerCase()]) assert.ok(!text.includes(needle), `${name} holds ${needle} in the teacher's extract`);
         }
       }
       // The guardian alone: the leave she asked for, the absence she reported, and nothing of the child's.
@@ -755,7 +755,7 @@ async function main(): Promise<void> {
         `NOTEE ${protectedPupil.id.replace(/-/g, '')}`, // id without hyphens
       ];
       for (const [index, note] of planted.entries()) await owner.attendanceRecord.update({ where: { id: pupilZero[index]!.id }, data: { note } });
-      await owner.absenceReport.updateMany({ where: { schoolId: a.schoolId, studentId: a.students[0]!.id }, data: { note: `NOTEF ${protectedTeacher.email.toUpperCase()}` } });
+      await owner.absenceReport.updateMany({ where: { schoolId: a.schoolId, studentId: a.students[0]!.id }, data: { note: `NOTEF ${protectedTeacher.email!.toUpperCase()}` } });
 
       await owner.schoolExport.deleteMany({ where: { schoolId: a.schoolId, id: { not: first.id } } });
       const order = await service.order(a.admins.FULL);
