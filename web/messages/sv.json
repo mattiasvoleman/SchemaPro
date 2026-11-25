@@ -1920,7 +1920,7 @@
     },
     "suggestions": {
       "title": "Vad kan jag ändra?",
-      "offer": "Motorn kan räkna fram upp till tre ändringar som skulle låta veckan läggas, och kontrollera dem mot reglerna. Det tar ungefär en och en halv minut. Den lägger inget schema och ändrar ingenting.",
+      "offer": "Motorn kan räkna fram upp till tre ändringar som kan låta veckan läggas, och kontrollera dem mot reglerna. Det tar ungefär en och en halv minut. Den lägger inget schema och ändrar ingenting.",
       "offerTimeout": "Tiden tog slut, så ingenting är bevisat om veckan än. Motorn kan göra en kortare körning där fem av skolans egna regler får ge vika, och säga om veckan då går att lägga och med vilka ändringar. Det tar ungefär en och en halv minut, lägger inget schema och ändrar ingenting.",
       "offerAction": "Räkna fram förslag",
       "again": "Räkna om",
@@ -1940,8 +1940,8 @@
         "OTHER": "Förslagen kunde inte begäras. Försök igen."
       },
       "intro": {
-        "SOLVED": "Motorn har löst veckan med just den här ändringen: den lade ett schema som håller alla regler, med ändringen gjord.",
-        "SOLVED_TOGETHER": "Motorn har löst veckan med just {total, plural, one {den här ändringen, som gäller flera tjänster,} other {de # ändringarna}} tillsammans: den lade ett schema som håller alla regler, med ändringarna gjorda. Ingen av dem är visad räcka ensam.",
+        "SOLVED": "Motorn har löst veckan med just den här ändringen: i analysen lade den ett schema som håller alla regler, med ändringen gjord. Schemat sparas inte.",
+        "SOLVED_TOGETHER": "Motorn har löst veckan med just {total, plural, one {den här ändringen, som gäller flera tjänster,} other {de # ändringarna}} tillsammans: i analysen lade den ett schema som håller alla regler, med ändringarna gjorda. Schemat sparas inte. Ingen av dem är visad räcka ensam.",
         "MAY_HELP": "Motorn lade en vecka där de här reglerna fick ge vika, men hann inte kontrollera att ändringarna räcker. De kan hjälpa, men mer är inte visat."
       },
       "proof": {

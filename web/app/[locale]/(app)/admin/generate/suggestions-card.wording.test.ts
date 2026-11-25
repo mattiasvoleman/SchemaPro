@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { IntlMessageFormat } from "intl-messageformat";
 import { describe, expect, it } from "vitest";
 import en from "@/messages/en.json";
@@ -114,6 +116,34 @@ describe("what a list may promise, and what it does not", () => {
     // And it says nothing of what the rules "probably" are: a probe before it may have measured one in the way.
     expect(text).not.toMatch(/troligen/);
     expect(say(en, "en", "verdict.NOT_FOUND", { seconds: 60 })).not.toMatch(/probably/);
+  });
+
+  it("offers changes that may let the week be laid, and does not say they would before the engine has shown it", () => {
+    // Before the proof, "would" is a promise and "may" is the offer: the proof is what the list says after the run (`proof.*`).
+    expect(say(sv, "sv", "offer")).toMatch(/ändringar som kan låta veckan läggas, och kontrollera dem mot reglerna/);
+    expect(say(sv, "sv", "offer")).not.toMatch(/skulle/);
+    expect(say(en, "en", "offer")).toMatch(/changes that could let the week be laid, and check them against the rules/);
+    expect(say(en, "en", "offer")).not.toMatch(/would/);
+  });
+
+  it("says that the timetable the engine laid to prove a change was laid in the analysis and is not saved, beside an offer that places none", () => {
+    // The offer says the run "lägger inget schema"; a proof that "den lade ett schema" read as the opposite until it said where, and that it is gone.
+    for (const key of ["intro.SOLVED", "intro.SOLVED_TOGETHER"]) {
+      const swedish = say(sv, "sv", key, { total: 3 });
+      const english = say(en, "en", key, { total: 3 });
+      expect(swedish, key).toMatch(/i analysen lade den ett schema som håller alla regler/);
+      expect(swedish, key).toMatch(/Schemat sparas inte\./);
+      expect(english, key).toMatch(/in the analysis it laid a timetable that keeps every rule/);
+      expect(english, key).toMatch(/The timetable is not saved\./);
+    }
+    expect(say(sv, "sv", "offer")).toMatch(/lägger inget schema/);
+  });
+
+  it("is quoted as the card says it in the handbook, where the same words stand", () => {
+    const manual = readFileSync(join(__dirname, "..", "..", "..", "..", "..", "..", "docs", "manual", "anvandarmanual.html"), "utf8")
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s+/g, " ");
+    expect(manual).toContain(say(sv, "sv", "intro.SOLVED"));
   });
 
   it("says after a TIMEOUT that nothing is proved yet, so that the offer is not read as a promise", () => {
