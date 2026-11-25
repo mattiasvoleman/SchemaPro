@@ -55,3 +55,29 @@ export function jsonParseRefusal(error: unknown, _request: unknown, _response: u
       : error,
   );
 }
+
+/**
+ * CORS first, then the body parsers: the order is the point.
+ *
+ * Express skips every ordinary middleware registered after the one that failed, so a refusal a body parser throws (413, 415, a body
+ * that is not JSON) never passes a `cors()` registered after it, and is answered with no `Access-Control-Allow-Origin`. The web is
+ * another origin than the API (`NEXT_PUBLIC_API_BASE_URL`): its browser then refuses to hand the page the response, and the page
+ * hears "no contact with the server" (CLIENT_NETWORK_FAILURE) where the gateway said, with a code, what was wrong. main.ts used to
+ * call configureBodyParsers first and enableCors after it, and the e2e harness enabled no CORS at all, so no row could see it.
+ */
+export function configureHttpEdge(app: NestExpressApplication, corsOrigins: readonly string[]): void {
+  if (corsOrigins.length > 0) {
+    app.enableCors({
+      origin: [...corsOrigins],
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      // X-School-Id: the school a request is about, for a login with rows
+      // at several schools (src/auth/school-choice.ts).
+      allowedHeaders: ['Authorization', 'Content-Type', 'X-School-Id'],
+      credentials: true,
+      // `Retry-After` is not one of the response headers a browser hands a page from another origin unless it is named here, and the web
+      // is one: the 503 DATABASE_BUSY and the 429 of the throttlers send it, and nothing on the page could read it.
+      exposedHeaders: ['Retry-After'],
+    });
+  }
+  configureBodyParsers(app);
+}

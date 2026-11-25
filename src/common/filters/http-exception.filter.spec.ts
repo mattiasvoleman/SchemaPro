@@ -342,6 +342,14 @@ describe('HttpExceptionFilter', () => {
         'The request body uses an unsupported content encoding.',
         'REQUEST_ENCODING_UNSUPPORTED',
       ],
+      [
+        'charset.unsupported',
+        415,
+        'Unsupported Media Type',
+        'The request body uses an unsupported character set. Send it as UTF-8.',
+        'REQUEST_ENCODING_UNSUPPORTED',
+      ],
+      ['parameters.too.many', 413, 'Payload Too Large', 'The request body has too many fields.', 'REQUEST_BODY_TOO_LARGE'],
     ])('answers %s with %i and says what to do about it, with a code the page words in its own language', (type, status, title, detail, code) => {
       // Not a 500: the CSV import one row too large used to come back as "an
       // unexpected error occurred", sending the caller after a server fault.

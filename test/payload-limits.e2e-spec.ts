@@ -1,6 +1,6 @@
 import { gzipSync } from 'node:zlib';
 import request from 'supertest';
-import { asUser, createTestApp, type TestHarness } from './utils/test-app';
+import { asUser, createTestApp, TEST_ORIGIN, type TestHarness } from './utils/test-app';
 
 /**
  * Transport limits versus declared limits.
@@ -112,6 +112,28 @@ describe('Import payload limits (e2e)', () => {
     expect(JSON.stringify(response.body)).toContain('rows');
   });
 
+  it('answers 415 with a code, not 500, when the body says it is in a character set the parser will not read', async () => {
+    const response = await request(harness.app.getHttpServer())
+      .post('/api/v1/import/room-types')
+      .set('x-test-user', asUser({}))
+      .set('Content-Type', 'application/json; charset=iso-8859-1')
+      .send('{"rows": []}')
+      .expect(415);
+
+    expect(response.body).toMatchObject({ status: 415, code: 'REQUEST_ENCODING_UNSUPPORTED' });
+  });
+
+  it('answers 413 with a code, not 500, when a form has more fields than the parser reads', async () => {
+    const response = await request(harness.app.getHttpServer())
+      .post('/api/v1/import/room-types')
+      .set('x-test-user', asUser({}))
+      .set('Content-Type', 'application/x-www-form-urlencoded')
+      .send(Array.from({ length: 1500 }, (_, i) => `a${i}=1`).join('&'))
+      .expect(413);
+
+    expect(response.body).toMatchObject({ status: 413, code: 'REQUEST_BODY_TOO_LARGE' });
+  });
+
   it('answers 413 — not 500 — when the body itself is too large', async () => {
     // A school's real file: 5400 memberships is ~350 kB. The caller must be
     // told the request was too big, not that the server broke.
@@ -161,5 +183,39 @@ describe('Import payload limits (e2e)', () => {
       title: 'Unsupported Media Type',
       code: 'REQUEST_ENCODING_UNSUPPORTED',
     });
+  });
+
+  // What the body parser refuses never reaches the route, and used to leave the API without `Access-Control-Allow-Origin`: the web is
+  // another origin, its browser then refused to hand the page the answer, and the page said "no contact with the server" where the
+  // gateway had said, with a code, what was wrong. main.ts and this harness enable CORS before the parsers (configureHttpEdge).
+  it.each([
+    ['413, a body over the limit', 413, 'REQUEST_BODY_TOO_LARGE', () => JSON.stringify({ rows: membershipRows(20_000) }), {}],
+    ['400, a body that is not JSON', 400, 'REQUEST_BODY_NOT_JSON', () => '{"rows": [', {}],
+    ['415, a compressed body', 415, 'REQUEST_ENCODING_UNSUPPORTED', () => gzipSync(Buffer.from('{"rows": []}')), { 'Content-Encoding': 'gzip' }],
+  ])('lets the web read the refusal of the body parser: %s carries Access-Control-Allow-Origin', async (_name, status, code, body, headers) => {
+    const response = await request(harness.app.getHttpServer())
+      .post('/api/v1/import/group-members')
+      .set('x-test-user', asUser({}))
+      .set('Origin', TEST_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .set(headers)
+      .send(body())
+      .expect(status);
+
+    expect(response.body).toMatchObject({ code });
+    expect(response.headers['access-control-allow-origin']).toBe(TEST_ORIGIN);
+    expect(response.headers['access-control-allow-credentials']).toBe('true');
+  });
+
+  it('exposes Retry-After to the web, on the answer to a simple request as on any other', async () => {
+    const response = await request(harness.app.getHttpServer())
+      .post('/api/v1/import/group-members')
+      .set('x-test-user', asUser({}))
+      .set('Origin', TEST_ORIGIN)
+      .set('Content-Type', 'application/json')
+      .send('{"rows": [')
+      .expect(400);
+
+    expect(response.headers['access-control-expose-headers']).toBe('Retry-After');
   });
 });

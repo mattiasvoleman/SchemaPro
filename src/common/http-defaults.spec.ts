@@ -3,7 +3,7 @@ import { BadRequestException, Body, Controller, Module, Post, type INestApplicat
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
-import { configureBodyParsers, jsonParseRefusal, MAX_BODY_SIZE } from './http-defaults';
+import { configureBodyParsers, configureHttpEdge, jsonParseRefusal, MAX_BODY_SIZE } from './http-defaults';
 
 @Controller('echo')
 class EchoController {
@@ -116,5 +116,35 @@ describe('configureBodyParsers', () => {
 
       expect(res.status).toBe(415);
     });
+  });
+});
+
+describe('configureHttpEdge', () => {
+  const appMock = () => ({ enableCors: jest.fn(), useBodyParser: jest.fn(), use: jest.fn() });
+
+  it('enables CORS BEFORE the body parsers: what a parser refuses must pass cors() on its way out, or a browser never reads it', () => {
+    const app = appMock();
+
+    configureHttpEdge(app as unknown as NestExpressApplication, ['https://app.example']);
+
+    expect(app.enableCors).toHaveBeenCalledWith(expect.objectContaining({ origin: ['https://app.example'], credentials: true }));
+    expect(app.enableCors.mock.invocationCallOrder[0]).toBeLessThan(Math.min(...app.useBodyParser.mock.invocationCallOrder));
+  });
+
+  it('names Retry-After as a header the web may read: a browser hides every header it is not told about', () => {
+    const app = appMock();
+
+    configureHttpEdge(app as unknown as NestExpressApplication, ['https://app.example']);
+
+    expect(app.enableCors).toHaveBeenCalledWith(expect.objectContaining({ exposedHeaders: ['Retry-After'] }));
+  });
+
+  it('sets the body limits and no CORS when no origin is configured', () => {
+    const app = appMock();
+
+    configureHttpEdge(app as unknown as NestExpressApplication, []);
+
+    expect(app.enableCors).not.toHaveBeenCalled();
+    expect(app.useBodyParser).toHaveBeenCalledWith('json', expect.objectContaining({ limit: MAX_BODY_SIZE }));
   });
 });

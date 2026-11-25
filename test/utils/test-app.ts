@@ -20,7 +20,7 @@ import {
 import { DiscoveryModule } from '@nestjs/core';
 import { HttpService } from '@nestjs/axios';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { configureBodyParsers } from '../../src/common/http-defaults';
+import { configureHttpEdge } from '../../src/common/http-defaults';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import { of } from 'rxjs';
@@ -157,6 +157,9 @@ class HeaderAuthGuard implements CanActivate {
   exports: [RealtimeService],
 })
 class TestRealtimeModule {}
+
+/** The one origin the harness's CORS allows, as production allows the web's (CORS_ORIGINS). */
+export const TEST_ORIGIN = 'http://localhost:3000';
 
 /** The feature modules, in the order AppModule declares them. */
 export const FEATURE_MODULES = [
@@ -375,9 +378,9 @@ export async function createTestApp(
   const moduleRef = await (options.configure ? options.configure(builder) : builder).compile();
 
   const app = moduleRef.createNestApplication<NestExpressApplication>();
-  // Production's body limits, applied the same way main.ts applies them: a
-  // harness with different limits cannot see a payload the real API rejects.
-  configureBodyParsers(app);
+  // Production's CORS and body limits, applied the same way main.ts applies them: a
+  // harness with different limits cannot see a payload the real API rejects, nor an answer a browser would not be shown.
+  configureHttpEdge(app, [TEST_ORIGIN]);
   await app.init();
   // LISTENING, ON THE LOOPBACK ADDRESS, ONCE. Given a server that is not listening, supertest starts it for each request with
   // `listen(0)`, which binds the wildcard address, and asks it at 127.0.0.1:<port>. On macOS a request to 127.0.0.1:<port> goes to

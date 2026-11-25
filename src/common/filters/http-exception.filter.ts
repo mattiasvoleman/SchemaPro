@@ -225,6 +225,23 @@ export class HttpExceptionFilter implements ExceptionFilter {
           detail: 'The request body uses an unsupported content encoding.',
           code: REQUEST_ENCODING_UNSUPPORTED,
         };
+      // The other two refusals of the same parsers that a client's own header or form can cause: a charset other than UTF-8
+      // (`Content-Type: application/json; charset=iso-8859-1`, which a Windows script or an older integration sends) and a form with
+      // more fields than the parser reads. Both were the catch-all's 500 "an unexpected error occurred", logged as a fault of ours.
+      case 'charset.unsupported':
+        return {
+          status: HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+          title: this.titleFor(HttpStatus.UNSUPPORTED_MEDIA_TYPE),
+          detail: 'The request body uses an unsupported character set. Send it as UTF-8.',
+          code: REQUEST_ENCODING_UNSUPPORTED,
+        };
+      case 'parameters.too.many':
+        return {
+          status: HttpStatus.PAYLOAD_TOO_LARGE,
+          title: this.titleFor(HttpStatus.PAYLOAD_TOO_LARGE),
+          detail: 'The request body has too many fields.',
+          code: REQUEST_BODY_TOO_LARGE,
+        };
       default:
         return null;
     }
