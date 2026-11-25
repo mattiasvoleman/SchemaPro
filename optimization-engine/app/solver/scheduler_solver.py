@@ -1499,6 +1499,9 @@ class SchedulerSolver:
         # can cut the count to less than WEEK_LOAD_SECONDS, and the row that says so (WEEK_LOAD_NOT_COUNTED)
         # must say the seconds it had and not the seconds it would have had (g371-L-1).
         self._week_load_seconds: float | None = None
+        # The requirements the school pinned in the request being solved (solve() sets it, see there); None outside
+        # solve(), where every pin is taken for the school's, as it always was.
+        self._school_pins: frozenset[UUID] | None = None
 
     # ---- the request's clock (app.timing) -------------------------------------
 
@@ -6113,6 +6116,10 @@ class SchedulerSolver:
         )
         self._search_seconds = None
         self._week_load_seconds = None
+        # THE PINS THE SCHOOL MADE, which a driver's attempt then adds to (staged.attempt pins what a schedule holds): the
+        # probe of a TIMEOUT that releases pins says "your placed lessons" (_timeout_relaxations), and of the lessons a
+        # schedule is held on that is a sentence about something the school never did.
+        self._school_pins = frozenset(r.id for r in request.requirements if r.pinned_lessons is not None)
         # WHERE THE TIME GOES, from the same instant (stage_clock.py).
         self._stages = StageClock(entered)
         try:
@@ -6144,6 +6151,7 @@ class SchedulerSolver:
             self._deadline = None
             self._search_seconds = None
             self._stages = None
+            self._school_pins = None
 
     def _solve_from_start(
         self, request: OptimizeScheduleRequest, entered: float,
@@ -11969,7 +11977,10 @@ class SchedulerSolver:
             # distribution because both are rules of the timplan page, about
             # how a row's lessons may lie.
             out.append(("PROBE_SOLVED_WITHOUT_BLOCKS", _without_blocks(request)))
-        if request.placements is not None or has_pins(request):
+        if request.placements is not None or any(
+            r.pinned_lessons is not None and (self._school_pins is None or r.id in self._school_pins)
+            for r in request.requirements
+        ):
             # FÖRLAGDA POSTER, ALL AT ONCE, beside the blocks for the same
             # reason: a rule of the timplan page about where a row's lessons
             # may lie. The förlagda lessons go back to their posts and are free
