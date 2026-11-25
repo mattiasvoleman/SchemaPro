@@ -97,6 +97,28 @@ describe("a problem with a code the web has a sentence for", () => {
     expect(apiErrorText(busy, english)).toBe("The server is busy right now, and nothing was done. Try again in a moment.");
   });
 
+  it("says each answer of the body parser, with each of the sentences the filter words its code with, as a general sentence in the reader's language", () => {
+    // The filter's five: a body too large and one with too many fields (413), one that is not JSON (400), an encoding and a character set it will not read (415).
+    const SENTENCES: ReadonlyArray<readonly [number, string, string, "problemTooLarge" | "problemBadRequest"]> = [
+      [413, "REQUEST_BODY_TOO_LARGE", "The request body is too large. Split the import into smaller files and upload them one at a time.", "problemTooLarge"],
+      [413, "REQUEST_BODY_TOO_LARGE", "The request body has too many fields.", "problemTooLarge"],
+      [400, "REQUEST_BODY_NOT_JSON", "The request body is not valid JSON.", "problemBadRequest"],
+      [415, "REQUEST_ENCODING_UNSUPPORTED", "The request body uses an unsupported content encoding.", "problemBadRequest"],
+      [415, "REQUEST_ENCODING_UNSUPPORTED", "The request body uses an unsupported character set. Send it as UTF-8.", "problemBadRequest"],
+    ];
+    for (const [status, code, detail, key] of SENTENCES) {
+      expect(apiErrorText(apiError(status, detail, code), swedish)).toBe(sv.common[key]);
+      expect(apiErrorText(apiError(status, detail, code), english)).toBe(en.common[key]);
+    }
+  });
+
+  it("says a sentence that is only the filter's log as the general one, ahead of the table, whatever code it is sent with", () => {
+    // GATEWAY_LOG is asked first (lib/api-error-text.ts generalKey) and the table after: a code the table holds does not bring a log's English back.
+    const log = "The request body is too large. Split the import into smaller files and upload them one at a time.";
+    expect(apiErrorText(apiError(413, log, "DATABASE_BUSY"), swedish)).toBe(sv.common.problemTooLarge);
+    expect(apiErrorText(apiError(413, log, "DATABASE_BUSY"), english)).toBe(en.common.problemTooLarge);
+  });
+
   it("fills the sentence from the params the gateway sent", () => {
     const tooLong = apiError(400, "topic: högst 200 tecken.", "LESSON_LOG_TOO_LONG", { field: "topic", max: 200 });
     expect(apiErrorText(tooLong, swedish)).toBe("Texten är för lång: högst 200 tecken.");

@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { apiErrorText, type ProblemLookup } from "@/lib/api-error-text";
 import { PROBLEM_CODES } from "@/lib/problem-codes";
 
 /**
@@ -73,5 +74,49 @@ describe("the codes the web has a sentence for, against the gateway's sources", 
       // A sentence whose argument the gateway no longer sends is never filled: it falls back to `detail`, silently.
       expect(SITES(code).some((site) => sendsParam(site, param))).toBe(true);
     }
+  });
+});
+
+/**
+ * The other direction, for the codes the gateway's filter gives its own answers: the body parser's three (REQUEST_BODY_TOO_LARGE,
+ * REQUEST_BODY_NOT_JSON, REQUEST_ENCODING_UNSUPPORTED) and the busy pool's (DATABASE_BUSY). The filter words each of them in more than one
+ * way (a body "too large" and one with "too many fields"; an encoding and a character set it will not read), so the sentences are not
+ * listed one by one: each code is said in the reader's language whatever `detail` it carries, either from the table or as a general
+ * sentence (lib/api-error-text.ts FILTER_CODES). A code the filter starts to name that the web cannot say is a failing test here, not
+ * the filter's English on a Swedish page.
+ */
+describe("the codes the gateway's filter gives its own answers, against the web", () => {
+  const filter = join(gateway, "common", "filters", "http-exception.filter.ts");
+  const poolWait = join(gateway, "database", "pool-wait.ts");
+  const text = (path: string) =>
+    readFileSync(path, "utf8")
+      .split("\n")
+      .filter((line) => !/^\s*(?:\*|\/\/|\/\*)/.test(line))
+      .join("\n");
+  const filterText = text(filter);
+  /** `export const NAME = 'VALUE'`, in the filter or the pool's wait: the code a constant stands for. */
+  const valueOf = (name: string): string => {
+    const hit = /\bexport const NAME = ['"]([A-Z][A-Z0-9_]*)['"]/.source.replace("NAME", name);
+    return new RegExp(hit).exec(`${filterText}\n${text(poolWait)}`)?.[1] ?? name;
+  };
+  // `code: REQUEST_BODY_TOO_LARGE,` and `code: DATABASE_BUSY,` (or the code as a literal): what the filter writes into its answer. A thrower's
+  // code passes as `record.code`, and an area's as `area.code`.
+  const CODE_LINE = /^\s*code:\s*(?:['"]([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)['"]|([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)),?\s*$/gm;
+  const named = [...new Set([...filterText.matchAll(CODE_LINE)].map((match) => match[1] ?? valueOf(match[2]!)))].sort();
+
+  const DETAIL = "Gatewayens egen mening, i vilket språk den vill.";
+  const apiError = (status: number, code: string): Error => Object.assign(new Error(DETAIL), { name: "ApiError", status, code });
+  // A translator that says the key it was asked for: a sentence that is the filter's own words comes back as DETAIL.
+  const echo: ProblemLookup = (key) => key;
+
+  it("finds the codes the filter names", () => {
+    // DATABASE_BUSY is sent by the filter from the pool's wait; that the line `code: DATABASE_BUSY` is still there is the point, as a
+    // mention elsewhere in the filter (the log level) would keep the list above satisfied if the answer lost its code.
+    expect(named).toContain("DATABASE_BUSY");
+  });
+
+  it.each(["400", "413", "415", "503"].map(Number))("says every code the filter names in the reader's language, for a %i", (status) => {
+    const unsaid = named.filter((code) => apiErrorText(apiError(status, code), echo) === DETAIL);
+    expect(unsaid).toEqual([]);
   });
 });
