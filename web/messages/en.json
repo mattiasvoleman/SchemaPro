@@ -2298,6 +2298,7 @@
   },
   "boardKeys": {
     "clash": "Clash",
+    "blockDialog": "{lesson} is a block: its own dialog opens, where lock, park and remove apply to the whole block.",
     "dayPicker": "Show a day",
     "dayTab": "{day}: {count, plural, =0 {no lessons} one {# lesson} other {# lessons}}",
     "pickedUp": "Picked up {lesson}, {day} {from}–{to}. The arrow keys move the marker, Enter puts it down, Esc lets go.",

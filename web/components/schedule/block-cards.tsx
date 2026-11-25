@@ -428,6 +428,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
               pupilTimeNote: undefined,
               share: undefined,
               shareLabel: undefined,
+              blockCard: true,
             });
             continue;
           }

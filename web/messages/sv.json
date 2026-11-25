@@ -2298,6 +2298,7 @@
   },
   "boardKeys": {
     "clash": "Krock",
+    "blockDialog": "{lesson} är ett block: blockets egen ruta öppnas, där lås, parkera och ta bort gäller hela blocket.",
     "dayPicker": "Visa en dag",
     "dayTab": "{day}: {count, plural, =0 {inga lektioner} one {# lektion} other {# lektioner}}",
     "pickedUp": "Tog upp {lesson}, {day} {from}–{to}. Pilarna flyttar markören, Enter lägger, Esc släpper.",

@@ -3688,6 +3688,34 @@ describe("a parallel block (Block i schemat)", () => {
     expect(toasts.success).toHaveBeenCalledWith("timetable.blocks.locked(Språkval åk 4|2)");
   });
 
+  it("answers L, P and Delete on the block's card by opening its dialog, and says that and not what the key does to a lesson", async () => {
+    const user = userEvent.setup();
+    showPage();
+    const drawn = await card();
+    await boardKeysCame();
+    const line = () => document.querySelector("[data-board-status]")!.textContent;
+    for (const key of ["l", "p", "Delete"]) {
+      fireEvent.keyDown(drawn, { key });
+      // The block by its name: "Språkval åk 4", and not by the first of the classes it is for ("… 4ma1").
+      expect(line(), `after ${key}`).toBe("boardKeys.blockDialog(Språkval åk 4)");
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByRole("button", { name: "timetable.blocks.lock" })).toBeTruthy();
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    }
+    // Nothing was locked, parked or removed by a key that only opened a dialog.
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+    expect(blockApi.patch).not.toHaveBeenCalled();
+  });
+
+  it("calls a block's card by the block when it is taken up", async () => {
+    showPage();
+    const drawn = await card();
+    await boardKeysCame();
+    fireEvent.keyDown(drawn, { key: " " });
+    expect(document.querySelector("[data-board-status]")!.textContent).toBe("boardKeys.pickedUp(Språkval åk 4|days.1|13:00|14:00)");
+  });
+
   it("says with the lock that the block's lessons on the tray were not locked", async () => {
     blockApi.patch.mockResolvedValue({ blockId: "b-sv", isLocked: true, lessonIds: ["l-sv1", "l-sv2"], parked: 1 });
     const user = userEvent.setup();

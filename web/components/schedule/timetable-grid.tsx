@@ -77,6 +77,11 @@ export interface TimetableLesson {
   mark?: string;
   markLabel?: string;
   /**
+   * The card of a block of lessons (Block i schemat): one card for the whole block, whose lock, parking and removal are its dialog's
+   * and not a lesson's. The board's keys name it by the block and answer L, P and Delete by opening that dialog, and say so.
+   */
+  blockCard?: boolean;
+  /**
    * The minutes the PUPILS are occupied outside this lesson, already worded by
    * the page — ombyte before idrotten, dusch and ombyte after it.
    *
