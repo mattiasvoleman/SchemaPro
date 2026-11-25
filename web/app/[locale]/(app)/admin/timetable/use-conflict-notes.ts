@@ -25,7 +25,9 @@ export function useConflictNotes(inputs: {
   tCommon: ProblemLookup;
 }): ReadonlyMap<string, string> | undefined {
   const { conflictMap, lessonById, groupById, subjectById, constraints, gradeSpanOf, roomLock, tCommon } = inputs;
-  const rows = useLazyModule(() => import("@/lib/conflict-rows"), undefined, conflictMap.size > 0);
+  // A chunk that does not come leaves the cards saying "Krock" and no more, as they did before the words: there is nothing else to do, and
+  // a rejection that nobody handles is a report to whoever watches the page for them.
+  const rows = useLazyModule(() => import("@/lib/conflict-rows"), () => undefined, conflictMap.size > 0);
   return useMemo(() => {
     if (!rows || conflictMap.size === 0) return undefined;
     const notes = new Map<string, string>();
