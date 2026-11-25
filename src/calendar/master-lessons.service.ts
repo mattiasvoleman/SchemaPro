@@ -639,6 +639,8 @@ export class MasterLessonsService {
         };
         // A lesson set aside occupies nothing, and one edited on the tray asks nothing of where it was.
         const parking = move.isParked === true;
+        // ... and neither does one that is on the tray and stays there: its remembered place is no place the others may not take.
+        const occupies = !parking && !(lesson.isParked && move.isParked !== false);
         const stands = lesson.isParked ? (move.isParked === false ? null : candidate) : was;
         const landing: DayLesson = {
           id: lesson.id,
@@ -665,7 +667,7 @@ export class MasterLessonsService {
           }
         }
         if (candidate.startMinutes >= candidate.endMinutes) throw new BadRequestException('startTime must be before endTime.');
-        return { lesson, candidate, stands, landing, parking, placed };
+        return { lesson, candidate, stands, landing, parking, occupies, placed };
       });
 
       const judged = planned.flatMap((entry, index) => (entry.parking || entry.placed ? [] : [index]));
@@ -682,7 +684,7 @@ export class MasterLessonsService {
             excludeIds: ids,
             // The others as they would stand, and only the ones that land on this candidate's own day.
             alongside: planned
-              .filter((other, otherIndex) => otherIndex !== index && !other.parking && other.candidate.dayOfWeek === candidate.dayOfWeek)
+              .filter((other, otherIndex) => otherIndex !== index && other.occupies && other.candidate.dayOfWeek === candidate.dayOfWeek)
               .map((other) => other.landing),
           };
         }),
