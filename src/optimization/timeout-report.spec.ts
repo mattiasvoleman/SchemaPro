@@ -60,17 +60,92 @@ describe('timeoutReportOf', () => {
       return [...match![1]!.matchAll(/"([A-Z_]+)"/g)].map((quoted) => quoted[1]!);
     };
 
-    it('lists the steps in the order the engine does, and the gateway’s two lists of them agree', () => {
+    // The engine may name a step the gateway does not know (it deploys first): the report skips it. What must hold is
+    // that every step the gateway knows is one the engine still has, in the engine's order, so that a name the engine
+    // dropped or renamed turns this red, and that the gateway's two lists of them agree.
+    const subsequence = (known: readonly string[], engine: readonly string[]): boolean => {
+      let at = 0;
+      for (const name of known) {
+        at = engine.indexOf(name, at);
+        if (at < 0) return false;
+        at += 1;
+      }
+      return true;
+    };
+
+    it('lists the steps in the order the engine does, with nothing the engine has dropped, and the gateway’s two lists agree', () => {
       const engine = literalOf('TimeoutStageName');
       expect(engine.length).toBeGreaterThanOrEqual(6);
-      expect([...TIMEOUT_STAGES]).toEqual(engine);
-      expect([...ENGINE_STAGES]).toEqual(engine);
+      expect(subsequence(TIMEOUT_STAGES, engine)).toBe(true);
+      expect(subsequence(ENGINE_STAGES, engine)).toBe(true);
+      expect([...ENGINE_STAGES]).toEqual([...TIMEOUT_STAGES]);
+    });
+
+    it('can tell a name the engine has added from one it has dropped (the check above has teeth)', () => {
+      const engine = ['PRECHECKS', 'BUILD', 'YEARS', 'SITES', 'SEARCH_CLEAN', 'SEARCH_CLONE', 'PROBE'];
+      expect(subsequence(TIMEOUT_STAGES, engine)).toBe(true); // added: allowed
+      expect(subsequence(TIMEOUT_STAGES, engine.filter((name) => name !== 'SITES'))).toBe(false); // dropped
+      expect(subsequence(TIMEOUT_STAGES, ['BUILD', 'PRECHECKS', 'SITES', 'SEARCH_CLEAN', 'SEARCH_CLONE', 'PROBE'])).toBe(false); // reordered
     });
 
     it('lists the searches that report their effort as the engine does', () => {
       const engine = literalOf('TimeoutPhaseName');
       expect(engine.length).toBeGreaterThanOrEqual(2);
       expect([...TIMEOUT_PHASES]).toEqual(engine);
+    });
+  });
+
+  describe('a step the engine has added and the gateway does not know yet (g425, L-2)', () => {
+    const withSteps = (stages: unknown[]): Record<string, unknown> => ({ ...report(), stages });
+
+    it('is skipped, and the steps around it are kept in their order', () => {
+      const kept = timeoutReportOf(
+        withSteps([
+          { stage: 'PRECHECKS', seconds: 0.4 },
+          { stage: 'YEARS', seconds: 30 },
+          { stage: 'BUILD', seconds: 4 },
+          { stage: 'START', seconds: 12.34 },
+          { stage: 'SEARCH_CLEAN', seconds: 60 },
+        ]),
+      );
+
+      expect(kept).not.toBeNull();
+      expect(kept?.stages).toEqual([
+        { stage: 'PRECHECKS', seconds: 0.4 },
+        { stage: 'BUILD', seconds: 4 },
+        { stage: 'SEARCH_CLEAN', seconds: 60 },
+      ]);
+      // The rest of the report is the engine's, whole: the total still counts the step that is not shown.
+      expect(kept?.totalSeconds).toBe(109);
+      expect(kept?.search.phases).toHaveLength(2);
+    });
+
+    it('leaves a report of nothing but such steps with no steps and the rest of it', () => {
+      const kept = timeoutReportOf(withSteps([{ stage: 'YEARS', seconds: 90 }]));
+      expect(kept?.stages).toEqual([]);
+      expect(kept?.budgetSeconds).toBe(100);
+    });
+
+    it('is read the same the second time: what is kept is accepted unchanged', () => {
+      const once = timeoutReportOf(withSteps([{ stage: 'YEARS', seconds: 30 }, { stage: 'BUILD', seconds: 4 }]));
+      expect(timeoutReportOf(once)).toEqual(once);
+    });
+
+    it.each([
+      ['a step with no readable seconds', { stage: 'YEARS', seconds: 'a while' }],
+      ['a step with negative seconds', { stage: 'YEARS', seconds: -1 }],
+      ['a step that is not an object', 'YEARS'],
+      ['a step with no name', { seconds: 3 }],
+      ['a name that is no word', { stage: 'years of the school', seconds: 3 }],
+      ['a name in lower case', { stage: 'years', seconds: 3 }],
+      ['a name of 41 characters', { stage: 'A'.repeat(41), seconds: 3 }],
+    ])('is still a malformed report with %s', (_what, entry) => {
+      expect(timeoutReportOf(withSteps([{ stage: 'BUILD', seconds: 4 }, entry]))).toBeNull();
+    });
+
+    it('still counts the skipped steps toward the cap on how many a report may carry', () => {
+      const many = Array.from({ length: 13 }, (_, index) => ({ stage: index % 2 ? 'YEARS' : 'BUILD', seconds: 1 }));
+      expect(timeoutReportOf(withSteps(many))).toBeNull();
     });
   });
 
@@ -130,7 +205,8 @@ describe('timeoutReportOf', () => {
     ['a caller’s wait that is not a number', { ...report(), callerWaitSeconds: 'soon' }],
     ['stages that are not a list', { ...report(), stages: { stage: 'BUILD', seconds: 1 } }],
     ['more than twelve stages', { ...report(), stages: Array.from({ length: 13 }, () => ({ stage: 'BUILD', seconds: 1 })) }],
-    ['a stage the engine does not name', { ...report(), stages: [{ stage: 'THINKING', seconds: 1 }] }],
+    // A step the engine has added but the gateway does not know is skipped, not refused (its own describe above); one that is no word is refused.
+    ['a stage whose name is no word', { ...report(), stages: [{ stage: 'thinking hard', seconds: 1 }] }],
     ['a stage with no seconds', { ...report(), stages: [{ stage: 'BUILD' }] }],
     ['a stage that is not an object', { ...report(), stages: ['BUILD'] }],
     ['no search', { ...report(), search: undefined }],

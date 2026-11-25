@@ -352,11 +352,26 @@ describe('OptimizationJobsService', () => {
         expect(lastWrite().report).toBe(DbNull);
 
         proxy.triggerScheduling.mockResolvedValueOnce(
-          engineResponse({ status: 'TIMEOUT', lessons: [], report: { ...report, stages: [{ stage: 'THINKING', seconds: 1 }] } }),
+          engineResponse({ status: 'TIMEOUT', lessons: [], report: { ...report, stages: [{ stage: 'thinking hard', seconds: 1 }] } }),
         );
         await service.start(YEAR_ID, testUser());
         await flushBackgroundRun();
         expect(lastWrite().report).toBe(DbNull);
+      });
+
+      it('stores the report of an engine that has added a step this gateway does not know, with the step left out (g425, L-2)', async () => {
+        proxy.triggerScheduling.mockResolvedValue(
+          engineResponse({
+            status: 'TIMEOUT',
+            lessons: [],
+            report: { ...report, stages: [{ stage: 'PRECHECKS', seconds: 0.4 }, { stage: 'YEARS', seconds: 30 }, ...report.stages.slice(1)] },
+          }),
+        );
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+
+        expect(lastWrite().report).toEqual(report);
       });
     });
 

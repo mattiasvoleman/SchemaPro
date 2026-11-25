@@ -12,12 +12,24 @@
  * wholly well formed is NOT shown in part: a half-read account of where the time went is worse than none, and
  * the page then says what a TIMEOUT has always said.
  *
+ * A NAME THE GATEWAY DOES NOT KNOW IS NOT A MALFORMED REPORT. The engine deploys with every merge, ahead of the
+ * gateway, and a step it adds (M8's YEARS and START, the second year of the design note's drivers) used to turn
+ * every report into null until the gateway followed: the whole account gone for a name (g425, L-2). A step whose
+ * name is well formed (a word in capitals) but not in TIMEOUT_STAGES is skipped, and the others are kept in
+ * their order. The steps then add up to less than `totalSeconds`, by the skipped step's seconds, and the total
+ * is still the engine's: the page says what it knows and does not say what it does not. A step that is not
+ * an object, has no readable seconds or a name that is no word is still a malformed report.
+ *
  * MEASURED, NEVER A RULE. Nothing here is a limit, and the figures are what the solve's own clock and CP-SAT
  * counted: `conflicts` and `branches` are effort and not progress, and a satisfaction search has no bound, so
  * none is carried. No id and no name is in it: the engine knows only anonymous ids, and none is read.
  */
 
-/** The steps of a solve, as the engine names them (TimeoutStageName). */
+/**
+ * The steps of a solve the gateway has a sentence for, in the engine's order (TimeoutStageName). The engine may
+ * have more: a step it names that is not here is skipped on the way in (see the head of this file), and
+ * timeout-report.spec.ts holds this list to being the engine's, in its order, with nothing the engine has dropped.
+ */
 export const TIMEOUT_STAGES = ['PRECHECKS', 'BUILD', 'SITES', 'SEARCH_CLEAN', 'SEARCH_CLONE', 'PROBE'] as const;
 export type TimeoutStage = (typeof TIMEOUT_STAGES)[number];
 
@@ -68,6 +80,8 @@ const MAX_SECONDS = 86_400;
 const MAX_COUNT = 1_000_000_000_000;
 const MAX_STAGES = 12;
 const MAX_PHASES = 6;
+/** What a step's name looks like: a word in capitals, as the engine's Literal writes them. */
+const STEP_WORD = /^[A-Z][A-Z0-9_]{0,39}$/;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -106,9 +120,9 @@ export function timeoutReportOf(value: unknown): TimeoutReportView | null {
   for (const entry of value.stages as unknown[]) {
     if (!isRecord(entry)) return null;
     const seconds = secondsOf(entry.seconds);
-    if (typeof entry.stage !== 'string' || !(TIMEOUT_STAGES as readonly string[]).includes(entry.stage) || seconds === undefined) {
-      return null;
-    }
+    if (typeof entry.stage !== 'string' || !STEP_WORD.test(entry.stage) || seconds === undefined) return null;
+    // A step of the engine's that this gateway does not know yet: not shown, and not a reason to show nothing.
+    if (!(TIMEOUT_STAGES as readonly string[]).includes(entry.stage)) continue;
     stages.push({ stage: entry.stage as TimeoutStage, seconds });
   }
 
