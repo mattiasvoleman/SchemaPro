@@ -220,6 +220,45 @@ describe("the question before a run", () => {
     expect(within(dialog).getByText("weekCheck.yearTight(8|90)")).toBeInTheDocument();
   });
 
+  describe("when the count did not finish", () => {
+    const cut = (over: Partial<WeekCheckResult> = {}) =>
+      result({
+        verdict: "TIGHT",
+        years: [{ year: 7, demandMinutes: 2068, capacityMinutes: 2200, percent: 94, over: false }],
+        conflicts: { summary: "", summaryCode: "", summaryParams: {}, conflicts: [tightRow] },
+        skipped: ["LUNCH_STAGE", "WEEK_LOAD_DEADLINE"],
+        ...over,
+      });
+
+    it("says in the dialog that the percentages are at least that high, as the answer does, and not otherwise", () => {
+      const { unmount } = render(<WeekCheckPanel {...props(cut(), { asking: true })} />);
+      expect(within(screen.getByRole("dialog")).getByText("weekCheck.atLeast")).toBeInTheDocument();
+      unmount();
+
+      render(<WeekCheckPanel {...props(cut({ skipped: ["LUNCH_STAGE"] }), { asking: true })} />);
+      expect(within(screen.getByRole("dialog")).queryByText("weekCheck.atLeast")).toBeNull();
+    });
+
+    it("says it for an impossible week's years too, which are listed in the same dialog", () => {
+      render(
+        <WeekCheckPanel
+          {...props(
+            cut({ verdict: "IMPOSSIBLE", years: [{ year: 9, demandMinutes: 2365, capacityMinutes: 2275, percent: 103, over: true }] }),
+            { asking: true },
+          )}
+        />,
+      );
+      expect(within(screen.getByRole("dialog")).getByText("weekCheck.atLeast")).toBeInTheDocument();
+    });
+
+    it("says nothing of a figure in a dialog that lists no year, however the count ended", () => {
+      render(<WeekCheckPanel {...props(cut({ years: [] }), { asking: true })} />);
+      const dialog = screen.getByRole("dialog");
+      expect(within(dialog).getByText("weekCheck.ask.titleTightPlain")).toBeInTheDocument();
+      expect(within(dialog).queryByText("weekCheck.atLeast")).toBeNull();
+    });
+  });
+
   it("asks without a year when a tight answer carries none, rather than naming nobody", () => {
     render(<WeekCheckPanel {...props(result({ verdict: "TIGHT" }), { asking: true })} />);
 
