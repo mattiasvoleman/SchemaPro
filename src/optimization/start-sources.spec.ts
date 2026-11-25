@@ -71,8 +71,14 @@ describe('versionLessonsOf', () => {
     ['a lesson placed by hand', { isGenerated: false }],
     ['a parked lesson, which occupies nothing', { isParked: true }],
     ['a lesson written from a förläggning, which is written again from it', { fromPlacement: true }],
+    ['a lesson of several classes, which belongs to no one post and which Generera keeps as it stands', { extraGroupIds: ['g-2'] }],
+    ['a lesson of named pupils, for the same reason', { studentIds: ['u-1'] }],
   ])('leaves out %s', (_what, over) => {
     expect(versionLessonsOf([stored(over)])).toEqual([]);
+  });
+
+  it('keeps a lesson whose lists of classes and pupils are there and empty, as a snapshot writes them for every ordinary lesson', () => {
+    expect(versionLessonsOf([stored({ extraGroupIds: [], studentIds: [] })])).toHaveLength(1);
   });
 
   it('reads a snapshot from before isGenerated as the machine’s, the side to be wrong on for a start', () => {

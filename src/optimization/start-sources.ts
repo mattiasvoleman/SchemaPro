@@ -109,7 +109,16 @@ const fromDraft = (lesson: DraftContent & { isParked?: boolean }): SourceLesson 
  * mostly generated lessons, and a start is only ever held until the week shows it cannot stay.
  */
 function isStartLesson(lesson: VersionLesson): boolean {
-  return lesson.isLocked !== true && lesson.isParked !== true && lesson.isGenerated !== false && lesson.fromPlacement !== true;
+  return (
+    lesson.isLocked !== true &&
+    lesson.isParked !== true &&
+    lesson.isGenerated !== false &&
+    lesson.fromPlacement !== true &&
+    // A lesson of several classes or of named pupils belongs to no one post (Generera keeps it as it stands, generated or not), as it
+    // does not in last year's schedule either (NOT_STARTABLE there).
+    (lesson.extraGroupIds?.length ?? 0) === 0 &&
+    (lesson.studentIds?.length ?? 0) === 0
+  );
 }
 
 const clock = (value: unknown): string | null => (typeof value === 'string' && /^\d{2}:\d{2}(:\d{2})?$/.test(value) ? value : null);
