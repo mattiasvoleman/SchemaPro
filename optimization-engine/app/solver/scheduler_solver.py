@@ -6167,7 +6167,7 @@ class SchedulerSolver:
         however many attempts there were the report is a list of each step once.
         """
         self._enter_stage("START")
-        held = staged.held_places(request)
+        held = staged.held_places(request, on_grid=self._on_the_weeks_grid(request))
         free = staged.with_blocks(request, staged.clashes(request, held)) if held.places else set()
         logger.info(
             "start_schedule held=%d clashing=%d dropped=%s [requestId=%s]",
@@ -6236,6 +6236,18 @@ class SchedulerSolver:
         a step called outside solve()."""
         left = self._clock_left()
         return left is None or left >= self.MIN_PHASE_SECONDS + 2 * self._build_seconds
+
+    def _on_the_weeks_grid(self, request: OptimizeScheduleRequest) -> Callable[[str], bool]:
+        """Whether a start is one the week's own start step reaches, counted without the schedule in it (staged.held_places)."""
+        step = _start_step(request.model_copy(update={"start_lessons": None}), self._grid)
+
+        def on_grid(clock: str) -> bool:
+            try:
+                return self._grid.parse_hhmmss(clock) % step == 0
+            except ValueError:
+                return False
+
+        return on_grid
 
     def _solve_strict(
         self, request: OptimizeScheduleRequest, entered: float,

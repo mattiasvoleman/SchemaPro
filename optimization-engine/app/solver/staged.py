@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -92,8 +93,13 @@ class Held:
         self.dropped[reason] = self.dropped.get(reason, 0) + count
 
 
-def held_places(request: OptimizeScheduleRequest) -> Held:
-    """The request's `startLessons` as places of its requirements' lessons (see the module)."""
+def held_places(request: OptimizeScheduleRequest, on_grid: Callable[[str], bool] | None = None) -> Held:
+    """The request's `startLessons` as places of its requirements' lessons (see the module).
+
+    `on_grid` says whether a start is one the week's own start step reaches: an entry that is not is left out. A start
+    the step does not reach (08:05 in a week whose times are all on the half hour, a schedule from another program)
+    would pull the step of EVERY lesson of every attempt, the last one too, down to the gcd with it: one such entry
+    took a gate week's start step from thirty minutes to five and its model build from 0.4 s to 2.4 s (g460)."""
     held = Held()
     by_id = {requirement.id: requirement for requirement in request.requirements}
     entries: dict[UUID, list[StartedLesson]] = defaultdict(list)
@@ -105,6 +111,8 @@ def held_places(request: OptimizeScheduleRequest) -> Held:
             held.drop("the school pinned this requirement")
         elif requirement.lesson_teacher_ids is not None:
             held.drop("a split lesson")
+        elif on_grid is not None and not on_grid(entry.start_time):
+            held.drop("a start off the week's own grid")
         else:
             entries[requirement.id].append(entry)
 
@@ -328,11 +336,12 @@ def attempt(request: OptimizeScheduleRequest, held: Held, free: set[UUID]) -> Op
     ]
     update: dict[str, object] = {"requirements": requirements, "start_lessons": None}
     if not request.previous_lessons:
+        # What is held, place by place: an entry that was left out (the same lesson twice, a start off the week's grid) is
+        # not given back as a hint, where it would do what it was left out for.
         update["previous_lessons"] = [
-            PreviousLesson(
-                requirementId=entry.requirement_id, dayOfWeek=entry.day_of_week, startTime=entry.start_time,
-            )
-            for entry in request.start_lessons or []
-            if entry.requirement_id in held.places
+            PreviousLesson(requirementId=requirement_id, dayOfWeek=place.day_of_week, startTime=place.start_time)
+            for requirement_id, row in held.places.items()
+            for place in row
+            if place is not None
         ][:5000]
     return request.model_copy(update=update)
