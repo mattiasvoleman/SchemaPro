@@ -278,6 +278,8 @@ const FIXED_LESSON_FIELDS_ALTERNATING = [...FIXED_LESSON_FIELDS_REPLACED, 'recur
 const FIXED_LESSON_FIELDS_DATED = [...FIXED_LESSON_FIELDS_ALTERNATING, 'periods'].sort();
 /** Placeringsregler: `studentCount` only on a lock in a room sent shareable. */
 const FIXED_LESSON_FIELDS_COUNTED = [...FIXED_LESSON_FIELDS, 'studentCount'].sort();
+/** Undantag med flit: `exemptFromLunch` only on a lock whose lesson carries an exemption from the class's meal. */
+const FIXED_LESSON_FIELDS_EXEMPT = [...FIXED_LESSON_FIELDS, 'exemptFromLunch'].sort();
 
 /** No resourceId: a year range names no resource, and sending one is refused. */
 const GRADE_CONSTRAINT_FIELDS = [
@@ -1247,6 +1249,29 @@ describe('AI engine wire contract', () => {
         // g1 holds pupil-1 and pupil-2; the lesson names pupil-3 and pupil-1 again.
         expect(fixed[0]!['studentCount']).toBe(3);
         expect(JSON.stringify(payload)).not.toMatch(/pupil-|ml-gym/);
+      });
+
+      it('sends the exemption from the class’s meal on a lock whose lesson carries one, and on no other (Undantag med flit)', async () => {
+        const rows = [
+          lock({ id: 'ml-meal', roomId: 'rm-plain', exemptFrom: ['LUNCH'] }),
+          // The ramtid needs nothing of the engine: a lock may lie outside its class's frame, so it is sent as the lock it is.
+          lock({ id: 'ml-frame', roomId: 'rm-plain', dayOfWeek: 3, exemptFrom: ['FRAME'] }),
+          lock({ id: 'ml-both', roomId: 'rm-plain', dayOfWeek: 4, exemptFrom: ['FRAME', 'LUNCH'] }),
+          lock({ id: 'ml-none', roomId: 'rm-plain', dayOfWeek: 5, exemptFrom: [] }),
+          // A row read without the column (a förläggning's lock) is a lock without one.
+          lock({ id: 'ml-bare', roomId: 'rm-plain', dayOfWeek: 2 }),
+        ].map((row) => (row.id === 'ml-bare' ? Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'exemptFrom')) : row));
+        const payload = await buildPayload({}, rows, [], configure({}, { rooms: [gym, room('rm-plain')] }));
+        const fixed = payload['fixedLessons'] as Array<Record<string, unknown>>;
+
+        const withKey = fixed.filter((entry) => 'exemptFromLunch' in entry);
+        expect(withKey).toHaveLength(2);
+        for (const entry of withKey) {
+          expect(Object.keys(entry).sort()).toEqual(FIXED_LESSON_FIELDS_EXEMPT);
+          expect(entry['exemptFromLunch']).toBe(true);
+        }
+        for (const entry of fixed.filter((other) => !('exemptFromLunch' in other))) expect(Object.keys(entry).sort()).toEqual(FIXED_LESSON_FIELDS);
+        expect(JSON.stringify(payload)).not.toMatch(/exemptFrom"|FRAME|LUNCH|exemption/);
       });
 
       it('sends a lock elsewhere, or anywhere with the rule off, the fields it always had', async () => {

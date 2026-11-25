@@ -64,6 +64,11 @@ whatever the request names (decision 5: no forced clash).
   exemption itself says `app.keep_exemptions = on` for its transaction (the PATCH that answers yes again for another breaking time,
   a discarded draft). The PATCH writes `exemptFrom` itself and answers `EXEMPTION_ENDED` (`params.rules`) when an edit ended one.
   Another time that breaks the rule asks again.
+- **Generera and the engine.** An exempt lesson is locked, so Generera keeps it and plans around it. The engine needs nothing for the
+  ramtid (a lock may lie outside its class's frame); for the lunch the payload names the lock (`fixedLessons[].exemptFromLunch: true`,
+  sent only on a lock whose lesson has the exemption) and the engine no longer refuses a meal the school placed by hand on it
+  (`LUNCH_PLACEMENT_COLLIDES`, `FixedLesson.exempt_from_lunch`). A meal the engine lays itself is still laid clear of the lock, and a
+  reserved hour of the class is still a reservation. `scripts/test/probe-undantag-motor.ts` shows it against the real engine (by hand).
 - **No automat gives one or moves one.** Generera, the swaps and Optimera salar never write the column; a lesson with an exemption is
   locked, so none of them moves it. A block card's members that move lose theirs (the card is judged against every rule and asked of no one's yes).
 - **The seams.** A version's blob and its restore, a publication's snapshot and a discarded draft (a changed exemption is a change of

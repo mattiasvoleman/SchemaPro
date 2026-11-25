@@ -103,6 +103,7 @@ import {
   type YearPeriods,
 } from './year-periods';
 import { datedMeals, MealPartsError, type DatedMeal } from './lunch-parts';
+import { exemptFromLunch } from '../calendar/lesson-exemption';
 import { computeScheduledCoverage, type ScheduledLessonInput } from '../common/timplan-scheduled';
 import type { PlannedGroup, PlannedRequirement, PlannedSubject } from '../common/timplan-planned';
 import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
@@ -2997,6 +2998,8 @@ export class OptimizationProxyService {
         recurrence: true,
         startDate: true,
         endDate: true,
+        // Undantag med flit: a lock whose lesson stands over its class's meal on purpose is told to the engine (FixedLesson.exemptFromLunch).
+        exemptFrom: true,
         extraGroups: { select: { studentGroupId: true } },
         // The pupils a hand-placed lesson names one by one. Not forwarded —
         // the engine plans around the lesson's groups — but a pupil who is
@@ -3731,6 +3734,8 @@ export class OptimizationProxyService {
       // Sent only on such a lock. A dated lock's periods are added further
       // down, once the läsår is read (yearPeriodsOf).
       ...((weeks) => (weeks ? { recurrence: weeks } : {}))(alternatingWeeksOf(lesson)),
+      // Undantag med flit: sent only on a lock whose lesson an administrator let stand over the class's meal.
+      ...(exemptFromLunch(lesson) ? { exemptFromLunch: true as const } : {}),
     }));
 
     /*

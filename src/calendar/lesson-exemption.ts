@@ -13,6 +13,13 @@ export type ExemptableRule = (typeof EXEMPTABLE_RULES)[number];
 
 export const isExemptable = (reason: string): reason is ExemptableRule => (EXEMPTABLE_RULES as readonly string[]).includes(reason);
 
+/**
+ * Whether a locked lesson stands over its class's meal on purpose: what Generera tells the engine (FixedLesson.exemptFromLunch), so that a meal
+ * the school placed by hand on it is not refused. A row read without the column (a förläggning's lock) is a lesson without one.
+ */
+export const exemptFromLunch = (row: object): boolean =>
+  'exemptFrom' in row && Array.isArray(row.exemptFrom) && exemptionsOf(row.exemptFrom as string[]).includes('LUNCH');
+
 /** The names a request or a row holds, as the rules they are, each once, in the order of EXEMPTABLE_RULES: the order a row is written in. */
 export function exemptionsOf(names: readonly string[] | null | undefined): ExemptableRule[] {
   return EXEMPTABLE_RULES.filter((rule) => (names ?? []).includes(rule));
