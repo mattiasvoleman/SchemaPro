@@ -198,7 +198,8 @@ class EncodingSolver(MeasuringSolver):
         #: What the last build posted: rows and the lessons in them, for the table.
         self.rows: dict[str, int] = {}
 
-    def _add_group_no_overlap(self, model, decisions, group_conflicts=None):  # type: ignore[override]
+    def _add_group_no_overlap(self, model, decisions, group_conflicts=None, *, by_cliques=False):  # type: ignore[override]
+        # `by_cliques` is the engine's own (M8 PR 6); the encoding a measurement asks for is `self.encoding`, and decides.
         grouped: dict[UUID, list] = {}
         for decision in decisions:
             grouped.setdefault(ss.pupil_key_of(decision.lesson.requirement), []).append(decision)
