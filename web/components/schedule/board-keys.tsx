@@ -74,6 +74,8 @@ const clock = (minutes: number) =>
   `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
 const ARROWS: ReadonlySet<string> = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+/** The keys that do something other than move (lower-cased): what a held key must not do again and again. */
+const OWNED_BY_THE_BOARD: ReadonlySet<string> = new Set([" ", "m", "l", "p", "delete", "backspace", "enter", "escape"]);
 
 const DAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
 
@@ -210,6 +212,13 @@ export function BoardKeys(props: BoardKeysProps) {
         event.preventDefault();
         event.stopPropagation();
       };
+
+      // A key held down repeats, and only an arrow (or Home and End) is meant to: a held Space would put down what it took up
+      // and take it up again, a held L would lock and unlock, and Alt+Down would write a length thirty times a second.
+      if (event.repeat && (event.altKey || !(ARROWS.has(key) || key === "Home" || key === "End"))) {
+        if (OWNED_BY_THE_BOARD.has(key.toLowerCase()) || (event.altKey && ARROWS.has(key))) consume();
+        return;
+      }
 
       if (key === "?") {
         consume();
