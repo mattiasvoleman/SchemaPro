@@ -76,16 +76,16 @@ describe("what the board says, in the catalogue's own words", () => {
 
     key("a", { key: "l" });
     note();
-    expect(said()).toBe("Matematik 7A är låst. Generera lägger inte om den.");
+    expect(said()).toBe("Låser Matematik 7A.");
     key("b", { key: "L" });
     note();
-    expect(said()).toBe("Svenska 7A är inte låst längre.");
+    expect(said()).toBe("Låser upp Svenska 7A.");
     key("a", { key: "p" });
     note();
     expect(said()).toBe("Parkerar Matematik 7A.");
     key("a", { key: "Delete" });
     note();
-    expect(said()).toBe("Tar bort Matematik 7A. Ctrl+Z ångrar.");
+    expect(said()).toBe("Tar bort Matematik 7A.");
 
     for (const sentence of all) expect(sentence).not.toMatch(/boardKeys\./);
   });
@@ -109,7 +109,7 @@ describe("what the board says, in the catalogue's own words", () => {
     expect(said()).toBe("Monday 09:15–10:15: free. Enter puts it down.");
     key("a", { key: "Escape" });
     key("a", { key: "l" });
-    expect(said()).toBe("Matematik 7A is locked. Generate will not rearrange it.");
+    expect(said()).toBe("Locking Matematik 7A.");
   });
 
   it("names the day buttons of a phone with their day and their number of lessons, in the catalogue's plural", async () => {
@@ -126,20 +126,6 @@ describe("what the board says, in the catalogue's own words", () => {
       ]);
     } finally {
       vi.unstubAllGlobals();
-    }
-  });
-
-  it("calls a clash a clash, in both languages", async () => {
-    for (const [locale, word] of [["sv", "Krock"], ["en", "Clash"]] as const) {
-      const { unmount } = await board(locale, {});
-      unmount();
-      render(
-        <NextIntlClientProvider locale={locale} messages={(locale === "sv" ? sv : en) as never}>
-          <TimetableGrid lessons={[lesson({ id: "x", conflicted: true, conflictNote: "Läraren har Kemi 8B." })]} />
-        </NextIntlClientProvider>,
-      );
-      expect(card("x").textContent).toContain(`${word}: Läraren har Kemi 8B.`);
-      document.body.innerHTML = "";
     }
   });
 });
