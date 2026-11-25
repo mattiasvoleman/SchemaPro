@@ -1,6 +1,7 @@
 import { Prisma, type LessonRecurrence, type PrismaClient } from '@prisma/client';
 import { Role } from '../auth/enums/role.enum';
 import { todayInZone } from '../common/utils/time';
+import { exemptionsOf } from '../calendar/lesson-exemption';
 import { effectiveSegments, type PublicationRange, type ValiditySegment } from './publication-validity';
 import { publishModeOf } from './publish-mode';
 
@@ -41,6 +42,11 @@ export interface PublishedMaster {
    * beside its förläggning (review of #293, MEDEL-2). Absent reads false.
    */
   fromPlacement?: boolean;
+  /**
+   * Undantag med flit: the rules of the board the lesson stands against on purpose, by name. Carried through the snapshot so that a discarded
+   * draft puts the lesson back as the exemption it was published as, and a publish says how many there are. Absent is none.
+   */
+  exemptFrom?: string[];
   extraGroups: { studentGroupId: string }[];
   participants: { studentId: string }[];
   subject: { id: string; name: string };
@@ -147,6 +153,7 @@ export async function readPublishedMasters(tx: PrismaClient, publicationId: stri
       isLocked: row.isLocked,
       isGenerated: row.isGenerated,
       fromPlacement: row.fromPlacement,
+      exemptFrom: row.exemptFrom,
       extraGroups: row.extraGroupIds.filter((id) => groups.has(id)).sort().map((studentGroupId) => ({ studentGroupId })),
       participants: row.studentIds.filter((id) => people.has(id)).sort().map((studentId) => ({ studentId })),
       subject: { id: subject.id, name: subject.name },
@@ -232,8 +239,8 @@ export function slotChanged(before: SlotFields, after: SlotFields): boolean {
 
 /** Everything a snapshot holds, for "is the draft the published grundschema?". */
 export function lessonDiffers(
-  before: SlotFields & { coTeacherId: string | null; isParked: boolean; subjectId: string; studentGroupId: string; extraGroups: { studentGroupId: string }[]; participants: { studentId: string }[] },
-  after: SlotFields & { coTeacherId: string | null; isParked: boolean; subjectId: string; studentGroupId: string; extraGroups: { studentGroupId: string }[]; participants: { studentId: string }[] },
+  before: SlotFields & { coTeacherId: string | null; isParked: boolean; subjectId: string; studentGroupId: string; exemptFrom?: readonly string[]; extraGroups: { studentGroupId: string }[]; participants: { studentId: string }[] },
+  after: SlotFields & { coTeacherId: string | null; isParked: boolean; subjectId: string; studentGroupId: string; exemptFrom?: readonly string[]; extraGroups: { studentGroupId: string }[]; participants: { studentId: string }[] },
 ): boolean {
   const ids = (list: { studentGroupId?: string; studentId?: string }[]) =>
     list.map((entry) => entry.studentGroupId ?? entry.studentId).sort().join(',');
@@ -243,6 +250,8 @@ export function lessonDiffers(
     before.isParked !== after.isParked ||
     before.subjectId !== after.subjectId ||
     before.studentGroupId !== after.studentGroupId ||
+    // An exemption given or taken back is a change of the draft although nothing moves: a discard would put it back.
+    exemptionsOf(before.exemptFrom).join(',') !== exemptionsOf(after.exemptFrom).join(',') ||
     ids(before.extraGroups) !== ids(after.extraGroups) ||
     ids(before.participants) !== ids(after.participants)
   );
@@ -270,6 +279,7 @@ export function readDraftMasters(tx: PrismaClient, academicYearId: string): Prom
       isLocked: true,
       isGenerated: true,
       fromPlacement: true,
+      exemptFrom: true,
       extraGroups: { select: { studentGroupId: true }, orderBy: { studentGroupId: 'asc' } },
       participants: { select: { studentId: true }, orderBy: { studentId: 'asc' } },
       subject: { select: { id: true, name: true } },
@@ -302,6 +312,7 @@ export async function snapshotMasters(
     isLocked: master.isLocked,
     isGenerated: master.isGenerated,
     fromPlacement: master.fromPlacement ?? false,
+    ...(exemptionsOf(master.exemptFrom).length > 0 ? { exemptFrom: exemptionsOf(master.exemptFrom) } : {}),
     isParked: master.isParked,
     recurrence: master.recurrence,
     startDate: master.startDate,

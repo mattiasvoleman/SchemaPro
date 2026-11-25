@@ -6497,6 +6497,7 @@
       "PUB_STAFFING_REFUSE": "Tjänstefördelningens stoppregler hittar {count, plural, one {# sak} other {# saker}}.",
       "PUB_TIMPLAN": "{count, plural, one {# rad} other {# rader}} i timplanen ligger under nivån.",
       "PUB_BLOCK_SPLIT": "{count, plural, one {# lektion står} other {# lektioner står}} inte på samma tider som resten av sitt parallella block.",
+      "PUB_EXEMPTIONS": "{count, plural, one {# lektion står} other {# lektioner står}} utanför ramtiden eller över klassens lunch med flit: ett undantag som en administratör har gett och som gäller den tiden.",
       "PUB_EMPTY_HALF": "{count, plural, one {# halvklass har lektioner men inga placerade elever.} other {# halvklasser har lektioner men inga placerade elever.}}",
       "PUB_RANGE_OVERLAP": "Giltigheten delar period med {count, plural, one {ett publicerat schema} other {# publicerade scheman}}.",
       "PUB_RANGE_GAP": "{count, plural, one {# skoldag} other {# skoldagar}} framåt saknar publicerat schema.",

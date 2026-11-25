@@ -7,6 +7,7 @@ import {
   type WeekPattern,
 } from './exchange-model';
 import { sittingMeetsWindow } from '../common/lunch-window';
+import { exemptionsOf, type ExemptableRule } from '../calendar/lesson-exemption';
 import { hasPersonalNumber, redactPersonalNumbers } from './file-safety';
 
 /**
@@ -139,6 +140,8 @@ export interface ExistingLesson {
   extraGroupIds: string[];
   isLocked: boolean;
   isGenerated: boolean;
+  /** The rules of the board the lesson stands against on purpose (Undantag med flit); only the export reads it. */
+  exempt?: ExemptableRule[];
 }
 
 export interface FrameRow {
@@ -250,6 +253,11 @@ export interface ResolvedLesson {
   to: string | null;
   block: string | null;
   lessonId: string | null;
+  /**
+   * The rules of the board the file says the lesson stands against on purpose (the column Undantag), and after fitRefusals the ones it really
+   * breaks: what is saved. A name for a rule the time does not break is saved on nothing.
+   */
+  exempt: ExemptableRule[];
   /**
    * Teachers the row names who are not active (left, on leave). Resolving a row
    * does not refuse them: a lesson the school already has with such a teacher
@@ -572,6 +580,7 @@ export function resolveLesson(
       to,
       block,
       lessonId: lesson.ids.lesson ?? null,
+      exempt: exemptionsOf(lesson.exempt),
       inactiveTeachers,
     },
   };
@@ -622,8 +631,15 @@ export function rastsOf(rasts: readonly RastRow[], span: { min: number; max: num
   return [...today, ...everyDay];
 }
 
-/** Whether the lesson fits the frames, the raster and the generator's own lunch sittings of every group on it. */
-export function fitRefusals(lesson: ResolvedLesson, ctx: PlanContext): { refusals: Refusal[]; warnings: PlanWarning[] } {
+/** The refusal each rule a file may name an exemption for gives: the ramtid and the class's meal, and no rast, no clash, no unknown name. */
+const EXEMPTION_REFUSAL: Readonly<Record<ExemptableRule, string>> = { FRAME: 'OUTSIDE_FRAME', LUNCH: 'ON_LUNCH_SITTING' };
+
+/**
+ * Whether the lesson fits the frames, the raster and the generator's own lunch sittings of every group on it. A rule the file names an exemption
+ * for (Undantag med flit, the column Undantag) that the lesson really breaks is not refused: it is said in `exempted`, which is what the import
+ * saves on the lesson. A rule named that the lesson does not break is not in it, and the rast is never let through.
+ */
+export function fitRefusals(lesson: ResolvedLesson, ctx: PlanContext): { refusals: Refusal[]; warnings: PlanWarning[]; exempted: ExemptableRule[] } {
   const refusals: Refusal[] = [];
   const warnings: PlanWarning[] = [];
   const groups = [lesson.group, ...lesson.extraGroups];
@@ -689,7 +705,8 @@ export function fitRefusals(lesson: ResolvedLesson, ctx: PlanContext): { refusal
       detail: `Lektionen ${clockOfMinutes(lesson.startMin)}–${clockOfMinutes(lesson.endMin)} ligger utanför schemamotorns dag 08:00–18:00.`,
     });
   }
-  return { refusals, warnings };
+  const exempted = lesson.exempt.filter((rule) => refusals.some((found) => found.code === EXEMPTION_REFUSAL[rule]));
+  return { refusals: refusals.filter((found) => !exempted.some((rule) => EXEMPTION_REFUSAL[rule] === found.code)), warnings, exempted };
 }
 
 /** One lesson as the lunch check sees it. */

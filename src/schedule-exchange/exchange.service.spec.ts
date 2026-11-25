@@ -58,6 +58,7 @@ function masterRow(over: Record<string, unknown> = {}) {
     endDate: null,
     isLocked: false,
     isGenerated: true,
+    exemptFrom: [],
     extraGroups: [],
     participants: [],
     ...over,

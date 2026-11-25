@@ -6497,6 +6497,7 @@
       "PUB_STAFFING_REFUSE": "The staffing stop rules find {count, plural, one {# thing} other {# things}}.",
       "PUB_TIMPLAN": "{count, plural, one {# line of the timplan is} other {# lines of the timplan are}} below level.",
       "PUB_BLOCK_SPLIT": "{count, plural, one {# lesson does} other {# lessons do}} not stand at the same times as the rest of its parallel block.",
+      "PUB_EXEMPTIONS": "{count, plural, one {# lesson stands} other {# lessons stand}} outside the stage’s time frame or over the class’s meal on purpose: an exemption an administrator gave, for that time.",
       "PUB_EMPTY_HALF": "{count, plural, one {# class half has lessons but no pupils placed in it.} other {# class halves have lessons but no pupils placed in them.}}",
       "PUB_RANGE_OVERLAP": "The validity shares its period with {count, plural, one {a published timetable} other {# published timetables}}.",
       "PUB_RANGE_GAP": "{count, plural, one {# school day ahead has} other {# school days ahead have}} no published timetable.",
