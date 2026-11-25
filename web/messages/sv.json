@@ -2370,6 +2370,7 @@
     "conflictListExemptionsBody": "Lektioner som en administratör har lagt ändå, med flit. Ett undantag gäller bara den tid det gavs för.",
     "conflictExemptFRAME": "Står utanför ramtiden med flit.",
     "conflictExemptLUNCH": "Står över klassens lunch med flit.",
+    "conflictExemptIdle": "Undantaget för {rule, select, FRAME {ramtiden} other {klassens lunch}} behövs inte just nu: lektionen står inte mot det. Det ligger kvar, och lektionen är låst, tills tiden, låset eller parkeringen ändras.",
     "dragHint": "Dra lektioner för att flytta, dra i nederkanten för att ändra längd, klicka på en tom lucka för att lägga till, skift-klicka för flerval. Med tangentbordet: piltangenterna flyttar en lektion 15 minuter eller en dag, Enter öppnar den och skift-Enter väljer den.",
     "versions": "Versioner",
     "versionsTitle": "Schemaversioner",

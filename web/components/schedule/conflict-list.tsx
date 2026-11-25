@@ -32,6 +32,11 @@ export interface ConflictListProps extends ConflictNames {
    * own and not in red: an exemption is an answer an administrator gave, and "Får stå" is a lesson nobody has answered for.
    */
   exemptions?: ReadonlyMap<string, readonly ExemptRule[]>;
+  /**
+   * Lesson id → the rules of its exemptions the lesson breaks now (lib/exemptions.ts). A rule not here is said as an exemption nothing
+   * needs at the moment. Absent: every rule is said to stand.
+   */
+  exemptionStanding?: ReadonlyMap<string, readonly ExemptRule[]>;
   lessonById: ReadonlyMap<string, MasterLesson>;
   /**
    * Opens Justera lektion for the lesson. Absent for a reader (Läsbehörighet): the page gives a profile that changes nothing no
@@ -40,7 +45,7 @@ export interface ConflictListProps extends ConflictNames {
   onGo?: (lessonId: string) => void;
 }
 
-export function ConflictList({ open, rules, onOpenChange, conflictMap, exemptions, lessonById, group, subject, onGo }: ConflictListProps) {
+export function ConflictList({ open, rules, onOpenChange, conflictMap, exemptions, exemptionStanding, lessonById, group, subject, onGo }: ConflictListProps) {
   const t = useTranslations("timetable");
   const tCommon = useTranslations("common");
   const tDays = useTranslations("days");
@@ -110,7 +115,9 @@ export function ConflictList({ open, rules, onOpenChange, conflictMap, exemption
                   <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">
                     {given.map((rule) => (
                       <li key={rule} className="break-words">
-                        {t(`conflictExempt${rule}` as never)}
+                        {exemptionStanding === undefined || exemptionStanding.get(lesson.id)?.includes(rule)
+                          ? t(`conflictExempt${rule}` as never)
+                          : t("conflictExemptIdle", { rule })}
                       </li>
                     ))}
                   </ul>

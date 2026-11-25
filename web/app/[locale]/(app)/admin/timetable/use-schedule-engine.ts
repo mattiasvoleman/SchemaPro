@@ -277,7 +277,7 @@ export function useScheduleEngine(inputs: Pick<TimetableReads, "groups" | "shown
 
   // UNDANTAG MED FLIT: a hit for a rule the lesson has been given an exemption for is no conflict, and is said apart (the card's märke, the
   // krocklistan's rubrik). The grid, the header's count and the list all read the map without it; a page where no lesson has one reads its own map.
-  const { conflicts: conflictMap, exemptions: exemptionMap } = useMemo(() => splitExemptions(foundConflicts, lessonById), [foundConflicts, lessonById]);
+  const { conflicts: conflictMap, exemptions: exemptionMap, standing: exemptionStanding } = useMemo(() => splitExemptions(foundConflicts, lessonById), [foundConflicts, lessonById]);
 
   /** lessonId → collaborator label (soft edit-locks from presence). */
   const remoteEditors = useMemo(() => {
@@ -374,7 +374,7 @@ export function useScheduleEngine(inputs: Pick<TimetableReads, "groups" | "shown
     ],
   );
 
-  return { yearGroups, closedWeeks, teachers, students, studentGroupOf, gradeSpanOf, homeClassIds, rosterIndex, groupConflictMap, subjectById, groupById, roomById, teacherById, personById, lessonById, lunchOf, pupilBuffers, conflictMap, exemptionMap, remoteEditors, placements, validateChange };
+  return { yearGroups, closedWeeks, teachers, students, studentGroupOf, gradeSpanOf, homeClassIds, rosterIndex, groupConflictMap, subjectById, groupById, roomById, teacherById, personById, lessonById, lunchOf, pupilBuffers, conflictMap, exemptionMap, exemptionStanding, remoteEditors, placements, validateChange };
 }
 
 export type ScheduleEngine = ReturnType<typeof useScheduleEngine>;

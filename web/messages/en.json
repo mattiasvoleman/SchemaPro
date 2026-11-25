@@ -2370,6 +2370,7 @@
     "conflictListExemptionsBody": "Lessons an administrator added anyway, on purpose. An exemption holds only for the time it was given for.",
     "conflictExemptFRAME": "Stands outside the stage’s time frame on purpose.",
     "conflictExemptLUNCH": "Stands over the class’s lunch on purpose.",
+    "conflictExemptIdle": "The exemption for {rule, select, FRAME {the stage’s time frame} other {the class’s lunch}} is not needed at the moment: the lesson does not stand against it. It stays, and the lesson stays locked, until the time, the lock or the tray changes.",
     "dragHint": "Drag lessons to move, drag the bottom edge to resize, click an empty slot to add, shift-click to multi-select. By keyboard: the arrow keys move a lesson 15 minutes or a day, Enter opens it and Shift-Enter selects it.",
     "versions": "Versions",
     "versionsTitle": "Schedule versions",

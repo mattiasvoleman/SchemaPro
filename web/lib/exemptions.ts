@@ -25,31 +25,44 @@ export function exemptableReasons(reasons: string | undefined): ExemptRule[] | n
 export interface ExemptionSplit {
   /** The grid's conflicts, without a hit the lesson is exempt from, and without a lesson that has nothing else. */
   conflicts: ReadonlyMap<string, readonly ConflictHit[]>;
-  /** Lesson id → the rules it stands against ON PURPOSE: given the exemption for, and breaking them now. */
+  /**
+   * Lesson id → the rules it has been given an exemption for: every placed lesson that carries one, as the publication counts them
+   * (PUB_EXEMPTIONS reads the column and not the board). The header says how many, and the list names each.
+   */
   exemptions: ReadonlyMap<string, readonly ExemptRule[]>;
+  /**
+   * Lesson id → the rules of those it breaks NOW: what it stands against on purpose. A rule not here is an exemption nothing needs at the
+   * moment (Generera has laid the class's meal elsewhere): it stays on the lesson, and the lesson stays locked, until its time, lock or place changes.
+   */
+  standing: ReadonlyMap<string, readonly ExemptRule[]>;
 }
 
 /**
- * Takes the hits of the rules a lesson is exempt from out of the clash map. A rule the lesson has an exemption for and does not break now is
- * not an exemption (nothing stands there), and an exemption never lifts another hit. A page where no lesson has one gets its own map back,
- * unchanged, so that nothing is drawn again for it.
+ * Takes the hits of the rules a lesson is exempt from out of the clash map. An exemption never lifts another hit. A rule the lesson has an
+ * exemption for and does not break now is still an exemption (the gateway has saved it, and the publication counts it), said apart from the ones
+ * that hold something (`standing`). A page where no lesson has one gets its own map back, unchanged, so that nothing is drawn again for it.
  */
 export function splitExemptions(
   conflictMap: ReadonlyMap<string, readonly ConflictHit[]>,
   lessonById: ReadonlyMap<string, MasterLesson>,
 ): ExemptionSplit {
   const exemptions = new Map<string, readonly ExemptRule[]>();
+  const standing = new Map<string, readonly ExemptRule[]>();
   let conflicts: Map<string, readonly ConflictHit[]> | null = null;
-  for (const [id, hits] of conflictMap) {
-    const given = lessonById.get(id)?.exemptFrom;
-    if (!given || given.length === 0) continue;
-    const exempt = EXEMPT_RULES.filter((rule) => given.includes(rule) && hits.some((found) => found.kind === rule));
-    if (exempt.length === 0) continue;
+  for (const [id, lesson] of lessonById) {
+    // A lesson on the tray occupies nothing, and the gateway ends its exemption there: the publication does not count it either.
+    if (!lesson.exemptFrom || lesson.exemptFrom.length === 0 || lesson.isParked) continue;
+    const given = EXEMPT_RULES.filter((rule) => lesson.exemptFrom!.includes(rule));
+    if (given.length === 0) continue;
+    exemptions.set(id, given);
+    const hits = conflictMap.get(id) ?? [];
+    const breaking = given.filter((rule) => hits.some((found) => found.kind === rule));
+    if (breaking.length === 0) continue;
+    standing.set(id, breaking);
     conflicts ??= new Map(conflictMap);
-    exemptions.set(id, exempt);
-    const rest = hits.filter((found) => !(exempt as readonly string[]).includes(found.kind));
+    const rest = hits.filter((found) => !(breaking as readonly string[]).includes(found.kind));
     if (rest.length > 0) conflicts.set(id, rest);
     else conflicts.delete(id);
   }
-  return { conflicts: conflicts ?? conflictMap, exemptions };
+  return { conflicts: conflicts ?? conflictMap, exemptions, standing };
 }

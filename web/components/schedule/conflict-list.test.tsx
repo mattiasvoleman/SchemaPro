@@ -141,4 +141,25 @@ describe("the krocklista says an exemption apart (Undantag med flit)", () => {
     expect(screen.getAllByText("Inga konflikter i schemat.").length).toBeGreaterThan(0);
     expect(screen.getAllByRole("heading", { name: "Undantag" })).toHaveLength(1);
   });
+
+  it("lists an exemption nothing stands against at the moment, in words that say so, so that the header's number and the publication's can be found in it", () => {
+    // Given for the ramtid and the lunch; Generera has since laid the class's meal elsewhere, so only the ramtid is still broken.
+    draw({
+      lessonById: both,
+      exemptions: new Map([["g", ["FRAME", "LUNCH"] as const]]),
+      exemptionStanding: new Map([["g", ["FRAME"] as const]]),
+    });
+    const section = screen.getByRole("heading", { name: "Undantag" }).closest("section")!;
+    expect(within(section).getByText("Står utanför ramtiden med flit.")).toBeTruthy();
+    expect(within(section).getByText(/Undantaget för klassens lunch behövs inte just nu/)).toBeTruthy();
+    expect(within(section).queryByText("Står över klassens lunch med flit.")).toBeNull();
+  });
+
+  it("lists an exemption none of whose rules is broken any more, where it can be opened and taken back", () => {
+    const { onGo } = draw({ lessonById: both, exemptions: new Map([["g", ["LUNCH"] as const]]), exemptionStanding: new Map() });
+    const section = screen.getByRole("heading", { name: "Undantag" }).closest("section")!;
+    expect(within(section).getByText(/Undantaget för klassens lunch behövs inte just nu/)).toBeTruthy();
+    fireEvent.click(within(section).getByRole("button", { name: "Öppna" }));
+    expect(onGo).toHaveBeenCalledWith("g");
+  });
 });

@@ -27,20 +27,35 @@ describe("splitExemptions", () => {
     expect(exemptions.get("a")).toEqual(["FRAME", "LUNCH"]);
   });
 
-  it("says nothing of an exemption for a rule the lesson does not break now: only the rule it stands against is an exemption", () => {
+  it("says an exemption for a rule the lesson does not break now as an exemption nothing needs: the gateway has saved it and the publication counts it", () => {
     const lessons = new Map([["a", lesson("a", ["FRAME", "LUNCH"])]]);
-    const { conflicts, exemptions } = splitExemptions(new Map([["a", [hit("LUNCH")]]]), lessons);
-    expect(exemptions.get("a")).toEqual(["LUNCH"]);
+    const { conflicts, exemptions, standing } = splitExemptions(new Map([["a", [hit("LUNCH")]]]), lessons);
+    expect(exemptions.get("a")).toEqual(["FRAME", "LUNCH"]);
+    expect(standing.get("a")).toEqual(["LUNCH"]);
     expect(conflicts.has("a")).toBe(false);
-    expect(splitExemptions(new Map(), lessons).exemptions.size).toBe(0);
+    // A lesson whose meal Generera has laid elsewhere: nothing stands there, and the exemption is still on the lesson.
+    const idle = splitExemptions(new Map(), lessons);
+    expect(idle.exemptions.get("a")).toEqual(["FRAME", "LUNCH"]);
+    expect(idle.standing.size).toBe(0);
+  });
+
+  it("counts what the publication counts: the placed lessons that carry an exemption, and not a lesson on the tray or one with the names of no rule", () => {
+    const lessons = new Map<string, MasterLesson>([
+      ["a", lesson("a", ["FRAME"])],
+      ["b", lesson("b", ["LUNCH"])],
+      ["c", lesson("c")],
+      ["d", lesson("d", [])],
+      ["e", { ...lesson("e", ["FRAME"]), isParked: true } as MasterLesson],
+    ]);
+    expect([...splitExemptions(new Map(), lessons).exemptions.keys()]).toEqual(["a", "b"]);
   });
 
   it("never lets an exemption through for another rule: a clash, a closed hour and a locked room stay conflicts", () => {
     const lessons = new Map([["a", lesson("a", ["FRAME", "LUNCH"])]]);
     const hits = [hit("TEACHER"), hit("ROOM"), hit("GROUP"), hit("AVAILABILITY"), hit("ROOM_LOCK")];
-    const { conflicts, exemptions } = splitExemptions(new Map([["a", hits]]), lessons);
+    const { conflicts, standing } = splitExemptions(new Map([["a", hits]]), lessons);
     expect(conflicts.get("a")).toEqual(hits);
-    expect(exemptions.size).toBe(0);
+    expect(standing.size).toBe(0);
   });
 
   it("is the same map, and the same arrays, for a page with no exemption: nothing is redrawn", () => {

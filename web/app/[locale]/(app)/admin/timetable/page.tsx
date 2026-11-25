@@ -314,7 +314,7 @@ export default function TimetablePage() {
     yearGroups, closedWeeks, teachers, students, studentGroupOf,
     gradeSpanOf, homeClassIds, rosterIndex, groupConflictMap, subjectById,
     groupById, roomById, teacherById, personById, lessonById,
-    lunchOf, pupilBuffers, conflictMap, exemptionMap, remoteEditors, placements,
+    lunchOf, pupilBuffers, conflictMap, exemptionMap, exemptionStanding, remoteEditors, placements,
     validateChange,
   } = engine;
   const view = useTimetableView({
@@ -1561,6 +1561,7 @@ export default function TimetablePage() {
               onOpenChange={setConflictsOpen}
               conflictMap={conflictMap}
               exemptions={exemptionMap}
+              exemptionStanding={exemptionStanding}
               lessonById={lessonById}
               group={(id) => groupById.get(id)?.name ?? ""}
               subject={(id) => subjectById.get(id)?.name ?? ""}

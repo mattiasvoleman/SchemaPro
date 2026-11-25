@@ -1499,6 +1499,20 @@ describe("a lesson that stands outside the ramtid on purpose (Undantag med flit)
     expect(within(list).queryByText(/^common\.codes\.MASTER_LESSON_REFUSED/)).toBeNull();
   });
 
+  it("counts an exemption nothing stands against too, as the publication does, and opens the list for it", async () => {
+    // Given for the ramtid, with the ramtid wide enough now for the lesson at 10:00-11:00: nothing stands there, and the lesson still has it.
+    state.frameTimes = [{ ...frame(0, 99), endTime: "12:00:00" }];
+    state.lessons = [given("l-idle", "s-sl", "g-51", "10:00")];
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    expect(await screen.findByText(/timetable\.exemptionCount/)).toBeTruthy();
+    expect(screen.queryByText(/timetable\.conflictCount/)).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "timetable.conflictListOpen" }));
+    const list = await screen.findByRole("dialog");
+    expect(within(list).getByRole("heading", { name: "timetable.conflictListExemptionsTitle" })).toBeTruthy();
+    expect(within(list).getByText(/timetable\.conflictExemptIdle/)).toBeTruthy();
+  });
+
   it("is a conflict as before for a lesson without the exemption, and the header says conflicts and no exemption", async () => {
     state.frameTimes = [frame(0, 99)];
     state.lessons = [lesson("l-late", "s-sl", "g-51", "10:00")];
