@@ -116,11 +116,11 @@ export function ResultView({
               <summary className="cursor-pointer px-3 py-2 text-sm font-medium">{say("result.previewOf", { n: i + 1 })}</summary>
               <div className="overflow-x-auto px-3 pb-3" tabIndex={0} role="region" aria-label={say("result.previewOf", { n: i + 1 })}>
                 {entries[i]?.plan.shape === "lines" ? (
-                  <pre className="whitespace-pre-wrap break-words font-mono text-xs">{file.preview.map((row) => row.cells[0]).join("\n")}</pre>
+                  <pre className="whitespace-pre-wrap break-words font-mono text-xs" translate="no">{file.preview.map((row) => row.cells[0]).join("\n")}</pre>
                 ) : (
                   <table className={TABLE}>
                     <caption className="sr-only">{say("result.previewOf", { n: i + 1 })}</caption>
-                    <tbody className="font-mono text-xs">
+                    <tbody className="font-mono text-xs" translate="no">
                       {file.preview.map((row) => (
                         <tr key={row.number}>
                           <th scope="row" className={`${TD} text-muted-foreground`}>{row.number}</th>
@@ -194,7 +194,7 @@ export function ResultView({
 
         <details className="mt-4 rounded-md border">
           <summary className="cursor-pointer px-3 py-2 text-sm font-medium">{say("result.reportShown")}</summary>
-          <pre className="overflow-x-auto whitespace-pre-wrap break-words px-3 pb-3 font-mono text-xs" tabIndex={0} aria-label={say("result.reportShown")}>
+          <pre className="overflow-x-auto whitespace-pre-wrap break-words px-3 pb-3 font-mono text-xs" tabIndex={0} aria-label={say("result.reportShown")} translate="no">
             {reportText}
           </pre>
         </details>

@@ -103,6 +103,22 @@ describe("e-mail addresses", () => {
     expect(kinds("anna@skola")).toEqual(["epost"]);
   });
 
+  it("is taken however short: a@bc is four characters and an address, as anna@skola is one with no top domain (the review of #403)", () => {
+    const at = (text: string) => findPersonalData(text).map((finding) => text.slice(finding.start, finding.end));
+    expect(at("Skriv till a@bc i dag")).toEqual(["a@bc"]);
+    expect(kinds("a@bc")).toEqual(["epost"]);
+    // One character on each side of the @ is all it takes: what was typed as an address is taken.
+    expect(at("Skriv till a@b nu")).toEqual(["a@b"]);
+  });
+
+  it("is not a domain in brackets with a blank in it: anna@[10.0.0 1] is no address, and nothing of it is taken (the review of #403)", () => {
+    const at = (text: string) => findPersonalData(text).map((finding) => text.slice(finding.start, finding.end));
+    expect(at("Skriv till anna@[10.0.0 1] i dag")).toEqual([]);
+    expect(at("Skriv till anna@[10.0.0\t1] i dag")).toEqual([]);
+    // The same bracket with no blank is one: the blank is what makes the difference.
+    expect(at("Skriv till anna@[10.0.0.1] i dag")).toEqual(["anna@[10.0.0.1]"]);
+  });
+
   it("holds the digits of a personnummer written inside it, so that the address is one finding and not two", () => {
     const text = `elev.${VALID.slice(0, 6)}-${VALID.slice(6)}@skola.se`;
     expect(kinds(text)).toEqual(["epost"]);
