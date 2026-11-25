@@ -1110,6 +1110,11 @@ export interface CreateMasterLessonInput {
   endDate?: string | null;
   extraGroupIds?: string[];
   studentIds?: string[];
+  /**
+   * Undantag med flit: the rules answered "Lägg ändå" to for this time (FRAME, LUNCH), as on an update. Said by the undo of a delete of a lesson
+   * that had an exemption, which would otherwise be refused as a new lesson on a time that breaks the rule.
+   */
+  exempt?: ExemptRule[];
 }
 
 export interface MasterLessonResponse {
