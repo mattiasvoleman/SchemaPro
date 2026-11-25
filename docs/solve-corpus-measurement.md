@@ -1,5 +1,7 @@
 # The solver corpus: the first measurement (2026-11-22)
 
+> **Read with the correction of 2026-11-25 (M8, docs/DEPLOYMENT.md §35.2 and §35.7).** Every "timeout" below is a week whose pupils' groups were drawn at random, TIMEOUT at a day ending at 16:00. Several of those weeks are laid on 0.01 to 4 deterministic seconds when the day ends 30 to 120 minutes later, and two are known to have a timetable at 16:00 itself: a random draw may have no timetable in its frame, so a timeout here does not say that the engine cannot lay a week of that form, and the lines the tables below draw are not lines of its reach. What the tables measure is where this corpus's weeks stop being laid by one search in that budget.
+
 What a Generera run costs on weeks shaped like real schools, and where it stops finding a timetable. The corpus and the measuring stick are described in docs/DEPLOYMENT.md §35; the numbers a school
 reads are in the manual (5.2). This file is the record of the measurement behind them, so that it can be repeated and compared. The data is `docs/solve-corpus-measurement.json` (count mode, 77 weeks) and
 `docs/solve-corpus-measurement-clock.json` (clock mode, 41 weeks); the tables are `corpus_report.py docs/solve-corpus-measurement.json --seconds-per-work 18 --lang en`.

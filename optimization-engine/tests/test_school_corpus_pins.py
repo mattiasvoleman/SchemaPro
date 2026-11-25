@@ -28,15 +28,19 @@ if str(_BENCH) not in sys.path:
 
 import school_corpus as corpus  # noqa: E402
 
-#: sha256 of the request, as canonical JSON (sorted keys), for CORPUS_VERSION 1.
+#: sha256 of the request, as canonical JSON (sorted keys), for CORPUS_VERSION 2. Version 1's are in git history
+#: (`139f71f2…`, `16795d8f…`, `82ba5a69…`, `cb3f9bd1…`, `52aefabd…`): ONLY THE REQUEST ID MOVED. The next test holds that.
 GOLDEN = {
-    "n12-g3-m0-s1": "139f71f2e5379dcb14d687c4ef3ffa9a2f8805fbca9930fb429a18ac3a824d9d",
-    "n12-g3-m0-s2": "16795d8ff51a8935610af99eb548972fd925b1b1c00d18a95ca00f0e3b3caf5c",
-    "n9-g10-m0-s1-t5-h": "82ba5a69e09f61e81c7bea54f6edb11cfed790c578835a4a04292fd423e6cc9a",
-    "n12-g6-m3-s3-t3-b-h-k": "cb3f9bd1abf35680d0412c8ce8a4086f348b72ad20ed68d456657c0ac9835b04",
-    "n6-g0-m0-s1": "52aefabd43681d404b6ff0d1b74e44915496958b28c2760ac048489f0cbe26a2",
+    "n12-g3-m0-s1": "a9cd73be052b49fb7824bde1fa43e119b26e379af5f9976aad9715e84f164750",
+    "n12-g3-m0-s2": "813ee056585f0e8d6233280d03a14c4f916988f4fa7e6a3a3c6929d1d5b9c531",
+    "n9-g10-m0-s1-t5-h": "279f6ee8f22cf8a7568ed0980414fb12c8a85be8ef5ebb7488a9fd9b64399e3a",
+    "n12-g6-m3-s3-t3-b-h-k": "bc5ccecc9daa3e75a528c7d6c0231e56f058554f38ff662aa8da230a80ea40fd",
+    "n6-g0-m0-s1": "16bf11bb99526fb63252da92dd3c08f25dabc4cc541ba1d7cadde6ba39e900ec",
 }
-GOLDEN_VERSION = 1
+GOLDEN_VERSION = 2
+
+#: The content of every sweep week as version 1 built it, requestId left out: tests/data/school_corpus_v1_content.json.
+V1_CONTENT = Path(__file__).resolve().parent / "data" / "school_corpus_v1_content.json"
 
 
 def shapes() -> list[corpus.SchoolShape]:
@@ -94,3 +98,31 @@ def test_the_request_id_names_the_shape_and_the_version() -> None:
     request_id = corpus.build_week(shape).request.request_id
     assert str(request_id) == corpus._uid(f"request-{shape.name()}-v{corpus.CORPUS_VERSION}")
     assert str(request_id) != corpus._uid(f"request-{shape.name()}")
+
+
+def _content_digest(week: corpus.CorpusWeek) -> str:
+    request = week.request.model_dump(mode="json", by_alias=True, exclude_none=True)
+    request.pop("requestId")
+    return hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def test_version_two_moved_only_the_request_id_of_every_week_of_version_one() -> None:
+    """THE GATE'S ROWS HAVE NOT CHANGED MEANING (M8, PR 3). The version is in every requestId, so bumping it renames
+    every week; this holds that nothing else of the 82 sweep weeks moved, the nightly gate's thirteen among them."""
+    held = json.loads(V1_CONTENT.read_text())["sweep"]
+    shapes = {shape.name(): shape for shape in corpus.sweep_shapes()}
+    assert set(held) == set(shapes), "the sweep has other weeks than version 1 had: name the new ones in the cliff weeks, not here"
+    moved = [name for name, digest in held.items() if _content_digest(corpus.build_week(shapes[name])) != digest]
+    assert moved == [], f"these weeks build another week than they did in version 1: {moved}"
+    assert {shape.name() for shape in corpus.gate_shapes()} <= set(held)
+
+
+def test_a_day_that_ends_otherwise_than_at_sixteen_is_another_week_with_another_name() -> None:
+    shape = corpus.with_classes(corpus.BASE, 9, group_subjects=6, seed=1)
+    later = replace(shape, day=(shape.day[0], "16:30:00", shape.day[2]))
+    assert shape.name() == "n9-g6-m0-s1"
+    assert later.name() == "n9-g6-m0-s1-e1630"
+    assert corpus.build_week(shape).request.request_id != corpus.build_week(later).request.request_id
+    other = corpus.build_week(later).request
+    assert {str(frame.end_time) for frame in other.frame_times} == {"16:30:00"}
+

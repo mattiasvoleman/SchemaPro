@@ -360,7 +360,7 @@ def main() -> int:
     parser.add_argument("--budget", type=float, default=120.0, help="seconds (clock mode)")
     parser.add_argument("--det-budget", type=float, default=30.0,
                         help="deterministic seconds (count mode)")
-    parser.add_argument("--profile", default=None, help="'gate' or 'sweep' (school_corpus.py)")
+    parser.add_argument("--profile", default=None, help="'gate', 'sweep' or 'cliff' (school_corpus.py)")
     parser.add_argument("--only", default=None,
                         help="only these weeks: names, comma separated; a name ending in * is a prefix")
     parser.add_argument("--jobs", type=int, default=1, help="weeks measured side by side")

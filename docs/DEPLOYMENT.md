@@ -7365,12 +7365,14 @@ fixed seed, so CP-SAT repeats the same search exactly, with the budget in CP-SAT
 the budget as a safety that never binds: a search that ends before 95 % of its deterministic budget is an `ERROR` (`WALL_LIMIT_BEFORE_BUDGET`), never a TIMEOUT, because a verdict the host's load decided is not
 count mode's (the first sweep's 40-times limit decided 13 of its 33 TIMEOUTs at load 55–119; they were measured again, and all 13 are real).
 
-### 35.2 What the first measurement says: limits a school can read
+### 35.2 What the first measurement says: where the corpus's weeks stop being laid (read the correction under the first paragraph)
 
 Measured 2026-11-22 (the record, tables and conditions are in docs/solve-corpus-measurement.md, the data in docs/solve-corpus-measurement.json and docs/solve-corpus-measurement-clock.json): the `sweep` profile, 77 of its
 82 weeks, in count mode with a budget of 4 deterministic seconds a search, and a clock-mode check with all eight cores of this Mac. **The table is one core's, and its seconds are estimates** ("within" is the slowest
 week of the row that got a timetable): the work times 18 s per deterministic second, which is what one worker took on this Mac when it was quiet (11 weeks, 8–25). By that figure the budget is about 72 s a
 search and 144 s for a solve's two searches of one core of this Mac. Production gives a run 180 s on every core it has, so the two are not the same measure, and **production's processor is not measured** (§35.5).
+
+**Read this before the table (correction of 2026-11-25, M8).** A "none (timeout)" row says that no timetable was found in 2 × 4 deterministic seconds for a week whose pupils' groups were drawn at random, with the day ending at 16:00. It is **not the limit of what the engine can lay**, and the line the table draws (five or six subjects in groups at nine classes) is not a line of the engine's reach. The weeks of the table that are TIMEOUT at 16:00 are weeks on a cliff: the same weeks are laid on 0.01 to 4 deterministic seconds of work when the day ends 30 to 120 minutes later (§35.7: `n9-g8` at 16:30, `n9-g10` at 17:00, `n12-g5` at 17:00, `n12-g6` at 18:00), and two of them were laid at 16:00 itself by laying the years one at a time (`n9-g6`, `n12-g5`: the engine accepts the result with every lesson pinned). A random draw of pupils may have **no timetable in its frame**, and a TIMEOUT there does not separate "hard" from "impossible". What the table measures is where this corpus's weeks stop having a timetable that one search finds in that budget. The school's own form (ten subjects in groups, half groups, terms, teachers on long chains) is **not known**: the weeks of that form that are TIMEOUT here are TIMEOUT at 16:00, and 18:00 gives a timetable for one and not for the others (§35.7); the word "none" in the table is not "cannot".
 
 | A school with … | gets a timetable within | in |
 |---|---|---|
@@ -7424,7 +7426,7 @@ search and 144 s for a solve's two searches of one core of this Mac. Production 
 
 What the numbers say, in order of weight:
 
-1. **The number of classes is not what stops the engine; the form of the groups is.** By class, 24 classes (546 lessons) are a matter of seconds even on one core. With three subjects in groups the line is between
+1. **The number of classes is not what stops these weeks; the form of the groups is** (and see the correction above: that is where the corpus's weeks stop having a timetable one search finds, not the engine's reach). By class, 24 classes (546 lessons) are a matter of seconds even on one core. With three subjects in groups the line is between
    12 and 15 classes on one core and between 15 and 18 on eight (the 15- and 18-class weeks are also the first with shared teachers, three språkval teachers on four parallel groups each, the chain of point 2: that row is the class count and the chain together). With more subjects in groups it is, on one core, four subjects at nine classes and three at twelve; on eight cores five at nine classes (7 and 33 s) and at least
    five at twelve (41 s), and six at nine classes is out of reach on eight cores too (two of two weeks).
 2. **What the engine cannot lay is a long chain of one person's parallel groups, not shared teachers as such.** A teacher on two parallel groups of a subject that take pupils from the same classes is cheap:
@@ -7433,7 +7435,7 @@ What the numbers say, in order of weight:
    the number of shared teachers, is the wall; it is what the warning "Krock för lärare" and the year count say.
 3. **Terms cost a lot** and the cost is not smooth: three term subjects at twelve classes get a timetable on one core in one of two weeks (35 s) and on eight cores in both (153 and 164 s at loads of 70 and 40, near the 180 s budget); five term subjects do not on one core.
 4. **The same shape differs by seed, a lot near the edge** (0.26 or 3.5 work; 1.9 work or a timeout). A figure for one week is a lottery ticket; a count of weeks is a result, which is why the table counts.
-5. **The production form does not get a timetable here**: ten subjects in groups with half groups and terms time out on one core at six and nine classes, with six periods instead of two, with teachers who have several groups each, and
+5. **The production form does not get a timetable here at 16:00** (and whether it has one is not known, §35.7): ten subjects in groups with half groups and terms time out on one core at six and nine classes, with six periods instead of two, with teachers who have several groups each, and
    in a week of a whole school of that form (30 classes in grades 4–9, 868 lessons, 4,154 group pairs). Three of these weeks were also run with all eight cores and timed out at 180 s, at a load of 13 to 63: a timeout
    under that load is no proof, and what production's cores do with them is what §35.5 would say.
 6. **The group-pair wall.** The engine takes 5,000 `groupConflicts` in a request, and the gateway refuses at that number with a named answer. The production form reaches it at about fifteen classes
@@ -7512,6 +7514,35 @@ node scripts/bench/solve-corpus-calibrate.mjs convert prod.json trajectory.json
   lists of its pupils. A second school is the only real second opinion.
 - The weeks the search gives up on are measured to the budget twice over (two searches) and are left out of the gate for what they cost; when one of them starts to solve, the sweep shows it and
   the gate's weeks can be moved to follow.
+
+### 35.7 The cliff weeks, and what is not known about the school's form (M8, PR 3)
+
+**What they are.** `school_corpus.CLIFF_WEEKS` names seven weeks of the sweep, each at the **lowest day end at which some road has laid it** (`corpus_measure.py --profile cliff`; a week whose end is 16:00 is the sweep's own). Each has a **witness** in `optimization-engine/benchmarks/corpus/cliff_witnesses.json`: the road, the encoding, the seed, the deterministic work, the engine tree it was found on, the digest of the request, and the start of every lesson. `benchmarks/cliff_weeks.py --verify` (and `tests/test_school_corpus_cliff.py`) pins every lesson at its start and asks the engine for a timetable: it must accept it without moving a lesson, and the rooms it hands out are checked **from the answer** (two lessons in a room at once, a room of the wrong type or too small), not on the engine's word. A TIMEOUT on a cliff week is therefore the search and not the week. They have no terms (the nightly gate does not cover terms), and **the gate does not read them yet**: a week no tree lays gives it nothing, and its rows are for M8's roads to turn from TIMEOUT to a timetable.
+
+| Week (name) | Lowest day end laid | By | Work (2 × 4 det. s, seed 1) | The engine as it is (one worker, same budget) |
+|---|---|---|---|---|
+| `n12-g4-m0-s1-e1530` | 15:30 | years one at a time | 1.17 | TIMEOUT at 16:00; laid with the groups as cliques at 16:00 (3.19) |
+| `n9-g6-m0-s1` | 16:00 | years one at a time | 1.04 | TIMEOUT at 16:15; 0.44 at 16:30 |
+| `n12-g5-m0-s1` | 16:00 | years one at a time | 5.70 | TIMEOUT at 16:00; 0.28 at 17:00 |
+| `n9-g8-m0-s1-e1630` | 16:30 | the engine, pairs | 4.32 | TIMEOUT at 16:15; 0.015 at 17:00 |
+| `n9-g10-m0-s1-e1630` | 16:30 | years one at a time | 5.54 | TIMEOUT at 16:30; 0.11 at 17:00 |
+| `n12-g6-m0-s1-e1645` | 16:45 | years one at a time | 5.15 | TIMEOUT at 17:00; 0.20 at 18:00 |
+| `n12-g10-m0-s1-e1700` | 17:00 | the engine, pairs | 3.85 | TIMEOUT at 16:45 (16:00); 0.02 at 18:00 |
+
+"Years one at a time" is `m8_paths.py years` of M8's design note: each year laid with the years before it held (pinned lessons), a refusal that names lessons in the way letting go of them. The ends are the lowest the SEARCH tried (15-minute steps; the monolith as the engine has it, then with the groups as cliques, then the years one at a time, in the order `down`): another order or a larger budget may lay a week lower. The measurement was made in count mode, so the work is the same on every machine; the machine's load is not a part of it.
+
+**What they say about the table of §35.2.** These seven weeks are TIMEOUT in the table and known to have a timetable at 15:30–17:00; `n9-g6` and `n12-g5` at 16:00 itself, and `n12-g4` at 15:30, so also at 16:00. The monolith needs at least 30 minutes more of the day than the years one at a time on the weeks both lay (`n9-g6`: 16:30 against 16:00; `n9-g10`: 17:00 against 16:30; `n12-g5` and `n12-g6` more, the ends tried for the monolith were further apart), which is about 6 % of the frame: on a week that has a timetable the engine's search is weaker than a search that lays the years one at a time. The other TIMEOUT rows of the table at 16:00 (`n9-g8`, `n9-g10`, `n12-g6`, `n12-g8`, `n12-g10` and the rest) are not known either way at 16:00.
+
+**The school's form is not known.** Ten subjects in groups, half groups, terms and long teacher chains; weeks of the sweep with that form, count mode, pairs, 2 × 4 deterministic seconds, one worker, the day ending at 16:00 and at 18:00:
+
+| Week | 16:00 | 18:00 |
+|---|---|---|
+| `n6-g10-m0-s1-t5-h` (6 classes) | TIMEOUT | a timetable, 3.25 |
+| `n9-g10-m0-s1-t5-h` (9 classes) | TIMEOUT | TIMEOUT |
+| `n9-g10-m0-s1-t5-q1-h` (9 classes, teachers on the same group in every year) | TIMEOUT | TIMEOUT |
+| `n30-g10-m0-s1-t5-y0.0.0.3.10.10-h` (30 classes in grades 4–9, 868 lessons, 4,154 pairs) | TIMEOUT | TIMEOUT |
+
+**A TIMEOUT on these rows does not separate "hard" from "impossible", and nothing here says that the school's form is out of the engine's reach or that it can be laid.** The six-class week has a timetable at 18:00 and none was found at 16:00; for the others neither is known. What is known is what the weeks are: random draws of pupils (a school's groups are not), with every lesson 60 or 90 minutes (a school's run from 40 to 140), no dining hall, a planning afternoon for every teacher that no school was asked about, and teachers with one group each or a few (a school's have chains of five to ten). A second school, or a **planted** week (a timetable first, the pupils second, which a first attempt could not fit pupils to), is the only fact; `g386-L-4`, `g386-M-4` and `g386-U-1` are the posts that would bring the corpus closer.
 
 ## 36. What the school's base data holds, and what is missing ("Vad kom in", P1 Pilotkit, part 2)
 
