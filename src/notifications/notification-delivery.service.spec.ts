@@ -2,9 +2,10 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Logger } from '@nestjs/common';
 import { createPrismaMock, createTxMock, type TxMock } from '../../test/utils/prisma-mock';
+import { MemoryOutbound } from '../../test/utils/outbound-memory';
 import type { PrismaService } from '../database/prisma.service';
-import { EMAIL_TIMEOUT_MS, MAX_PENDING_BATCHES, NotificationDeliveryService } from './notification-delivery.service';
-import type { OutboxEntry } from './notification-outbox';
+import { EMAIL_TIMEOUT_MS, NOTICE_LEASE_MS, NotificationDeliveryService } from './notification-delivery.service';
+import type { OutboxEntry, OutboxSettled } from './notification-outbox';
 
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
 
@@ -27,46 +28,99 @@ const entry = (overrides: Partial<OutboxEntry> = {}): OutboxEntry => ({
   ...overrides,
 });
 
+/** An entry for `n` people with an address each: 98 of them are two mails of 49. */
+const wide = (n: number, overrides: Partial<OutboxEntry> = {}, prefix = 'w'): OutboxEntry =>
+  entry({
+    recipients: Array.from({ length: n }, (_v, i) => ({ userId: `${prefix}${i}`, notificationId: `n-${prefix}${i}` })),
+    email: { subject: 'S', body: 'B', recipients: Array.from({ length: n }, (_v, i) => ({ userId: `${prefix}${i}`, email: `${prefix}${i}@example.invalid` })) },
+    ...overrides,
+  });
+
+/**
+ * What the producers of an entry know and the queue does not keep: the addresses. The delivery reads them from the
+ * database when a row is planned (app.outbound_addresses), so a spec says who has one.
+ */
+const withAddresses = (store: MemoryOutbound, batch: readonly OutboxEntry[]): void => {
+  for (const one of batch) for (const r of one.email?.recipients ?? []) if (r.email) store.directory.set(r.userId, r.email);
+};
+
+const logOf = (delivery: NotificationDeliveryService): Logger => (delivery as unknown as { logger: Logger }).logger;
+
+/** A Resend that answers like the real one for a repeated key: the first request sends, the next ones are answered as it was. */
+const resend = () => {
+  const delivered = new Map<string, { bcc: string[]; subject: string }>();
+  const requests: Array<{ key: string; bcc: string[]; subject: string }> = [];
+  const fetchMock = jest.fn(async (_url: string, init: { headers: Record<string, string>; body: string }) => {
+    const body = JSON.parse(init.body) as { bcc: string[]; subject: string };
+    const key = init.headers['Idempotency-Key']!;
+    requests.push({ key, bcc: body.bcc, subject: body.subject });
+    if (!delivered.has(key)) delivered.set(key, body);
+    return { ok: true, status: 200 };
+  });
+  return { fetchMock, delivered, requests };
+};
+
 describe('NotificationDeliveryService (e-mail)', () => {
   let tx: TxMock;
   let prisma: ReturnType<typeof createPrismaMock>;
+  let store: MemoryOutbound;
   let delivery: NotificationDeliveryService;
   let fetchMock: jest.Mock;
   const realFetch = globalThis.fetch;
 
+  const make = () => {
+    const made = new NotificationDeliveryService(prisma as unknown as PrismaService, undefined, undefined, undefined, store);
+    // The provider's pacing is its own test, below.
+    made.emailIntervalMs = 0;
+    made.pushIntervalMs = 0;
+    return made;
+  };
+
   beforeEach(() => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
-    delivery = new NotificationDeliveryService(prisma as unknown as PrismaService);
-    // The provider's pacing is its own test (notifications.service.spec.ts).
-    delivery.emailIntervalMs = 0;
+    store = new MemoryOutbound();
+    delivery = make();
     fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200 });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     process.env.RESEND_API_KEY = 'resend-key';
+    delete process.env.EMAIL_FROM;
   });
   afterEach(() => {
     globalThis.fetch = realFetch;
     delete process.env.RESEND_API_KEY;
+    jest.restoreAllMocks();
   });
 
-  const bccOf = (call: number) => JSON.parse((fetchMock.mock.calls[call][1] as { body: string }).body).bcc as string[];
+  /** Hands a batch over as its producer does, with the addresses in the database. */
+  const enqueue = (batch: OutboxEntry[], settled?: OutboxSettled) => {
+    withAddresses(store, batch);
+    return delivery.enqueue(batch, settled);
+  };
+  const bccOf = (call: number) => JSON.parse((fetchMock.mock.calls[call]![1] as { body: string }).body).bcc as string[];
+  const subjectOf = (call: unknown[]) => (JSON.parse((call[1] as { body: string }).body) as { subject: string }).subject;
+  const until = async (condition: () => boolean) => {
+    for (let i = 0; i < 500 && !condition(); i++) await new Promise((resolve) => setTimeout(resolve, 2));
+    expect(condition()).toBe(true);
+  };
 
   it('leaves out who opted out of the type, read by user in the delivery’s own door', async () => {
     tx.$queryRaw.mockResolvedValue([{ user_id: 'u2' }]);
-    delivery.enqueue([entry()]);
+    await enqueue([entry()]);
     await delivery.idle();
     expect(prisma.withDeliveryService).toHaveBeenCalledTimes(1);
-    const sql = tx.$queryRaw.mock.calls[0][0] as { strings: string[]; values: unknown[] };
+    const sql = tx.$queryRaw.mock.calls[0]![0] as { strings: string[]; values: unknown[] };
     expect(sql.strings.join('?')).toContain('app.delivery_opt_outs(');
     expect(sql.values).toEqual([SCHOOL, ['u1', 'u2'], 'LESSON_CANCELLED']);
     expect(bccOf(0)).toEqual(['u1@example.invalid']);
   });
 
-  it('sends nothing when everybody opted out', async () => {
+  it('sends nothing when everybody opted out, and the row is done all the same', async () => {
     tx.$queryRaw.mockResolvedValue([{ user_id: 'u1' }, { user_id: 'u2' }]);
-    delivery.enqueue([entry()]);
+    await enqueue([entry()]);
     await delivery.idle();
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(store.count('DONE')).toBe(1);
   });
 
   it.each([
@@ -75,27 +129,46 @@ describe('NotificationDeliveryService (e-mail)', () => {
     ['a withdrawn booking', { type: 'LESSON_COVER_WITHDRAWN' as const, meta: {} }],
   ])('ignores opt-outs for %s', async (_name, overrides) => {
     tx.$queryRaw.mockResolvedValue([{ user_id: 'u1' }, { user_id: 'u2' }]);
-    delivery.enqueue([entry(overrides)]);
+    await enqueue([entry(overrides)]);
     await delivery.idle();
     expect(prisma.withDeliveryService).not.toHaveBeenCalled();
     expect(bccOf(0)).toEqual(['u1@example.invalid', 'u2@example.invalid']);
   });
 
-  it('never mails a teacher’s absence report, and wants nothing for it', async () => {
+  it('never mails a teacher’s absence report, wants nothing for it and does not even queue it', async () => {
     expect(delivery.wants({ type: 'TEACHER_ABSENCE_REPORTED', email: { subject: 's', body: 'b' } })).toBe(false);
-    delivery.enqueue([entry({ type: 'TEACHER_ABSENCE_REPORTED' })]);
+    await enqueue([entry({ type: 'TEACHER_ABSENCE_REPORTED' })]);
     await delivery.idle();
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(store.rows).toHaveLength(0);
   });
 
-  it('asks nothing of the database when no recipient has an address', async () => {
-    delivery.enqueue([entry({ email: { subject: 'S', body: 'B', recipients: [{ userId: 'u1', email: '' }] } })]);
+  it('asks nothing of the opt-outs when no recipient has an address', async () => {
+    await enqueue([entry({ email: { subject: 'S', body: 'B', recipients: [{ userId: 'u1', email: '' }] } })]);
     await delivery.idle();
     expect(prisma.withDeliveryService).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('delivers batches one after another, never two at once', async () => {
+  it('sends one address once, whoever shares it', async () => {
+    store.directory.set('u1', 'Same@Example.invalid');
+    store.directory.set('u2', 'same@example.invalid');
+    await delivery.enqueue([entry()]);
+    await delivery.idle();
+    expect(bccOf(0)).toEqual(['Same@Example.invalid']);
+  });
+
+  it('puts no address and no token in the queue: the people’s ids, and the mail’s own text, are all it holds of them', async () => {
+    const written = jest.spyOn(store, 'enqueue');
+    await enqueue([entry()]);
+    await delivery.idle();
+    expect(written).toHaveBeenCalledTimes(1);
+    const text = JSON.stringify(written.mock.calls[0]![0]);
+    expect(text).not.toMatch(/@|example\.invalid/);
+    expect(JSON.parse(text)).toMatchObject({ schoolId: SCHOOL, urgent: false, recipientIds: ['u1', 'u2'], notificationIds: ['n1', 'n2'] });
+  });
+
+  it('delivers rows one after another, never two at once', async () => {
     let inFlight = 0;
     let most = 0;
     fetchMock.mockImplementation(async () => {
@@ -105,24 +178,16 @@ describe('NotificationDeliveryService (e-mail)', () => {
       inFlight--;
       return { ok: true, status: 200 };
     });
-    for (let i = 0; i < 4; i++) delivery.enqueue([entry({ meta: { i } })]);
+    for (let i = 0; i < 4; i++) await enqueue([entry({ meta: { i } })]);
     await delivery.idle();
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(most).toBe(1);
   });
 
   describe('an alarm and a wave', () => {
-    const waveOf = (subject: string) =>
-      entry({
-        email: { subject, body: 'B', recipients: Array.from({ length: 98 }, (_, i) => ({ userId: `u${i}`, email: `u${i}@example.invalid` })) },
-      });
+    const waveOf = (subject: string) => wide(98, { email: { subject, body: 'B', recipients: Array.from({ length: 98 }, (_v, i) => ({ userId: `w${i}`, email: `w${i}@example.invalid` })) } });
     const alarm = (subject = 'ALARM') =>
       entry({ type: 'CRISIS_ALARM', meta: {}, email: { subject, body: 'B', recipients: [{ userId: 'u1', email: 'u1@example.invalid' }] } });
-    const subjectOf = (call: unknown[]) => (JSON.parse((call[1] as { body: string }).body) as { subject: string }).subject;
-    const until = async (condition: () => boolean) => {
-      for (let i = 0; i < 500 && !condition(); i++) await new Promise((resolve) => setTimeout(resolve, 2));
-      expect(condition()).toBe(true);
-    };
 
     it('lets an alarm go beside a wave that is in the middle of its mails, not after it', async () => {
       // A request to a whole school is some 4 000 notices and 82 mails; the alarm's push lives ten minutes.
@@ -132,10 +197,10 @@ describe('NotificationDeliveryService (e-mail)', () => {
         if ((JSON.parse(init.body) as { subject: string }).subject === 'WAVE') await held;
         return { ok: true, status: 200 };
       });
-      delivery.enqueue([waveOf('WAVE')]);
-      delivery.enqueue([waveOf('NEXT WAVE')]);
+      await enqueue([waveOf('WAVE')]);
+      await enqueue([waveOf('NEXT WAVE')]);
       await until(() => fetchMock.mock.calls.length === 1);
-      delivery.enqueue([alarm()]);
+      await enqueue([alarm()]);
       await until(() => fetchMock.mock.calls.some((call) => subjectOf(call) === 'ALARM'));
       // The first wave is still held in its first mail, and the second has not started.
       expect(fetchMock.mock.calls.map(subjectOf)).toEqual(['WAVE', 'ALARM']);
@@ -144,165 +209,287 @@ describe('NotificationDeliveryService (e-mail)', () => {
       expect(fetchMock.mock.calls.map(subjectOf).filter((subject) => subject === 'NEXT WAVE')).toHaveLength(2);
     });
 
-    it('splits a transaction’s notices by type: the alarm in it goes the urgent way, the rest wait their turn', async () => {
+    it('splits a transaction’s notices by type: the alarm in it is a row of the urgent lane, the rest wait their turn', async () => {
       let release!: () => void;
       const held = new Promise<void>((resolve) => (release = resolve));
       fetchMock.mockImplementation(async (_url: string, init: { body: string }) => {
         if ((JSON.parse(init.body) as { subject: string }).subject === 'WAVE') await held;
         return { ok: true, status: 200 };
       });
-      delivery.enqueue([waveOf('WAVE')]);
+      await enqueue([waveOf('WAVE')]);
       await until(() => fetchMock.mock.calls.length === 1);
-      delivery.enqueue([entry({ email: { subject: 'LESSON', body: 'B', recipients: [{ userId: 'u9', email: 'u9@example.invalid' }] } }), alarm()]);
+      await enqueue([entry({ email: { subject: 'LESSON', body: 'B', recipients: [{ userId: 'u9', email: 'u9@example.invalid' }] } }), alarm()]);
       await until(() => fetchMock.mock.calls.some((call) => subjectOf(call) === 'ALARM'));
       expect(fetchMock.mock.calls.map(subjectOf)).toEqual(['WAVE', 'ALARM']);
+      expect(store.rows.map((row) => row.urgent).sort()).toEqual([false, false, true]);
       release();
       await delivery.idle();
       expect(fetchMock.mock.calls.map(subjectOf)).toEqual(['WAVE', 'ALARM', 'WAVE', 'LESSON']);
     });
 
-    it('keeps the provider’s pace across both lanes: one mail at most every interval, whichever lane sends it', async () => {
-      delivery.emailIntervalMs = 40;
-      const sentAt: number[] = [];
-      fetchMock.mockImplementation(async () => {
-        sentAt.push(Date.now());
-        return { ok: true, status: 200 };
-      });
-      delivery.enqueue([waveOf('WAVE')]);
-      delivery.enqueue([alarm('A1')]);
-      delivery.enqueue([alarm('A2')]);
+    it('is two rows for two schools, as an entry has one school', async () => {
+      const OTHER = '44444444-4444-4444-8444-444444444444';
+      await enqueue([entry(), entry({ schoolId: OTHER })]);
       await delivery.idle();
-      expect(sentAt).toHaveLength(4);
-      const gaps = sentAt.slice(1).map((at, i) => at - sentAt[i]!);
-      for (const gap of gaps) expect(gap).toBeGreaterThanOrEqual(35);
-    });
-
-    it('counts the interval from when a mail really went, not from when it was planned: a late timer does not bring two mails closer', async () => {
-      delivery.emailIntervalMs = 40;
-      const sentAt: number[] = [];
-      fetchMock.mockImplementation(async () => {
-        sentAt.push(Date.now());
-        return { ok: true, status: 200 };
-      });
-      // A wave of two mails; its second waits 40 ms for its turn. While it waits the event loop is stuck for 60 ms (a busy host),
-      // so that timer fires late, at about 65 ms, and an alarm queued meanwhile must not go at 80 as the wave's planned slots say.
-      delivery.enqueue([waveOf('WAVE')]);
-      await until(() => sentAt.length === 1);
-      setTimeout(() => {
-        const stuckUntil = Date.now() + 60;
-        while (Date.now() < stuckUntil) {
-          /* a busy host */
-        }
-      }, 5);
-      delivery.enqueue([alarm()]);
-      await delivery.idle();
-      expect(sentAt).toHaveLength(3);
-      const gaps = sentAt.slice(1).map((at, i) => at - sentAt[i]!);
-      for (const gap of gaps) expect(gap).toBeGreaterThanOrEqual(37);
-    });
-
-    it('bounds each lane on its own: a full ordinary lane does not refuse an alarm', async () => {
-      const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
-      fetchMock.mockImplementation(() => new Promise(() => undefined));
-      for (let i = 0; i <= MAX_PENDING_BATCHES + 1; i++) delivery.enqueue([entry()]);
-      warn.mockClear();
-      delivery.enqueue([alarm()]);
-      expect(warn).not.toHaveBeenCalled();
-      for (let i = 0; i <= MAX_PENDING_BATCHES + 1; i++) delivery.enqueue([alarm()]);
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('lane=urgent'));
-    });
-  });
-
-  it('keeps going after a batch fails, and logs only its error’s name', async () => {
-    const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
-    prisma.withDeliveryService.mockRejectedValueOnce(new TypeError('boom with a secret'));
-    delivery.enqueue([entry()]);
-    delivery.enqueue([entry()]);
-    await delivery.idle();
-    expect(warn).toHaveBeenCalledWith('Delivery failed [TypeError, notices=1]');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('refuses a batch beyond the bound and ignores an empty one', async () => {
-    const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
-    fetchMock.mockImplementation(() => new Promise(() => undefined));
-    delivery.enqueue([]);
-    for (let i = 0; i <= MAX_PENDING_BATCHES + 1; i++) delivery.enqueue([entry()]);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Delivery queue full'));
-  });
-
-  describe('a turn in the mail chain that throws', () => {
-    it('costs the mail it was for and not the process’s e-mail: the next mail goes', async () => {
-      const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
-      // A BigInt interval makes the turn's arithmetic throw (a TypeError), once the interval is back to a number nothing does.
-      delivery.emailIntervalMs = 10n as unknown as number;
-      delivery.enqueue([entry({ meta: { n: 'refused' } })]);
-      await delivery.idle();
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(warn).toHaveBeenCalledWith('Email dispatch skipped [turn, TypeError]');
-
-      delivery.emailIntervalMs = 0;
-      delivery.enqueue([entry({ meta: { n: 'next' } })]);
-      await delivery.idle();
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect(bccOf(0)).toEqual(['u1@example.invalid', 'u2@example.invalid']);
-    });
-
-    it('goes on to the next mail of the same batch, and the mails behind it in the queue', async () => {
-      let turns = 0;
-      const turn = jest.spyOn(Date, 'now').mockImplementation(() => {
-        turns += 1;
-        // The first turn's first reading throws; everything else reads the clock as usual.
-        if (turns === 1) throw new RangeError('clock');
-        return performance.timeOrigin + performance.now();
-      });
-      try {
-        const wide = entry({ email: { subject: 'S', body: 'B', recipients: Array.from({ length: 98 }, (_v, i) => ({ userId: `w${i}`, email: `w${i}@example.invalid` })) } });
-        delivery.enqueue([wide]);
-        delivery.enqueue([entry({ meta: { n: 'after' } })]);
-        await delivery.idle();
-      } finally {
-        turn.mockRestore();
-      }
-      // Two mails for the wide entry (the first turn threw, so one is lost) and one for the batch after it.
+      expect(store.rows.map((row) => row.schoolId).sort()).toEqual([SCHOOL, OTHER].sort());
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
+
+    it('takes its place in the pace from the database for every mail, from whichever lane, and waits as long as it is told', async () => {
+      delivery.emailIntervalMs = 40;
+      // The database says: now, then 40 ms after, then 40 ms after that.
+      store.slots = [0, 40, 40, 40];
+      const sentAt: number[] = [];
+      fetchMock.mockImplementation(async () => {
+        sentAt.push(Date.now());
+        return { ok: true, status: 200 };
+      });
+      await enqueue([waveOf('WAVE')]);
+      await enqueue([alarm('A1')]);
+      await enqueue([alarm('A2')]);
+      await delivery.idle();
+      expect(sentAt).toHaveLength(4);
+      expect(store.slotCalls).toEqual(Array.from({ length: 4 }, () => ({ channel: 'EMAIL', intervalMs: 40 })));
+    });
+
+    it('keeps the pace itself, by its own clock, when the database cannot say', async () => {
+      delivery.emailIntervalMs = 40;
+      const slot = jest.spyOn(store, 'slot').mockRejectedValue(new Error('the database is down'));
+      const sentAt: number[] = [];
+      fetchMock.mockImplementation(async () => {
+        sentAt.push(Date.now());
+        return { ok: true, status: 200 };
+      });
+      await enqueue([wide(98)]);
+      await delivery.idle();
+      expect(slot).toHaveBeenCalledTimes(2);
+      expect(sentAt).toHaveLength(2);
+      expect(sentAt[1]! - sentAt[0]!).toBeGreaterThanOrEqual(35);
+    });
+
+    it('does not wait for a slot that is a long way off: at most thirty seconds, then it asks again', async () => {
+      delivery.emailIntervalMs = 40;
+      store.slots = [3_600_000];
+      const timers = jest.spyOn(globalThis, 'setTimeout');
+      await enqueue([entry()]);
+      await until(() => timers.mock.calls.some(([, ms]) => ms === 30_000));
+      expect(fetchMock).not.toHaveBeenCalled();
+      // The row waits where it is; this spec does not wait the half minute out.
+      timers.mockRestore();
+    });
   });
 
-  describe('a mail Resend does not answer', () => {
+  describe('the queue does not take the batch, or a row fails', () => {
+    it('keeps going after a row fails to plan, hands it back for later and logs only the error’s name', async () => {
+      const warn = jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
+      prisma.withDeliveryService.mockRejectedValueOnce(new TypeError('boom with a secret'));
+      await enqueue([entry()]);
+      await enqueue([entry({ meta: { n: 2 }, type: 'ABSENCE_UNREPORTED' })]);
+      await delivery.idle();
+      expect(warn).toHaveBeenCalledWith('Notice delivery failed [TypeError, attempt=1]');
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('secret');
+      // The second row had no opt-out to ask for and went; the first waits to be tried again.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(store.count('PENDING')).toBe(1);
+      expect(store.count('DONE')).toBe(1);
+      // After its wait it is planned again and goes.
+      store.forward(31_000);
+      tx.$queryRaw.mockResolvedValue([]);
+      delivery.kick();
+      await delivery.idle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(store.count('DONE')).toBe(2);
+    });
+
+    it('tries a write to the queue again, and says false only when it will not take it', async () => {
+      const warn = jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
+      store.failNext = 'enqueue';
+      const told: boolean[] = [];
+      await enqueue([entry()], (delivered) => told.push(delivered));
+      await delivery.idle();
+      expect(store.rows).toHaveLength(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(told).toEqual([true]);
+
+      jest.spyOn(store, 'enqueue').mockRejectedValue(new TypeError('the database is gone'));
+      await enqueue([entry()], (delivered) => told.push(delivered));
+      expect(told).toEqual([true, false]);
+      expect(warn).toHaveBeenCalledWith('Delivery enqueue failed [TypeError, notices=1]');
+    });
+
+    it('refuses a batch for a full queue, says false and writes the rest of the work', async () => {
+      const warn = jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
+      store.limit = 0;
+      const told: boolean[] = [];
+      await enqueue([entry()], (delivered) => told.push(delivered));
+      expect(told).toEqual([false]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Delivery queue full'));
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('ignores an empty batch, and one with no channel to go by', async () => {
+      await enqueue([]);
+      delete process.env.RESEND_API_KEY;
+      await enqueue([entry()]);
+      await delivery.idle();
+      expect(store.rows).toHaveLength(0);
+    });
+
+    it('takes no row at all where there is no channel: it is left for a process that has one', async () => {
+      await enqueue([entry()]);
+      await delivery.idle();
+      store.rows.push({ ...store.rows[0]!, id: 'later', status: 'PENDING', claim: null, leaseUntil: null, plan: null, mailDone: 0 });
+      delete process.env.RESEND_API_KEY;
+      delivery.kick();
+      await delivery.idle();
+      expect(store.rows.find((row) => row.id === 'later')!.status).toBe('PENDING');
+    });
+
+    it('leaves a row with mail in it for a process that has the key, when this one has not', async () => {
+      const first = store.enqueue({ schoolId: SCHOOL, urgent: false, entries: [{ type: 'LESSON_CANCELLED', meta: {}, n: 1, email: { subject: 'S', body: 'B' } }], recipientIds: ['u1'], notificationIds: ['n1'] });
+      await first;
+      const config = { get: (key: string) => (key === 'push' ? { enabled: true } : undefined) };
+      delete process.env.RESEND_API_KEY;
+      const pushOnly = new NotificationDeliveryService(prisma as unknown as PrismaService, config as never, { send: jest.fn(async () => []) } as never, undefined, store);
+      pushOnly.kick();
+      await pushOnly.idle();
+      expect(store.rows[0]!.status).toBe('PENDING');
+      expect(store.rows[0]!.plan).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the mails of a row', () => {
+    it('go under a key made of the row and the packet, and a packet gets the same key every time it is tried', async () => {
+      const { fetchMock: fake, requests } = resend();
+      globalThis.fetch = fake as unknown as typeof fetch;
+      await enqueue([wide(98)]);
+      await delivery.idle();
+      const id = store.rows[0]!.id;
+      expect(requests.map((r) => r.key)).toEqual([`notice/${id}/mail/0`, `notice/${id}/mail/1`]);
+      expect(requests.every((r) => r.key.length <= 256)).toBe(true);
+    });
+
+    it('are sent with the caller’s subject and body, the sender’s own address as `to` and the rest on BCC', async () => {
+      process.env.EMAIL_FROM = 'SchemaPro <noreply@schemapro.test>';
+      await enqueue([entry({ email: { subject: 'Decided', body: 'Your leave was approved.', recipients: [{ userId: 'u1', email: 'anna@school.se' }, { userId: 'u2', email: '' }] } })]);
+      await delivery.idle();
+      const [url, init] = fetchMock.mock.calls[0]! as [string, { method: string; headers: Record<string, string>; body: string }];
+      expect(url).toBe('https://api.resend.com/emails');
+      expect(init.method).toBe('POST');
+      expect(init.headers['Authorization']).toBe('Bearer resend-key');
+      expect(init.headers['Content-Type']).toBe('application/json');
+      expect(JSON.parse(init.body)).toEqual({ from: 'SchemaPro <noreply@schemapro.test>', to: ['noreply@schemapro.test'], bcc: ['anna@school.se'], subject: 'Decided', text: 'Your leave was approved.' });
+    });
+
+    it('are 49 addresses each beside the sender’s own: 50, the provider’s documented cap', async () => {
+      await enqueue([wide(120)]);
+      await delivery.idle();
+      const sizes = fetchMock.mock.calls.map((_call, i) => bccOf(i).length);
+      expect(sizes).toEqual([49, 49, 22]);
+    });
+  });
+
+  describe('a mail that does not go through', () => {
     /** A fetch that answers nothing, and rejects the way fetch does when its signal aborts. */
     const silent = (_url: string, init: { signal: AbortSignal }) =>
       new Promise<never>((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
 
-    it('is given up after the limit, so the lane goes on to the next mail instead of waiting minutes', async () => {
-      const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+    it('that nobody answers is given up for now after the limit, and the lane goes on to the next row instead of waiting minutes', async () => {
+      const warn = jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
       delivery.emailTimeoutMs = 25;
       fetchMock.mockImplementationOnce(silent);
       const started = Date.now();
-      delivery.enqueue([entry({ meta: { n: 'hangs' } })]);
-      delivery.enqueue([entry({ meta: { n: 'goes' } })]);
+      await enqueue([entry({ meta: { n: 'hangs' } })]);
+      await enqueue([entry({ meta: { n: 'goes' } })]);
       await delivery.idle();
       expect(Date.now() - started).toBeLessThan(1_000);
       expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(warn).toHaveBeenCalledWith('Email dispatch failed [timeout 25 ms]');
+      expect(warn).toHaveBeenCalledWith('Email dispatch failed [timeout 25 ms, will be tried again]');
       // Logged without an address, a subject or a text.
       expect(JSON.stringify(warn.mock.calls)).not.toMatch(/example\.invalid|"S"|"B"/);
+      expect(store.count('PENDING')).toBe(1);
+      expect(store.count('DONE')).toBe(1);
+    });
+
+    it('that is tried again goes as the same packet under the same key, and is told true when it has gone', async () => {
+      const { fetchMock: fake, requests, delivered } = resend();
+      const inner = fake.getMockImplementation()!;
+      let failures = 1;
+      fake.mockImplementation(async (url, init) => {
+        if (failures-- > 0) return { ok: false, status: 503 } as never;
+        return inner(url, init) as never;
+      });
+      globalThis.fetch = fake as unknown as typeof fetch;
+      jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
+      const told: boolean[] = [];
+      await enqueue([wide(98)], (delivered) => told.push(delivered));
+      await delivery.idle();
+      // The first packet was refused for now: the row is handed back and nothing is told yet.
+      expect(told).toEqual([]);
+      expect(store.rows[0]!.status).toBe('PENDING');
+      expect(store.rows[0]!.mailDone).toBe(0);
+      store.forward(31_000);
+      delivery.kick();
+      await delivery.idle();
+      expect(told).toEqual([true]);
+      const id = store.rows[0]!.id;
+      expect(fake.mock.calls).toHaveLength(3);
+      expect([...delivered.keys()]).toEqual([`notice/${id}/mail/0`, `notice/${id}/mail/1`]);
+      // The refused request and the one that went are the same packet.
+      expect(requests[0]!.key).toBe(`notice/${id}/mail/0`);
+      expect(requests[0]!.bcc).toEqual(delivered.get(`notice/${id}/mail/0`)!.bcc);
+    });
+
+    it.each([
+      ['a rate limit with the wait it names', { ok: false, status: 429, headers: { get: (name: string) => (name === 'retry-after' ? '7' : null) } }, 7_000],
+      ['a server that is down', { ok: false, status: 503 }, null],
+      ['a request still being served under the key', { ok: false, status: 409, json: async () => ({ name: 'concurrent_idempotent_requests' }) }, 5_000],
+      ['a day’s quota that is used up', { ok: false, status: 429, json: async () => ({ name: 'daily_quota_exceeded' }) }, 30 * 60_000],
+      ['a key Resend refuses', { ok: false, status: 401 }, 15 * 60_000],
+    ])('hands the row back for %s, after the wait', async (_name, answer, waitMs) => {
+      jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
+      fetchMock.mockResolvedValue(answer);
+      const before = Date.now();
+      await enqueue([entry()]);
+      await delivery.idle();
+      const row = store.rows[0]!;
+      expect(row.status).toBe('PENDING');
+      expect(row.mailDone).toBe(0);
+      // The first retry of a row is half a minute off when the provider names no wait.
+      const waits = row.notBefore - before;
+      expect(waits).toBeGreaterThanOrEqual((waitMs ?? 30_000) - 50);
+      expect(waits).toBeLessThanOrEqual((waitMs ?? 30_000) + 2_000);
+    });
+
+    it('that Resend will not take at all (a bad address) is counted failed, not tried again, and the rest of the row goes', async () => {
+      const warn = jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 422, json: async () => ({ name: 'validation_error' }) });
+      const told: boolean[] = [];
+      await enqueue([wide(98)], (delivered) => told.push(delivered));
+      await delivery.idle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(bccOf(1)).toHaveLength(49);
+      expect(bccOf(1)[0]).toBe('w49@example.invalid');
+      expect(warn).toHaveBeenCalledWith('Email dispatch failed [status=422, validation_error]');
+      expect(told).toEqual([false]);
+      expect(store.rows[0]).toMatchObject({ status: 'DONE', mailsSent: 49, mailsFailed: 49 });
     });
 
     it('is sent with a signal of ten seconds unless the limit is changed', async () => {
       const timeout = jest.spyOn(AbortSignal, 'timeout');
-      delivery.enqueue([entry()]);
+      await enqueue([entry()]);
       await delivery.idle();
       expect(timeout).toHaveBeenCalledWith(EMAIL_TIMEOUT_MS);
       expect(EMAIL_TIMEOUT_MS).toBe(10_000);
-      expect((fetchMock.mock.calls[0][1] as { signal: AbortSignal }).signal).toBeInstanceOf(AbortSignal);
-      timeout.mockRestore();
+      expect((fetchMock.mock.calls[0]![1] as { signal: AbortSignal }).signal).toBeInstanceOf(AbortSignal);
     });
 
     it('is given up over a real socket too; and an answer that stalls after its headers holds nothing, since the mail does not read the body', async () => {
-      const server = createServer((req, res) => {
+      let requests = 0;
+      const server = createServer((_req, res) => {
         requests += 1;
-        // The first mail is never answered; the second gets its headers and no body (all the service looks at is the status); the third is answered.
+        // The first mail is never answered; the second gets its headers and no body (all the delivery looks at is the status); the third is answered.
         if (requests === 1) return;
         if (requests === 2) {
           res.writeHead(200, { 'content-type': 'application/json' });
@@ -312,47 +499,145 @@ describe('NotificationDeliveryService (e-mail)', () => {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end('{"id":"mail"}');
       });
-      let requests = 0;
       await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
       const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-      // The service posts to Resend's own address; the real fetch is pointed at the server instead.
+      // The delivery posts to Resend's own address; the real fetch is pointed at the server instead.
       globalThis.fetch = ((url: string, init?: RequestInit) => realFetch(String(url).replace('https://api.resend.com', base), init)) as typeof fetch;
       try {
-        const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+        const warn = jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
         delivery.emailTimeoutMs = 80;
         const started = Date.now();
         const told: boolean[] = [];
-        delivery.enqueue([entry({ meta: { n: 1 } })], (delivered) => told.push(delivered));
-        delivery.enqueue([entry({ meta: { n: 2 } })], (delivered) => told.push(delivered));
-        delivery.enqueue([entry({ meta: { n: 3 } })], (delivered) => told.push(delivered));
+        await enqueue([entry({ meta: { n: 1 } })], (delivered) => told.push(delivered));
+        await enqueue([entry({ meta: { n: 2 } })], (delivered) => told.push(delivered));
+        await enqueue([entry({ meta: { n: 3 } })], (delivered) => told.push(delivered));
         await delivery.idle();
         expect(requests).toBe(3);
-        expect(told).toEqual([false, true, true]);
+        // The first is still to be tried; the other two went.
+        expect(told).toEqual([true, true]);
         expect(Date.now() - started).toBeLessThan(2_000);
-        expect(warn).toHaveBeenCalledWith('Email dispatch failed [timeout 80 ms]');
+        expect(warn).toHaveBeenCalledWith('Email dispatch failed [timeout 80 ms, will be tried again]');
+        expect(store.count('PENDING')).toBe(1);
       } finally {
         server.closeAllConnections();
         await new Promise<void>((resolve) => server.close(() => resolve()));
       }
     });
+  });
 
-    it('is a refused mail like any other: not sent again, and the rest of the batch goes', async () => {
-      delivery.emailTimeoutMs = 25;
-      fetchMock.mockImplementationOnce(silent);
-      const wide = entry({ email: { subject: 'S', body: 'B', recipients: Array.from({ length: 98 }, (_v, i) => ({ userId: `w${i}`, email: `w${i}@example.invalid` })) } });
-      delivery.enqueue([wide]);
+  describe('a process that stops, or dies, in the middle of a queue', () => {
+    it('hands the row in hand back at a packet’s end when it is stopped, and the next process finishes it: every mail once', async () => {
+      const { fetchMock: fake, delivered, requests } = resend();
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const inner = fake.getMockImplementation()!;
+      let calls = 0;
+      fake.mockImplementation(async (url, init) => {
+        calls += 1;
+        if (calls === 1) await held;
+        return inner(url, init) as never;
+      });
+      globalThis.fetch = fake as unknown as typeof fetch;
+      await enqueue([wide(147)]);
+      await until(() => fake.mock.calls.length === 1);
+      // A deploy's SIGTERM: the packet in hand finishes, the row is handed back with its place kept.
+      const stopped = delivery.onModuleDestroy();
+      release();
+      await stopped;
+      expect(store.rows[0]).toMatchObject({ status: 'PENDING', mailDone: 1 });
+
+      const next = make();
+      next.kick();
+      await next.idle();
+      expect(store.rows[0]!.status).toBe('DONE');
+      const id = store.rows[0]!.id;
+      expect([...delivered.keys()]).toEqual([0, 1, 2].map((i) => `notice/${id}/mail/${i}`));
+      expect(requests).toHaveLength(3);
+      expect(delivered.size).toBe(3);
+    });
+
+    it('is taken up by another after its lease has run out, from the packet that was on its way, which Resend answers as it did: every mail once', async () => {
+      const { fetchMock: fake, delivered, requests } = resend();
+      const inner = fake.getMockImplementation()!;
+      const dead: Array<() => void> = [];
+      let calls = 0;
+      fake.mockImplementation(async (url, init) => {
+        calls += 1;
+        // The third mail reaches Resend, and the process dies before it hears: its answer never comes.
+        if (calls === 3) {
+          await inner(url, init);
+          return new Promise<never>((resolve) => dead.push(() => resolve({ ok: true, status: 200 } as never)));
+        }
+        return inner(url, init) as never;
+      });
+      globalThis.fetch = fake as unknown as typeof fetch;
+      await enqueue([wide(196)]);
+      await until(() => calls === 3);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(store.rows[0]).toMatchObject({ status: 'CLAIMED', mailDone: 2 });
+
+      // Nobody else may take it while the lease holds.
+      const other = make();
+      other.kick();
+      await other.idle();
+      expect(requests).toHaveLength(3);
+
+      store.forward(NOTICE_LEASE_MS + 1_000);
+      other.kick();
+      await other.idle();
+      const id = store.rows[0]!.id;
+      expect(store.rows[0]!.status).toBe('DONE');
+      // The packet that was on its way went again under its key, and the fourth after it.
+      expect(requests.map((r) => r.key)).toEqual([0, 1, 2, 2, 3].map((i) => `notice/${id}/mail/${i}`));
+      expect([...delivered.keys()]).toEqual([0, 1, 2, 3].map((i) => `notice/${id}/mail/${i}`));
+      expect(delivered.get(`notice/${id}/mail/2`)!.bcc).toHaveLength(49);
+
+      // The process that stood still wakes up, is told no at its next step and leaves the row alone.
+      dead.forEach((resolve) => resolve());
       await delivery.idle();
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(bccOf(1)).toHaveLength(49);
-      expect(bccOf(1)[0]).toBe('w49@example.invalid');
+      expect(requests).toHaveLength(5);
+      expect(store.rows[0]).toMatchObject({ status: 'DONE', mailsSent: 196 });
+    });
+
+    it('says nothing of a row it lost at the last step, and the process that finishes it sends nothing again', async () => {
+      const { fetchMock: fake, requests } = resend();
+      globalThis.fetch = fake as unknown as typeof fetch;
+      // Its claim is told no when it comes to finish: another process holds the row now.
+      jest.spyOn(store, 'finish').mockResolvedValueOnce(false);
+      const told: boolean[] = [];
+      await enqueue([wide(49)], (delivered) => told.push(delivered));
+      await delivery.idle();
+      expect(told).toEqual([]);
+      expect(requests).toHaveLength(1);
+      expect(store.rows[0]).toMatchObject({ status: 'CLAIMED', mailDone: 1 });
+
+      // The next process takes it up after the lease, sees every packet done and only finishes it.
+      store.forward(NOTICE_LEASE_MS + 1_000);
+      const other = make();
+      other.kick();
+      await other.idle();
+      expect(requests).toHaveLength(1);
+      expect(store.rows[0]!.status).toBe('DONE');
+    });
+
+    it('does not send a packet twice because two processes ask for it at once', async () => {
+      const { fetchMock: fake, delivered, requests } = resend();
+      globalThis.fetch = fake as unknown as typeof fetch;
+      const other = make();
+      await Promise.all([enqueue([wide(98)]), enqueue([wide(98, {}, 'x')])]);
+      other.kick();
+      delivery.kick();
+      await Promise.all([delivery.idle(), other.idle()]);
+      expect(requests).toHaveLength(4);
+      expect(delivered.size).toBe(4);
+      expect(store.count('DONE')).toBe(2);
     });
   });
 
   describe('telling the sender how the batch went', () => {
     it('says true when Resend took every mail, after the last one', async () => {
       const told: boolean[] = [];
-      const wide = entry({ email: { subject: 'S', body: 'B', recipients: Array.from({ length: 98 }, (_v, i) => ({ userId: `w${i}`, email: `w${i}@example.invalid` })) } });
-      delivery.enqueue([wide], (delivered) => told.push(delivered));
+      await enqueue([wide(98)], (delivered) => told.push(delivered));
       expect(told).toEqual([]);
       await delivery.idle();
       expect(told).toEqual([true]);
@@ -361,67 +646,109 @@ describe('NotificationDeliveryService (e-mail)', () => {
 
     it('says true at once for a batch with nothing to deliver, and never twice', async () => {
       const told: boolean[] = [];
-      delivery.enqueue([], (delivered) => told.push(delivered));
+      await enqueue([], (delivered) => told.push(delivered));
       expect(told).toEqual([true]);
       // An opt-out of everybody leaves no mail: the inbox row is the whole delivery.
       tx.$queryRaw.mockResolvedValue([{ user_id: 'u1' }, { user_id: 'u2' }]);
-      delivery.enqueue([entry()], (delivered) => told.push(delivered));
+      await enqueue([entry()], (delivered) => told.push(delivered));
       await delivery.idle();
       expect(told).toEqual([true, true]);
     });
 
-    it.each([
-      ['a status Resend refuses with', () => fetchMock.mockResolvedValueOnce({ ok: false, status: 422 })],
-      ['a connection that fails', () => fetchMock.mockRejectedValueOnce(new Error('ECONNRESET'))],
-      ['no answer in time', () => fetchMock.mockImplementationOnce((_u: string, init: { signal: AbortSignal }) => new Promise((_r, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))))],
-    ])('says false for %s, although the lane goes on', async (_name, fail) => {
-      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
-      delivery.emailTimeoutMs = 25;
-      fail();
+    it('says false for a status Resend refuses with for good, although the lane goes on', async () => {
+      jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 422 });
       const told: boolean[] = [];
-      delivery.enqueue([entry()], (delivered) => told.push(delivered));
-      delivery.enqueue([entry()], (delivered) => told.push(delivered));
+      await enqueue([entry()], (delivered) => told.push(delivered));
+      await enqueue([entry()], (delivered) => told.push(delivered));
       await delivery.idle();
       expect(told).toEqual([false, true]);
-    });
-
-    it('says false for a batch whose delivery threw, and for one the full queue refused', async () => {
-      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
-      prisma.withDeliveryService.mockRejectedValueOnce(new TypeError('boom'));
-      const told: boolean[] = [];
-      delivery.enqueue([entry()], (delivered) => told.push(delivered));
-      await delivery.idle();
-      expect(told).toEqual([false]);
-
-      fetchMock.mockImplementation(() => new Promise(() => undefined));
-      for (let i = 0; i <= MAX_PENDING_BATCHES; i++) delivery.enqueue([entry()]);
-      delivery.enqueue([entry()], (delivered) => told.push(delivered));
-      expect(told).toEqual([false, false]);
     });
 
     it('is told once for a batch that is split between the lanes, true only if both went', async () => {
       const told: boolean[] = [];
       const alarm = entry({ type: 'CRISIS_ALARM', meta: {}, email: { subject: 'A', body: 'B', recipients: [{ userId: 'u1', email: 'u1@example.invalid' }] } });
-      delivery.enqueue([alarm, entry()], (delivered) => told.push(delivered));
+      await enqueue([alarm, entry()], (delivered) => told.push(delivered));
       await delivery.idle();
       expect(told).toEqual([true]);
 
-      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
-      fetchMock.mockResolvedValueOnce({ ok: false, status: 500 });
-      delivery.enqueue([alarm, entry()], (delivered) => told.push(delivered));
+      jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 400 });
+      await enqueue([alarm, entry()], (delivered) => told.push(delivered));
       await delivery.idle();
       expect(told).toEqual([true, false]);
     });
 
     it('does not let a listener that throws stop the lane', async () => {
-      const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
-      delivery.enqueue([entry()], () => {
+      const warn = jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
+      await enqueue([entry()], () => {
         throw new RangeError('listener');
       });
-      delivery.enqueue([entry()]);
+      await enqueue([entry()]);
       await delivery.idle();
       expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(warn).toHaveBeenCalledWith('A delivery listener failed [RangeError]');
+    });
+
+    it('is not told by a process that did not write the batch: another’s row is delivered without a word', async () => {
+      const told: boolean[] = [];
+      await enqueue([entry()], (delivered) => told.push(delivered));
+      // Another process takes the row before this one's lane does.
+      const other = make();
+      store.rows[0]!.createdAt -= 1;
+      await Promise.all([other.tick(), delivery.idle()]);
+      await delivery.idle();
+      expect(store.count('DONE')).toBe(1);
+      expect(told.length).toBeLessThanOrEqual(1);
+    });
+  });
+
+  describe('the job', () => {
+    it('is registered with the runner when something can be sent, and a pass counts what it did', async () => {
+      const registered: Array<{ name: string; intervalMs: number }> = [];
+      const settled: Array<{ name: string; counts: Record<string, number> }> = [];
+      const jobs = {
+        register: (definition: { name: string; intervalMs: number }) => registered.push(definition),
+        unregister: jest.fn(),
+        settled: (name: string, _at: Date, outcome: { counts?: Record<string, number> }) => settled.push({ name, counts: outcome.counts ?? {} }),
+      };
+      const withJobs = new NotificationDeliveryService(prisma as unknown as PrismaService, undefined, undefined, jobs as never, store);
+      withJobs.emailIntervalMs = 0;
+      withJobs.onModuleInit();
+      expect(registered).toEqual([{ name: 'notice-delivery', intervalMs: 10_000, tick: expect.any(Function) }]);
+      withAddresses(store, [entry()]);
+      await store.enqueue({ schoolId: SCHOOL, urgent: false, entries: [{ type: 'LESSON_CANCELLED', meta: {}, n: 2, email: { subject: 'S', body: 'B' } }], recipientIds: ['u1', 'u2'], notificationIds: ['n1', 'n2'] });
+      await withJobs.tick();
+      // The first pass also sweeps, and says what it gave up and removed.
+      expect(settled).toEqual([{ name: 'notice-delivery', counts: { claimed: 1, done: 1, gaveUp: 0, deleted: 0 } }]);
+      await withJobs.onModuleDestroy();
+      expect(jobs.unregister).toHaveBeenCalledWith('notice-delivery');
+    });
+
+    it('looks at the queue a moment after the start, for what the process before it left, and does not wait an interval', async () => {
+      jest.useFakeTimers();
+      try {
+        const jobs = { register: jest.fn(), unregister: jest.fn(), settled: jest.fn() };
+        const booted = new NotificationDeliveryService(prisma as unknown as PrismaService, undefined, undefined, jobs as never, store);
+        booted.emailIntervalMs = 0;
+        store.directory.set('u1', 'u1@example.invalid');
+        await store.enqueue({ schoolId: SCHOOL, urgent: false, entries: [{ type: 'LESSON_CANCELLED', meta: {}, n: 1, email: { subject: 'S', body: 'B' } }], recipientIds: ['u1'], notificationIds: ['n1'] });
+        booted.onModuleInit();
+        expect(fetchMock).not.toHaveBeenCalled();
+        await jest.advanceTimersByTimeAsync(2_500);
+        await booted.idle();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(store.rows[0]!.status).toBe('DONE');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('is not registered where nothing can be sent', () => {
+      delete process.env.RESEND_API_KEY;
+      const register = jest.fn();
+      new NotificationDeliveryService(prisma as unknown as PrismaService, undefined, undefined, { register } as never, store).onModuleInit();
+      expect(register).not.toHaveBeenCalled();
     });
   });
 });
@@ -429,6 +756,7 @@ describe('NotificationDeliveryService (e-mail)', () => {
 describe('NotificationDeliveryService (push)', () => {
   let tx: TxMock;
   let prisma: ReturnType<typeof createPrismaMock>;
+  let store: MemoryOutbound;
   let expo: { send: jest.Mock; receipts: jest.Mock };
   let delivery: NotificationDeliveryService;
   let targets: Array<{ token_id: string; user_id: string; token: string; locale: string; timezone: string }>;
@@ -444,11 +772,13 @@ describe('NotificationDeliveryService (push)', () => {
     enabled = true;
     tx = createTxMock();
     prisma = createPrismaMock(tx);
+    store = new MemoryOutbound();
     expo = {
       send: jest.fn(async (messages: unknown[]) => messages.map((_m, i) => ({ status: 'ok', id: `ticket-${i}-abc` }))),
       receipts: jest.fn(),
     };
-    delivery = new NotificationDeliveryService(prisma as unknown as PrismaService, config as never, expo as never);
+    delivery = new NotificationDeliveryService(prisma as unknown as PrismaService, config as never, expo as never, undefined, store);
+    delivery.pushIntervalMs = 0;
     targets = [
       { token_id: 't-u1', user_id: 'u1', token: 'ExponentPushToken[aaaaaaaa]', locale: 'sv', timezone: 'Europe/Stockholm' },
       { token_id: 't-u2', user_id: 'u2', token: 'ExponentPushToken[bbbbbbbb]', locale: 'en', timezone: 'Europe/Stockholm' },
@@ -469,22 +799,25 @@ describe('NotificationDeliveryService (push)', () => {
     });
     fetchMock.mockReset();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
+    delete process.env.RESEND_API_KEY;
   });
   afterEach(() => {
     globalThis.fetch = realFetch;
+    jest.restoreAllMocks();
   });
 
   const lesson = (overrides: Partial<OutboxEntry> = {}): OutboxEntry => entry({ email: undefined, ...overrides });
 
-  it('does nothing about push while it is off: no query, no Expo call', async () => {
+  it('does nothing about push while it is off: no query, no Expo call, no row', async () => {
     enabled = false;
     expect(delivery.pushEnabled()).toBe(false);
     expect(delivery.wants({ type: 'LESSON_CANCELLED' })).toBe(false);
-    delivery.enqueue([lesson()]);
+    await delivery.enqueue([lesson()]);
     await delivery.idle();
     expect(prisma.withDeliveryService).not.toHaveBeenCalled();
     expect(expo.send).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(store.rows).toHaveLength(0);
   });
 
   it('wants every notice but a teacher’s absence report once push is on, even without e-mail', () => {
@@ -502,17 +835,19 @@ describe('NotificationDeliveryService (push)', () => {
         meta: { lessonCount: 2, startDate: '2026-10-19', endDate: '2026-10-20', name: 'Prao åk 9' },
         recipients: people.slice(from, to).map((userId) => ({ userId, notificationId: `n-${userId}` })),
       });
-    delivery.enqueue([chunk(0, 500), chunk(500, 1000), chunk(1000, 1203)]);
+    await delivery.enqueue([chunk(0, 500), chunk(500, 1000), chunk(1000, 1203)]);
     await delivery.idle();
     expect(targetCalls.map((call) => (call.values[1] as string[]).length)).toEqual([500, 500, 203]);
     const sent = expo.send.mock.calls.flatMap(([messages]) => messages as Array<{ to: string; body: string }>);
     expect(sent).toHaveLength(1203);
     expect(new Set(sent.map((message) => message.to)).size).toBe(1203);
     expect(sent[0]!.body).toBe('2 lektioner 19 okt–20 okt är inställda.');
+    // Expo takes a hundred in a request: thirteen of them, and the last holds the rest.
+    expect(expo.send.mock.calls.map(([messages]) => (messages as unknown[]).length)).toEqual([...Array(12).fill(100), 3]);
   });
 
   it('gives each device its owner’s notices and no one else’s, in the order they arrived, once per device, and nothing to a row nobody asked about', async () => {
-    // One group (the same school, type and opt-out rule) holding two kinds: a digest and its reversal.
+    // One group (the same type and opt-out rule) holding two kinds: a digest and its reversal.
     const digest = (extra: Record<string, unknown>, recipients: Array<{ userId: string; notificationId: string }>) =>
       lesson({ type: 'CANCELLATION_DIGEST', meta: { lessonCount: 2, startDate: '2026-10-19', endDate: '2026-10-20', ...extra }, recipients });
     const device = (id: string, user: string, locale: string) => ({ token_id: `t-${id}`, user_id: user, token: `ExponentPushToken[${id}]`, locale, timezone: 'Europe/Stockholm' });
@@ -523,7 +858,7 @@ describe('NotificationDeliveryService (push)', () => {
       targetCalls.push(sql);
       return targets;
     });
-    delivery.enqueue([
+    await delivery.enqueue([
       digest({ reversed: true }, [{ userId: 'u1', notificationId: 'n-r1' }, { userId: 'u3', notificationId: 'n-r3' }]),
       digest({}, [{ userId: 'u1', notificationId: 'n-d1' }, { userId: 'u2', notificationId: 'n-d2' }, { userId: 'u1', notificationId: 'n-d1-again' }]),
     ]);
@@ -543,12 +878,12 @@ describe('NotificationDeliveryService (push)', () => {
   });
 
   it('sends each device its language, with only the notice id and type as data', async () => {
-    delivery.enqueue([lesson()]);
+    await delivery.enqueue([lesson()]);
     await delivery.idle();
     expect(targetCalls).toHaveLength(1);
     expect(targetCalls[0]!.values).toEqual([SCHOOL, ['u1', 'u2'], 'LESSON_CANCELLED', false]);
     expect(expo.send).toHaveBeenCalledTimes(1);
-    expect(expo.send.mock.calls[0][0]).toEqual([
+    expect(expo.send.mock.calls[0]![0]).toEqual([
       {
         to: 'ExponentPushToken[aaaaaaaa]',
         title: 'Inställd lektion',
@@ -570,7 +905,7 @@ describe('NotificationDeliveryService (push)', () => {
         priority: 'default',
       },
     ]);
-    expect(JSON.stringify(expo.send.mock.calls[0][0])).not.toContain('Matematik');
+    expect(JSON.stringify(expo.send.mock.calls[0]![0])).not.toContain('Matematik');
   });
 
   it('sends an alarm and its end as an alarm: high priority, a channel of its own, a short life and time-sensitive on iOS; nothing else is', async () => {
@@ -581,7 +916,7 @@ describe('NotificationDeliveryService (push)', () => {
       targetCalls.push(sql);
       return [{ token_id: 't-u1', user_id: 'u1', token: 'ExponentPushToken[u1aaaaaaaa]', locale: 'sv', timezone: 'Europe/Stockholm' }];
     });
-    delivery.enqueue([alarm('CRISIS_ALARM', {}), alarm('CRISIS_ENDED', { endedAt: '2027-01-12T09:40:00.000Z' }), lesson()]);
+    await delivery.enqueue([alarm('CRISIS_ALARM', {}), alarm('CRISIS_ENDED', { endedAt: '2027-01-12T09:40:00.000Z' }), lesson()]);
     await delivery.idle();
     const sent = expo.send.mock.calls.flatMap(([messages]) => messages as Array<Record<string, unknown>>);
     const by = (type: string) => sent.find((m) => (m['data'] as { type: string }).type === type)!;
@@ -590,6 +925,8 @@ describe('NotificationDeliveryService (push)', () => {
     }
     expect(by('LESSON_CANCELLED')).toMatchObject({ priority: 'default', channelId: 'default', ttl: 86_400 });
     expect(by('LESSON_CANCELLED')['interruptionLevel']).toBeUndefined();
+    // The alarm is a row of its own, in the lane of its own.
+    expect(store.rows.map((row) => row.urgent).sort()).toEqual([false, true]);
   });
 
   it('asks each school for its own rows’ phones, so a login with a row at two schools hears only from the school its phone is registered at, never named', async () => {
@@ -603,7 +940,7 @@ describe('NotificationDeliveryService (push)', () => {
       const users = sql.values[1] as string[];
       return sql.values[0] === SCHOOL ? targets.filter((t) => users.includes(t.user_id)) : [];
     });
-    delivery.enqueue([
+    await delivery.enqueue([
       lesson({ recipients: [{ userId: 'row-at-a', notificationId: 'n-a' }] }),
       lesson({ schoolId: OTHER, recipients: [{ userId: 'row-at-b', notificationId: 'n-b' }] }),
     ]);
@@ -618,9 +955,9 @@ describe('NotificationDeliveryService (push)', () => {
   });
 
   it('coalesces one person’s notices of a kind in one transaction into one push', async () => {
-    delivery.enqueue([lesson(), lesson({ recipients: [{ userId: 'u1', notificationId: 'n3' }] }), lesson({ recipients: [{ userId: 'u1', notificationId: 'n4' }] })]);
+    await delivery.enqueue([lesson(), lesson({ recipients: [{ userId: 'u1', notificationId: 'n3' }] }), lesson({ recipients: [{ userId: 'u1', notificationId: 'n4' }] })]);
     await delivery.idle();
-    const sent = expo.send.mock.calls[0][0] as Array<{ to: string; body: string; data: { notificationId: string } }>;
+    const sent = expo.send.mock.calls[0]![0] as Array<{ to: string; body: string; data: { notificationId: string } }>;
     expect(sent.map((m) => [m.to, m.body, m.data.notificationId])).toEqual([
       ['ExponentPushToken[aaaaaaaa]', '3 lektioner är inställda.', 'n1'],
       ['ExponentPushToken[bbbbbbbb]', 'A lesson Tue 13 Oct 08:00 is cancelled.', 'n2'],
@@ -628,7 +965,7 @@ describe('NotificationDeliveryService (push)', () => {
   });
 
   it('asks for a substitute’s booking with opt-outs ignored, apart from the class’s notice', async () => {
-    delivery.enqueue([
+    await delivery.enqueue([
       lesson({ type: 'LESSON_SUBSTITUTE', meta: { startsAt: '2026-10-13T06:00:00.000Z' }, recipients: [{ userId: 'u2', notificationId: 'n-class' }] }),
       lesson({ type: 'LESSON_SUBSTITUTE', meta: { startsAt: '2026-10-13T06:00:00.000Z', cover: true }, recipients: [{ userId: 'u1', notificationId: 'n-cover' }] }),
       lesson({ type: 'LESSON_COVER_WITHDRAWN', meta: {}, recipients: [{ userId: 'u1', notificationId: 'n-off' }] }),
@@ -641,7 +978,7 @@ describe('NotificationDeliveryService (push)', () => {
       ['LESSON_COVER_WITHDRAWN', true],
       ['ABSENCE_UNREPORTED', true],
     ]);
-    const bodies = (expo.send.mock.calls[0][0] as Array<{ body: string }>).map((m) => m.body);
+    const bodies = (expo.send.mock.calls[0]![0] as Array<{ body: string }>).map((m) => m.body);
     expect(bodies).toEqual([
       'A lesson Tue 13 Oct 08:00 has a substitute.',
       'Du har ett vikariepass tis 13 okt 08:00.',
@@ -651,7 +988,7 @@ describe('NotificationDeliveryService (push)', () => {
   });
 
   it('never pushes a teacher’s absence report', async () => {
-    delivery.enqueue([lesson({ type: 'TEACHER_ABSENCE_REPORTED', meta: { teacherName: 'Karin Lund' } })]);
+    await delivery.enqueue([lesson({ type: 'TEACHER_ABSENCE_REPORTED', meta: { teacherName: 'Karin Lund' } })]);
     await delivery.idle();
     expect(targetCalls).toHaveLength(0);
     expect(expo.send).not.toHaveBeenCalled();
@@ -659,19 +996,20 @@ describe('NotificationDeliveryService (push)', () => {
 
   it('sends nothing to a person without a live token, and settles nothing', async () => {
     targets = [];
-    delivery.enqueue([lesson()]);
+    await delivery.enqueue([lesson()]);
     await delivery.idle();
     expect(expo.send).not.toHaveBeenCalled();
     expect(settled).toHaveLength(0);
+    expect(store.count('DONE')).toBe(1);
   });
 
   it('stores the ok tickets and revokes a device Expo says is gone, in the school it was sent for', async () => {
-    const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+    const warn = jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
     expo.send.mockResolvedValue([
       { status: 'ok', id: 'ticket-ok-1' },
       { status: 'error', message: 'gone', details: { error: 'DeviceNotRegistered' } },
     ]);
-    delivery.enqueue([lesson()]);
+    await delivery.enqueue([lesson()]);
     await delivery.idle();
     expect(settled).toHaveLength(1);
     expect(settled[0]!.values).toEqual([SCHOOL, ['t-u2'], JSON.stringify([{ id: 'ticket-ok-1', tokenId: 't-u1' }])]);
@@ -679,24 +1017,65 @@ describe('NotificationDeliveryService (push)', () => {
   });
 
   it('logs other ticket errors by code and settles nothing for them', async () => {
-    const warn = jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+    const warn = jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
     expo.send.mockResolvedValue([{ status: 'error', details: { error: 'MessageRateExceeded' } }, { status: 'error' }]);
-    delivery.enqueue([lesson()]);
+    await delivery.enqueue([lesson()]);
     await delivery.idle();
     expect(settled).toHaveLength(0);
     expect(warn).toHaveBeenCalledWith('Push tickets with errors [MessageRateExceeded=1, Unknown=1, sent=2]');
   });
 
+  it('takes its place in Expo’s pace from the database before each request', async () => {
+    delivery.pushIntervalMs = 200;
+    const people = Array.from({ length: 150 }, (_, i) => `p${i}`);
+    targets = people.map((id) => ({ token_id: `t-${id}`, user_id: id, token: `ExponentPushToken[${id}aaaaaaaa]`, locale: 'sv', timezone: 'Europe/Stockholm' }));
+    await delivery.enqueue([lesson({ recipients: people.map((userId) => ({ userId, notificationId: `n-${userId}` })) })]);
+    await delivery.idle();
+    expect(store.slotCalls).toEqual([
+      { channel: 'PUSH', intervalMs: 200 },
+      { channel: 'PUSH', intervalMs: 200 },
+    ]);
+  });
+
+  describe('a process that dies in the middle of a push', () => {
+    it('does not send the packet that was on its way again, and goes on with the next: at most once', async () => {
+      const people = Array.from({ length: 250 }, (_, i) => `p${i}`);
+      targets = people.map((id) => ({ token_id: `t-${id}`, user_id: id, token: `ExponentPushToken[${id}aaaaaaaa]`, locale: 'sv', timezone: 'Europe/Stockholm' }));
+      const dead: Array<() => void> = [];
+      expo.send.mockImplementationOnce(async (messages: unknown[]) => messages.map((_m, i) => ({ status: 'ok', id: `a-${i}-abc` })));
+      // The second packet is on its way when the process dies: Expo never answers.
+      expo.send.mockImplementationOnce(() => new Promise((resolve) => dead.push(() => resolve([]))));
+      await delivery.enqueue([lesson({ recipients: people.map((userId) => ({ userId, notificationId: `n-${userId}` })) })]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(expo.send).toHaveBeenCalledTimes(2);
+      expect(store.rows[0]).toMatchObject({ status: 'CLAIMED', pushDone: 2, pushSent: 100 });
+
+      store.forward(NOTICE_LEASE_MS + 1_000);
+      const next = new NotificationDeliveryService(prisma as unknown as PrismaService, config as never, expo as never, undefined, store);
+      next.pushIntervalMs = 0;
+      next.kick();
+      await next.idle();
+      // The first packet was sent once, the second began once and is not begun again, the third (50 devices) goes.
+      expect(expo.send).toHaveBeenCalledTimes(3);
+      expect((expo.send.mock.calls[2]![0] as unknown[]).length).toBe(50);
+      expect(store.rows[0]!.status).toBe('DONE');
+      // The process that stood still hears no when it wakes, and does not settle what it sent.
+      dead.forEach((resolve) => resolve());
+      await delivery.idle();
+      expect(store.rows[0]).toMatchObject({ status: 'DONE', pushSent: 150 });
+    });
+  });
+
   describe('telling the sender how the batch went', () => {
     const told = async (batch: OutboxEntry[]): Promise<boolean[]> => {
       const answers: boolean[] = [];
-      delivery.enqueue(batch, (delivered) => answers.push(delivered));
+      await delivery.enqueue(batch, (delivered) => answers.push(delivered));
       await delivery.idle();
       return answers;
     };
 
     it('says true when Expo took the request, also when it refuses one device or says one is gone', async () => {
-      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
       expect(await told([lesson()])).toEqual([true]);
       expo.send.mockResolvedValue([
         { status: 'ok', id: 'ticket-ok-1' },
@@ -707,17 +1086,11 @@ describe('NotificationDeliveryService (push)', () => {
       expect(await told([lesson()])).toEqual([true]);
     });
 
-    it('says false when the client could not get a chunk through (it answers RequestFailed, as it does after a timeout)', async () => {
-      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
-      expo.send.mockResolvedValue([{ status: 'ok', id: 'ticket-ok-1' }, { status: 'error', details: { error: 'RequestFailed' } }]);
-      expect(await told([lesson()])).toEqual([false]);
-    });
-
     // Expo refuses our credentials for every device alike: the request was not taken by the channel, and a reminder
     // must not read "taken" for a push no phone will get. The client's own answer for a chunk it could not get
     // through is the same kind of word.
     it.each(['InvalidCredentials', 'MismatchSenderId', 'RequestFailed'])('says false when the channel itself refuses (%s), although another ticket was ok', async (code) => {
-      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
       expo.send.mockResolvedValue([{ status: 'ok', id: 'ticket-ok-1' }, { status: 'error', details: { error: code } }]);
       expect(await told([lesson()])).toEqual([false]);
       // What was taken is still stored: the answer does not undo the ok ticket.
@@ -727,25 +1100,17 @@ describe('NotificationDeliveryService (push)', () => {
 
     // One device or one message: the channel took the request, and sending it again would change nothing.
     it.each(['DeviceNotRegistered', 'MessageTooBig', 'MessageRateExceeded'])('says true when Expo refuses one device or message (%s), as it took the request', async (code) => {
-      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
       expo.send.mockResolvedValue([{ status: 'ok', id: 'ticket-ok-1' }, { status: 'error', details: { error: code } }]);
       expect(await told([lesson()])).toEqual([true]);
     });
 
-    it('says false for a channel refusal among device refusals, and true when only the device ones are there', async () => {
-      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
-      expo.send.mockResolvedValue([{ status: 'error', details: { error: 'MessageRateExceeded' } }, { status: 'error', details: { error: 'InvalidCredentials' } }]);
-      expect(await told([lesson()])).toEqual([false]);
-      expo.send.mockResolvedValue([{ status: 'error', details: { error: 'MessageTooBig' } }, { status: 'error', details: { error: 'DeviceNotRegistered' } }]);
-      expect(await told([lesson()])).toEqual([true]);
-    });
-
     it('says false when the settling of the tickets failed, and goes on to the next batch', async () => {
-      jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+      jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
       tx.$executeRaw.mockRejectedValueOnce(new Error('connection lost'));
       const answers: boolean[] = [];
-      delivery.enqueue([lesson()], (delivered) => answers.push(delivered));
-      delivery.enqueue([lesson()], (delivered) => answers.push(delivered));
+      await delivery.enqueue([lesson()], (delivered) => answers.push(delivered));
+      await delivery.enqueue([lesson()], (delivered) => answers.push(delivered));
       await delivery.idle();
       expect(answers).toEqual([false, true]);
     });
@@ -754,19 +1119,20 @@ describe('NotificationDeliveryService (push)', () => {
       enabled = false;
       expect(delivery.wants({ type: 'LESSON_CANCELLED' })).toBe(false);
       const answers: boolean[] = [];
-      delivery.enqueue([], (delivered) => answers.push(delivered));
-      expect(answers).toEqual([true]);
+      await delivery.enqueue([], (delivered) => answers.push(delivered));
+      await delivery.enqueue([lesson()], (delivered) => answers.push(delivered));
+      expect(answers).toEqual([true, true]);
     });
   });
 });
 
-// A batch that goes out by both channels. The two are told apart in the answer (true only when both took it) but not
+// A row that goes out by both channels. The two are told apart in the answer (true only when both took it) but not
 // in the work: for the crisis alarm the push is what counts (its life is ten minutes, and a phone in a pocket hears
-// nothing of a mail), so a mail that Resend refuses must never keep the same batch's push from going. These tests need
-// no socket and no clock, which the two that read an answer over a real one do.
+// nothing of a mail), so a mail that Resend does not take, for good or for now, must never keep the same row's push from going.
 describe('NotificationDeliveryService (mail and push in one batch)', () => {
   let tx: TxMock;
   let prisma: ReturnType<typeof createPrismaMock>;
+  let store: MemoryOutbound;
   let expo: { send: jest.Mock; receipts: jest.Mock };
   let delivery: NotificationDeliveryService;
   const fetchMock = jest.fn();
@@ -782,7 +1148,8 @@ describe('NotificationDeliveryService (mail and push in one batch)', () => {
     });
   const told = async (batch: OutboxEntry[]): Promise<boolean[]> => {
     const answers: boolean[] = [];
-    delivery.enqueue(batch, (delivered) => answers.push(delivered));
+    withAddresses(store, batch);
+    await delivery.enqueue(batch, (delivered) => answers.push(delivered));
     await delivery.idle();
     return answers;
   };
@@ -790,13 +1157,15 @@ describe('NotificationDeliveryService (mail and push in one batch)', () => {
   beforeEach(() => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
+    store = new MemoryOutbound();
     expo = {
       send: jest.fn(async (messages: unknown[]) => messages.map((_m, i) => ({ status: 'ok', id: `ticket-${i}-abc` }))),
       receipts: jest.fn(),
     };
-    delivery = new NotificationDeliveryService(prisma as unknown as PrismaService, config as never, expo as never);
+    delivery = new NotificationDeliveryService(prisma as unknown as PrismaService, config as never, expo as never, undefined, store);
     delivery.emailIntervalMs = 0;
-    jest.spyOn((delivery as unknown as { logger: Logger }).logger, 'warn').mockImplementation(() => undefined);
+    delivery.pushIntervalMs = 0;
+    jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
     tx.$queryRaw.mockImplementation(async (sql: { strings: string[] }) =>
       sql.strings.join('?').includes('app.push_targets(')
         ? [{ token_id: 't-u1', user_id: 'u1', token: 'ExponentPushToken[aaaaaaaa]', locale: 'sv', timezone: 'Europe/Stockholm' }]
@@ -813,18 +1182,29 @@ describe('NotificationDeliveryService (mail and push in one batch)', () => {
     jest.restoreAllMocks();
   });
 
-  it('sends the push although the mail of the same batch was refused, and tells the batch false, once', async () => {
-    fetchMock.mockResolvedValue({ ok: false, status: 429 });
+  it('sends the push although the mail of the same row was refused for good, and tells the batch false, once', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 422 });
     expect(await told([alarm()])).toEqual([false]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(expo.send).toHaveBeenCalledTimes(1);
     expect(expo.send.mock.calls[0]![0]).toHaveLength(1);
   });
 
-  it('sends the push although the mail could not be sent at all (the connection failed)', async () => {
+  it('sends the push although the mail must wait (Resend is down), and the row is handed back for the mail alone', async () => {
     fetchMock.mockRejectedValue(new Error('ECONNRESET'));
-    expect(await told([alarm()])).toEqual([false]);
+    // Nothing is told: the mail is still to go.
+    expect(await told([alarm()])).toEqual([]);
     expect(expo.send).toHaveBeenCalledTimes(1);
+    expect(store.rows[0]).toMatchObject({ status: 'PENDING', mailDone: 0, pushDone: 1 });
+
+    // After its wait the mail goes, and the push is not sent again.
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    store.forward(31_000);
+    delivery.kick();
+    await delivery.idle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(expo.send).toHaveBeenCalledTimes(1);
+    expect(store.rows[0]!.status).toBe('DONE');
   });
 
   it('sends the mail although the push was refused, and tells the batch false', async () => {
@@ -842,10 +1222,10 @@ describe('NotificationDeliveryService (mail and push in one batch)', () => {
   });
 
   // The order is today's, and it is pinned so that changing it is a decision and not a slip: the push comes after the
-  // batch's mails, so a Resend that does not answer holds an alarm's push for up to the mail timeout and the turn in
-  // the mail chain (the push's own life is ten minutes). Sending the push first would take that wait away; this test
-  // is the one to change with it.
-  it('sends the batch’s mails first and its push after them', async () => {
+  // row's mails when both can go, so a Resend that does not answer holds an alarm's push for up to the mail timeout.
+  // A mail that must wait for a retry does not hold it (above). Sending the push first would take the first wait away;
+  // this test is the one to change with it.
+  it('sends the row’s mails first and its push after them', async () => {
     const order: string[] = [];
     fetchMock.mockImplementation(async () => {
       order.push('mail');

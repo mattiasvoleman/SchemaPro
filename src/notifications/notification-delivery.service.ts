@@ -1,25 +1,30 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { createHash, randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import type { PushConfig } from '../config/configuration';
 import { PrismaService } from '../database/prisma.service';
+import { errorName, JobRunner, type JobCounts } from '../jobs/job-runner';
 import { ExpoPushClient, type ExpoMessage } from './expo-push.client';
-import { RECIPIENT_CHUNK, type OutboxBatch, type OutboxEntry, type OutboxSettled } from './notification-outbox';
-import { NEVER_EXTERNAL, deliveredRegardless } from './notification-types';
-import { isTimeoutError } from './request-timeout';
+import { OUTBOUND_STORE, OutboundQueue, QueueFullError, type NewNotice, type OutboundStore, type PlannedPush, type QueuedNotice, type StoredEntry } from './notification-queue';
+import { retryDelayMs, sendMailPacket } from './notification-mail';
+import { RECIPIENT_CHUNK, type OutboxBatch, type OutboxSettled } from './notification-outbox';
+import {
+  EMAIL_BCC_CHUNK,
+  PUSH_TTL_SECONDS,
+  URGENT_PUSH_CHANNEL,
+  URGENT_PUSH_TTL_SECONDS,
+  URGENT_PUSH_TYPES,
+  planNotice,
+  type PlanSources,
+  type PushTarget,
+} from './notification-plan';
+import { NEVER_EXTERNAL } from './notification-types';
 import type { NotificationKind } from './notifications.service';
-import { pushKindOf, pushText, type PushKind, type PushLocale } from './push-messages';
 
-/** A push lives a day: a notice about today's lessons is no use tomorrow. */
-export const PUSH_TTL_SECONDS = 86_400;
-/**
- * An alarm (and its end) is told like an alarm: sent with high priority on a channel of its own that the phone
- * rings on, and not kept longer than it is true. A phone that was off for an hour must not get "Ett larm pågår"
- * for an alarm that ended before it came back; the app also asks the gateway before it shows a list.
- */
-export const URGENT_PUSH_TTL_SECONDS = 600;
-export const URGENT_PUSH_CHANNEL = 'crisis';
-const URGENT_PUSH_TYPES: ReadonlySet<string> = new Set(['CRISIS_ALARM', 'CRISIS_ENDED']);
+// What the plan decides stays importable from where it always was.
+export { EMAIL_BCC_CHUNK, PUSH_TTL_SECONDS, URGENT_PUSH_CHANNEL, URGENT_PUSH_TTL_SECONDS };
 
 /**
  * The ticket errors that say the channel itself did not take the request, so that a reminder is not told "taken":
@@ -31,144 +36,126 @@ const URGENT_PUSH_TYPES: ReadonlySet<string> = new Set(['CRISIS_ALARM', 'CRISIS_
  */
 const CHANNEL_ERRORS: ReadonlySet<string> = new Set(['RequestFailed', 'InvalidCredentials', 'MismatchSenderId']);
 
-interface PushTarget {
-  token_id: string;
-  user_id: string;
-  token: string;
-  locale: string;
-  timezone: string;
-}
-
-/** One person's notices of one kind in one batch: one push. */
-interface PushNotice {
-  schoolId: string;
-  userId: string;
-  type: NotificationKind;
-  kind: PushKind;
-  meta: Record<string, unknown>;
-  notificationId: string;
-  count: number;
-  required: boolean;
-}
-
-/** Pending batches beyond which a new one is refused (logged; the in-app rows are already committed). */
-export const MAX_PENDING_BATCHES = 1000;
-
-/**
- * Addresses per mail. Resend documents 50 recipients for `to`, and nothing
- * larger for a mail as a whole, so a mail holds 50: the sender's own address
- * as `to` and 49 on BCC. A whole-school digest of some 1,800 people is about
- * 37 mails, never one.
- */
-export const EMAIL_BCC_CHUNK = 49;
-
 /** Resend's default rate is two requests a second: one mail at most every 500 ms. */
 export const EMAIL_INTERVAL_MS = 500;
+/** Expo's five requests a second (the client's own pace is the same, per process). */
+export const PUSH_INTERVAL_MS = 200;
 
 /**
- * How long a mail may wait for Resend's answer before it is given up (logged, not retried, like any refused mail).
- * Resend answers in well under a second; a mail that has had ten has no answer coming. The mails of a lane go one
- * at a time, so a mail that never answers holds the lane (the ordinary one carries every school's notices), and
- * without a limit it held it for as long as the runtime waits for a response, five minutes. Ten seconds is twenty
- * mail intervals: long enough for a slow answer, short enough that a Resend that does not answer at all costs a
- * wave one lane-ful of seconds a mail, not minutes.
+ * How long a mail may wait for Resend's answer before it is given up for now (the row is handed back and the packet is
+ * asked about again under the same key). Resend answers in well under a second; a mail that has had ten has no answer
+ * coming, and one that never answers must not hold the lane it is in (the ordinary one carries every school's notices).
  */
 export const EMAIL_TIMEOUT_MS = 10_000;
 
-/** A queued batch, and who wants to know how it went. */
-interface Queued {
-  batch: OutboxBatch;
-  settled?: OutboxSettled;
+/** The job's name in the runner and in JobRuns. */
+export const NOTICE_JOB = 'notice-delivery';
+/**
+ * How often a process looks at the queue by itself: for a row another process left (its lease ran out), a row that was
+ * handed back for a retry, and what a restart found waiting. A notice this process wrote is taken at once (kick).
+ */
+export const NOTICE_POLL_MS = 10_000;
+/** How long a claim holds a row, renewed by every step. A packet takes at most ten seconds of its own. */
+export const NOTICE_LEASE_MS = 120_000;
+/** How often a pass also gives up what has stuck and removes what is old (app.outbound_sweep). */
+export const NOTICE_SWEEP_MS = 5 * 60 * 1000;
+/** A watcher that has heard nothing in this long is let go (the row may have been finished by another process). */
+const WATCH_MS = 30 * 60 * 1000;
+/** A write to the queue that fails is tried again after these. */
+const ENQUEUE_RETRY_MS: readonly number[] = [200, 1000];
+/** How soon after the start a process looks at the queue, for what its predecessor left. */
+const BOOT_LOOK_MS = 2_000;
+/** A row this process cannot send (the key is not here) is left for another, and looked at again after this. */
+const NOT_HERE_MS = 30_000;
+/** Longest a lane waits for one slot of the provider's pace before it asks again. */
+const MAX_SLOT_WAIT_MS = 30_000;
+
+type Lane = 'ordinary' | 'urgent';
+
+/** Tells one watcher how a batch went, once, when its last row has: true only if every row was taken by its channel. */
+class Watch {
+  private all = true;
+  constructor(
+    private remaining: number,
+    private readonly tell: (delivered: boolean) => void,
+  ) {}
+  part(delivered: boolean): void {
+    this.all = this.all && delivered;
+    this.remaining -= 1;
+    if (this.remaining === 0) this.tell(this.all);
+  }
 }
 
 /**
- * Delivers what NotificationsService wrote, after the transaction that wrote
- * it has committed: e-mail through Resend, as before, and push through Expo
- * when PUSH_NOTIFICATIONS=expo.
+ * Delivers what NotificationsService wrote, after the transaction that wrote it has committed: e-mail through Resend,
+ * as before, and push through Expo when PUSH_NOTIFICATIONS=expo.
  *
- * WHY AFTER THE COMMIT. notifyUsers used to dispatch e-mail before the
- * caller's transaction had committed, so a write that was refused or rolled
- * back after the notice could already have mailed. Only the cover module
- * deferred its notices (cover.service.ts afterCommit). Now every caller's
- * notices wait for the commit: PrismaService.onCommit runs one hook per
- * transaction, which hands this service the transaction's whole outbox.
+ * WHY AFTER THE COMMIT. notifyUsers used to dispatch e-mail before the caller's transaction had committed, so a write
+ * that was refused or rolled back after the notice could already have mailed. Now every caller's notices wait for the
+ * commit: PrismaService.onCommit runs one hook per transaction, which hands this service the transaction's whole outbox.
  *
- * ONE AT A TIME. A DRAFT publish or a cover-board day notifies once per
- * class or per substitute inside one transaction; were each delivered on its
- * own, a publish would start dozens of deliveries at once against a pool of
- * ten. Batches go through one process-wide serial queue: the next starts
- * when the last has finished. The queue is bounded (MAX_PENDING_BATCHES).
+ * THE QUEUE IS THE DATABASE'S (H3, 20270309090000). What the hook hands over is written to OutboundNotices in one
+ * statement per lane and school, and delivered from there. A deploy that stops the process between the commit and the
+ * send used to take every waiting mail with it (the queue was an array); now the next process, or another one running
+ * beside it, takes the row up where it was left:
  *
- * AN ALARM DOES NOT WAIT IN IT. A request for a guardian's confirmation to a
- * whole school is 4 000 notices and some 82 mails, a minute or so of that
- * queue, and an alarm's push lives ten minutes (URGENT_PUSH_TTL_SECONDS). The
- * urgent types (URGENT_PUSH_TYPES) therefore go through a second serial
- * queue of their own, which starts at once beside the first one: the entries
- * of a batch are split by type when it is queued, so an alarm that shares a
- * transaction with other notices is still the urgent lane's. The two lanes
- * share the providers' pacing (one mail at most every EMAIL_INTERVAL_MS,
- * Expo's five requests a second). Mails go one at a time in the order they
- * ask for their turn, each at least EMAIL_INTERVAL_MS after the last one
- * ACTUALLY went, not after the moment it was planned for: a timer that fires
- * late must not bring the next mail closer than the interval, and Resend
- * refuses what comes faster than two a second. So an alarm's mail waits one
- * turn, not the other lane's whole backlog, and the total rate is the one the
- * providers allow. A turn that throws costs the mail it was for and nothing more
- * (the chain goes on from a settled link, mailTurn).
+ *   - A ROW is one lane's notices of one school from one transaction, as the delivery has always grouped them (the push
+ *     joins one person's notices of a kind into "3 lektioner är inställda"). It holds the notices' types and meta, the
+ *     mail's subject and text and the recipients' ids; never an address or a token, which are read when the row is first
+ *     taken.
+ *   - A LEASE per row (app.outbound_claim): the oldest row that waits, or whose lease has run out, FOR UPDATE SKIP
+ *     LOCKED, with a claim that every later step must show. Two API instances, or an old and a new one in a deploy, never
+ *     hold the same row; a process that stood still past its lease is told no at its next step and lets go.
+ *   - A PLAN, made once (planNotice) and frozen on the row: the mail packets (49 addresses on BCC, after opt-outs) and
+ *     the push packets (100 devices, each with its text). A retry sends the same packets.
+ *   - TWO COUNTERS, and what they promise. A mail packet is counted AFTER Resend took it, and every mail goes under an
+ *     Idempotency-Key made of the row and the packet (notification-mail.ts): a packet that was on its way when the process
+ *     died is sent again by the next one under the same key, and Resend does not send it twice (24 hours; a row gives up
+ *     after 20). A push packet is counted BEFORE the call, since Expo has no such key: a packet that was on its way when
+ *     the process died is not sent again. So a mail arrives once or, when the provider is down for the whole day, not
+ *     at all; a push arrives at most once. (ExpoPushClient retries a request it got no answer to inside one call, and
+ *     says so itself: that, and nothing a restart does, is where a push can arrive twice.)
+ *   - THE PACE IS THE FLEET'S. A mail takes a slot in the database's pace (app.outbound_slot: one mail at most every
+ *     EMAIL_INTERVAL_MS, one push request at most every PUSH_INTERVAL_MS), whichever instance sends it, so two instances
+ *     in a deploy do not double what the providers allow. The alarm's lane and the ordinary one share it.
+ *   - AN ALARM DOES NOT WAIT BEHIND A WAVE. The urgent types (URGENT_PUSH_TYPES) are rows of their own, taken by a lane of
+ *     their own that runs beside the ordinary one; a request for a guardian's confirmation to a whole school is 4,000
+ *     notices and a minute or so of the ordinary lane, and an alarm's push lives ten minutes.
+ *   - A FAILURE THAT MAY PASS IS WAITED OUT. A 429, a 5xx, a request nobody answers (EMAIL_TIMEOUT_MS) and a key
+ *     Resend refuses hand the row back for a retry, after the wait the provider names or half a minute doubling to a
+ *     quarter of an hour; a packet the provider will not take however often (a bad address) is counted failed and the
+ *     queue goes on. A row that has waited 20 hours or been tried 30 times gives up (app.outbound_sweep).
+ *   - WHEN A ROW IS DONE it is emptied of everything about a person (a CHECK holds the database to it) and kept as a few
+ *     counts for a week.
  *
- * A REQUEST NOBODY ANSWERS IS GIVEN UP. A mail waits EMAIL_TIMEOUT_MS for Resend
- * (ExpoPushClient has its own limit for Expo): the mails of a lane go one at a
- * time, so one that never answered held the lane, and the ordinary lane carries
- * every school's notices, for as long as the runtime waits, five minutes. It is
- * logged and not sent again, like any mail Resend refused.
+ * HOW A BATCH WENT. enqueue takes a listener (OutboxSettled) that is told once, when the batch's rows have been worked
+ * through by THIS process: true when every mail was taken by Resend and every push request by Expo (or there was nothing
+ * outside the inbox), false when one was refused, or the queue would not take the batch. It is not told when another
+ * process finishes a row, or when this one stops first: the notices go on, and no word is an answer too. Kvittens' reminder
+ * uses it to say "Skickad" only when the mail went.
  *
- * HOW A BATCH WENT. enqueue takes a listener (OutboxSettled) that is told once,
- * when the batch has been worked through: true when every mail was taken by Resend
- * and every push request by Expo (or there was nothing outside the inbox), false
- * when one was refused, timed out, or the batch was dropped. It is not told when the
- * process stops with the batch in the queue, which is in memory: no word is an answer
- * too. Kvittens' reminder uses it to say "Skickad" only when the mail went.
- *
- * E-mail is BCC mail per notifyUsers chunk, with the caller's subject and
- * body, unchanged, minus the recipients who opted out of the type
- * (NotificationOptOuts, read by userId through app.delivery_opt_outs in
- * withDeliveryService) — except for the notices the school must deliver
- * (deliveredRegardless) — split into mails of EMAIL_BCC_CHUNK addresses and
- * sent at most one every EMAIL_INTERVAL_MS. Configured with
- * `RESEND_API_KEY` + `EMAIL_FROM`; when unset nothing is sent and nothing is
- * queued. TEACHER_ABSENCE_REPORTED never leaves the inbox.
- *
- * PUSH, only when configured (PushConfig.enabled; off by default, and then
- * nothing here touches Expo or the push tables):
- *
- *   1. One push per person and kind per batch: a person with three cancelled
- *      lessons in one transaction gets "3 lektioner är inställda." (C2).
- *   2. app.push_targets gives each person's live tokens, minus opt-outs
- *      unless the notice is one the school must deliver, with the school's
- *      timezone.
- *   3. Each message is written in its device's language with the templates of
- *      push-messages.ts — no name, no free text, no subject, group or room —
- *      and data { notificationId, type }.
- *   4. ExpoPushClient sends in chunks of 100 at five requests a second.
- *   5. app.push_settle stores the ok tickets (PushReceiptsService reads their
- *      receipts later) and revokes tokens Expo called DeviceNotRegistered.
- *
- * Counts of ticket errors are logged by code; never a token or a text.
+ * Configured with `RESEND_API_KEY` + `EMAIL_FROM` (mail) and PUSH_NOTIFICATIONS=expo (push); with neither, nothing is
+ * queued, and a process that has neither takes no row (a row waits for one that has). TEACHER_ABSENCE_REPORTED never
+ * leaves the inbox. Counts of errors are logged by code; never an address, a token or a text.
  */
 @Injectable()
-export class NotificationDeliveryService {
+export class NotificationDeliveryService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(NotificationDeliveryService.name);
-  /** The ordinary lane and the urgent one; each is serial, and they run beside each other. */
-  private readonly lanes: Record<'ordinary' | 'urgent', { queue: Queued[]; running: Promise<void> | null }> = {
-    ordinary: { queue: [], running: null },
-    urgent: { queue: [], running: null },
-  };
-  /** When the last mail really went (epoch ms), for the provider's rate. */
-  private lastMailAt = 0;
-  /** The mails waiting for their turn, both lanes in the order they asked: each turn starts when the one before it has gone. */
-  private mailTurns: Promise<void> = Promise.resolve();
+  private readonly store: OutboundStore;
+  /** This process's name in a claim. */
+  private readonly consumer = `${hostname().slice(0, 40)}-${process.pid}-${randomUUID().slice(0, 8)}`;
+  private readonly lanes: Record<Lane, { running: Promise<void> | null }> = { ordinary: { running: null }, urgent: { running: null } };
+  private readonly writing = new Set<Promise<void>>();
+  private readonly watching = new Map<string, Watch>();
+  private stopping = false;
+  private lastSweepAt = 0;
+  private stats: Record<string, number> = {};
+  /** When the last mail or push request went by this process's own clock, for when the database cannot say. */
+  private readonly lastAt: Record<'EMAIL' | 'PUSH', number> = { EMAIL: 0, PUSH: 0 };
   /** The pause between two mails; a spec sets it to 0. */
   emailIntervalMs = EMAIL_INTERVAL_MS;
+  /** The pause between two push requests; a spec sets it to 0. */
+  pushIntervalMs = PUSH_INTERVAL_MS;
   /** How long a mail waits for Resend's answer; a spec shortens it. */
   emailTimeoutMs = EMAIL_TIMEOUT_MS;
 
@@ -176,7 +163,29 @@ export class NotificationDeliveryService {
     private readonly prisma: PrismaService,
     @Optional() private readonly config?: ConfigService,
     @Optional() private readonly expo?: ExpoPushClient,
-  ) {}
+    @Optional() private readonly jobs?: JobRunner,
+    @Optional() @Inject(OUTBOUND_STORE) store?: OutboundStore,
+  ) {
+    this.store = store ?? new OutboundQueue(prisma);
+  }
+
+  onModuleInit(): void {
+    if (!this.jobs || !(this.emailConfigured() || this.pushEnabled())) return;
+    this.jobs.register({ name: NOTICE_JOB, intervalMs: NOTICE_POLL_MS, tick: () => this.tick() });
+    // What the process before this one left waiting is looked at now, not an interval from now.
+    setTimeout(() => this.kick(), BOOT_LOOK_MS).unref();
+  }
+
+  /**
+   * A stop (a deploy's SIGTERM) lets the row in hand finish its packet and hands it back for the next process, which is
+   * what the lease would do after two minutes. The wait for it is bounded: a process that does not come out in time is
+   * stopped by the platform, and the lease does the rest.
+   */
+  async onModuleDestroy(): Promise<void> {
+    this.stopping = true;
+    this.jobs?.unregister(NOTICE_JOB);
+    await Promise.race([this.idle(), new Promise<void>((resolve) => setTimeout(resolve, 8_000).unref())]);
+  }
 
   /** Whether an entry of this shape has anywhere to go beyond the in-app inbox. */
   wants(entry: { type: NotificationKind; email?: unknown }): boolean {
@@ -194,40 +203,106 @@ export class NotificationDeliveryService {
   }
 
   /**
-   * Queues one committed transaction's notices: the alarms in the urgent lane, the rest in the ordinary one. Never
-   * throws. `settled`, when given, is told once how the whole batch went (OutboxSettled): at once and true for a
-   * batch with nothing to deliver outside the inbox, after the last lane has finished otherwise.
+   * Writes one committed transaction's notices to the queue: the alarms as rows of the urgent lane, the rest as rows of
+   * the ordinary one, one per school. Never rejects. `settled`, when given, is told once how the whole batch went
+   * (OutboxSettled): at once and true for a batch with nothing to deliver outside the inbox, after this process has worked
+   * through the last row otherwise, and false when the queue would not take it.
    */
-  enqueue(batch: OutboxBatch, settled?: OutboxSettled): void {
-    if (batch.length === 0) {
+  enqueue(batch: OutboxBatch, settled?: OutboxSettled): Promise<void> {
+    const writing = this.write(batch, settled)
+      .catch((error: unknown) => {
+        this.logger.warn(`Delivery enqueue failed [${errorName(error)}, notices=${batch.length}]`);
+        this.tell(settled, false);
+      })
+      .finally(() => this.writing.delete(writing));
+    this.writing.add(writing);
+    return writing;
+  }
+
+  /** Resolves once nothing is being written to the queue and this process has no row in hand. */
+  async idle(): Promise<void> {
+    for (;;) {
+      const waiting = [...this.writing, this.lanes.ordinary.running, this.lanes.urgent.running].filter((p): p is Promise<void> => p !== null);
+      if (waiting.length === 0) return;
+      await Promise.all(waiting);
+    }
+  }
+
+  private async write(batch: OutboxBatch, settled?: OutboxSettled): Promise<void> {
+    const notices = this.rowsOf(batch);
+    if (notices.length === 0) {
       this.tell(settled, true);
       return;
     }
-    const urgent = batch.filter((entry) => URGENT_PUSH_TYPES.has(entry.type));
-    const ordinary = urgent.length === 0 ? batch : batch.filter((entry) => !URGENT_PUSH_TYPES.has(entry.type));
-    // The lanes finish apart; the caller hears once, when both have, and "delivered" only if both delivered.
-    let lanes = (urgent.length > 0 ? 1 : 0) + (ordinary.length > 0 ? 1 : 0);
-    let all = true;
-    const part: OutboxSettled | undefined = settled
-      ? (delivered) => {
-          all = all && delivered;
-          lanes -= 1;
-          if (lanes === 0) this.tell(settled, all);
-        }
-      : undefined;
-    if (urgent.length > 0) this.offer('urgent', urgent, part);
-    if (ordinary.length > 0) this.offer('ordinary', ordinary, part);
+    const watch = settled ? new Watch(notices.length, (delivered) => this.tell(settled, delivered)) : undefined;
+    for (const notice of notices) {
+      let id: string | undefined;
+      try {
+        id = await this.put(notice);
+      } catch (error) {
+        this.logger.warn(
+          error instanceof QueueFullError
+            ? `Delivery queue full; ${notice.entries.length} notice(s) not mirrored [lane=${notice.urgent ? 'urgent' : 'ordinary'}]`
+            : `Delivery enqueue failed [${errorName(error)}, notices=${notice.entries.length}]`,
+        );
+      }
+      if (id === undefined) {
+        watch?.part(false);
+        continue;
+      }
+      if (watch) {
+        this.watching.set(id, watch);
+        setTimeout(() => this.watching.delete(id!), WATCH_MS).unref();
+      }
+    }
+    this.kick();
   }
 
-  private offer(name: 'ordinary' | 'urgent', batch: OutboxBatch, settled?: OutboxSettled): void {
-    const lane = this.lanes[name];
-    if (lane.queue.length >= MAX_PENDING_BATCHES) {
-      this.logger.warn(`Delivery queue full; ${batch.length} notice(s) not mirrored [pending=${lane.queue.length}${name === 'urgent' ? ', lane=urgent' : ''}]`);
-      this.tell(settled, false);
-      return;
+  /** One write, tried again after a short wait if the database was not there (a queue that is full is not asked again). */
+  private async put(notice: NewNotice): Promise<string> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.store.enqueue(notice);
+      } catch (error) {
+        if (error instanceof QueueFullError || attempt >= ENQUEUE_RETRY_MS.length) throw error;
+        await new Promise((resolve) => setTimeout(resolve, ENQUEUE_RETRY_MS[attempt]));
+      }
     }
-    lane.queue.push({ batch, settled });
-    if (!lane.running) lane.running = this.drain(name);
+  }
+
+  /**
+   * A batch as its rows: the urgent entries apart from the rest, and each school apart (an entry has one school). An
+   * entry is kept when it has somewhere to go outside the inbox: its mail, when it has one and Resend is set up, or the
+   * push when it is on. A row holds at most what the table's CHECKs allow (2,000 entries, 20,000 recipients); a batch that
+   * large is cut there.
+   */
+  private rowsOf(batch: OutboxBatch): NewNotice[] {
+    const open = new Map<string, NewNotice>();
+    const rows: NewNotice[] = [];
+    const mail = this.emailConfigured();
+    const push = this.pushEnabled();
+    for (const entry of batch) {
+      if (entry.recipients.length === 0 || NEVER_EXTERNAL.has(entry.type)) continue;
+      const email = entry.email && mail ? { subject: entry.email.subject, body: entry.email.body } : undefined;
+      if (!email && !push) continue;
+      const urgent = URGENT_PUSH_TYPES.has(entry.type);
+      const key = `${urgent ? 'u' : 'o'}|${entry.schoolId}`;
+      let row = open.get(key);
+      if (row && (row.entries.length >= 2_000 || row.recipientIds.length + entry.recipients.length > 20_000)) row = undefined;
+      if (!row) {
+        row = { schoolId: entry.schoolId, urgent, entries: [], recipientIds: [], notificationIds: [] };
+        open.set(key, row);
+        rows.push(row);
+      }
+      const stored: StoredEntry = { type: entry.type, meta: entry.meta, n: entry.recipients.length, ...(email ? { email } : {}) };
+      row.entries.push(stored);
+      for (const recipient of entry.recipients) {
+        row.recipientIds.push(recipient.userId);
+        row.notificationIds.push(recipient.notificationId);
+      }
+    }
+    // An alarm is written first: it is the one that is late if the database is slow.
+    return rows.sort((a, b) => Number(b.urgent) - Number(a.urgent));
   }
 
   /** Tells whoever asked how a batch went. A listener that throws must not stop the lane. */
@@ -235,266 +310,320 @@ export class NotificationDeliveryService {
     try {
       settled?.(delivered);
     } catch (error) {
-      this.logger.warn(`A delivery listener failed [${error instanceof Error ? error.name : 'unknown'}]`);
+      this.logger.warn(`A delivery listener failed [${errorName(error)}]`);
     }
   }
 
-  /** Resolves once both queues are empty and nothing is being delivered. */
-  async idle(): Promise<void> {
-    while (this.lanes.ordinary.running || this.lanes.urgent.running) {
-      await Promise.all([this.lanes.ordinary.running, this.lanes.urgent.running]);
-    }
-  }
+  // -------------------------------------------------------------------
+  // The consumer
 
-  private async drain(name: 'ordinary' | 'urgent'): Promise<void> {
-    const lane = this.lanes[name];
-    try {
-      for (let next = lane.queue.shift(); next; next = lane.queue.shift()) {
-        let delivered = false;
-        try {
-          delivered = await this.deliver(next.batch);
-        } catch (error) {
-          this.logger.warn(`Delivery failed [${error instanceof Error ? error.name : 'unknown'}, notices=${next.batch.length}]`);
-        }
-        this.tell(next.settled, delivered);
+  /** Starts a lane that is not running. A process with no channel, or on its way out, takes no row. */
+  kick(): void {
+    if (this.stopping || !(this.emailConfigured() || this.pushEnabled())) return;
+    for (const lane of ['urgent', 'ordinary'] as const) {
+      if (!this.lanes[lane].running) {
+        const running = this.run(lane).finally(() => {
+          this.lanes[lane].running = null;
+        });
+        this.lanes[lane].running = running;
       }
-    } finally {
-      lane.running = null;
     }
   }
 
-  /** Whether every mail and every push the batch wanted was taken by its channel. */
-  private async deliver(batch: OutboxBatch): Promise<boolean> {
-    let delivered = true;
-    for (const entry of batch) delivered = (await this.email(entry)) && delivered;
-    if (this.pushEnabled()) delivered = (await this.push(batch)) && delivered;
-    return delivered;
+  /** One pass of the job: the lanes until the queue has nothing due, and now and then the sweep. Never throws. */
+  async tick(): Promise<void> {
+    const started = new Date();
+    try {
+      this.stats = {};
+      this.kick();
+      await Promise.all([this.lanes.ordinary.running, this.lanes.urgent.running]);
+      await this.sweepIfDue();
+      this.jobs?.settled(NOTICE_JOB, started, { ok: true, counts: this.stats as JobCounts });
+    } catch (error) {
+      this.logger.warn(`Notice delivery pass failed [${errorName(error)}]`);
+      this.jobs?.settled(NOTICE_JOB, started, { ok: false, error: errorName(error) });
+    }
   }
+
+  private count(name: string, by = 1): void {
+    this.stats[name] = (this.stats[name] ?? 0) + by;
+  }
+
+  private async sweepIfDue(): Promise<void> {
+    if (Date.now() - this.lastSweepAt < NOTICE_SWEEP_MS) return;
+    this.lastSweepAt = Date.now();
+    const { gaveUp, deleted } = await this.store.sweep();
+    this.count('gaveUp', gaveUp);
+    this.count('deleted', deleted);
+    if (gaveUp > 0) this.logger.warn(`Notice queue gave up rows that had waited too long [rows=${gaveUp}]`);
+  }
+
+  /** One lane: rows one after another until none is due. */
+  private async run(lane: Lane): Promise<void> {
+    while (!this.stopping) {
+      let row: QueuedNotice | null;
+      try {
+        row = await this.store.claim(this.consumer, lane === 'urgent', NOTICE_LEASE_MS);
+      } catch (error) {
+        this.logger.warn(`Notice claim failed [${errorName(error)}, lane=${lane}]`);
+        return;
+      }
+      if (!row) return;
+      this.count('claimed');
+      await this.workOn(row);
+    }
+  }
+
+  /** Works one row to its end or hands it back. Never throws. */
+  private async workOn(row: QueuedNotice): Promise<void> {
+    try {
+      const outcome = await this.send(row);
+      this.count(outcome.kind);
+      if (outcome.kind === 'done') {
+        const watch = this.watching.get(row.id);
+        this.watching.delete(row.id);
+        watch?.part(outcome.delivered);
+      }
+    } catch (error) {
+      // Nothing is sent twice by the retry: the counters say where the row is. A row whose planning keeps failing gives up
+      // after thirty claims (app.outbound_sweep).
+      this.logger.warn(`Notice delivery failed [${errorName(error)}, attempt=${row.attempts}]`);
+      this.count('failed');
+      await this.handBack(row, retryDelayMs(row.attempts));
+    }
+  }
+
+  private async handBack(row: QueuedNotice, delayMs: number): Promise<void> {
+    try {
+      await this.store.release(row, delayMs);
+    } catch (error) {
+      // The lease runs out and the next claim takes it from there.
+      this.logger.warn(`Notice could not be handed back [${errorName(error)}]`);
+    }
+  }
+
+  private async send(row: QueuedNotice): Promise<{ kind: 'done'; delivered: boolean } | { kind: 'released' | 'lost' }> {
+    const apiKey = process.env.RESEND_API_KEY;
+    const channels = { mail: Boolean(apiKey), push: this.pushEnabled(), from: process.env.EMAIL_FROM ?? 'Rastra Schema <noreply@schemapro.app>' };
+    // A row with mail in it that this process cannot send is left for one that can (a key that is set on some instances
+    // only is a deploy in the middle of being made): never given up, never sent without its mail.
+    if (!row.plan && !channels.mail && row.entries.some((entry) => entry.email)) {
+      await this.handBack(row, NOT_HERE_MS);
+      return { kind: 'released' };
+    }
+
+    let plan = row.plan;
+    if (!plan) {
+      plan = await planNotice(row, channels, this.sources(row.schoolId));
+      if (!(await this.store.plan(row, plan, NOTICE_LEASE_MS))) return { kind: 'lost' };
+    }
+
+    // The two channels do not hold each other: a mail that must be tried again later (Resend is down) does not keep the
+    // same row's push from going, which for an alarm is what counts (its push lives ten minutes), and a push that was
+    // refused does not keep the mail. The row is handed back at the end if a mail has to wait.
+    let mailFailed = row.mailsFailed;
+    let mailWait: number | null = null;
+    let interrupted = false;
+    for (let i = row.mailDone; i < plan.mail.length; i++) {
+      if (this.stopping) {
+        interrupted = true;
+        break;
+      }
+      const packet = plan.mail[i]!;
+      const email = row.entries[packet.e]?.email;
+      if (!apiKey || !email) {
+        // Resend was set up when this was planned and is not now (or the entry has no mail: not made by this code).
+        mailWait = NOT_HERE_MS;
+        break;
+      }
+      await this.pace('EMAIL', this.emailIntervalMs);
+      const result = await sendMailPacket(
+        apiKey,
+        { from: plan.from, bcc: packet.bcc, subject: email.subject, body: email.body, key: `notice/${row.id}/mail/${i}` },
+        this.emailTimeoutMs,
+      );
+      if (result.kind === 'retry') {
+        this.logger.warn(`Email dispatch failed [${result.why}, will be tried again]`);
+        mailWait = result.delayMs ?? retryDelayMs(row.attempts);
+        break;
+      }
+      const taken = result.kind === 'taken';
+      if (!taken) this.logger.warn(`Email dispatch failed [status=${result.status}${result.name ? `, ${result.name}` : ''}]`);
+      if (!(await this.store.advance(row, { mailDone: i + 1, mailSent: taken ? packet.bcc.length : 0, mailFailed: taken ? 0 : packet.bcc.length }, NOTICE_LEASE_MS))) {
+        return { kind: 'lost' };
+      }
+      if (!taken) mailFailed += packet.bcc.length;
+    }
+
+    let pushFailed = row.pushFailed;
+    let pushWait: number | null = null;
+    for (let j = row.pushDone; !interrupted && j < plan.push.length; j++) {
+      if (this.stopping) {
+        interrupted = true;
+        break;
+      }
+      if (!this.expo) {
+        // Expo was set up when this was planned and is not here now.
+        pushWait = NOT_HERE_MS;
+        break;
+      }
+      await this.pace('PUSH', this.pushIntervalMs);
+      // Counted BEFORE the request: Expo has no idempotency key, and a packet that was on its way when this process died
+      // must not be sent again by the next.
+      if (!(await this.store.advance(row, { pushDone: j + 1 }, NOTICE_LEASE_MS))) return { kind: 'lost' };
+      const result = await this.pushPacket(row.schoolId, plan.push[j]!);
+      if (!(await this.store.advance(row, { pushSent: result.sent, pushFailed: result.failed }, NOTICE_LEASE_MS))) return { kind: 'lost' };
+      pushFailed += result.failed;
+    }
+
+    if (interrupted || mailWait !== null || pushWait !== null) {
+      await this.handBack(row, interrupted ? 0 : Math.min(mailWait ?? Infinity, pushWait ?? Infinity));
+      return { kind: 'released' };
+    }
+    if (!(await this.store.finish(row, 'DONE'))) return { kind: 'lost' };
+    return { kind: 'done', delivered: mailFailed === 0 && pushFailed === 0 };
+  }
+
+  // -------------------------------------------------------------------
+  // Pace
 
   /**
-   * Whether Expo took every request. A device it says is gone, and a refusal for one device or one message, is not the
-   * channel failing; a refusal of our credentials, or a request the client could not get through, is (CHANNEL_ERRORS).
+   * Waits for this request's place in the provider's pace. The place comes from the database, so it is the fleet's: one
+   * mail at most every `intervalMs` whichever instance sends it. Where the database cannot say (it is down; a spec has no
+   * queue), this process keeps the pace by its own clock, as the delivery did before the queue.
    */
-  private async push(batch: OutboxBatch): Promise<boolean> {
-    let taken = true;
-    const notices = new Map<string, PushNotice>();
-    for (const entry of batch) {
-      const kind = pushKindOf(entry.type, entry.meta);
-      if (!kind || NEVER_EXTERNAL.has(entry.type)) continue;
-      const required = deliveredRegardless(entry.type, entry.meta);
-      for (const recipient of entry.recipients) {
-        const key = `${entry.schoolId}|${recipient.userId}|${kind}`;
-        const seen = notices.get(key);
-        if (seen) {
-          seen.count++;
-          continue;
-        }
-        notices.set(key, {
-          schoolId: entry.schoolId,
-          userId: recipient.userId,
-          type: entry.type,
-          kind,
-          meta: entry.meta,
-          notificationId: recipient.notificationId,
-          count: 1,
-          required,
-        });
-      }
+  private async pace(channel: 'EMAIL' | 'PUSH', intervalMs: number): Promise<void> {
+    if (intervalMs <= 0) return;
+    let wait: number;
+    try {
+      wait = await this.store.slot(channel, intervalMs);
+    } catch {
+      wait = Math.max(0, this.lastAt[channel] + intervalMs - Date.now());
     }
-
-    // The people to ask about, per school, type and whether opt-outs count.
-    const groups = new Map<string, PushNotice[]>();
-    for (const notice of notices.values()) {
-      const key = `${notice.schoolId}|${notice.type}|${notice.required}`;
-      const group = groups.get(key);
-      if (group) group.push(notice);
-      else groups.set(key, [notice]);
-    }
-
-    const bySchool = new Map<string, Array<{ message: ExpoMessage; tokenId: string }>>();
-    for (const group of groups.values()) {
-      const { schoolId, type, required } = group[0]!;
-      // Each person's notices, found by the person: a device is given its owner's, and a
-      // whole-school digest is not read once per device (1,800 people twice over, 1,800 times each).
-      const noticesOf = new Map<string, PushNotice[]>();
-      for (const notice of group) {
-        const own = noticesOf.get(notice.userId);
-        if (own) own.push(notice);
-        else noticesOf.set(notice.userId, [notice]);
-      }
-      const people = [...noticesOf.keys()];
-      const targets: PushTarget[] = [];
-      // A whole-school digest is one group of some 1,800 people: asked 500 at a time.
-      for (let at = 0; at < people.length; at += RECIPIENT_CHUNK) {
-        const chunk = people.slice(at, at + RECIPIENT_CHUNK);
-        const rows = await this.prisma.withDeliveryService((tx) =>
-          tx.$queryRaw<PushTarget[]>(
-            Prisma.sql`SELECT token_id::text AS token_id, user_id::text AS user_id, token, locale, timezone
-                         FROM app.push_targets(${schoolId}::uuid, ${chunk}::uuid[],
-                                               ${type}::"NotificationType", ${required})`,
-          ),
-        );
-        targets.push(...(rows ?? []));
-      }
-      const out = bySchool.get(schoolId) ?? [];
-      for (const target of targets) {
-        const locale: PushLocale = target.locale === 'en' ? 'en' : 'sv';
-        for (const notice of noticesOf.get(target.user_id) ?? []) {
-          const text = pushText(notice.kind, notice.meta, locale, target.timezone, notice.count);
-          const urgent = URGENT_PUSH_TYPES.has(notice.type);
-          out.push({
-            tokenId: target.token_id,
-            message: {
-              to: target.token,
-              title: text.title,
-              body: text.body,
-              data: { notificationId: notice.notificationId, type: notice.type },
-              ttl: urgent ? URGENT_PUSH_TTL_SECONDS : PUSH_TTL_SECONDS,
-              channelId: urgent ? URGENT_PUSH_CHANNEL : 'default',
-              sound: 'default',
-              priority: urgent ? 'high' : 'default',
-              ...(urgent ? { interruptionLevel: 'time-sensitive' as const } : {}),
-            },
-          });
-        }
-      }
-      bySchool.set(schoolId, out);
-    }
-
-    for (const [schoolId, outgoing] of bySchool) {
-      if (outgoing.length === 0) continue;
-      const tickets = await this.expo!.send(outgoing.map((o) => o.message));
-      const ok: Array<{ id: string; tokenId: string }> = [];
-      const dead = new Set<string>();
-      const errors = new Map<string, number>();
-      tickets.forEach((ticket, index) => {
-        const tokenId = outgoing[index]!.tokenId;
-        if (ticket.status === 'ok') {
-          ok.push({ id: ticket.id, tokenId });
-          return;
-        }
-        const code = ticket.details?.error ?? 'Unknown';
-        errors.set(code, (errors.get(code) ?? 0) + 1);
-        if (code === 'DeviceNotRegistered') dead.add(tokenId);
-        if (CHANNEL_ERRORS.has(code)) taken = false;
-      });
-      if (errors.size > 0) {
-        this.logger.warn(
-          `Push tickets with errors [${[...errors].map(([code, n]) => `${code}=${n}`).join(', ')}, sent=${outgoing.length}]`,
-        );
-      }
-      if (ok.length > 0 || dead.size > 0) {
-        await this.prisma.withDeliveryService((tx) =>
-          tx.$executeRaw(
-            Prisma.sql`SELECT app.push_settle(${schoolId}::uuid, ${[...dead]}::uuid[], ${JSON.stringify(ok)}::jsonb)`,
-          ),
-        );
-      }
-    }
-    return taken;
+    wait = Math.min(wait, MAX_SLOT_WAIT_MS);
+    this.lastAt[channel] = Date.now() + wait;
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   }
 
-  /** Whether every mail of the entry was taken by Resend (also when there was none to send). */
-  private async email(entry: OutboxEntry): Promise<boolean> {
-    if (!entry.email || !this.emailConfigured() || NEVER_EXTERNAL.has(entry.type)) return true;
-    const withAddress = entry.email.recipients.filter((r) => Boolean(r.email));
-    if (withAddress.length === 0) return true;
-    const optedOut = deliveredRegardless(entry.type, entry.meta)
-      ? new Set<string>()
-      : await this.optOuts(entry.schoolId, withAddress.map((r) => r.userId), entry.type);
-    const addresses = withAddress.filter((r) => !optedOut.has(r.userId)).map((r) => r.email);
-    return this.sendEmails(addresses, entry.email.subject, entry.email.body);
+  // -------------------------------------------------------------------
+  // Push
+
+  /** What planning reads from the database, for one school. */
+  private sources(schoolId: string): PlanSources {
+    return {
+      optOuts: (_school, userIds, type) => this.optOuts(schoolId, userIds, type),
+      addresses: (_school, userIds) => this.store.addresses(schoolId, userIds),
+      pushTargets: (_school, userIds, type, required) => this.pushTargets(schoolId, userIds, type, required),
+    };
   }
 
   /** Who of `userIds` said no to `type` outside the app (NotificationOptOuts). */
   private async optOuts(schoolId: string, userIds: string[], type: NotificationKind): Promise<Set<string>> {
+    const found = new Set<string>();
+    for (let at = 0; at < userIds.length; at += RECIPIENT_CHUNK) {
+      const chunk = userIds.slice(at, at + RECIPIENT_CHUNK);
+      const rows = await this.prisma.withDeliveryService((tx) =>
+        tx.$queryRaw<{ user_id: string }[]>(
+          Prisma.sql`SELECT u::text AS user_id FROM app.delivery_opt_outs(${schoolId}::uuid, ${chunk}::uuid[], ${type}::"NotificationType") AS u`,
+        ),
+      );
+      for (const row of rows ?? []) found.add(row.user_id);
+    }
+    return found;
+  }
+
+  private async pushTargets(schoolId: string, userIds: string[], type: NotificationKind, required: boolean): Promise<PushTarget[]> {
     const rows = await this.prisma.withDeliveryService((tx) =>
-      tx.$queryRaw<{ user_id: string }[]>(
-        Prisma.sql`SELECT u::text AS user_id FROM app.delivery_opt_outs(${schoolId}::uuid, ${userIds}::uuid[], ${type}::"NotificationType") AS u`,
+      tx.$queryRaw<PushTarget[]>(
+        Prisma.sql`SELECT token_id::text AS token_id, user_id::text AS user_id, token, locale, timezone
+                     FROM app.push_targets(${schoolId}::uuid, ${userIds}::uuid[], ${type}::"NotificationType", ${required})`,
       ),
     );
-    return new Set((rows ?? []).map((row) => row.user_id));
+    return rows ?? [];
+  }
+
+  private toExpo(push: PlannedPush): ExpoMessage {
+    const urgent = URGENT_PUSH_TYPES.has(push.y);
+    return {
+      to: push.to,
+      title: push.ti,
+      body: push.b,
+      data: { notificationId: push.n, type: push.y },
+      ttl: urgent ? URGENT_PUSH_TTL_SECONDS : PUSH_TTL_SECONDS,
+      channelId: urgent ? URGENT_PUSH_CHANNEL : 'default',
+      sound: 'default',
+      priority: urgent ? 'high' : 'default',
+      ...(urgent ? { interruptionLevel: 'time-sensitive' as const } : {}),
+    };
   }
 
   /**
-   * Resolves when this mail may go: it is next in line, and EMAIL_INTERVAL_MS has passed since the last mail went, from
-   * whichever lane. The moment is taken when the wait ends, so the interval is kept even when a timer fires late.
+   * One packet to Expo, and what comes of the tickets: the ok ones are stored for their receipts and a device Expo calls
+   * gone is revoked (app.push_settle). `failed` counts the refusals that say the channel did not take the request
+   * (CHANNEL_ERRORS), and one for tickets that could not be stored; a refusal for one device or one message is not the
+   * channel failing.
    */
-  private async mailTurn(): Promise<void> {
-    const turn = this.mailTurns.then(async () => {
-      for (let wait = this.lastMailAt + this.emailIntervalMs - Date.now(); wait > 0; wait = this.lastMailAt + this.emailIntervalMs - Date.now()) {
-        await new Promise((resolve) => setTimeout(resolve, wait));
+  private async pushPacket(schoolId: string, packet: readonly PlannedPush[]): Promise<{ sent: number; failed: number }> {
+    const tickets = await this.expo!.send(packet.map((push) => this.toExpo(push)));
+    const ok: Array<{ id: string; tokenId: string }> = [];
+    const dead = new Set<string>();
+    const errors = new Map<string, number>();
+    let failed = 0;
+    tickets.forEach((ticket, index) => {
+      const tokenId = packet[index]!.t;
+      if (ticket.status === 'ok') {
+        ok.push({ id: ticket.id, tokenId });
+        return;
       }
-      this.lastMailAt = Date.now();
+      const code = ticket.details?.error ?? 'Unknown';
+      errors.set(code, (errors.get(code) ?? 0) + 1);
+      if (code === 'DeviceNotRegistered') dead.add(tokenId);
+      if (CHANNEL_ERRORS.has(code)) failed += 1;
     });
-    // A turn that throws must not close the mail for the process: every later turn is chained to this one, and
-    // a rejected link would be skipped by all of them (and rejected by every mailTurn) until a restart. The
-    // caller of THIS turn still hears of it.
-    this.mailTurns = turn.catch(() => undefined);
-    await turn;
-  }
-
-  /** Whether Resend took every mail (also when there was none to send). A mail that fails is logged and not sent again. */
-  private async sendEmails(addresses: string[], subject: string, body: string): Promise<boolean> {
-    const apiKey = process.env.RESEND_API_KEY;
-    const from = process.env.EMAIL_FROM ?? 'Rastra Schema <noreply@schemapro.app>';
-    if (!apiKey || addresses.length === 0) return true;
-
-    let taken = true;
-    for (let at = 0; at < addresses.length; at += EMAIL_BCC_CHUNK) {
+    if (errors.size > 0) {
+      this.logger.warn(`Push tickets with errors [${[...errors].map(([code, n]) => `${code}=${n}`).join(', ')}, sent=${packet.length}]`);
+    }
+    if (ok.length > 0 || dead.size > 0) {
       try {
-        await this.mailTurn();
+        await this.prisma.withDeliveryService((tx) =>
+          tx.$executeRaw(Prisma.sql`SELECT app.push_settle(${schoolId}::uuid, ${[...dead]}::uuid[], ${JSON.stringify(ok)}::jsonb)`),
+        );
       } catch (error) {
-        // No turn, no pace to keep: this mail is not sent, and the next one asks for a turn of its own.
-        this.logger.warn(`Email dispatch skipped [turn, ${error instanceof Error ? error.name : 'unknown'}]`);
-        taken = false;
-        continue;
-      }
-      try {
-        const response = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            from,
-            // BCC so recipients never see each other's addresses.
-            to: [from.replace(/^.*<|>$/g, '')],
-            bcc: addresses.slice(at, at + EMAIL_BCC_CHUNK),
-            subject,
-            text: body,
-          }),
-          signal: AbortSignal.timeout(this.emailTimeoutMs),
-        });
-        if (!response.ok) {
-          this.logger.warn(`Email dispatch failed [status=${response.status}]`);
-          taken = false;
-        }
-      } catch (error) {
-        this.logger.warn(`Email dispatch failed [${isTimeoutError(error) ? `timeout ${this.emailTimeoutMs} ms` : 'network'}]`);
-        taken = false;
+        this.logger.warn(`Push tickets could not be stored [${errorName(error)}]`);
+        failed += 1;
       }
     }
-    return taken;
+    return { sent: ok.length, failed };
   }
 
+  // -------------------------------------------------------------------
+  // The kitchen's letter
+
   /**
-   * A letter to one address that is no user (Måltidskollen's kitchen): no inbox row, no push and no opt-out to
-   * honour, because the address is the school's and there is no person behind it to choose. It takes its turn at
-   * the mail pace like every other mail (mailTurn), so the providers' rate holds for it too, and a mail that
-   * Resend refuses is logged and not sent again. It does not wait in the lanes: it is one mail, once a day.
+   * A letter to one address that is no user (Måltidskollen's kitchen): no inbox row, no push and no opt-out to honour,
+   * because the address is the school's and there is no person behind it to choose. It takes its place in the same pace as
+   * every other mail (the fleet's, from the database), so the providers' rate holds for it too. It does not wait in the
+   * queue: it is one mail, once a day, and its caller keeps its own claim and asks again inside its window. What the queue
+   * gives the others, the letter has in its key: it goes under an Idempotency-Key that is the letter's own fingerprint, so
+   * that asking again after an answer that never came (a timeout) does not send it twice within the day.
    *
-   * Answers false when the mail was not taken: Resend is not set up here, or Resend refused it, did not answer
-   * or the mail never got its turn (sendEmails says so), so the caller can leave its claim open and try again
-   * inside its window. True otherwise. Never throws, and never sends a letter twice by itself.
+   * Answers false when the mail was not taken: Resend is not set up here, or Resend refused it, did not answer, or asked to
+   * be asked again later, so the caller can leave its claim open and try again inside its window. True otherwise. Never
+   * throws.
    */
   async sendLetter(address: string, subject: string, body: string): Promise<boolean> {
-    if (!this.emailConfigured()) return false;
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) return false;
     try {
-      return await this.sendEmails([address], subject, body);
+      await this.pace('EMAIL', this.emailIntervalMs);
+      const from = process.env.EMAIL_FROM ?? 'Rastra Schema <noreply@schemapro.app>';
+      const key = `letter/${createHash('sha256').update(`${address}\n${subject}\n${body}`).digest('hex')}`;
+      const result = await sendMailPacket(apiKey, { from, bcc: [address], subject, body, key }, this.emailTimeoutMs);
+      if (result.kind === 'taken') return true;
+      this.logger.warn(`Email dispatch failed [${result.kind === 'retry' ? result.why : `status=${result.status}`}]`);
+      return false;
     } catch (error) {
-      this.logger.warn(`Letter dispatch failed [${error instanceof Error ? error.name : 'unknown'}]`);
+      this.logger.warn(`Letter dispatch failed [${errorName(error)}]`);
       return false;
     }
   }
