@@ -31,6 +31,18 @@
     "finish": "Finish",
     "none": "None",
     "error": "Something went wrong",
+    "codes": {
+      "ABSENCE_STATS_TOO_SLOW": "The statistics took too long to work out just now. Try again in a moment, or choose a shorter period.",
+      "ATTENDANCE_REGISTER_BUSY": "The register could not be saved just now, because a pupil or teacher is being updated from the source system. Nothing was saved. Try again in a moment.",
+      "DATABASE_BUSY": "The server is busy right now, and nothing was done. Try again in a moment.",
+      "LESSON_LOG_TOO_LONG": "The text is too long: at most {max} characters.",
+      "PUSH_DISABLED": "Push notifications are not turned on for the school.",
+      "PUSH_TOKEN_BUSY": "The device is already being registered. Try again.",
+      "ROOM_CLASH": "The room change would clash with another lesson in the same room. Nothing was changed.",
+      "SCHOOL_ID_INVALID": "The school id is not a valid id.",
+      "TEMPLATE_FIELDS_CONFLICT": "The fields {a} and {b} read the same cells and cannot be placed together.",
+      "TIMPLAN_CREDIT_GROUP_OF_ANOTHER_YEAR": "The group {groupName} belongs to a different school year than {yearName}."
+    },
     "problemNetwork": "The server could not be reached. Check your connection and try again.",
     "problemSignedOut": "Your session has expired. Sign in again.",
     "problemNotFound": "What you tried to reach no longer exists. Reload the page and try again.",

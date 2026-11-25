@@ -31,6 +31,18 @@
     "finish": "Slutför",
     "none": "Ingen",
     "error": "Något gick fel",
+    "codes": {
+      "ABSENCE_STATS_TOO_SLOW": "Statistiken tog för lång tid att räkna fram just nu. Försök igen om en stund, eller välj en kortare period.",
+      "ATTENDANCE_REGISTER_BUSY": "Registret kunde inte sparas just nu, eftersom en elev eller lärare uppdateras från källsystemet. Inget sparades. Försök igen om en stund.",
+      "DATABASE_BUSY": "Servern är upptagen just nu, och inget har gjorts. Försök igen om en stund.",
+      "LESSON_LOG_TOO_LONG": "Texten är för lång: högst {max} tecken.",
+      "PUSH_DISABLED": "Push är inte påslaget för skolan.",
+      "PUSH_TOKEN_BUSY": "Enheten registreras redan. Försök igen.",
+      "ROOM_CLASH": "Salsbytet skulle krocka med en annan lektion i samma sal. Inget ändrades.",
+      "SCHOOL_ID_INVALID": "Skolans id är inte ett giltigt id.",
+      "TEMPLATE_FIELDS_CONFLICT": "Fälten {a} och {b} läser samma celler och kan inte placeras tillsammans.",
+      "TIMPLAN_CREDIT_GROUP_OF_ANOTHER_YEAR": "Gruppen {groupName} hör till ett annat läsår än {yearName}."
+    },
     "problemNetwork": "Servern gick inte att nå. Kontrollera anslutningen och försök igen.",
     "problemSignedOut": "Din inloggning har gått ut. Logga in igen.",
     "problemNotFound": "Det du försökte nå finns inte längre. Ladda om sidan och försök igen.",

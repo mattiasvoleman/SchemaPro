@@ -1,3 +1,5 @@
+import { problemCodeText } from "@/lib/problem-codes";
+
 /**
  * The sentence a failed request is shown as, in the reader's language.
  *
@@ -72,8 +74,8 @@ export function apiErrorText(error: unknown, t: ProblemLookup): string {
   // Not the gateway's: what it says, as every handler did before.
   if (typeof status !== "number") return own;
   if (code === NETWORK_FAILURE) return t("problemNetwork");
-  // The gateway named the case and its thrower worded it.
-  if (typeof code === "string") return own;
+  // The gateway named the case: the web's own sentence for the code when it has one (lib/problem-codes.ts), else its thrower's.
+  if (typeof code === "string") return problemCodeText(error, code, t) ?? own;
   if (Array.isArray(problems) && problems.length > 0) {
     const sentences = problems.filter((sentence): sentence is string => typeof sentence === "string");
     if (sentences.length > 0) {
