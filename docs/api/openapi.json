@@ -3508,6 +3508,62 @@
         ]
       }
     },
+    "/api/v1/board-tray/lay": {
+      "post": {
+        "tags": [
+          "BoardTray"
+        ],
+        "operationId": "BoardTrayController_lay",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LayBrickDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
     "/api/v1/calendar-feeds": {
       "get": {
         "tags": [
@@ -33324,6 +33380,58 @@
         },
         "required": [
           "lessonId"
+        ]
+      },
+      "LayBrickDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "postId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "teacherId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "minutes": {
+            "type": "number",
+            "minimum": 5,
+            "maximum": 600
+          },
+          "partKey": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$"
+          },
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 7
+          },
+          "startTime": {
+            "type": "string"
+          },
+          "roomId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        },
+        "required": [
+          "academicYearId",
+          "postId",
+          "minutes",
+          "partKey",
+          "dayOfWeek",
+          "startTime"
         ]
       },
       "LeftLessonDto": {

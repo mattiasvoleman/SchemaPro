@@ -17,7 +17,7 @@ const POST = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 describe('BoardTrayService: the brick of a post with a medlärare', () => {
   it('carries the post\'s medlärare on every brick, and null on a post without one', async () => {
     const tx = createTxMock();
-    const service = new BoardTrayService(createPrismaMock(tx) as unknown as PrismaService);
+    const service = new BoardTrayService(createPrismaMock(tx) as unknown as PrismaService, {} as never);
     const post = (id: string, coTeacherId: string | null) => ({
       id,
       studentGroupId: GROUP,

@@ -58,6 +58,23 @@ lektioner, lagda, svarade av en förläggning, kvar) och `groups` (kvar per klas
 Hålls av `scripts/test/probe-att-lagga.ts` (mot riktig Postgres: samma tal som Förlägg i veckan, fria och parkerade lektioner, en förläggning, en annan skolas år) och, för hand mot
 en riktig motor, `scripts/test/probe-att-lagga-motor.ts`: brickorna per post är det motorn sedan lägger, och facket är tomt efteråt.
 
+### Att lägga en bricka (E4, läggningen)
+
+`POST /api/v1/board-tray/lay` lägger en bricka på en tid. Brickan har en **bild** (`partKey`: hash av postens del — lärare, minuter, antal, låsta, lagda, kvar och de stående lektionernas id), som läsningen
+ger och som skrivningen jämför med det den ser med låset taget. Två som läst samma bild och lägger varsin: den första skriver, den andra får `409 REQUIREMENT_PLACEMENTS_STALE` (samma kod som
+Förlägg i veckan) och ingenting skrivs för den. Läggningen tar årets lås (`enterGrundschemaWrite`, `lockYearForGrundschemaEdit`) och sedan postens (`lockPostForShares`) före läsningen, i samma
+ordning som alla andra skrivningar på grundschemat, och skriver sedan med `createIn`/`updateIn` i samma transaktion, så att domaren (`judgeLessons`) dömer lektionen som varje handläggning och
+ingenting läggs vid sidan av den.
+
+- En vanlig bricka blir en ny **låst** lektion (`isLocked: true`, `isGenerated: false`): Generera låter den stå och räknar den som lagd (`PRESERVED_FROM_REGENERATION`), så att ingenting läggs två gånger.
+- En **parkerad** lektion är en bricka, nämligen sig själv (`lessonId`): läggningen flyttar tillbaka den (`updateIn`, `isParked: false`), ingen ny lektion görs och den räknas inte två gånger.
+- En lektion Generera skrivit från en förläggning (`fromPlacement`) vars rad tagits bort står kvar och räknas som lagd; läsningen matchar den mot postens tider i stället för mot raden.
+- Utan sal läggs brickan som den är och svaret säger `noRoom: true` (Klart e: "Utan sal"). Salen väljer den som lägger, ur E3:s `room-choices` (rang 1 är den generatorn skulle ta); läggningen tar den sal den får, och domaren vägrar en sal som är upptagen som vid varje handredigering.
+- Ett block läggs inte här, och inte heller en bricka utan lärare (`cannotPlace` → `409 BOARD_BRICK_CANNOT_BE_LAID`, med skälet i `params.reason`); en bricka som inte finns kvar efter låset är samma `409 REQUIREMENT_PLACEMENTS_STALE` som en gammal bild.
+
+Hålls av `src/board-tray/board-tray.lay.spec.ts` och `board-tray.identity.spec.ts` (bild, parkerad, föräldralös, tvåa), samt `scripts/test/probe-att-lagga.ts` (al-e…al-g: mot riktig Postgres, två som lägger
+samtidigt och en parkerad lektion som läggs tillbaka).
+
 ## Possible times (Möjliga tider, E3)
 
 `POST /api/v1/master-lessons/possible-times` answers "where can this lesson stand, and which time is best?" without writing anything. It
