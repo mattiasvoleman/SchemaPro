@@ -115,6 +115,23 @@ test('a week that gains a timetable, a refusal that changes its code, and weeks 
   assert.equal(compareWeek(head[2], floor[2], BUDGET).kind, 'same');
 });
 
+test('a week both trees answer TIMEOUT is named as guarding nothing, and decides nothing', () => {
+  const floor = [week('a', null), week('b', 1), week('c', null)];
+  const head = [week('a', null), week('b', 1), week('c', null)];
+  const verdict = gate(head, floor);
+  assert.equal(verdict.failed, false, verdict.lines.join('\n'));
+  assert.deepEqual(verdict.summary.unguarded, ['a', 'c']);
+  assert.ok(verdict.lines.some((line) => line.startsWith('guarding nothing tonight') && line.endsWith(': a, c')), verdict.lines.join('\n'));
+});
+
+test('weeks that are solved, refused alike or answered otherwise by the two trees are not named as guarding nothing', () => {
+  const floor = [week('a', 1), refused('b'), week('c', null), week('d', null)];
+  const head = [week('a', 1), refused('b'), week('c', 2), refused('d')];
+  const verdict = gate(head, floor);
+  assert.deepEqual(verdict.summary.unguarded, []);
+  assert.ok(!verdict.lines.some((line) => line.startsWith('guarding nothing')), verdict.lines.join('\n'));
+});
+
 test('a week with too little work in the floor carries no ratio', () => {
   const floor = [week('tiny', 0.01), week('big', 1)];
   const head = [week('tiny', 0.5), week('big', 1)];
