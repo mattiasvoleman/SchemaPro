@@ -5427,6 +5427,9 @@ class SchedulerSolver:
                 return None
             # The meals the week's lunch stage settled, for the classes this step has: the same warm start phase 1a's model is
             # given, and the lessons are searched around meals that have a place.
+            # The previous schedule's slots of the year being laid: where phase 1b would have started (the steps are built
+            # without the objective, so no hint of the disruption term is in them and none is named twice).
+            self._hint_previous_lessons(model, decisions, step.previous_lessons)
             left = edge - time.monotonic()
             if left < self.MIN_PHASE_SECONDS:
                 logger.info("years step=%d/%d: no time left for its search [requestId=%s]", number, len(units), request.request_id)

@@ -202,7 +202,11 @@ def step_request(
     meal is the year's), and the pairs whose two ends are in it. Everything that is about the week and not about a
     requirement is the week's own: the frame, the reservations, the rooms, the rules, the locks (a lock is a fact about a
     class's time and a teacher's whatever year it is for). What a step does not ask is taken out: the schedule it
-    is a hint toward (`previousLessons`) and the one it starts from (`startLessons`), which are for the whole week."""
+    is a hint toward (`previousLessons`) and the one it starts from (`startLessons`), which are for the whole week.
+
+    THE PREVIOUS SCHEDULE STAYS A HINT FOR THE YEAR BEING LAID (`previousLessons` of the requirements in `free`): it is what
+    phase 1b would have settled into, and a road that laid the week from nothing and replaced it gave a school that
+    re-generates a timetable that moved nearly every lesson (g482, M-1)."""
     kept = [
         requirement.model_copy(update={"pinned_lessons": held[requirement.id]})
         if requirement.id in held
@@ -220,6 +224,6 @@ def step_request(
         "group_conflicts": [
             pair for pair in request.group_conflicts if pair[0] in pupils and pair[1] in pupils
         ],
-        "previous_lessons": [],
+        "previous_lessons": [lesson for lesson in request.previous_lessons if lesson.requirement_id in free],
         "start_lessons": None,
     })
