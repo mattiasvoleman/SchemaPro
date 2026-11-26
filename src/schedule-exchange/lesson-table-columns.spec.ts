@@ -19,8 +19,8 @@ describe('the flat table\'s columns the web copies', () => {
     expect(LESSON_TABLE_COLUMNS.map((column) => column.en)).toEqual([...LESSON_TABLE_HEADER_EN]);
   });
 
-  it('have 28 columns with a key each, and no key twice', () => {
-    expect(LESSON_TABLE_COLUMNS).toHaveLength(28);
-    expect(new Set(LESSON_TABLE_COLUMNS.map((column) => column.key)).size).toBe(28);
+  it('have 29 columns with a key each, and no key twice', () => {
+    expect(LESSON_TABLE_COLUMNS).toHaveLength(29);
+    expect(new Set(LESSON_TABLE_COLUMNS.map((column) => column.key)).size).toBe(29);
   });
 });

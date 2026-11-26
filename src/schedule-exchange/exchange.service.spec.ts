@@ -58,6 +58,7 @@ function masterRow(over: Record<string, unknown> = {}) {
     endDate: null,
     isLocked: false,
     isGenerated: true,
+    exemptFrom: [],
     extraGroups: [],
     participants: [],
     ...over,
@@ -294,6 +295,12 @@ describe('ScheduleExchangeService.preview', () => {
     // And 10:30–11:15 is on the autumn's: the other way round.
     expect(await codes({ start: '10:30', end: '11:15', from: '2027-01-11', to: '2027-06-11' })).toEqual([]);
     expect(await codes({ start: '10:30', end: '11:15', from: '2026-08-17', to: '2026-12-18' })).toEqual(['ON_LUNCH_SITTING']);
+  });
+
+  it('says an exemption by what the lesson really breaks: a rule the file names and the lesson holds is saved on nothing (Undantag med flit, g467)', async () => {
+    const { service } = world({ frames: [{ minGradeLevel: 7, maxGradeLevel: 9, dayOfWeek: null, startTime: time(8), endTime: time(15) }] });
+    const plan = await preview(service, [base({ start: '14:30', end: '15:30', exempt: ['FRAME', 'LUNCH'] }), base({ day: 2, start: '09:00', end: '10:00', exempt: ['FRAME', 'LUNCH'] })]);
+    expect(plan.rows.map((row) => [row.refusals.length, row.resolved?.exempt])).toEqual([[0, ['FRAME']], [0, []]]);
   });
 
   it('warns about a lesson outside the engine’s day and does not refuse it', async () => {

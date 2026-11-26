@@ -44,6 +44,41 @@ a Sunday (`SCHOOL_DAY`, the förläggning's own first question, in its words).
   over real Postgres, with the cases in `src/calendar/__fixtures__/lesson-judge-cases.json` that the web's mirror is held to) and
   `src/calendar/lesson-judge.property.spec.ts` (the other schools' holds and the board's rules over random facts).
 
+## Undantag med flit (E1b)
+
+Under a no for the stage's ramtid or the class's meal the administrator may answer **"Lägg ändå"**. It is a question that says what
+breaks, and only an administrator (the route's own role) can answer yes. Nothing else can be answered yes to: the teacher, the room,
+the class and its pupils, a closed hour, a rule on årskurser, another school's time and the school day are refused with the same code
+whatever the request names (decision 5: no forced clash).
+
+- **By name.** `exempt: ['FRAME' | 'LUNCH']` on the PATCH, the create and the läsande frågan (`moves[].exempt`). The judge answers
+  EVERY board rule a time breaks (`reasons: 'FRAME,LUNCH'`; `boardCodeOf` of a swap names the first only), so an exemption for the ramtid
+  does not hide the lunch: what is named is let through, what is not is still asked. `exempted` says what the answer yes would save,
+  `exemptable` whether the refusals are the ramtid and the meal and nothing else. A rule named that the time does not break is saved on nothing.
+- **Saved on the lesson.** `MasterLessons.exemptFrom text[]` (`FRAME`, `LUNCH`, a CHECK on the two names; the same column on
+  `PublishedLessons`), and the lesson is locked in the same breath (a request that names a rule and says `isLocked: false` is a 400). The
+  lesson says it only when it has one (`exemptFrom` in the result, a version's blob, a publication's snapshot): every other lesson is
+  the object it was.
+- **For the time it was given for.** The trigger `MasterLessons_exemption_ends` takes it away when the day, clock, dates, lock or tray
+  of the lesson change, for any writer that does not know the column (a swap's apply, an import, a restore): a writer that decides the
+  exemption itself says `app.keep_exemptions = on` for its transaction (the PATCH that answers yes again for another breaking time,
+  a discarded draft). The PATCH writes `exemptFrom` itself and answers `EXEMPTION_ENDED` (`params.rules`) when an edit ended one.
+  Another time that breaks the rule asks again.
+- **Generera and the engine.** An exempt lesson is locked, so Generera keeps it and plans around it. The engine needs nothing for the
+  ramtid (a lock may lie outside its class's frame); for the lunch the payload names the lock (`fixedLessons[].exemptFromLunch: true`,
+  sent only on a lock whose lesson has the exemption) and the engine no longer refuses a meal the school placed by hand on it
+  (`LUNCH_PLACEMENT_COLLIDES`, `FixedLesson.exempt_from_lunch`). A meal the engine lays itself is still laid clear of the lock, and a
+  reserved hour of the class is still a reservation. `scripts/test/probe-undantag-motor.ts` shows it against the real engine (by hand).
+- **No automat gives one or moves one.** Generera, the swaps and Optimera salar never write the column; a lesson with an exemption is
+  locked, so none of them moves it. A block card's members that move lose theirs (the card is judged against every rule and asked of no one's yes).
+- **The seams.** A version's blob and its restore, a publication's snapshot and a discarded draft (a changed exemption is a change of
+  the draft), the schedule file (the column `Undantag`: `Ramtid | Lunch`; read into another school the import lets through the rules the
+  file names and the lesson breaks, never the rast or a clash, and refuses a word that is none of the two) and the publication check
+  (`PUB_EXEMPTIONS`, information: the number of lessons and the rule each stands against).
+- **Held in place by** `scripts/test/probe-undantag.ts` (the table and its trigger, the PATCH over real Postgres, a version, a
+  discarded draft, the schedule file in and out), `src/calendar/lesson-judge.exempt.property.spec.ts` (the same drag with and without a
+  name gets the same verdict on every rule but the one named) and `src/calendar/master-lessons.judge.exempt.spec.ts`.
+
 ## Tier 3
 
 - **Minimal-disruption re-optimization** — the gateway sends the current unlocked placements as `previousLessons`; the solver is rewarded (weight `disruption`) for keeping lessons on those slots and warm-started with them as hints. Mid-term re-runs now change as little as possible.

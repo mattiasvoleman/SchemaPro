@@ -190,7 +190,7 @@ export function generateWorlds(count: number, perWorld: number): { worlds: World
 // A world in a school of its own.
 // ---------------------------------------------------------------------------------------------------------------------
 
-interface Planted {
+export interface Planted {
   school: string;
   year: string;
   caller: AuthenticatedUser;
@@ -203,7 +203,7 @@ interface Planted {
   slot: Map<string, { day: number; start: string; end: string }>;
 }
 
-async function plant(owner: Client, slug: string, world: World): Promise<Planted> {
+export async function plant(owner: Client, slug: string, world: World): Promise<Planted> {
   const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [slug]);
   const school = (await one<{ id: string }>(`INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`, [`${slug}`, slug])).id;
@@ -290,6 +290,8 @@ async function plant(owner: Client, slug: string, world: World): Promise<Planted
 // ---------------------------------------------------------------------------------------------------------------------
 
 const unify = (reason: string): string => (reason === 'PUPILS' ? 'GROUP' : reason);
+/** The board's three rules, in the order boardCodeOf asks them. */
+const BOARD_RULES = ['FRAME', 'LUNCH', 'GRADE_RULE'];
 
 export async function domarenChecks(owner: Client, api: PrismaService, check: (label: string, body: () => Promise<void>) => Promise<void>): Promise<void> {
   const write = process.env['DOMAREN_WRITE'] === '1';
@@ -425,7 +427,11 @@ export async function domarenChecks(owner: Client, api: PrismaService, check: (l
           assert.equal(swapSays.size === 0, weekend ? swapReasons.size === 0 : verdict.ok, `${label}: a swap's judge says ${[...swapReasons].join(',') || 'ok'}, the läsande frågan ${verdict.ok ? 'ok' : verdict.reasons.join(',')}`);
           if (!verdict.ok) {
             assert.equal(placement.reason, verdict.reasons[0], `${label}: the heaviest reason is ${placement.reason} for the förläggning's judge and ${verdict.reasons[0]} for the läsande frågan`);
-            assert.deepEqual([...swapReasons].sort(), [...new Set(verdict.reasons.filter((reason) => reason !== 'SCHOOL_DAY').map(unify))].sort(), `${label}: the reasons are not a swap's`);
+            // A swap's judge names the FIRST board rule a landing breaks (boardCodeOf); the hand edit names every one of them, so that an
+            // exemption for the ramtid does not hide the lunch (Undantag med flit). The rest of the reasons are the same set.
+            const firstBoard = verdict.reasons.find((reason) => BOARD_RULES.includes(reason));
+            const theSwapsReasons = verdict.reasons.filter((reason) => reason !== 'SCHOOL_DAY' && (!BOARD_RULES.includes(reason) || reason === firstBoard));
+            assert.deepEqual([...swapReasons].sort(), [...new Set(theSwapsReasons.map(unify))].sort(), `${label}: the reasons are not a swap's`);
           }
           for (const reason of verdict.ok ? [] : [...new Set(verdict.reasons.map(unify))]) note(reason, true);
           if (verdict.ok) stood += 1;

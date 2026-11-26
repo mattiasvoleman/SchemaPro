@@ -112,6 +112,7 @@ import {
   type ParsedExchange,
   type TeacherRef,
 } from './exchange-model';
+import { exemptionsRead, exemptionWords } from '../calendar/lesson-exemption';
 import { excerpt, hasPersonalNumber, MAX_PROBLEMS, ProblemLog } from './file-safety';
 
 // ---------------------------------------------------------------------------
@@ -146,7 +147,8 @@ type ColumnKey =
   | 'to'
   | 'weeks'
   | 'block'
-  | 'locked';
+  | 'locked'
+  | 'exempt';
 
 interface Column {
   key: ColumnKey;
@@ -187,6 +189,7 @@ const COLUMNS: readonly Column[] = [
   { key: 'weeks', sv: 'Veckomönster', en: 'Week pattern', aliases: ['Vecka', 'Veckor'] },
   { key: 'block', sv: 'Block', en: 'Block', aliases: [] },
   { key: 'locked', sv: 'Låst', en: 'Locked', aliases: [] },
+  { key: 'exempt', sv: 'Undantag', en: 'Exemption', aliases: [] },
 ];
 
 /**
@@ -313,6 +316,7 @@ function rowOf(lesson: ExchangeLesson): string[] {
     weekLetter(lesson.weeks),
     lesson.block ?? '',
     'Ja',
+    exemptionWords(lesson.exempt),
   ];
 }
 
@@ -653,6 +657,13 @@ export function tableToLessons(rows: string[][], rowNumbers?: number[]): ParsedE
       bad('TABLE_BAD_WEEKS', () => `Veckomönstret ${excerpt(weeksText)} går inte att läsa. Skriv A (udda veckor), B (jämna veckor) eller lämna tomt.`);
     }
 
+    // Undantag med flit: the rules the lesson stands against on purpose, by the words the writer writes. A word that is none of them is no guess.
+    const exemptText = cell('exempt');
+    const exempt = exemptText === '' ? [] : exemptText.length > LONGEST_WORD ? null : exemptionsRead(exemptText);
+    if (exempt === null) {
+      bad('TABLE_BAD_EXEMPTION', () => `Undantaget ${excerpt(exemptText)} går inte att läsa. Skriv Ramtid, Lunch eller båda med | emellan, eller lämna tomt.`);
+    }
+
     const person = (short: ColumnKey, name: ColumnKey, email: ColumnKey, id: ColumnKey): TeacherRef | null => {
       const teacher: TeacherRef = { short: orNull(cell(short)), name: orNull(cell(name)), email: orNull(cell(email)), id: orNull(cell(id)) };
       return Object.values(teacher).every((value) => value === null) ? null : teacher;
@@ -709,6 +720,7 @@ export function tableToLessons(rows: string[][], rowNumbers?: number[]): ParsedE
         to: dates.to,
         block: orNull(cell('block')),
         ids,
+        ...(exempt !== null && exempt.length > 0 ? { exempt } : {}),
       }),
     );
   }

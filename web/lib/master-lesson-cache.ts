@@ -232,7 +232,7 @@ export function answered(
  * that shares that one, which is what loading this module late is for): a contract test holds the two equal.
  */
 export const MASTER_LESSON_SELECT =
-  "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)";
+  "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, exemptFrom, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)";
 
 type LessonRow = Omit<MasterLesson, "extraGroupIds" | "studentIds"> & {
   extraGroups: Array<{ studentGroupId: string }>;

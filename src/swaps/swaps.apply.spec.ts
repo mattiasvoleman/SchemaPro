@@ -17,7 +17,7 @@ const user = { userId: 'u1', role: 'SCHOOL_ADMIN', schoolId: SCHOOL } as never;
 const clockOf = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 
 /** The tx of an apply: the clash reads of the world, the row locks, the writes recorded. */
-function applyTx(world: World, lessons: () => SwapLesson[] = () => world.data.lessons, parked: ReadonlySet<string> = new Set()) {
+function applyTx(world: World, lessons: () => SwapLesson[] = () => world.data.lessons, parked: ReadonlySet<string> = new Set(), exempt: ReadonlyMap<string, string[]> = new Map()) {
   const base = fakeTx(world, lessons);
   const written: Array<{ where: Record<string, unknown>; data: Record<string, unknown> }> = [];
   const changeLog: Array<Record<string, unknown>> = [];
@@ -37,6 +37,7 @@ function applyTx(world: World, lessons: () => SwapLesson[] = () => world.data.le
               ...rowOf(lesson),
               isLocked: lesson.isLocked,
               isParked: parked.has(lesson.id),
+              exemptFrom: exempt.get(lesson.id) ?? [],
               school: { id: SCHOOL, timezone: 'Europe/Stockholm' },
             }))
             .sort((a, b) => (a.id < b.id ? -1 : 1));
@@ -138,6 +139,42 @@ describe('SwapsService.apply', () => {
     expect(result.propagatedLessons).toBe(2);
     // The undo is the same moves reversed.
     expect(result.undo).toEqual(swap.moves.map((move) => ({ lessonId: move.lessonId, from: move.to, to: move.from })));
+  });
+
+  it('says what a swap took away: the picked lesson stood outside its ramtid on purpose, and the answer and the log name the exemption it lost (Undantag med flit)', async () => {
+    const { lesson, swap } = await aGoodSwap(world);
+    const { tx, changeLog } = applyTx(world, undefined, undefined, new Map([[lesson.id, ['FRAME']]]));
+    const { swaps } = build(world, tx);
+    const result = await swaps.apply(
+      {
+        lessonId: lesson.id,
+        moves: swap.moves.map((move) => ({
+          lessonId: move.lessonId,
+          from: { dayOfWeek: move.from.dayOfWeek, startTime: clockOf(move.from.startMinutes), endTime: clockOf(move.from.endMinutes) },
+          to: { dayOfWeek: move.to.dayOfWeek, startTime: clockOf(move.to.startMinutes), endTime: clockOf(move.to.endMinutes) },
+        })),
+      },
+      user,
+    );
+    expect(result.exemptionsEnded).toEqual([{ lessonId: lesson.id, rules: 'FRAME' }]);
+    const log = changeLog.find((row) => row['masterLessonId'] === lesson.id) as { before: Record<string, unknown>; after: Record<string, unknown> };
+    expect(log.before['exemptFrom']).toEqual(['FRAME']);
+    expect('exemptFrom' in log.after).toBe(false);
+    expect(result.lessons.every((moved) => !('exemptFrom' in moved))).toBe(true);
+    // A swap of lessons that have none says nothing of the kind.
+    const plain = applyTx(world);
+    const again = await build(world, plain.tx).swaps.apply(
+      {
+        lessonId: lesson.id,
+        moves: swap.moves.map((move) => ({
+          lessonId: move.lessonId,
+          from: { dayOfWeek: move.from.dayOfWeek, startTime: clockOf(move.from.startMinutes), endTime: clockOf(move.from.endMinutes) },
+          to: { dayOfWeek: move.to.dayOfWeek, startTime: clockOf(move.to.startMinutes), endTime: clockOf(move.to.endMinutes) },
+        })),
+      },
+      user,
+    );
+    expect(again.exemptionsEnded).toEqual([]);
   });
 
   it('leaves the published calendar alone when asked to, and in a draft', async () => {

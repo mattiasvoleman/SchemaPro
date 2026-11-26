@@ -36,6 +36,13 @@ export interface TimetableLesson {
   /** Existing clash detected by the client conflict engine. */
   conflicted?: boolean;
   /**
+   * What the clash is, in words: the reasons as the page's krocklista and a refused save say them ("Läraren har Kemi 8B onsdag
+   * 14:10–15:10 …"). The ring and the triangle are a drawing, and a screen reader is told nothing by a drawing, so the card's name
+   * carries "Krock" and these words, and the hover has them. Absent while the words are on their way (they are made by a module
+   * the page fetches when there is a clash), and then the card says only "Krock".
+   */
+  conflictNote?: string;
+  /**
    * Short note about which weeks the lesson runs ("udda", "jämna", "period").
    *
    * A weekly grid cannot show it any other way: a lesson that runs every other
@@ -69,6 +76,11 @@ export interface TimetableLesson {
    */
   mark?: string;
   markLabel?: string;
+  /**
+   * The card of a block of lessons (Block i schemat): one card for the whole block, whose lock, parking and removal are its dialog's
+   * and not a lesson's. The board's keys name it by the block and answer L, P and Delete by opening that dialog, and say so.
+   */
+  blockCard?: boolean;
   /**
    * The minutes the PUPILS are occupied outside this lesson, already worded by
    * the page — ombyte before idrotten, dusch and ombyte after it.
@@ -388,6 +400,8 @@ interface LessonCardProps {
   dayName: string;
   cancelledLabel: string;
   selectedLabel: string;
+  /** What a clash is called, for a reader who cannot see the triangle ("Krock"). */
+  clashLabel: string;
   onOpen: (id: string) => void;
   onPointerDown: (event: React.PointerEvent, id: string) => void;
   onKeyDown: (event: React.KeyboardEvent, id: string) => void;
@@ -428,6 +442,7 @@ const LessonCard = memo(function LessonCard({
   dayName,
   cancelledLabel,
   selectedLabel,
+  clashLabel,
   onOpen,
   onPointerDown,
   onKeyDown,
@@ -511,6 +526,8 @@ const LessonCard = memo(function LessonCard({
         // the lesson's; and the block's geometry stays the
         // teaching time either way. See pupilTimeNote.
         lesson.pupilTimeNote,
+        // The words of a clash are on the hover as they are in the name: a clash that can only be told by a ring is not told.
+        lesson.conflicted ? [clashLabel, lesson.conflictNote].filter(Boolean).join(": ") : undefined,
       ]
         .filter((fact): fact is string => Boolean(fact))
         .join(" · ")}
@@ -680,6 +697,14 @@ const LessonCard = memo(function LessonCard({
       ) : null}
         </>
       )}
+      {lesson.conflicted && !lesson.duty ? (
+        // After what the lesson is, so that the name reads "Matematik 7A … Krock: Läraren har …" and not a sentence before the subject.
+        <span className="sr-only">
+          {" "}
+          {clashLabel}
+          {lesson.conflictNote ? `: ${lesson.conflictNote}` : ""}
+        </span>
+      ) : null}
       {drags ? (
         <div className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
       ) : null}
@@ -1349,6 +1374,7 @@ function TimetableGridInner({
   const hasClick = Boolean(onLessonClick);
   const cancelledLabel = tStatus("CANCELLED");
   const selectedLabel = t("selected");
+  const clashLabel = useTranslations("boardKeys")("clash");
   const dayNames = useMemo(
     () => Array.from({ length: 8 }, (_, day) => (day === 0 ? "" : tDays(String(day)))),
     [tDays],
@@ -1575,6 +1601,7 @@ function TimetableGridInner({
                     dayName={dayNames[lesson.dayOfWeek] ?? ""}
                     cancelledLabel={cancelledLabel}
                     selectedLabel={selectedLabel}
+                    clashLabel={clashLabel}
                     onOpen={openLesson}
                     onPointerDown={startLessonDrag}
                     onKeyDown={handleLessonKey}
