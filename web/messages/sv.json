@@ -12287,6 +12287,7 @@
       "runHeading": "4. Ta bort personuppgifterna",
       "run": "Ta bort personuppgifter",
       "clearAll": "Rensa allt",
+      "cleared": "Allt du lagt in är borta: filerna, texten, orden och resultatet.",
       "working": "Arbetar…",
       "undecided": "{count, plural, one {# kolumn väntar} other {# kolumner väntar}} på ditt val. Välj vad som ska hända med dem innan du går vidare."
     },

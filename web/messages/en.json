@@ -12287,6 +12287,7 @@
       "runHeading": "4. Remove the personal data",
       "run": "Remove personal data",
       "clearAll": "Clear everything",
+      "cleared": "Everything you added is gone: the files, the text, the words and the result.",
       "working": "Working…",
       "undecided": "{count, plural, one {# column is waiting} other {# columns are waiting}} for your choice. Choose what happens to the waiting columns before you go on."
     },

@@ -204,6 +204,26 @@ describe("the tool, a file at a time", () => {
     expect(screen.queryByRole("button", { name: sv["tool.run"] })).not.toBeInTheDocument();
   });
 
+  // The review of #429, L-4: the instance is dropped and the focus with it, and nobody said it was done.
+  it("puts the focus on the first control after Rensa allt, and says everything is gone until something is put in again", async () => {
+    const user = setup();
+    await runFile(user);
+    expect(document.getElementById("cleared-status")).toBeEmptyDOMElement();
+    await user.click(screen.getByRole("button", { name: sv["tool.clearAll"] }));
+    expect(screen.getByLabelText(sv["tool.chooseFiles"])).toHaveFocus();
+    expect(document.getElementById("cleared-status")).toHaveTextContent(sv["tool.cleared"]);
+    // Something is put in, and the sentence has done its work.
+    await user.click(screen.getByLabelText(sv["tool.pasteLabel"]));
+    await user.paste("Anna Svensson");
+    expect(document.getElementById("cleared-status")).toBeEmptyDOMElement();
+  });
+
+  it("does not take the focus when the page is first drawn", () => {
+    setup();
+    expect(screen.getByLabelText(sv["tool.chooseFiles"])).not.toHaveFocus();
+    expect(document.getElementById("cleared-status")).toBeEmptyDOMElement();
+  });
+
   // "Rensa allt" drops what the page holds. Text pasted and not yet added is held too, and before a file is added the button used to be missing.
   describe("clears what the page holds even when no file is added", () => {
     const clearAll = () => screen.queryAllByRole("button", { name: sv["tool.clearAll"] });
