@@ -108,6 +108,47 @@ def test_the_rows_of_the_cover_forbid_exactly_the_pairs_of_lessons_the_rows_of_t
     assert _forbidden(by_pairs, pair_owner), "a week with pairs forbids some"
 
 
+def _alternating_week() -> tuple[OptimizeScheduleRequest, tuple[str, str, str, str, str, str]]:
+    """Six groups; A–B, A–C, B–C, C–D and E–F pair (A and D share no pupil), and some of their lessons run in some weeks only.
+
+    A has a lesson every week and one in the odd weeks, B one every week and one in the even weeks, C one every week and one in
+    the first period, D one every week and one in the second period. The odd and the even weeks never meet, nor do the two
+    periods: A's odd lesson may sit beside B's even one, and C's first-period lesson beside D's second-period one. E and F
+    have one lesson each: the part of a row with exactly two lessons is a row too, and F's pupils change for ten minutes
+    before and after it (minutesBefore, minutesAfter): the row is posted over the pupils' interval, not the lesson's."""
+    import test_ab_weeks as ab
+
+    a, b, c, d, e, f = (str(uuid.uuid4()) for _ in range(6))
+    requirements = [
+        ab._requirement(a, 1), ab._requirement(a, 1, recurrence="ODD_WEEKS"),
+        ab._requirement(b, 1), ab._requirement(b, 1, recurrence="EVEN_WEEKS"),
+        ab._requirement(c, 1), ab._requirement(c, 1, periods=[True, False]),
+        ab._requirement(d, 1), ab._requirement(d, 1, periods=[False, True]),
+        ab._requirement(e, 1), ab._requirement(f, 1, minutesBefore=10, minutesAfter=10),
+    ]
+    payload = ab._payload(requirements, groupConflicts=[[a, b], [a, c], [b, c], [c, d], [e, f]])
+    return OptimizeScheduleRequest.model_validate(payload), (a, b, c, d, e, f)
+
+
+def test_the_rows_of_the_cover_keep_apart_the_lessons_of_weeks_that_meet_and_only_those() -> None:
+    """The rule is held once per week the pupils have: a row over a clique is cut by weeks as the row of a pair is."""
+    request, (a, b, c, d, e, f) = _alternating_week()
+    by_pairs, decisions, pair_owner = _build(request, objective=True, by_cliques=False)
+    by_cover, _, cover_owner = _build(request, objective=True, by_cliques=True)
+    forbidden = _forbidden(by_cover, cover_owner)
+
+    assert forbidden == _forbidden(by_pairs, pair_owner), "another rule"
+    lesson = {
+        (str(x.lesson.requirement.student_group_id), x.lesson.requirement.recurrence, x.lesson.requirement.periods): x.lesson.key()
+        for x in decisions
+    }
+    assert frozenset((lesson[a, None, None], lesson[b, None, None])) in forbidden, "every week meets every week"
+    assert frozenset((lesson[a, "ODD_WEEKS", None], lesson[b, "EVEN_WEEKS", None])) not in forbidden, "odd and even weeks never meet"
+    assert frozenset((lesson[c, None, (True, False)], lesson[d, None, (False, True)])) not in forbidden, "two periods never meet"
+    assert frozenset((lesson[c, None, (True, False)], lesson[d, None, None])) in forbidden, "a period's lesson meets every week's"
+    assert frozenset((lesson[e, None, None], lesson[f, None, None])) in forbidden, "two groups of one lesson each, one of them changing: a row of two over the pupils' intervals"
+
+
 def test_a_cover_is_fewer_rows_than_the_pairs() -> None:
     request = _week()
     by_pairs, _, pair_owner = _build(request, objective=True, by_cliques=False)
