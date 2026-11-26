@@ -28,14 +28,21 @@ import { CreateMasterLessonDto } from './dto/create-master-lesson.dto';
 import { LockBlockDto, MoveBlockCardDto } from './dto/block-card.dto';
 import { UpdateMasterLessonDto } from './dto/update-master-lesson.dto';
 import { JudgeLessonsDto } from './dto/judge-lessons.dto';
+import { PossibleTimesDto, RoomChoicesDto, WhatFitsDto } from './dto/possible-times.dto';
 import type { LessonJudgement } from './lesson-judge';
+import { PossibleTimesService, type PossibleTimes } from './possible-times.service';
+import { WhatFitsService, type RoomChoices, type WhatFits } from './what-fits.service';
 
 @Controller('api/v1/master-lessons')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
 @Area('SCHEMALAGGNING', 'DRIFT')
 export class MasterLessonsController {
-  constructor(private readonly masterLessons: MasterLessonsService) {}
+  constructor(
+    private readonly masterLessons: MasterLessonsService,
+    private readonly possibleTimes: PossibleTimesService,
+    private readonly whatFitsHere: WhatFitsService,
+  ) {}
 
   /**
    * `POST /api/v1/master-lessons` — manually add a timetable slot. Validated
@@ -63,6 +70,39 @@ export class MasterLessonsController {
   @HttpCode(200)
   judge(@Body() dto: JudgeLessonsDto, @CurrentUser() user: AuthenticatedUser): Promise<LessonJudgement> {
     return this.masterLessons.judgeMoves(dto, user);
+  }
+
+  /**
+   * `POST /api/v1/master-lessons/possible-times` — where a lesson (or a brick that is not a lesson yet) can stand: the times
+   * the judge lets through, best first with the soft figures that rank them, the stretches a rule shuts (named by the rule),
+   * and the lessons that hold the rest. Nothing written. A POST because the question is a body.
+   */
+  @Post('possible-times')
+  @HttpCode(200)
+  possible(@Body() dto: PossibleTimesDto, @CurrentUser() user: AuthenticatedUser): Promise<PossibleTimes> {
+    return this.possibleTimes.possibleTimes(dto, user);
+  }
+
+  /**
+   * `POST /api/v1/master-lessons/what-fits-here` — "vad kan ligga här?": which of the given lessons (the bricks of Att lägga, or any
+   * lessons of the year) can stand at an empty day and clock the schemaläggare picked, best first, each with the figures that rank it,
+   * and for the others why not. Nothing written.
+   */
+  @Post('what-fits-here')
+  @HttpCode(200)
+  whatFits(@Body() dto: WhatFitsDto, @CurrentUser() user: AuthenticatedUser): Promise<WhatFits> {
+    return this.whatFitsHere.whatFits(dto, user);
+  }
+
+  /**
+   * `POST /api/v1/master-lessons/room-choices` — the salväljaren: the rooms of the school for a lesson (or brick) laid at a day and
+   * clock, the free ones the generator would put it in first with a rank, then the free ones it would not, then the busy ones naming
+   * the lesson in them, then the shut ones. Nothing written.
+   */
+  @Post('room-choices')
+  @HttpCode(200)
+  roomChoices(@Body() dto: RoomChoicesDto, @CurrentUser() user: AuthenticatedUser): Promise<RoomChoices> {
+    return this.whatFitsHere.roomChoices(dto, user);
   }
 
   /**

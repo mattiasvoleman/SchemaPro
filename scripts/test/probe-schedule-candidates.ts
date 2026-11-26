@@ -1032,8 +1032,10 @@ export async function scheduleCandidateChecks(
       // A generated lesson moved by hand: the draft.
       const moved = await generatedMaster(sv, g7a);
       await lessons.update(moved.id, { dayOfWeek: await freeDayFor(moved.id) }, admin);
-      await staleWith(['draft']);
-      await lessons.update(moved.id, { dayOfWeek: moved.dayOfWeek }, admin);
+      // A lesson moved by hand is locked (E4, beslut 2), and a lock is what Generera keeps: the demand and the preserved part move with the draft.
+      await staleWith(['requirements', 'preserved', 'draft']);
+      // Put back as the page's Ångra puts it back: the slot and the lock it had.
+      await lessons.update(moved.id, { dayOfWeek: moved.dayOfWeek, isLocked: false }, admin);
       await applicable();
 
       // A timplanspost's pupil buffer: the requirements.
@@ -1071,7 +1073,7 @@ export async function scheduleCandidateChecks(
       assert.ok(edited.ok, `the held edit failed: ${edited.ok ? '' : describe(edited.error)}`);
       assert.ok(!applied.ok, 'the apply wrote over a hand edit it waited for');
       const body = bodyOf(applied.error);
-      assert.deepEqual([body.status, body.code, body.changed], [409, 'SCHEDULE_CANDIDATE_STALE', ['draft']]);
+      assert.deepEqual([body.status, body.code, body.changed], [409, 'SCHEDULE_CANDIDATE_STALE', ['requirements', 'preserved', 'draft']]);
       const row = await one<{ dayOfWeek: number }>(`SELECT "dayOfWeek" FROM "MasterLessons" WHERE id = $1`, [moved.id]);
       assert.equal(row.dayOfWeek, target, 'the hand edit is lost');
       assert.deepEqual({ versions: (await versionRows()).length, logs: (await regenerations()).length }, before, 'the refused apply wrote');
@@ -1081,7 +1083,7 @@ export async function scheduleCandidateChecks(
       assert.match(wait.statement, /grundschema-regenerate/, `the apply waited elsewhere: ${wait.statement}`);
       assert.equal(wait.waitEvent, 'Lock/advisory', `the apply waited ${wait.waitEvent}`);
       console.log(`     sc-f: the apply waited ${wait.waitEvent} in: ${wait.query}`);
-      await lessons.update(moved.id, { dayOfWeek: moved.dayOfWeek }, admin);
+      await lessons.update(moved.id, { dayOfWeek: moved.dayOfWeek, isLocked: false }, admin);
       assert.equal((await candidates.check(staleBatch, admin)).stale, false);
 
       // 2. The apply first, parked at its safety snapshot with every master locked.

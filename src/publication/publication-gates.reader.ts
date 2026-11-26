@@ -1,6 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { EXEMPTION_WORDS, exemptionsOf } from '../calendar/lesson-exemption';
 import { readClosedWeeks } from '../calendar/school-weeks';
 import { readSharedMode, readSharedSeats } from '../common/shared-rooms.reader';
 import { clashPairs, yearClashes, type YearClashKind } from '../common/year-clashes';
@@ -38,6 +39,8 @@ export interface GateLesson {
   startDate: string | null;
   endDate: string | null;
   isParked: boolean;
+  /** Undantag med flit: the rules of the board the lesson stands against on purpose. Absent is none. */
+  exemptFrom?: string[];
   extraGroupIds: string[];
   studentIds: string[];
   subjectName: string;
@@ -61,6 +64,7 @@ export async function readGateLessons(tx: PrismaClient, academicYearId: string):
       startDate: true,
       endDate: true,
       isParked: true,
+      exemptFrom: true,
       extraGroups: { select: { studentGroupId: true } },
       participants: { select: { studentId: true } },
       subject: { select: { name: true } },
@@ -82,6 +86,7 @@ export async function readGateLessons(tx: PrismaClient, academicYearId: string):
     startDate: day(row.startDate),
     endDate: day(row.endDate),
     isParked: row.isParked,
+    exemptFrom: row.exemptFrom,
     extraGroupIds: row.extraGroups.map((entry) => entry.studentGroupId).sort(),
     studentIds: row.participants.map((entry) => entry.studentId).sort(),
     subjectName: row.subject.name,
@@ -95,6 +100,20 @@ export function lessonLabel(lesson: GateLesson): string {
 }
 
 const entryOf = (lesson: GateLesson): GateEntry => ({ label: lessonLabel(lesson), masterLessonId: lesson.id });
+
+/**
+ * PUB_EXEMPTIONS: the placed lessons that stand against the ramtid or the class's meal on purpose (Undantag med flit), counted, and named with
+ * the rule each stands against. Information: it asks for nothing, it says how many there are.
+ */
+export function exemptionFinding(lessons: readonly GateLesson[]): GateFinding {
+  const exempt = lessons.filter((lesson) => !lesson.isParked && exemptionsOf(lesson.exemptFrom).length > 0);
+  return {
+    code: 'PUB_EXEMPTIONS',
+    count: exempt.length,
+    entries: exempt.map((lesson) => ({ label: `${lessonLabel(lesson)} (${exemptionsOf(lesson.exemptFrom).map((rule) => EXEMPTION_WORDS[rule].toLowerCase()).join(', ')})`, masterLessonId: lesson.id })),
+    info: true,
+  };
+}
 
 /** PUB_PARKED, PUB_NO_TEACHER, PUB_NO_ROOM: read off the lessons alone. */
 export function lessonFindings(lessons: readonly GateLesson[]): GateFinding[] {

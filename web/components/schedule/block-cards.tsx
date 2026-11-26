@@ -421,6 +421,17 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
               room: [...new Set(parts.map((part) => part.room).filter(Boolean))].join(", ") || undefined,
               locked: parts.every((part) => part.locked),
               conflicted: parts.some((part) => part.conflicted),
+              // What each member that clashes clashes with, in words: the spread above would give the first member's note alone, which is
+              // none for a block whose second lesson is the one that clashes, and the card then says "Krock" and no more.
+              conflictNote: [...new Set(parts.filter((part) => part.conflicted).map((part) => part.conflictNote).filter(Boolean))].join(" ") || undefined,
+              // An exemption is a lesson's (E1b): the card carries the mark of EVERY member that has one, with that member's own words and its
+              // subject in front, so that the card names the member the words are about and not the first member's alone.
+              mark: [...new Set(parts.map((part) => part.mark).filter(Boolean))].join(" ") || undefined,
+              markLabel:
+                parts
+                  .filter((part) => part.mark)
+                  .map((part) => `${part.title}: ${part.markLabel ?? part.mark}`)
+                  .join(" ") || undefined,
               remoteEditor: parts.find((part) => part.remoteEditor)?.remoteEditor,
               recurrenceNote: [parts[0]!.recurrenceNote, card.complete ? null : say.current.t("split")]
                 .filter(Boolean)
@@ -428,6 +439,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
               pupilTimeNote: undefined,
               share: undefined,
               shareLabel: undefined,
+              blockCard: true,
             });
             continue;
           }

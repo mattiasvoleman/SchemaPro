@@ -13,7 +13,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useTranslations } from "next-intl";
-import { Check, Lock, TriangleAlert, X } from "lucide-react";
+import { Asterisk, Check, Lock, TriangleAlert, X } from "lucide-react";
 import { layoutDay } from "@/lib/day-lanes";
 import { useLazyModule } from "@/lib/use-lazy-module";
 import type { LessonCommand } from "./board-keys";
@@ -35,6 +35,13 @@ export interface TimetableLesson {
   locked?: boolean;
   /** Existing clash detected by the client conflict engine. */
   conflicted?: boolean;
+  /**
+   * What the clash is, in words: the reasons as the page's krocklista and a refused save say them ("Läraren har Kemi 8B onsdag
+   * 14:10–15:10 …"). The ring and the triangle are a drawing, and a screen reader is told nothing by a drawing, so the card's name
+   * carries "Krock" and these words, and the hover has them. Absent while the words are on their way (they are made by a module
+   * the page fetches when there is a clash), and then the card says only "Krock".
+   */
+  conflictNote?: string;
   /**
    * Short note about which weeks the lesson runs ("udda", "jämna", "period").
    *
@@ -69,6 +76,11 @@ export interface TimetableLesson {
    */
   mark?: string;
   markLabel?: string;
+  /**
+   * The card of a block of lessons (Block i schemat): one card for the whole block, whose lock, parking and removal are its dialog's
+   * and not a lesson's. The board's keys name it by the block and answer L, P and Delete by opening that dialog, and say so.
+   */
+  blockCard?: boolean;
   /**
    * The minutes the PUPILS are occupied outside this lesson, already worded by
    * the page — ombyte before idrotten, dusch and ombyte after it.
@@ -388,10 +400,15 @@ interface LessonCardProps {
   dayName: string;
   cancelledLabel: string;
   selectedLabel: string;
+  /** What a clash is called, for a reader who cannot see the triangle ("Krock"). */
+  clashLabel: string;
   onOpen: (id: string) => void;
   onPointerDown: (event: React.PointerEvent, id: string) => void;
   onKeyDown: (event: React.KeyboardEvent, id: string) => void;
 }
+
+/** The most lanes a day can have for a card to carry the mark as its word: a card of more is too narrow for it (see the mark in LessonCard). */
+const MARK_WORD_LANES = 2;
 
 /**
  * Two cards are the same when every prop is and the lesson holds the same
@@ -428,6 +445,7 @@ const LessonCard = memo(function LessonCard({
   dayName,
   cancelledLabel,
   selectedLabel,
+  clashLabel,
   onOpen,
   onPointerDown,
   onKeyDown,
@@ -511,6 +529,10 @@ const LessonCard = memo(function LessonCard({
         // the lesson's; and the block's geometry stays the
         // teaching time either way. See pupilTimeNote.
         lesson.pupilTimeNote,
+        // The words of a clash are on the hover as they are in the name: a clash that can only be told by a ring is not told.
+        lesson.conflicted ? [clashLabel, lesson.conflictNote].filter(Boolean).join(": ") : undefined,
+        // The words of a mark likewise: the hover of the whole card says what the mark is about, and not only the hover of its small corner.
+        lesson.markLabel,
       ]
         .filter((fact): fact is string => Boolean(fact))
         .join(" · ")}
@@ -634,7 +656,16 @@ const LessonCard = memo(function LessonCard({
               {lesson.remoteEditor}
             </span>
           ) : null}
-          {lesson.mark ? (
+          {lesson.mark && lesson.laneCount > MARK_WORD_LANES ? (
+            // THREE LANES OR MORE: the word is 62-67 px with its border (measured, 9 px bold capitals), and a card of three lanes at 1280 px is
+            // 54 px wide, 38 of them inside its edge and padding. A shrink-0 word there takes the lesson's own name first and is cut by the card
+            // after ("UNDAN"): a sign, then, and the word and its sentence stay for the reader who is told and for the hover. A width that
+            // asks for it (1024-1279 px with the sidebar: two lanes already) is for a measure of the column and not a count of lanes.
+            <span data-lesson-mark title={lesson.markLabel} className="rounded border border-foreground/40 px-0.5 text-foreground">
+              <Asterisk className="size-3" />
+              <span className="sr-only">{`${lesson.mark}${lesson.markLabel ? ` ${lesson.markLabel}` : ""}`}</span>
+            </span>
+          ) : lesson.mark ? (
             <span
               data-lesson-mark
               title={lesson.markLabel}
@@ -680,6 +711,14 @@ const LessonCard = memo(function LessonCard({
       ) : null}
         </>
       )}
+      {lesson.conflicted && !lesson.duty ? (
+        // After what the lesson is, so that the name reads "Matematik 7A … Krock: Läraren har …" and not a sentence before the subject.
+        <span className="sr-only">
+          {" "}
+          {clashLabel}
+          {lesson.conflictNote ? `: ${lesson.conflictNote}` : ""}
+        </span>
+      ) : null}
       {drags ? (
         <div className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
       ) : null}
@@ -1349,6 +1388,7 @@ function TimetableGridInner({
   const hasClick = Boolean(onLessonClick);
   const cancelledLabel = tStatus("CANCELLED");
   const selectedLabel = t("selected");
+  const clashLabel = useTranslations("boardKeys")("clash");
   const dayNames = useMemo(
     () => Array.from({ length: 8 }, (_, day) => (day === 0 ? "" : tDays(String(day)))),
     [tDays],
@@ -1575,6 +1615,7 @@ function TimetableGridInner({
                     dayName={dayNames[lesson.dayOfWeek] ?? ""}
                     cancelledLabel={cancelledLabel}
                     selectedLabel={selectedLabel}
+                    clashLabel={clashLabel}
                     onOpen={openLesson}
                     onPointerDown={startLessonDrag}
                     onKeyDown={handleLessonKey}

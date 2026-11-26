@@ -528,6 +528,42 @@ describe("TimetableGrid overlap lanes", () => {
     expect(biologi.style.width).toBe(algebra.style.width);
   });
 
+  it("draws the mark as the word on a day of up to two lanes, and as a sign on a day of three or more, where the card is too narrow for the word and it would take the lesson's name", () => {
+    const marked = makeLesson({ id: "b", title: "Biologi", mark: "Undantag", markLabel: "ramtiden" });
+    const { rerender } = render(<TimetableGrid lessons={[makeLesson({ id: "a", title: "Algebra" }), marked]} />);
+    const word = screen.getByRole("button", { name: /Biologi/ }).querySelector("[data-lesson-mark]")!;
+    expect(word.querySelector("svg")).toBeNull();
+    expect(word.querySelector(":scope > .sr-only")?.textContent).not.toContain("Undantag");
+    expect(word.textContent).toBe("Undantag ramtiden");
+
+    rerender(<TimetableGrid lessons={[makeLesson({ id: "a", title: "Algebra" }), marked, makeLesson({ id: "c", title: "Kemi" })]} />);
+    const sign = screen.getByRole("button", { name: /Biologi/ }).querySelector("[data-lesson-mark]")!;
+    // A sign beside nothing drawn, and the same words for a screen reader and on the hover.
+    expect(sign.querySelector("svg")).not.toBeNull();
+    expect(sign.querySelector(":scope > .sr-only")?.textContent).toBe("Undantag ramtiden");
+    expect(sign.textContent).toBe("Undantag ramtiden");
+    expect(sign).toHaveAttribute("title", "ramtiden");
+  });
+
+  it("tells a clash in words: the card's name says what it clashes with after what the lesson is, and its hover says it too", () => {
+    render(
+      <TimetableGrid
+        lessons={[
+          makeLesson({ id: "a", title: "Algebra", conflicted: true, conflictNote: "Läraren har Kemi 8B onsdag 14:10–15:10." }),
+          makeLesson({ id: "b", title: "Biologi", startMinutes: 660, endMinutes: 720, conflicted: true }),
+          makeLesson({ id: "c", title: "Chemi", startMinutes: 780, endMinutes: 840 }),
+        ]}
+      />,
+    );
+    const algebra = screen.getByRole("button", { name: /Algebra/ });
+    // A drawing tells a screen reader nothing: "clash" (the mock says the key) and the words, after the lesson.
+    expect(algebra.textContent).toMatch(/Algebra.*clash: Läraren har Kemi 8B onsdag 14:10–15:10\./);
+    expect(algebra).toHaveAttribute("title", expect.stringContaining("clash: Läraren har Kemi 8B"));
+    // The words are on their way, or there are none: it still says that it clashes.
+    expect(screen.getByRole("button", { name: /Biologi/ }).textContent).toMatch(/clash$/);
+    expect(screen.getByRole("button", { name: /Chemi/ }).textContent).not.toContain("clash");
+  });
+
   it("lets back-to-back lessons share a full-width lane", () => {
     render(
       <TimetableGrid
@@ -604,6 +640,19 @@ describe("TimetableGrid lesson appearance", () => {
     expect(button).toHaveStyle({ backgroundColor: "rgba(0, 0, 0, 0)" });
     expect(screen.getByText("Math")).toHaveClass("text-muted-foreground");
     expect(screen.getByText("Room 214")).toHaveClass("text-muted-foreground");
+  });
+
+  it("says the mark's sentence on the hover of the whole card, as it says a clash's, and adds nothing to a card without a mark", () => {
+    render(
+      <TimetableGrid
+        lessons={[
+          makeLesson({ id: "a", title: "Algebra" }),
+          makeLesson({ id: "b", title: "Biologi", startMinutes: 660, endMinutes: 720, mark: "Undantag", markLabel: "Undantag: lektionen står mot ramtiden med flit." }),
+        ]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Biologi/ }).getAttribute("title")).toMatch(/Biologi.*Undantag: lektionen står mot ramtiden med flit\.$/);
+    expect(screen.getByRole("button", { name: /Algebra/ }).getAttribute("title")).toBe("09:00-10:00 · Algebra");
   });
 
   it("marks conflicted lessons with a red ring and warning icon", () => {

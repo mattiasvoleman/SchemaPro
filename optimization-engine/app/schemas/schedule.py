@@ -1250,6 +1250,18 @@ class FixedLesson(CamelModel):
     #: then taken off the room's capacity for the lock's window. Absent is a
     #: lock that takes the whole room, which every lock does today.
     student_count: int | None = Field(default=None, alias="studentCount", ge=1, le=1000)
+    #: Undantag med flit (E1b): the school let this lock stand over its class's
+    #: meal on purpose, by an administrator's answer yes to "Lägg ändå". It
+    #: releases ONE refusal and nothing else: a meal the school placed by hand
+    #: on this lock (LUNCH_PLACEMENT_COLLIDES, what "locked") is two of the
+    #: school's sentences that the school has itself said can both stand, and
+    #: the placed meal is kept where it was placed. A meal the solver places is
+    #: still laid clear of the lock (the exemption does not move it), a reserved
+    #: hour of the class is still a reservation, and the ramtid needs no field
+    #: (a lock may lie outside its frame, app/solver/pins.py). Absent is false,
+    #: today's reading exactly; the gateway sends the key only on a lock whose
+    #: lesson carries the exemption.
+    exempt_from_lunch: bool = Field(default=False, alias="exemptFromLunch")
 
     @field_validator("periods")
     @classmethod
@@ -2282,9 +2294,10 @@ class ConflictAnalysis(CamelModel):
 #: `BUILD`: the two models. `SITES`: the walk's planned-sites search (a school
 #: that keeps Restid i generatorn). `SEARCH_CLEAN` and `SEARCH_CLONE`: phase 1a
 #: and 1b, the two satisfaction searches (the clone's setup counts with its
-#: search). `PROBE`: the timeout probe that names a rule which does not fit.
+#: search). `YEARS`: the week laid a year at a time between the two (years.py): every step
+#: of it, builds and searches, as one entry. `PROBE`: the timeout probe that names a rule which does not fit.
 TimeoutStageName = Literal[
-    "PRECHECKS", "START", "BUILD", "SITES", "SEARCH_CLEAN", "SEARCH_CLONE", "PROBE",
+    "PRECHECKS", "START", "BUILD", "SITES", "SEARCH_CLEAN", "YEARS", "SEARCH_CLONE", "PROBE",
 ]
 
 #: The satisfaction searches that report their effort: phase 1a and phase 1b.

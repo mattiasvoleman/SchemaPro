@@ -241,6 +241,108 @@ describe('OptimizationJobsService', () => {
       );
     });
 
+    describe('a run that starts from a schedule (omgång 15, M9)', () => {
+      const startFrom = { source: 'VERSION' as const, versionId: '9b1c1f64-6d7c-4a52-8f0e-2d2a4b7c5e11' };
+
+      it('passes the start to the proxy as the fifth argument, and only then', async () => {
+        const user = testUser();
+
+        await service.start(YEAR_ID, user, undefined, undefined, startFrom);
+        await flushBackgroundRun();
+
+        expect(proxy.triggerScheduling).toHaveBeenCalledWith(YEAR_ID, user, null, null, startFrom);
+      });
+
+      it('answers at the click when the start cannot be one: a version that is not this year’s is a 404 with its code, and no run is queued', async () => {
+        tx.scheduleVersion.findFirst.mockResolvedValue(null);
+
+        const thrown = await service.start(YEAR_ID, testUser(), undefined, undefined, startFrom).catch((error: unknown) => error);
+
+        expect(thrown).toMatchObject({ status: 404, response: { code: 'START_VERSION_NOT_FOUND' } });
+        expect(tx.optimizationJob.create).not.toHaveBeenCalled();
+        expect(proxy.triggerScheduling).not.toHaveBeenCalled();
+      });
+
+      it('refuses PREVIOUS_YEAR at the click for a year that was not rolled over from another', async () => {
+        tx.academicYear.findUnique.mockResolvedValue({ predecessorId: null });
+
+        const thrown = await service.start(YEAR_ID, testUser(), undefined, undefined, { source: 'PREVIOUS_YEAR' }).catch((error: unknown) => error);
+
+        expect(thrown).toMatchObject({ status: 409, response: { code: 'START_NO_PREVIOUS_YEAR' } });
+        expect(tx.optimizationJob.create).not.toHaveBeenCalled();
+      });
+
+      it('stores what the run did with the schedule, as the proxy counted it', async () => {
+        const startedFrom = {
+          source: 'CURRENT' as const,
+          versionName: null,
+          engine: 'USED' as const,
+          offered: 120,
+          used: 118,
+          held: 104,
+          moved: 12,
+          laid: 2,
+          dropped: { NO_POST: 2 },
+        };
+        proxy.triggerScheduling.mockResolvedValue({ ...engineResponse(), startedFrom });
+
+        await service.start(YEAR_ID, testUser(), undefined, undefined, { source: 'CURRENT' });
+        await flushBackgroundRun();
+
+        expect(tx.optimizationJob.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: 'SUCCEEDED', startedFrom }) }),
+        );
+      });
+
+      it('writes no startedFrom for a run that asked for none, so the row is what it always was', async () => {
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+
+        const data = (tx.optimizationJob.update.mock.calls[0]![0] as { data: Record<string, unknown> }).data;
+        expect(data).not.toHaveProperty('startedFrom');
+      });
+
+      it('shows a stored run’s start through the whitelist: an unknown key and an unknown reason are left out', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue({
+          id: JOB_ID,
+          status: 'SUCCEEDED',
+          solverStatus: 'OPTIMAL',
+          lessonsGenerated: 12,
+          conflictSummary: null,
+          conflicts: [],
+          error: null,
+          createdAt: new Date('2026-08-07T10:00:00.000Z'),
+          finishedAt: new Date('2026-08-07T10:00:42.000Z'),
+          startedFrom: {
+            source: 'PREVIOUS_YEAR',
+            versionName: null,
+            engine: 'USED',
+            offered: 10,
+            used: 9,
+            held: 7,
+            moved: 2,
+            laid: 0,
+            dropped: { NO_SUCCESSOR: 1, SOMETHING_NEW: 4 },
+            leaked: 'x',
+          },
+        });
+
+        const view = await service.get(JOB_ID, testUser());
+
+        expect(view.startedFrom).toEqual({
+          source: 'PREVIOUS_YEAR',
+          versionName: null,
+          engine: 'USED',
+          offered: 10,
+          used: 9,
+          held: 7,
+          moved: 2,
+          laid: 0,
+          dropped: { NO_SUCCESSOR: 1 },
+        });
+      });
+    });
+
     it('marks the job RUNNING before the solver call and SUCCEEDED after', async () => {
       proxy.triggerScheduling.mockResolvedValue(
         engineResponse({
@@ -1193,6 +1295,7 @@ describe('OptimizationJobsService', () => {
         report: null,
         suggestions: null,
         suggestionsOffered: false,
+        startedFrom: null,
         // No notes, so no change log read: nothing to say they were replaced.
         supersededBy: null,
         createdAt: '2026-08-07T10:00:00.000Z',
@@ -1345,6 +1448,7 @@ describe('OptimizationJobsService', () => {
           report: null,
           suggestions: null,
           suggestionsOffered: false,
+          startedFrom: null,
           supersededBy: null,
           createdAt: '2026-08-07T09:00:00.000Z',
           finishedAt: null,

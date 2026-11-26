@@ -487,3 +487,13 @@ describe("the board's tab stop follows what is drawn", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("what a lesson is called in the line", () => {
+  it("is its subject and its class, and not the teacher or the förläggning that the card's own text goes on to", async () => {
+    const { container: _container } = await board({}, [
+      lesson({ id: "x", title: "Matematik", subtitle: "7A · B. Ek · Förlagd" }),
+    ]);
+    key("x", { key: " " });
+    expect(statusLine()).toHaveTextContent(/^pickedUp Matematik 7A 1 /);
+  });
+});

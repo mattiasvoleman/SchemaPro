@@ -10,6 +10,7 @@ import {
 } from '../calendar/master-lessons.service';
 import { propagateTemplateChange } from '../calendar/propagate-template';
 import { clashRefusedConflict } from '../calendar/clash-refusal';
+import { exemptionKey, exemptionsOf } from '../calendar/lesson-exemption';
 import { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
@@ -110,6 +111,11 @@ export interface SwapApplyResult {
   versionId: string;
   /** The moves that take it back: send them to the same route. */
   undo: SwapMove[];
+  /**
+   * Undantag med flit: a moved lesson that stood against a rule of the board on purpose lost it (MasterLessons_exemption_ends: an exemption is for the
+   * time it was given for). `rules` are the names, comma-joined, as on a PATCH's EXEMPTION_ENDED. Empty when no moved lesson had one.
+   */
+  exemptionsEnded: Array<{ lessonId: string; rules: string }>;
 }
 
 const WEEKDAY_MAX = 7;
@@ -398,6 +404,7 @@ export class SwapsService {
           isLocked: true,
           isParked: true,
           fromPlacement: true,
+          exemptFrom: true,
           recurrence: true,
           startDate: true,
           endDate: true,
@@ -490,6 +497,7 @@ export class SwapsService {
       );
 
       const results: MasterLessonResult[] = [];
+      const exemptionsEnded: Array<{ lessonId: string; rules: string }> = [];
       let propagatedLessons = 0;
       let removedCalendarLessons = 0;
       const notices: Array<{ before: (typeof rows)[number]; after: MasterLessonResult }> = [];
@@ -508,6 +516,9 @@ export class SwapsService {
           data: { dayOfWeek: move.to.dayOfWeek, startTime, endTime },
         });
         if (count !== 1) throw swapStale();
+        // The trigger takes an exemption away from a lesson whose day or clock changes: the answer and the log say so.
+        const ended = exemptionsOf(row.exemptFrom);
+        if (ended.length > 0) exemptionsEnded.push({ lessonId: row.id, rules: ended.join(',') });
         const updated = { ...row, dayOfWeek: move.to.dayOfWeek, startTime, endTime };
         const { moved, removed } =
           dto.propagate === false || mode === 'DRAFT'
@@ -519,7 +530,7 @@ export class SwapsService {
               });
         propagatedLessons += moved;
         removedCalendarLessons += removed;
-        const after = resultOf(updated);
+        const after = resultOf(updated, false);
         await tx.scheduleChangeLog.create({
           data: {
             schoolId: row.school.id,
@@ -566,6 +577,7 @@ export class SwapsService {
         removedCalendarLessons,
         versionId: version.id,
         undo: moves.map((move) => ({ lessonId: move.lessonId, from: move.to, to: move.from })),
+        exemptionsEnded,
       };
     });
   }
@@ -651,6 +663,8 @@ interface RowForResult {
   coTeacherId: string | null;
   isLocked: boolean;
   isParked: boolean;
+  /** Undantag med flit; absent on a row built by hand. */
+  exemptFrom?: readonly string[];
   recurrence: LessonRecurrence;
   startDate: Date | null;
   endDate: Date | null;
@@ -659,7 +673,7 @@ interface RowForResult {
 }
 
 /** The change log's and the answer's shape for a lesson: MasterLessonsService's toResult. */
-function resultOf(lesson: RowForResult): MasterLessonResult {
+function resultOf(lesson: RowForResult, withExemption = true): MasterLessonResult {
   return {
     id: lesson.id,
     academicYearId: lesson.academicYearId,
@@ -678,5 +692,7 @@ function resultOf(lesson: RowForResult): MasterLessonResult {
     endDate: toDateOrNull(lesson.endDate),
     extraGroupIds: lesson.extraGroups.map((entry) => entry.studentGroupId),
     studentIds: lesson.participants.map((entry) => entry.studentId),
+    // As MasterLessonsService's toResult, only on a lesson that has one: the log's `before` shows what a swap took away. A moved lesson has none after it.
+    ...(withExemption ? exemptionKey(lesson.exemptFrom) : {}),
   };
 }

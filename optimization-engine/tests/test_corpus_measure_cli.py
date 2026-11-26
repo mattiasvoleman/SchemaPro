@@ -102,6 +102,47 @@ def test_a_profile_through_a_pool_comes_back_in_the_profile_s_order_with_the_fie
     assert rows == json.loads(json.dumps(rows)), "plain JSON, as main() prints it"
 
 
+def test_the_pool_is_given_the_gate_s_longest_weeks_first_and_the_rest_as_they_come() -> None:
+    """A week is one worker's three seeds in a row, so a long week given last to four workers is the end of the job (M8 PR 7)."""
+    shapes = corpus.gate_shapes()
+    names = [shapes[index].name() for index in measure.submission_order(shapes)]
+    assert sorted(names) == sorted(shape.name() for shape in shapes), "every week once"
+    first = [name for name in measure.LONGEST_FIRST if name in names]
+    assert first == list(measure.LONGEST_FIRST), "each of the longest weeks is a week of the gate"
+    assert names[: len(first)] == first
+    assert names[len(first):] == [shape.name() for shape in shapes if shape.name() not in first], "the others keep the gate's order"
+
+
+def test_a_profile_given_to_the_pool_longest_first_still_comes_back_in_the_profile_s_order(monkeypatch) -> None:
+    import concurrent.futures
+
+    class InlinePool:
+        submitted: list[str] = []
+
+        def __init__(self, max_workers: int) -> None:
+            self.max_workers = max_workers
+
+        def __enter__(self) -> InlinePool:
+            return self
+
+        def __exit__(self, *exc) -> bool:
+            return False
+
+        def submit(self, function, shape, **kwargs):
+            type(self).submitted.append(shape.name())
+            done: concurrent.futures.Future = concurrent.futures.Future()
+            done.set_result(function(shape, **kwargs))
+            return done
+
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", InlinePool)
+    monkeypatch.setattr(measure, "LONGEST_FIRST", (TINY_TOO.name(),))
+
+    rows = measure.run_profile([TINY, TINY_TOO], mode="count", budget=0.0, deterministic_budget=5.0, jobs=2)
+
+    assert InlinePool.submitted == [TINY_TOO.name(), TINY.name()], "the longest week was given to the pool first"
+    assert [row["name"] for row in rows] == [TINY.name(), TINY_TOO.name()], "and the rows are the profile's"
+
+
 def test_what_main_prints_is_what_the_gate_reads(monkeypatch, capsys, tmp_path) -> None:
     """The seam: the names of the fields on the Python side and on the Node side. A rename on one leaves the gate comparing nothing."""
     monkeypatch.setattr(corpus, "GATE_WEEKS", ("n9-g4-m0-s1", "n9-g3-m0-s2"))

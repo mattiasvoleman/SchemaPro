@@ -104,7 +104,7 @@ export interface PlacementSlot {
   teacherId: string | null;
 }
 
-const VIEW_SELECT = {
+export const VIEW_SELECT = {
   id: true,
   requirementId: true,
   dayOfWeek: true,
@@ -140,7 +140,7 @@ const POST_SELECT = {
 } as const;
 
 /** What the week of förläggningar reads of every post of the year. */
-const BOARD_POST_SELECT = {
+export const BOARD_POST_SELECT = {
   id: true,
   studentGroupId: true,
   subjectId: true,
@@ -159,7 +159,7 @@ const BOARD_POST_SELECT = {
 } as const;
 
 /** What the week reads of a lesson Generera keeps: where it stands and whose it is, no pupil. */
-const BOARD_KEPT_SELECT = {
+export const BOARD_KEPT_SELECT = {
   id: true,
   dayOfWeek: true,
   startTime: true,
@@ -235,7 +235,7 @@ const slotOf = (row: StoredView): PlacementSlot => ({
 type BoardPostRow = Prisma.TeachingRequirementGetPayload<{ select: typeof BOARD_POST_SELECT }>;
 
 /** A lesson Generera keeps as the count reads it: with its length. */
-const keptForCountOf = <T extends { startTime: Date; endTime: Date }>(lesson: T): T & { minutes: number } => ({
+export const keptForCountOf = <T extends { startTime: Date; endTime: Date }>(lesson: T): T & { minutes: number } => ({
   ...lesson,
   minutes: minutesOfClock(lesson.endTime) - minutesOfClock(lesson.startTime),
 });
@@ -245,7 +245,7 @@ const keptForCountOf = <T extends { startTime: Date; endTime: Date }>(lesson: T)
  * each member's lessons placed), the rows as the key reads them, and each post's covering locks. The week of förläggningar counts
  * and judges with them, and the question of whether the engine has anything to place counts with the same ones.
  */
-function countedPostsOf(
+export function countedPostsOf(
   posts: readonly BoardPostRow[],
   rows: readonly StoredView[],
   kept: readonly KeptForCount[],

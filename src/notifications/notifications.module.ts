@@ -4,7 +4,9 @@ import type { PushConfig } from '../config/configuration';
 import { DevicesController } from './devices.controller';
 import { DevicesService } from './devices.service';
 import { ExpoPushClient } from './expo-push.client';
+import { PrismaService } from '../database/prisma.service';
 import { NotificationDeliveryService } from './notification-delivery.service';
+import { OUTBOUND_STORE, OutboundQueue } from './notification-queue';
 import { PushReceiptsService } from './push-receipts.service';
 import { NotificationPreferencesController } from './notification-preferences.controller';
 import { NotificationPreferencesService } from './notification-preferences.service';
@@ -16,6 +18,8 @@ import { NotificationsService } from './notifications.service';
   controllers: [NotificationPreferencesController, DevicesController],
   providers: [
     NotificationsService,
+    // The outgoing queue is the database's (OutboundNotices); the e2e harness puts one in memory in its place.
+    { provide: OUTBOUND_STORE, inject: [PrismaService], useFactory: (prisma: PrismaService) => new OutboundQueue(prisma) },
     NotificationDeliveryService,
     NotificationPreferencesService,
     DevicesService,

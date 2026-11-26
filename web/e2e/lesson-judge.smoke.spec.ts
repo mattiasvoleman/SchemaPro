@@ -28,6 +28,8 @@ const WIDE_FONT = "body, button, input, select { font-family: 'DejaVu Sans Mono'
 
 /** Idrott 7A, Monday 13:00–14:00 (David, the gym): free of everything until it is dragged. */
 const IDROTT = uid(KIND.masterLesson, 3);
+/** The day of both: the lessons of the stub's 7A below are on Monday. */
+const MONDAY = 1;
 /** Matematik 7A, Monday 09:25–10:25 (Bo, 101). */
 const MATEMATIK = uid(KIND.masterLesson, 2);
 
@@ -54,9 +56,9 @@ async function open(page: Page, baseURL: string, size: { width: number; height: 
 }
 
 /**
- * Every line of text of the boxes lies inside its box. What the PAGE does sideways is not this suite's to judge (at 320 px the header's own
- * buttons already reach 339 px, and a wide font moves them further): `scrollWidth` is read so that opening the dialog can be held to
- * adding nothing to it.
+ * Every line of text of the boxes lies inside its box. What the PAGE does sideways is not this suite's to judge (timetable-board.smoke.spec.ts
+ * holds that it does not scroll sideways at 320 px; the header's own buttons reached 339 px before they were let wrap): `scrollWidth` is read
+ * so that opening the dialog can be held to adding nothing to it.
  */
 function measure(page: Page, selector: string) {
   return page.evaluate((boxSelector) => {
@@ -82,7 +84,13 @@ function measure(page: Page, selector: string) {
   }, selector);
 }
 
-async function openJustera(page: Page, lessonId: string) {
+async function openJustera(page: Page, lessonId: string, day: number) {
+  // On a phone the board draws one day, today's (E2): the day the lesson is on is chosen first. At a desk there is no such choice to make.
+  const picker = page.getByRole("group", { name: "Visa en dag" });
+  // The buttons are in the board's keyboard module, which the grid fetches when it is editable: a phone is waited for them, and not asked
+  // once (`count()` does not wait, and a page whose module is a moment late would be tried with the wrong day drawn).
+  if ((page.viewportSize()?.width ?? 1280) < 768) await expect(picker).toBeVisible();
+  if (await picker.count()) await picker.getByRole("button").nth(day - 1).click();
   await page.locator(`[data-lesson-id='${lessonId}']`).click();
   await expect(page.getByRole("dialog").getByRole("heading", { name: "Justera lektion" })).toBeVisible();
 }
@@ -94,7 +102,7 @@ for (const size of VIEWPORTS) {
         const misses = await open(page, baseURL!, size, scheme);
         await page.addStyleTag({ content: WIDE_FONT });
         const before = await scrollWidthOf(page);
-        await openJustera(page, IDROTT);
+        await openJustera(page, IDROTT, MONDAY);
         const dialog = page.getByRole("dialog");
         // Nothing moved: nothing asked and nothing said.
         await expect(dialog.getByRole("status")).toHaveText("");
@@ -125,7 +133,7 @@ for (const size of VIEWPORTS) {
 
       test("a rule that names no other lesson is said as it is: the class's meal", async ({ page, baseURL }) => {
         await open(page, baseURL!, size, scheme);
-        await openJustera(page, IDROTT);
+        await openJustera(page, IDROTT, MONDAY);
         const dialog = page.getByRole("dialog");
         await dialog.locator("#edit-start").fill("11:40");
         await dialog.locator("#edit-end").fill("12:40");
@@ -134,7 +142,7 @@ for (const size of VIEWPORTS) {
 
       test("a save the gateway refuses is toasted in the catalogue's sentence, with no 'Schemakonflikt' in front, and the dialog stays", async ({ page, baseURL }) => {
         await open(page, baseURL!, size, scheme);
-        await openJustera(page, IDROTT);
+        await openJustera(page, IDROTT, MONDAY);
         const dialog = page.getByRole("dialog");
         await dialog.locator("#edit-start").fill("09:25");
         await dialog.locator("#edit-end").fill("10:25");
