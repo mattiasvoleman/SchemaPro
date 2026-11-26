@@ -1446,6 +1446,30 @@ describe("a refusal of the one judge, and the krocklista (E1)", () => {
     expect(said).not.toContain("editConflict");
   });
 
+  it("says that more rules said no when the gateway names more than one reason, and not otherwise (E3)", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    // The dialog stays open on a refusal: it is opened once, and Spara is pressed again for each answer.
+    let opened = false;
+    const refuse = async (reasons: string) => {
+      toasts.error.mockClear();
+      noMutation.mutateAsync.mockRejectedValue(new ApiError(409, "Tiden ligger på klassens lunch.", "MASTER_LESSON_REFUSED", { reason: "LUNCH", reasons }));
+      if (!opened) {
+        const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+        fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+        fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+        opened = true;
+      }
+      await user.click(await screen.findByRole("button", { name: "common.save" }));
+      await waitFor(() => expect(toasts.error).toHaveBeenCalledTimes(1));
+      return toasts.error.mock.calls[0]![0] as string;
+    };
+    expect(await refuse("LUNCH")).not.toContain("moreReasons");
+    expect(await refuse("LUNCH,LUNCH")).not.toContain("moreReasons");
+    expect(await refuse("LUNCH,FRAME")).toMatch(/ timetable\.moreReasons\(1\)$/);
+    expect(await refuse("LUNCH,FRAME,TEACHER")).toMatch(/ timetable\.moreReasons\(2\)$/);
+  });
+
   it("has no way to the list for a week without a clash", async () => {
     render(<TimetablePage />);
     await screen.findAllByRole("button");

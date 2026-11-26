@@ -2488,6 +2488,7 @@
     "undo": "Undo",
     "redo": "Redo",
     "undoRefused": "This cannot be undone. {why} The lesson stays where it is.",
+    "moreReasons": "{count, plural, one {One more rule says no} other {# more rules say no}}: Justera lektion shows them.",
     "undone": "Change undone",
     "redone": "Change redone",
     "conflictCount": "{count, plural, =1 {1 conflict} other {# conflicts}}",

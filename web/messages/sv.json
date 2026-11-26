@@ -2488,6 +2488,7 @@
     "undo": "Ångra",
     "redo": "Gör om",
     "undoRefused": "Det går inte att ångra. {why} Lektionen ligger kvar där den är.",
+    "moreReasons": "{count, plural, one {En regel till säger nej} other {# regler till säger nej}}: Justera lektion visar dem.",
     "undone": "Ändringen ångrades",
     "redone": "Ändringen gjordes om",
     "conflictCount": "{count, plural, =1 {1 konflikt} other {# konflikter}}",
