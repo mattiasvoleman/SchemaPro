@@ -3,7 +3,7 @@ import { buildGroupConflictMap, detectConflicts, toPlacement, validatePlacement,
 import { conflictRows } from "./conflict-rows";
 import { buildGradeSpans } from "./grade-span";
 import { clockOfMinutes, minutesOfClock } from "./requirement-placement-text";
-import { cases, constraintsOf, framesOf, groupsOf, lessonsOf, worlds, type Case, type World } from "./lesson-judge-world";
+import { cases, constraintsOf, framesOf, groupsOf, homeClassOf, lessonsOf, membershipsOf, worlds, type Case, type World } from "./lesson-judge-world";
 
 /**
  * THE GRID'S DRAG CONTROL MUST NOT BE MILDER THAN THE JUDGE OF A HAND EDIT (E1, Klart (d)).
@@ -18,8 +18,14 @@ import { cases, constraintsOf, framesOf, groupsOf, lessonsOf, worlds, type Case,
  * For the rules the grid has (TEACHER, ROOM, GROUP and PUPILS, AVAILABILITY, FRAME, LUNCH, GRADE_RULE) it refuses where the judge
  * refuses, with the kind of rule the judge names: a year rule is one more constraint to the grid, so the judge's GRADE_RULE is the
  * grid's AVAILABILITY, and pupils a teaching group shares with the class (PUPILS) are one more clash of groups (GROUP). It may be
- * stricter only where a case is named in MIRROR_STRICTER, and is never milder. OTHER_SCHOOL is not in the file: the page holds no other
- * school's lessons, and the save says it (the gateway's refusal, in the toast and in the dialog).
+ * stricter only where a case is named in MIRROR_STRICTER, and is never milder.
+ *
+ * The file's worlds from the nineteenth on (probe-domaren.ts generateRichWorlds) carry what the first eighteen leave out: pupils with a
+ * home class, teaching groups of pupils from several classes (PUPILS), lessons with an extra class or with pupils named on them, lessons
+ * and meals that run in a window of dates, and a room that another school has borrowed for an hour (OTHER_SCHOOL, E3). The grid has no
+ * word for OTHER_SCHOOL: the page holds no other school's lessons and no loan, and the save says it (the gateway's refusal, in the toast
+ * and the dialog), and the board paints it from the gateway's answer (lib/possible-times.ts). Such a case is held to the rest of what the
+ * judge says of it.
  */
 
 /** The kind of rule the grid says for each reason the judge gives. */
@@ -35,6 +41,8 @@ const KIND: Readonly<Record<string, ConflictKind | null>> = {
   GRADE_RULE: "AVAILABILITY",
   FRAME: "FRAME",
   LUNCH: "LUNCH",
+  // The page holds no other school's lessons and no loan of a room: see above.
+  OTHER_SCHOOL: null,
 };
 
 /** The cases (by name) the grid refuses and the judge lets through: where it is stricter, and why. Empty is the aim. */
@@ -43,20 +51,23 @@ const MIRROR_STRICTER: Readonly<Record<string, string>> = {};
 /** The week as the page holds it (use-schedule-engine.ts), from a world. */
 function pageOf(world: World) {
   const groups = groupsOf(world);
-  const studentGroupOf = new Map<string, string | null>();
+  const studentGroupOf = homeClassOf(world);
+  const memberships = membershipsOf(world);
+  const membersByGroup = new Map<string, string[]>();
+  for (const row of memberships) membersByGroup.set(row.studentGroupId, [...(membersByGroup.get(row.studentGroupId) ?? []), row.studentId]);
   const lunchOf: LunchOf = new Map();
   for (const meal of world.meals) {
     const key = `${meal.class}:${meal.day}`;
     const held: Meal[] = (lunchOf.get(key) as Meal[] | undefined) ?? [];
-    held.push({ startMinutes: minutesOfClock(meal.start), endMinutes: minutesOfClock(meal.end), startDate: null, endDate: null });
+    held.push({ startMinutes: minutesOfClock(meal.start), endMinutes: minutesOfClock(meal.end), startDate: meal.startDate ?? null, endDate: meal.endDate ?? null });
     lunchOf.set(key, held);
   }
   return {
     lessons: lessonsOf(world),
     constraints: constraintsOf(world),
     studentGroupOf,
-    groupConflictMap: buildGroupConflictMap(studentGroupOf, [], groups),
-    gradeSpanOf: buildGradeSpans({ groups, membersByGroup: new Map(), homeClassOf: studentGroupOf, numbering: "NIOARIG" }),
+    groupConflictMap: buildGroupConflictMap(studentGroupOf, memberships, groups),
+    gradeSpanOf: buildGradeSpans({ groups, membersByGroup, homeClassOf: studentGroupOf, numbering: "NIOARIG" }),
     frames: framesOf(world),
     lunchOf,
   };
@@ -94,9 +105,20 @@ describe("the cases", () => {
     expect(refused.length).toBeGreaterThanOrEqual(100);
     expect(held.length).toBeGreaterThanOrEqual(100);
     expect(refused.length + held.length).toBe(cases.length);
-    for (const reason of ["TEACHER", "ROOM", "GROUP", "AVAILABILITY", "FRAME", "LUNCH", "GRADE_RULE"]) {
+    for (const reason of ["TEACHER", "ROOM", "GROUP", "PUPILS", "AVAILABILITY", "FRAME", "LUNCH", "GRADE_RULE", "OTHER_SCHOOL"]) {
       expect(refused.filter((entry) => entry.verdict.reasons.includes(reason)).length, `${reason} refused`).toBeGreaterThan(0);
     }
+    // The richer worlds are what they say: pupils and groups, extra classes and pupils named on a lesson, windows of dates on lessons and
+    // on meals, and a lent room. A world that lost one of them would prove the grid on a thinner slice than the file claims.
+    const rich = worlds.filter((world) => world.pupils !== undefined);
+    expect(rich.length).toBeGreaterThanOrEqual(10);
+    const lessons = rich.flatMap((world) => world.lessons);
+    expect(lessons.filter((lesson) => (lesson.extra ?? []).length > 0).length, "lessons with an extra class").toBeGreaterThan(5);
+    expect(lessons.filter((lesson) => (lesson.participants ?? []).length > 0).length, "lessons with pupils named").toBeGreaterThan(5);
+    expect(lessons.filter((lesson) => lesson.startDate).length, "lessons in a window").toBeGreaterThan(10);
+    expect(rich.flatMap((world) => world.lessons.filter((lesson) => (world.groups ?? []).some((group) => group.key === lesson.class))).length, "lessons of a teaching group").toBeGreaterThan(10);
+    expect(rich.flatMap((world) => world.meals).filter((meal) => meal.startDate).length, "meals in a window").toBeGreaterThan(5);
+    expect(rich.flatMap((world) => world.loans ?? []).length, "lent rooms").toBeGreaterThan(10);
     // A reason the file carries that this test has no kind for would be compared with nothing.
     for (const entry of cases) for (const reason of entry.verdict.reasons) expect(KIND, `${entry.name}: ${reason}`).toHaveProperty(reason);
     // A refusal says at least one reason, and a case that holds says none.
@@ -113,8 +135,9 @@ describe("the grid's drag control, against the judge of a hand edit", () => {
       expect(said.length, "the grid lets through what the judge refuses").toBeGreaterThan(0);
       for (const reason of gridReasons) expect(said, `the judge says ${reason}`).toContain(KIND[reason]);
     } else if (!testCase.verdict.ok) {
-      // Only the school day says no: the drag control's rule, held in suggestions-and-the-drag.test.ts.
-      expect(testCase.verdict.reasons).toEqual(["SCHOOL_DAY"]);
+      // Only the school day and another school say no: the drag control's own rule (held in suggestions-and-the-drag.test.ts), and what the
+      // page holds no word for (above).
+      for (const reason of testCase.verdict.reasons) expect(["SCHOOL_DAY", "OTHER_SCHOOL"], reason).toContain(reason);
     } else if (said.length > 0) {
       // STRICTER only where a case says so, and why.
       expect(MIRROR_STRICTER[testCase.name], `the grid refuses (${said.join(", ")}) what the judge lets through`).toBeDefined();
@@ -160,7 +183,7 @@ describe("the krocklista, against the judge", () => {
     });
     const said = new Set((rows.find((row) => row.lesson.id === testCase.drag.lesson)?.reasons ?? []).map((reason) => reason.values?.["reason"]));
     // The school day is no conflict the grid marks or the list names: a lesson a file brought to a Saturday stands there (låt stå), and what
-    // the judge refuses is only putting one there.
-    for (const reason of testCase.verdict.reasons.filter((entry) => entry !== "SCHOOL_DAY")) expect(said, `the judge says ${reason}`).toContain(reason);
+    // the judge refuses is only putting one there. Nor is another school's hold: the page holds none.
+    for (const reason of testCase.verdict.reasons.filter((entry) => entry !== "SCHOOL_DAY" && entry !== "OTHER_SCHOOL")) expect(said, `the judge says ${reason}`).toContain(reason);
   });
 });
