@@ -85,7 +85,7 @@ describe('timeoutReportOf', () => {
     // deploy after it, and the page learns the name later) and leaves when TIMEOUT_STAGES has it. It is what keeps a step the
     // engine has added from going unseen: the check above lets the engine add one, and nothing else would say that the card
     // still leaves it out.
-    const SKIPPED_FOR_NOW: readonly string[] = ['START'];
+    const SKIPPED_FOR_NOW: readonly string[] = ['START', 'YEARS'];
 
     it('names every step of the engine that the gateway does not know, so that none is skipped unseen', () => {
       const unknown = literalOf('TimeoutStageName').filter((name) => !(TIMEOUT_STAGES as readonly string[]).includes(name));
