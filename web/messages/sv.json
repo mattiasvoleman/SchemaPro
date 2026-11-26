@@ -2029,7 +2029,7 @@
     "startDrop": {
       "NO_SUCCESSOR": "{count} hörde till klasser som inte har någon efterträdare i det här läsåret",
       "NO_POST": "{count} saknar timplanspost i det här läsåret",
-      "NOT_IN_WEEK": "{count} hör till poster som redan är helt låsta",
+      "NOT_IN_WEEK": "{count} hör till poster som inte läggs i den här körningen (helt låsta eller förlagda, eller följer ett annat block)",
       "OTHER_WEEKS": "{count} gick i andra veckor än postens (udda eller jämna veckor, eller datum)",
       "AMBIGUOUS": "{count} kunde höra till flera poster",
       "NOT_STARTABLE": "{count} hör till poster med egna lärare per lektion, fästa lektioner eller flera klasser",

@@ -2029,7 +2029,7 @@
     "startDrop": {
       "NO_SUCCESSOR": "{count} belonged to classes with no successor this school year",
       "NO_POST": "{count} have no curriculum entry this school year",
-      "NOT_IN_WEEK": "{count} belong to entries that are already fully locked",
+      "NOT_IN_WEEK": "{count} belong to entries that are not laid in this run (fully locked or placed by hand, or following another block)",
       "OTHER_WEEKS": "{count} ran in other weeks than the entry's (odd or even weeks, or dates)",
       "AMBIGUOUS": "{count} could belong to several entries",
       "NOT_STARTABLE": "{count} belong to entries with their own teachers per lesson, pinned lessons or several classes",

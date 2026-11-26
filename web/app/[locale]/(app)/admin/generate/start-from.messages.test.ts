@@ -40,6 +40,15 @@ describe("the catalogue of Utgå från ett schema", () => {
     }
   });
 
+  it("does not say that a post the run does not lay is locked: a post placed by hand or following another block is not in the week either", () => {
+    // The gateway leaves a post out of the week when every lesson of it is answered by a lock or a förläggning, and a mirrored follower
+    // block is written at its leader's times: its lessons are NOT_IN_WEEK, whichever of the three it was.
+    expect(say(sv, "sv", ["startDrop", "NOT_IN_WEEK"], { count: 4 })).toMatch(/förlagda/);
+    expect(say(sv, "sv", ["startDrop", "NOT_IN_WEEK"], { count: 4 })).toMatch(/annat block/);
+    expect(say(en, "en", ["startDrop", "NOT_IN_WEEK"], { count: 4 })).toMatch(/placed by hand/);
+    expect(say(en, "en", ["startDrop", "NOT_IN_WEEK"], { count: 4 })).toMatch(/another block/);
+  });
+
   it("says the counts of a run in whole sentences, with the plural of one lesson right", () => {
     expect(say(sv, "sv", ["startNoteCounts"], { total: 180, held: 171, moved: 9, laid: 0 })).toBe(
       "Av 180 lektioner hölls 171 där de låg, 9 flyttades och 0 lades nya.",
