@@ -88,7 +88,9 @@ export function PossibleDay({ day, scale }: { day: number; scale: { startMinutes
   };
 
   return (
-    <div aria-hidden data-possible-day={day} className="pointer-events-none absolute inset-0">
+    // `overflow-hidden`: the gateway answers for 07:00 to 18:00 and the board's day is usually 08:00 to 16:00, so a run above or below it would
+    // paint over the day's heading and make the grid's own box scroll (a vertical scrollbar that appears with the layer and goes with it).
+    <div aria-hidden data-possible-day={day} className="pointer-events-none absolute inset-0 overflow-hidden">
       {runs
         .filter((run) => BAND[run.kind] !== "")
         .map((run) => (

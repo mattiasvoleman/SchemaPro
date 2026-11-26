@@ -97,6 +97,14 @@ test("Grundschemat: a lesson taken up is painted with where it can stand, and th
   }, MATH_LESSON.id);
   expect(facts).toEqual({ hidden: "true", pointer: "none", cardIsOnTop: true, sideways: false });
 
+  // The gateway answers for 07:00 to 18:00 and the board's day is 08:00 to 16:00: what lies outside the column is cut off, so that the grid
+  // keeps the height it has (a vertical scrollbar inside the grid's own box that came with the layer and went with it).
+  const box = await page.evaluate(() => {
+    const wrapper = document.querySelector("[data-possible-day]")!.closest<HTMLElement>(".overflow-x-auto")!;
+    return { scrollHeight: wrapper.scrollHeight, clientHeight: wrapper.clientHeight };
+  });
+  expect(box.scrollHeight, "the painting makes the grid scroll").toBe(box.clientHeight);
+
   await page.keyboard.press("Escape");
   await expect(page.locator("[data-possible-day]")).toHaveCount(0);
   expect(misses, MISSES).toEqual([]);

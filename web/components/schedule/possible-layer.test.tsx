@@ -56,6 +56,20 @@ describe("the painted day", () => {
     expect(runs[0]!.style.top).toBe("0px");
   });
 
+  it("clips what it paints to its column: the gateway answers from 07:00 and the board's day starts later, and a run above or below it must not paint over the heading or make the grid scroll", () => {
+    const { container } = render(
+      <NextIntlClientProvider locale="sv" messages={sv as never}>
+        <div style={{ position: "relative" }}>
+          <PossibleDay day={1} scale={{ startMinutes: 480, pxPerMinute: 1 }} />
+        </div>
+      </NextIntlClientProvider>,
+    );
+    act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
+    // The first stretch starts at 07:00, an hour above a column that starts at 08:00: it is outside the box unless the layer cuts it off.
+    expect(container.querySelector<HTMLElement>("[data-possible-run]")!.style.top).toBe("-60px");
+    expect(container.querySelector("[data-possible-day]")!.className).toContain("overflow-hidden");
+  });
+
   it("numbers the best times where they start, on their own day", () => {
     const { container } = day(2);
     act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
