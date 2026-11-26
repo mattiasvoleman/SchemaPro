@@ -154,6 +154,36 @@ describe('MasterLessonsService: ett lås vid flytt', () => {
     expect(dialog).toMatchObject({ isLocked: true });
   });
 
+  // Every field the judge reads, changed on its own: dropping any one of them from `changesNothingJudged` lets that edit through unasked onto a lesson
+  // that already clashes (g486: the start, the end, the weeks, a date and the pupils were each unasked by a mutant no test killed).
+  it.each([
+    ['the start', { startTime: '10:15' }],
+    ['the end', { endTime: '11:15' }],
+    ['the weeks', { recurrence: 'ODD_WEEKS' as const }],
+    ['the first date', { startDate: '2027-01-11' }],
+    ['the last date', { endDate: '2027-03-01' }],
+    ['the pupils', { studentIds: ['77777777-7777-4777-8777-777777777777'] }],
+    ['the teacher', { teacherId: '88888888-8888-4888-8888-888888888888' }],
+    ['the co-teacher', { coTeacherId: '88888888-8888-4888-8888-888888888888' }],
+  ])('still asks the clash rule of %s changed on its own, on a lesson that is double-booked', async (_label, patch) => {
+    doubleBooked();
+    // The other lesson has both teachers, so a changed teacher or co-teacher still stands on a clash.
+    dayLessons = [{ ...dayLessons[0]!, coTeacherId: TEACHER, teacherId: '88888888-8888-4888-8888-888888888888' }, ...dayLessons.slice(1)];
+    await expect(service.update(LESSON, patch, testUser())).rejects.toBeInstanceOf(ConflictException);
+    expect(tx['masterLesson']!['update']).not.toHaveBeenCalled();
+  });
+
+  // The question says what the PATCH says (g467, L-3): a lesson that stays on the tray is given no exemption, so the answer yes to a rule its remembered
+  // time breaks is not carried to the judge, whatever the time. Put back, the same lesson is asked as any lesson is, and the answer yes is its own.
+  it('answers no exemption for a lesson that stays on the tray, and the exemption the time asks for once it is put back', async () => {
+    tx['frameTime']!['findMany']!.mockResolvedValue([{ minGradeLevel: 7, maxGradeLevel: 9, dayOfWeek: null, startTime: t('08:00'), endTime: t('15:00') }]);
+    standing({ isParked: true, startTime: t('14:30'), endTime: t('15:30') });
+    const onTray = await service.judgeMoves({ moves: [{ lessonId: LESSON, exempt: ['FRAME'] }] }, testUser());
+    expect(onTray.moves[0]).toMatchObject({ ok: true, exempted: [] });
+    const putBack = await service.judgeMoves({ moves: [{ lessonId: LESSON, isParked: false, exempt: ['FRAME'] }] }, testUser());
+    expect(putBack.moves[0]).toMatchObject({ ok: true, exempted: ['FRAME'] });
+  });
+
   it('still asks the clash rule of anything that moves or changes who or what is in the way: a new room, a move', async () => {
     doubleBooked();
     for (const patch of [{ roomId: NEW_ROOM }, { startTime: '10:15', endTime: '11:15' }]) {
