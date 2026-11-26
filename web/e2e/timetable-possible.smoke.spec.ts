@@ -154,6 +154,34 @@ test("Grundschemat: the list of possible times below the week lays a lesson with
   expect(misses, MISSES).toEqual([]);
 });
 
+test("Grundschemat on a phone: Justera lektion lists the possible times, and a button fills the fields, with nothing dragged", async ({ page, baseURL }) => {
+  const { misses, asked } = await open(page, baseURL!, { width: 375, height: 812 }, "light");
+  await page.getByRole("button", { name: /^Måndag: 4 lektioner/ }).click();
+  await card(page, MATH_LESSON.id).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  // Closed until opened, and nothing asked of the gateway before.
+  expect(asked).toEqual([]);
+  await dialog.getByText("Möjliga tider", { exact: true }).click();
+  const first = dialog.getByRole("button", { name: /^1\. / });
+  await expect(first).toBeVisible();
+  expect(asked).toHaveLength(1);
+  const chosen = (await first.textContent())!;
+  const times = /(\d\d:\d\d)–(\d\d:\d\d)/.exec(chosen)!;
+  await first.click();
+  await expect(dialog.getByLabel("Start")).toHaveValue(times[1]!);
+  await expect(dialog.getByLabel("Slut")).toHaveValue(times[2]!);
+  await expect(first).toHaveAttribute("aria-pressed", "true");
+  // The button is a finger's size and the dialog does not scroll sideways under it.
+  const box = (await first.boundingBox())!;
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+  const scan = await scanBothSchemes(page, "justera-lektion-mojliga-tider", true);
+  expect(scan, scan.join("\n")).toEqual([]);
+  expect(await page.evaluate(() => window.__pointerPresses), "taps, never a drag").toBeGreaterThan(0);
+  expect(misses, MISSES).toEqual([]);
+});
+
 test("Grundschemat: a click is a press and a let go, and asks the gateway nothing", async ({ page, baseURL }) => {
   const { asked } = await open(page, baseURL!, { width: 1280, height: 800 }, "light");
   await card(page, MATH_LESSON.id).click();

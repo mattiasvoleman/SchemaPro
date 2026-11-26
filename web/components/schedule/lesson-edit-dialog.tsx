@@ -33,6 +33,7 @@ import type { LessonRecurrence, MasterLesson, Person, Room } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { type MoveRefusal, moveOf, useLessonJudgement } from "@/lib/lesson-judgement";
 import { problemSentence } from "@/lib/problem-codes";
+import { LessonPossibleTimes } from "@/components/schedule/lesson-possible-times";
 import { RecurrenceFields } from "@/components/schedule/recurrence-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -165,6 +166,8 @@ export function LessonEditDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-4 [&>*]:min-w-0">
+          {/* Where the lesson can stand (E3): the best times, each a button that fills the fields below. Closed until opened. */}
+          {lesson ? <LessonPossibleTimes lesson={lesson} draft={draft} onDraftChange={onDraftChange} /> : null}
           {/* Every Label points at its control, as in Lägg till: a Label
               beside a Radix trigger is not tied to it otherwise. */}
           <div className="col-span-2 space-y-2">

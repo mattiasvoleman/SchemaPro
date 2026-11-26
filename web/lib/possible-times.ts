@@ -103,3 +103,26 @@ export function optionAt(times: PossibleTimes, dayOfWeek: number, startMinutes: 
 export function optionNumbered(times: PossibleTimes, rank: number): PossibleOption | null {
   return times.options.find((option) => option.rank === rank) ?? null;
 }
+
+/** What laying the lesson at a time does to the week, in words: only what moves, and nothing when nothing does. */
+export function costWords(option: PossibleOption): string[] {
+  const figure = (code: string) => option.costs.find((cost) => cost.code === code)?.delta ?? 0;
+  const words: string[] = [];
+  const pupils = figure("PUPIL_GAPS");
+  if (pupils < 0) words.push("pupilsBetter");
+  if (pupils > 0) words.push("pupilsWorse");
+  const teacher = figure("TEACHER_GAPS");
+  if (teacher < 0) words.push("teacherLess");
+  if (teacher > 0) words.push("teacherMore");
+  if (figure("DISTRIBUTION") < 0) words.push("distributionBetter");
+  if (figure("DISTRIBUTION") > 0) words.push("distributionWorse");
+  if (figure("TEACHER_DAY") < 0) words.push("dayBetter");
+  if (figure("TEACHER_DAY") > 0) words.push("dayWorse");
+  if (option.wishes.met > 0) words.push("wishMet");
+  if (option.wishes.avoided > 0) words.push("wishBroken");
+  if (option.roomChanged) words.push("roomChanged");
+  return words;
+}
+
+/** 09:05 from minutes. */
+export const clockOf = (minutes: number): string => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;

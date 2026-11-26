@@ -2308,6 +2308,11 @@
     },
     "inTheWay": "{subject} {className} i vägen",
     "inTheWayUnnamed": "En lektion i vägen",
+    "dialog": {
+      "title": "Möjliga tider",
+      "hint": "Välj en tid så fylls dag och klockslag i (och salen, om tiden går i en annan). Spara lägger lektionen.",
+      "failed": "Det gick inte att hämta de möjliga tiderna. Fälten nedan fungerar som förut."
+    },
     "list": {
       "title": "Möjliga tider för {lesson}",
       "loading": "Letar efter tider …",

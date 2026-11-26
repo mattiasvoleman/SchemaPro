@@ -2308,6 +2308,11 @@
     },
     "inTheWay": "{subject} {className} in the way",
     "inTheWayUnnamed": "A lesson in the way",
+    "dialog": {
+      "title": "Possible times",
+      "hint": "Pick a time and the day and clock are filled in (and the room, if the time is in another). Save places the lesson.",
+      "failed": "The possible times could not be fetched. The fields below work as before."
+    },
     "list": {
       "title": "Possible times for {lesson}",
       "loading": "Looking for times …",

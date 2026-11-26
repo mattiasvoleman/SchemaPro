@@ -5,7 +5,8 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { NextIntlClientProvider } from "next-intl";
 import { TIMES } from "@/lib/possible-times.fixture";
 import { boardCommands, possibleStore } from "@/lib/possible-store";
-import { costWords, HOLD_BEFORE_ASKING_MS, PossibleDay, PossibleHold, PossibleList } from "./possible-layer";
+import { costWords } from "@/lib/possible-times";
+import { HOLD_BEFORE_ASKING_MS, PossibleDay, PossibleHold, PossibleList } from "./possible-layer";
 import sv from "@/messages/sv.json";
 import en from "@/messages/en.json";
 

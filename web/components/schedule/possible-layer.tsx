@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { boardCommands, possibleStore } from "@/lib/possible-store";
-import { askPossibleTimes, type PossibleOption, type PossibleRun } from "@/lib/possible-times";
+import { askPossibleTimes, clockOf, costWords, type PossibleRun } from "@/lib/possible-times";
 
 /*
  * THE BOARD PAINTS WHERE THE LESSON IN HAND CAN STAND (E3, "Se").
@@ -117,27 +117,6 @@ export function PossibleDay({ day, scale }: { day: number; scale: { startMinutes
   );
 }
 
-/** What laying the lesson at a time does to the week, in words: only what moves, and nothing when nothing does. */
-export function costWords(option: PossibleOption): string[] {
-  const figure = (code: string) => option.costs.find((cost) => cost.code === code)?.delta ?? 0;
-  const words: string[] = [];
-  const pupils = figure("PUPIL_GAPS");
-  if (pupils < 0) words.push("pupilsBetter");
-  if (pupils > 0) words.push("pupilsWorse");
-  const teacher = figure("TEACHER_GAPS");
-  if (teacher < 0) words.push("teacherLess");
-  if (teacher > 0) words.push("teacherMore");
-  if (figure("DISTRIBUTION") < 0) words.push("distributionBetter");
-  if (figure("DISTRIBUTION") > 0) words.push("distributionWorse");
-  if (figure("TEACHER_DAY") < 0) words.push("dayBetter");
-  if (figure("TEACHER_DAY") > 0) words.push("dayWorse");
-  if (option.wishes.met > 0) words.push("wishMet");
-  if (option.wishes.avoided > 0) words.push("wishBroken");
-  if (option.roomChanged) words.push("roomChanged");
-  return words;
-}
-
-const clock = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
 /**
  * The best times as a list, for the lesson in hand: what the painting says, for a reader who cannot see it and for anybody who has no
@@ -163,7 +142,7 @@ export function PossibleList() {
       {times && times.options.length > 0 ? (
         <ol className="grid gap-1">
           {times.options.map((option) => {
-            const where = { day: tDays(String(option.dayOfWeek)), from: clock(option.startMinutes), to: clock(option.endMinutes) };
+            const where = { day: tDays(String(option.dayOfWeek)), from: clockOf(option.startMinutes), to: clockOf(option.endMinutes) };
             const words = costWords(option);
             return (
               <li key={option.rank} className="flex flex-wrap items-center gap-x-3 gap-y-1">
