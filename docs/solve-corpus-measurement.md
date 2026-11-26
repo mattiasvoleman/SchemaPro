@@ -13,7 +13,7 @@ reads are in the manual (5.2). This file is the record of the measurement behind
 | Corpus | `optimization-engine/benchmarks/school_corpus.py` (corpus version 1), the `sweep` profile at main `01fcb4707` (the corpus after the review of #386): 77 of its 82 weeks. One axis moves at a time from the base (three subjects in groups across the classes, three classes a year): N classes, G subjects in groups, M shared teachers and how many groups each stands on, term subjects, a språkval block, half groups, and the production school's form (two and six periods, teachers with several groups, 30 classes in grades 4–9). The five weeks of the second seed of the new production-form variants were not measured. |
 | Engine | CP-SAT from OR-Tools 9.15.6755, Python 3.11, the engine of main at `9a61fbbe` (the corpus build is byte-identical for the 60 weeks measured on it: checked) |
 | Count mode | one worker, fixed seed, a budget of **4 deterministic seconds a search**, with the solve's two satisfaction searches (phase 1a, then 1b), so at most 8 deterministic seconds of work before a week is a TIMEOUT. The unit of "work" is CP-SAT's deterministic second: operations counted, the same on every machine. |
-| Clock mode | every core (eight), wall-clock seconds, a budget of 180 s as in production, one run each. |
+| Clock mode | every core (eight), wall-clock seconds, a budget of 180 s (the one production's engine logged on 2026-11-18), one run each. |
 | What is timed | From `solve()`'s entry to the first timetable: prechecks, builds and phase 1a (or 1b). Phase 2 (improving a timetable that exists) is left out. |
 | Machine | darwin/arm64, 8 cores, shared with other sessions: **load average 4.5 to 119 during the count run** and 4 to 87 during the clock runs. Count mode's verdicts and work do not depend on the load; seconds do. |
 
@@ -27,7 +27,7 @@ arithmetic, so they measured a refusal); the corpus takes four and eight with tw
 
 The seconds columns of the count tables are **estimates**: the work times 18. Eleven solved weeks were measured when the machine was quiet (load 4.5 to 11.5); one worker took **18 s per deterministic second** in the
 median there (8 to 25). At load 50 to 80 the same weeks took 27 to 69 s. So "≈ 18 s per work" is one core of this machine, quiet, and nothing says what a production core does (§35.5). By the same figure the budget of
-4 deterministic seconds a search is about 72 s, and the two searches of a solve about 144 s of one core of this machine. Production gives a run 180 s on every core it has, so the two are not the same measure: a **timeout**
+4 deterministic seconds a search is about 72 s, and the two searches of a solve about 144 s of one core of this machine. Production's budget was 180 s on 2026-11-18 and 540 s on 2026-11-23 (the day it changed is not read), so the two are not the same measure: a **timeout**
 below means "no timetable in about 144 s of one core of this machine", and says less than that about production.
 
 ## The tables (count mode, one core)

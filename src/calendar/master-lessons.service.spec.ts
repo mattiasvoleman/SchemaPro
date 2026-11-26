@@ -5376,6 +5376,17 @@ describe('MasterLessonsService', () => {
         expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
       });
 
+      it('says the exemption a moved member loses, and nothing of the kind for a card that stays (Undantag med flit)', async () => {
+        arrangeCard([tyska({ isLocked: true, exemptFrom: ['FRAME'] }), franskaLesson()]);
+        const moved = await move();
+        expect(moved.warnings).toEqual(expect.arrayContaining([{ code: 'EXEMPTION_ENDED', params: { rules: 'FRAME' } }]));
+        // The same card put where it stands is no move, and loses nothing.
+        tx.masterLesson.findMany.mockReset();
+        arrangeCard([tyska({ isLocked: true, exemptFrom: ['FRAME'] }), franskaLesson()]);
+        const stayed = await move({ dayOfWeek: 1, startTime: '10:00', endTime: '11:00' });
+        expect(stayed.warnings.filter((warning) => warning.code === 'EXEMPTION_ENDED')).toEqual([]);
+      });
+
       it('moves every member in one statement held to the slot it was read in, and leaves the owner be', async () => {
         arrangeCard([tyska(), franskaLesson()]);
 

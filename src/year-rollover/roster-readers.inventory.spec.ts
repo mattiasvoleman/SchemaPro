@@ -542,6 +542,7 @@ describe('the roster-reader inventory', () => {
         'MasterLessonsController.create',
         'MasterLessonsController.judge',
         'MasterLessonsController.moveBlockCard',
+        'MasterLessonsController.possible',
         'MasterLessonsController.update',
         'OptimizationController.applyCandidate',
         'OptimizationController.applyRooms',

@@ -596,6 +596,15 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
               .map((lesson) => ({ ...fixedLessonContent(lesson, realOf), studentCount: lesson.studentCount })),
           }
         : {}),
+      // Undantag med flit: a lock that stands over its class's meal on purpose, beside the lock it is of. A run solved before the answer yes
+      // was another question. Only when a lock carries one, so every other school's part hashes as before.
+      ...(payload.fixedLessons.some((lesson) => lesson.exemptFromLunch === true)
+        ? {
+            lockedLunchExemptions: payload.fixedLessons
+              .filter((lesson) => lesson.exemptFromLunch === true)
+              .map((lesson) => fixedLessonContent(lesson, realOf)),
+          }
+        : {}),
       // Elevernas håltimmar: the pupils' cohorts, in real ids (a lock by its
       // own lesson id), as counts and keys. A pupil who changes språkval
       // changes what the objective was, and a candidate solved before it is

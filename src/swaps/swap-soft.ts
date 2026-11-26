@@ -67,6 +67,11 @@ export interface SoftInput {
   teacherRules: ReadonlyMap<string, TeacherDayRule>;
   /** Only the posts that have a distribution rule; key `${group}:${subject}`. */
   distribution: ReadonlyMap<string, DistributionRule>;
+  /**
+   * Lessons in `lessons` that stand nowhere yet (a brick, E3): the figures before a move are the school without them, and a move
+   * lays one where it says. They still belong to their cohorts, their teacher's week and their post.
+   */
+  absent?: ReadonlySet<string>;
 }
 
 /** The weights that order the proposals. Heuristic ordering only: the figures shown are the real ones. */
@@ -110,6 +115,7 @@ const asCost = (code: SoftCost['code'], unit: SoftCost['unit'], before: number, 
 
 export function buildSoftMeasure(input: SoftInput): SoftMeasure {
   const lessonById = new Map(input.lessons.map((lesson) => [lesson.id, lesson]));
+  const absent = input.absent ?? new Set<string>();
   const closuresFor = (body: Pick<Body, 'groups'>, day: number): Interval[] =>
     closedMinutes(body.groups, day, input.spans, input.constraints, input.frames);
 
@@ -134,7 +140,7 @@ export function buildSoftMeasure(input: SoftInput): SoftMeasure {
     const byDay = new Map<number, DayEntry[]>();
     for (const id of lessonIds) {
       const lesson = lessonById.get(id);
-      if (!lesson) continue;
+      if (!lesson || absent.has(id)) continue;
       const list = byDay.get(lesson.dayOfWeek);
       const entry = entryOf(lesson, margin);
       if (list) list.push(entry);
@@ -170,12 +176,15 @@ export function buildSoftMeasure(input: SoftInput): SoftMeasure {
   });
 
   const teacherLessons = new Map<string, string[]>();
+  /** The absent lessons of each teacher: counted in a teacher's week only once a move lays them. */
+  const teacherAbsent = new Map<string, string[]>();
   for (const lesson of input.lessons) {
     for (const teacherId of [lesson.teacherId, lesson.coTeacherId]) {
       if (teacherId === null) continue;
-      const list = teacherLessons.get(teacherId);
+      const into = absent.has(lesson.id) ? teacherAbsent : teacherLessons;
+      const list = into.get(teacherId);
       if (list) list.push(lesson.id);
-      else teacherLessons.set(teacherId, [lesson.id]);
+      else into.set(teacherId, [lesson.id]);
     }
   }
   const teacherBodies = new Map<string, Body>();
@@ -197,7 +206,8 @@ export function buildSoftMeasure(input: SoftInput): SoftMeasure {
   ): { before: number; after: number } => {
     const days = new Set<number>();
     for (const id of mine) {
-      days.add(lessonById.get(id)!.dayOfWeek);
+      // A lesson that stands nowhere has no day it leaves.
+      if (!absent.has(id)) days.add(lessonById.get(id)!.dayOfWeek);
       days.add(moved.get(id)!.dayOfWeek);
     }
     let before = 0;
@@ -229,16 +239,25 @@ export function buildSoftMeasure(input: SoftInput): SoftMeasure {
 
   // --- the posts' distribution rules and the teachers' day rules ----------
   const postLessons = new Map<string, string[]>();
+  const postAbsent = new Map<string, string[]>();
   for (const lesson of input.lessons) {
     const key = `${lesson.studentGroupId}:${lesson.subjectId}`;
     if (!input.distribution.has(key)) continue;
-    const list = postLessons.get(key);
+    const into = absent.has(lesson.id) ? postAbsent : postLessons;
+    const list = into.get(key);
     if (list) list.push(lesson.id);
-    else postLessons.set(key, [lesson.id]);
+    else into.set(key, [lesson.id]);
   }
+  /** A post's lessons as the figures count them: the ones that stand, and the absent ones a move lays. */
+  const countedOf = (
+    standing: ReadonlyMap<string, string[]>,
+    notYet: ReadonlyMap<string, string[]>,
+    key: string,
+    moved: ReadonlyMap<string, SwapSlot>,
+  ): string[] => [...(standing.get(key) ?? []), ...(notYet.get(key) ?? []).filter((id) => moved.has(id))];
   const distributionCount = (key: string, moved: ReadonlyMap<string, SwapSlot>): number => {
     const rule = input.distribution.get(key)!;
-    const week = (postLessons.get(key) ?? []).map((id) => {
+    const week = countedOf(postLessons, postAbsent, key, moved).map((id) => {
       const lesson = lessonById.get(id)!;
       return {
         id,
@@ -253,7 +272,7 @@ export function buildSoftMeasure(input: SoftInput): SoftMeasure {
   const teacherDayCount = (teacherId: string, moved: ReadonlyMap<string, SwapSlot>): number => {
     const rule = input.teacherRules.get(teacherId);
     if (!rule || !hasTeacherDayRule(rule)) return 0;
-    const week = (teacherLessons.get(teacherId) ?? []).map((id) => {
+    const week = countedOf(teacherLessons, teacherAbsent, teacherId, moved).map((id) => {
       const lesson = lessonById.get(id)!;
       const slot = moved.get(id) ?? lesson;
       return {

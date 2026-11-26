@@ -6,7 +6,7 @@
 
 web
 
-The Next.js web app is the product: every role uses it, and all planning and administration happen only there. The Expo app (`mobile/`) is a companion for teachers', pupils' and guardians' daily jobs. It has one cross-platform look with no per-OS design language, and admin on mobile is deliberately left out.
+The Next.js web app is the product: every role uses it, and all planning and administration happen only there. The Expo app (`mobile/`) is a companion for teachers', pupils' and guardians' daily jobs. It has one cross-platform look with no per-OS design language, and admin on mobile is deliberately left out: an administrator who signs in to the app gets the Krisläge view (start, watch and end an alarm) and nothing else of the administration.
 
 ## Users
 
@@ -39,9 +39,10 @@ Design work optimises for this person first (decided 2026-10-11).
 - **Elever** are children in F–9 and see their own schedule and attendance. Adult students may report their own absence.
 - **Anyone with a link or a code** can open *Schemavisaren*, the login-free published week for a class, teaching group, teacher, pupil or room, when the school has chosen so: the viewer is for signed-in staff only until it says otherwise, and each kind of schedule is off, a list, or Fritext-ID (shown only to the holder of the exact code, drawn and handed out by the school). A pupil's schedule is only ever behind a code, and a person with a protected identity is never shown. The school creates the code, and it typically reaches families on a phone.
 
-**Not modelled yet:**
-- A huvudman's central planners.
-- Rektor, schemaläggare and expedition as separate roles. Today there is one Administratör role per school, though the 2026-10-05 gap analysis treats them as different people with different rhythms.
+**What the roles are, and what is not modelled yet:**
+- Administratör is one role with five profiles: full administrator, rektor, schemaläggare, expedition and läsare. The profile decides which of six areas a person writes (planering, schemaläggning, publicering, drift, personal, integrationer) and whether they decide (who is administrator, HR-läs, tjänst %, dataskydd): `AdminProfile` in `prisma/schema.prisma` and `src/auth/admin-areas.ts`, held equal to the database's `app.admin_profile_writes()` by tests.
+- A huvudman (a kommun or a friskola's owner) owns schools. Its kommunadministratör keeps its members, schools and SS12000 keys, and its planerare read every school it owns as läsare: nothing written, nothing decided, no HR-läs (DEPLOYMENT §14, route `/huvudman`).
+- Not modelled: a huvudman's central planners who *write*. Planning several schools from one place is not built; every write is a school's own.
 
 ## Product Purpose
 
@@ -107,7 +108,7 @@ The *grundschema* is the weekly template. The *kalender* holds dated lessons. At
 - Payroll CSVs of vikarie hours.
 - The A4 landscape week that hangs on the classroom door.
 
-**Tenancy and time:** one school per tenant, in the Europe/Stockholm timezone. A guardian with children at two schools logs in to each separately.
+**Tenancy and time:** one school per tenant, in the Europe/Stockholm timezone. A login can belong to several schools (a teacher at two schools, a guardian with children at two): each school keeps its own row for the person, and the web switches school (`GET /api/v1/me/schools`, the `X-School-Id` header, DEPLOYMENT §12, user manual 2.3).
 
 **Neighbouring systems:**
 - SS12000 2.1: Rastra pulls the roster from IST or Edlevo through a reviewed diff, and provides the published schedule to systems such as Vklass.
@@ -125,18 +126,21 @@ The *grundschema* is the weekly template. The *kalender* holds dated lessons. At
 
 Out of scope are gymnasium (there is no Course entity), förskola, fritids and grading.
 
-**Shipped** (main at `bb47a2f`, 2026-10-11): lokal timplan with national checks and coverage, timplansposter with several lesson lengths, tjänstefördelning (Fas 1–5, staffing proposal included), year rollover, the CP-SAT timetable with named refusals, publishing (validity, draft, gates, bulk avbokning, Schemavisaren), the vikarie module, attendance with an offline queue, guardian absence and leave, notices by e-mail and push, and SS12000 both ways.
+**Shipped** (main at `3838859c6`, 2026-11-25; the first list was written at `bb47a2f` on 2026-10-11): lokal timplan with national checks and coverage, timplansposter with several lesson lengths, tjänstefördelning (Fas 1–5, staffing proposal included), year rollover, the CP-SAT timetable with named refusals, publishing (validity, draft, gates, bulk avbokning, Schemavisaren), the vikarie module, attendance with an offline queue, guardian absence and leave, notices by e-mail and push, and SS12000 both ways.
+
+Added since 2026-10-11:
+- the school account for staff (Entra, Google), several schools per login, huvudman with its readers, and the five administrator profiles;
+- Generera as a queue entry with one clock per request, Kontrollera veckan before a long run, the explanation of a timed-out run, changes that would let a refused week be laid, and a measuring stick of weeks shaped like real schools (nightly gate);
+- the ordinance's teaching time (SFS 2026:1487, in force 2027-07-01) in tjänstefördelning, with the rektor's own level and exception;
+- readers for Skola24-shaped student, guardian and staff tables, saved column mappings, and the pseudonymiser (`/pseudonymisera`), where a school makes an example of its own file without names and with nothing leaving the browser;
+- the pilot kit: *Vad kom in*, a safe reset of the demo school, and the sakbeskrivning for a school's dataskyddsombud;
+- the first parts of manual editing of the grundschema: a judge that names the rule a move breaks, and a board of the week that the arrow keys move around in.
 
 **Constraints that shape design today:**
-- Sign-in is by e-mail and password only. SSO (Skolfederation, Entra/Google, BankID/Freja) is not built yet, and municipal procurement expects it.
-- There is one Administratör role per school, with no huvudman level.
-- The generator does not model:
-  - option blocks that run simultaneously, such as språkval;
-  - subject distribution rules;
-  - teacher daily caps;
-  - A/B weeks. It reserves alternating lessons every week, and the manual tells schools to lock them.
+- Sign-in is by e-mail and password, and for staff a school account (Microsoft Entra ID or Google Workspace) that a school can choose and then require. The school account is built and off until the operator takes the setup steps (DEPLOYMENT §11); guardians and pupils sign in with a password. SSO through Skolfederation, BankID and Freja is not built yet, and municipal procurement expects it.
+- The generator models parallel blocks (a språkval can be a block, which lays its posts at the same times), A/B weeks (a post can go odd or even weeks, and the two are planned separately), a teacher's daily cap and days, and *Sprid ämnen över veckan* as a weight (the user manual, chapters 3–5). What it does not do is lay the week of a school of a certain form within its budget: a högstadium with most subjects in groups across the classes, half groups, teachers on long chains of parallel groups and subjects that run one term only gets a TIMEOUT where a school whose subjects are taught class by class gets one within about half a minute (DEPLOYMENT §35, user manual 5.2). A refused or timed-out week says why and offers changes; it does not lay itself.
 - The app is in Swedish and English only.
-- The mobile apps, Rastra for staff and pupils and Rastra vårdnadshavare for guardians, have no admin. They have not been distributed: the build profiles and the runbook exist (`mobile/eas.json`, `docs/DEPLOYMENT.md` §15), but there is no EAS project yet, no build of them has reached a tester, and push has never reached a real device.
+- The mobile apps, Rastra for staff and pupils and Rastra vårdnadshavare for guardians, have no administration beyond Krisläge: an administrator who signs in to Rastra starts, watches and ends an alarm, and one who teaches also gets the roll call (`mobile/src/screens/crisis/`, DEPLOYMENT §25). They have not been distributed: the build profiles and the runbook exist (`mobile/eas.json`, `docs/DEPLOYMENT.md` §15), but there is no EAS project yet, no build of them has reached a tester, and push has never reached a real device.
 
 **Terms.** Keep the Swedish domain words in Swedish copy, without glossing:
 - **Timplan** is the school's lokal timplan in minutes per week per subject and årskurs, a huvudman decision.
@@ -185,15 +189,16 @@ The manuals are ordered by workflow, not by feature, and end steps with *Kontrol
 
 **Real content and proof:**
 - **Three Swedish manuals** (HTML source and built PDFs):
-  - `docs/manual/anvandarmanual.html` (utgåva 1.0, for rektor and schemaläggare);
-  - `docs/manual/lararmanual.html` (1.0);
-  - `docs/manual/vardnadshavarmanual.html` (1.1);
+  - `docs/manual/anvandarmanual.html` (utgåva 1.1, for rektor and schemaläggare);
+  - `docs/manual/lararmanual.html` (1.1);
+  - `docs/manual/vardnadshavarmanual.html` (1.2);
   - the PDFs, `docs/Rastra-Schema-*.pdf`.
 
   They contain no screenshots or images, and no English version exists.
 - **Competitive research** with dated sources: the Gap Analysis & Roadmap document of 2026-10-05/06.
-- **The measured baseline,** `docs/verification-baseline.md`. Six of eleven gates pass. The solver is validated at 1,300 pupils (about 9.5 min) and times out at 2,000, against a target of 2,000 in under 10 s.
-- **The security audit,** `docs/SECURITY_AUDIT.md` (2026-07-11): 11 findings, all recorded as fixed.
+- **The measured baseline,** `docs/verification-baseline.md`. Seven of fifteen rows pass, six fail against a measured number and two are not measured (2026-11-25). The solver is validated at 1,300 pupils (about 9.5 min) and times out at 2,000, against a target of 2,000 in under 10 s; for weeks shaped like a real school's, the line between a week it lays and one it does not is measured in DEPLOYMENT §35.
+- **The security audit,** `docs/SECURITY_AUDIT.md` (2026-07-11): 11 findings, all recorded as fixed. It has not been done again, and says so.
+- **A sakbeskrivning for a school's dataskyddsombud,** `docs/dataskydd-sakbeskrivning.md` (2026-11-23): what the system does with personal data, belagt in the code. It says itself that it is not an avtalsmall, a registerförteckning or a legal assessment, and it lists what only the owner can answer (its section 13).
 - **Public reference data:** skolförordningen bilaga 1–4 (grundskola 6 890 h; 7 424 h from HT 2028), seeded in `prisma/migrations/20261006090000_den_nationella_timplanen_ar_referensdata`.
 
 **Demo data, not evidence:** "Demo Skola" in `prisma/seed.ts`, with fictional teachers and 80 fictional pupils.
@@ -204,7 +209,7 @@ The manuals are ordered by workflow, not by feature, and end steps with *Kontrol
 - usage figures;
 - pricing;
 - certifications;
-- an SLA, a DPA template or a registerförteckning;
+- an SLA, a DPA template or a registerförteckning (the sakbeskrivning above is none of the three);
 - a store listing for the app;
 - any claim that the brief's numeric targets are met.
 
@@ -221,11 +226,11 @@ The manuals are ordered by workflow, not by feature, and end steps with *Kontrol
 
 **Commitment:** WCAG 2.1 AA on every screen (decided 2026-10-11). That includes the signed-in admin, teacher, pupil and guardian screens, the public viewer and the mobile app, not just login. Kommunal buyers typically ask for EN 301 549, which builds on WCAG 2.1 AA.
 
-**Today's coverage is narrower:**
-- axe and Lighthouse run only on the public auth pages. Signed-in screens are not scanned automatically, and no manual keyboard or screen-reader pass has been done.
-- Reduced motion is not honoured.
-- The web's mobile nav drawer has no focus trap or Escape handling.
-- The app uses accessibility props sparingly, and guardians type dates as text.
+**Today's coverage is narrower than the commitment:**
+- axe runs on every signed-in page, for every role, in light and dark and at desktop and phone width (290 tests in CI's `a11y` project on 2026-11-25: `web/e2e/a11y-app.spec.ts` for the signed-in pages, `a11y.spec.ts` for the public pages and the keyboard checks, and `aria.spec.ts` for the accessibility trees), and the accessibility tree of the main screens is compared with saved versions (`web/e2e/aria-baselines/`). Lighthouse runs nightly on the public auth pages. No manual keyboard or screen-reader pass with a person has been done: the script is `docs/skarmlasartest.md`, and the accessibility statement says it remains.
+- Reduced motion is honoured on the web (`@media (prefers-reduced-motion: reduce)`, `web/app/globals.css`). The app is not checked for it.
+- The web's mobile nav drawer closes on Escape and keeps Tab inside it (`web/components/layout/app-shell.tsx`).
+- The app is not scanned automatically, it uses accessibility props sparingly, and guardians type dates as text.
 
 **Who the users are:**
 - children from förskoleklass to åk 9;

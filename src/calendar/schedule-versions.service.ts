@@ -10,6 +10,7 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { enterGrundschemaWrite, isLockTimeout } from '../publication/publish-mode';
 import { lockYearForRegeneration, scheduleBusy, SCHEDULE_BUSY } from '../optimization/regeneration-lock';
+import { exemptionsOf } from './lesson-exemption';
 
 /**
  * One lesson inside a version snapshot (times as `HH:MM`, dates as
@@ -94,6 +95,13 @@ export interface VersionLesson {
    * administrator — not the restore — knows whether the lesson was set aside.
    */
   isParked?: boolean;
+  /**
+   * Undantag med flit: the rules of the board the lesson stands against on purpose (`FRAME`, `LUNCH`). Carried so a restore puts the lesson
+   * back as the exemption it was, locked as it stands in the snapshot: dropped, the lesson came back outside its ramtid with nothing to say why
+   * and the next hand edit of it was refused. Said only on a lesson that has one, so a snapshot of a school with none is the blob it always was;
+   * absent is none, which for a snapshot from before the column is the truth.
+   */
+  exemptFrom?: string[];
   /** Absent or null means "from the start of the academic year". */
   startDate?: string | null;
   /** Absent or null means "until the year ends". */
@@ -281,6 +289,8 @@ export class ScheduleVersionsService {
           fromPlacement: lesson.fromPlacement ?? false,
           // See VersionLesson.isParked for why an absent key is false.
           isParked: lesson.isParked ?? false,
+          // See VersionLesson.exemptFrom: only the names the table knows (its CHECK), the way a row is written.
+          ...(exemptionsOf(lesson.exemptFrom).length > 0 ? { exemptFrom: exemptionsOf(lesson.exemptFrom) } : {}),
           recurrence: lesson.recurrence ?? 'ALL_WEEKS',
           startDate: parseDateOrNull(lesson.startDate),
           endDate: parseDateOrNull(lesson.endDate),
@@ -380,6 +390,7 @@ export class ScheduleVersionsService {
         isGenerated: true,
         fromPlacement: true,
         isParked: true,
+        exemptFrom: true,
         recurrence: true,
         startDate: true,
         endDate: true,
@@ -403,6 +414,8 @@ export class ScheduleVersionsService {
       // blob it always was.
       ...(lesson.fromPlacement ? { fromPlacement: true } : {}),
       isParked: lesson.isParked,
+      // Only on a lesson that has one (see VersionLesson.exemptFrom).
+      ...(exemptionsOf(lesson.exemptFrom).length > 0 ? { exemptFrom: exemptionsOf(lesson.exemptFrom) } : {}),
       recurrence: lesson.recurrence,
       startDate: toDateStringOrNull(lesson.startDate),
       endDate: toDateStringOrNull(lesson.endDate),

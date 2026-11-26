@@ -115,6 +115,23 @@ test('a week that gains a timetable, a refusal that changes its code, and weeks 
   assert.equal(compareWeek(head[2], floor[2], BUDGET).kind, 'same');
 });
 
+test('a week both trees answer TIMEOUT is named as guarding nothing, and decides nothing', () => {
+  const floor = [week('a', null), week('b', 1), week('c', null)];
+  const head = [week('a', null), week('b', 1), week('c', null)];
+  const verdict = gate(head, floor);
+  assert.equal(verdict.failed, false, verdict.lines.join('\n'));
+  assert.deepEqual(verdict.summary.unguarded, ['a', 'c']);
+  assert.ok(verdict.lines.some((line) => line.startsWith('guarding nothing tonight') && line.endsWith(': a, c')), verdict.lines.join('\n'));
+});
+
+test('weeks that are solved, refused alike or answered otherwise by the two trees are not named as guarding nothing', () => {
+  const floor = [week('a', 1), refused('b'), week('c', null), week('d', null)];
+  const head = [week('a', 1), refused('b'), week('c', 2), refused('d')];
+  const verdict = gate(head, floor);
+  assert.deepEqual(verdict.summary.unguarded, []);
+  assert.ok(!verdict.lines.some((line) => line.startsWith('guarding nothing')), verdict.lines.join('\n'));
+});
+
 test('a week with too little work in the floor carries no ratio', () => {
   const floor = [week('tiny', 0.01), week('big', 1)];
   const head = [week('tiny', 0.5), week('big', 1)];
@@ -321,4 +338,68 @@ test('rows of one seed keep the rule they had: the floor under half of the most 
   const head = [week('a', null), week('b', 1), week('c', 1)];
   assert.equal(gate(head, floor).failed, true);
   assert.equal(gate([seeded('a', null, [null, null, null]), week('b', 1), week('c', 1)], floor).failed, true);
+});
+
+// ---- M8 PR 7: the two weeks the years' road lays -------------------------------------------------------------------
+// What the PR says about its two rows, held here and not only in a run of the verdict by hand: the road's weeks fail the
+// gate together and not alone, which is what a road that breaks does (it loses both) and what the luck of one search does not.
+
+const ROAD = ['n9-g6-m0-s1', 'n12-g6-m0-s1-e1645'];
+/** What the road laid at the three seeds of the gate (M8 PR 7's measurement, count mode, a budget of 4). */
+const roadWith = () => [seeded(ROAD[0], 5.394, [6.144, 5.394, 4.56]), seeded(ROAD[1], 5.739, [5.739, 5.07, 5.966])];
+/** What a tree without the road answers for them: phase 1a and phase 1b both give up, at every seed. */
+const roadWithout = () => ROAD.map((name) => seeded(name, null, [null, null, null]));
+const rest = () => Array.from({ length: 13 }, (_, i) => week(`w${i}`, 1));
+
+test("the road's weeks are not clearly inside: phase 1a's whole budget, which gave up, is in every seed's work", () => {
+  // A week the road lays has spent phase 1a's whole budget first, so its work is at least one budget. Clearly inside is
+  // under CLEARLY_INSIDE of SEARCHES_PER_SOLVE budgets, which is one budget as it is: a road week cannot fail the gate alone.
+  const edge = CLEARLY_INSIDE * SEARCHES_PER_SOLVE * BUDGET;
+  assert.ok(BUDGET >= edge, 'one budget is not under the edge');
+  for (const row of roadWith()) {
+    assert.ok(row.seedWork.every((work) => work >= edge), `${row.name}: a seed under the edge would make the week fail alone`);
+  }
+});
+
+test('a floor with no road reads the road weeks as gained and decides nothing; a floor with it holds them', () => {
+  const head = [...rest(), ...roadWith()];
+  const first = gate(head, [...rest(), ...roadWithout()]);
+  assert.equal(first.failed, false, first.lines.join('\n'));
+  assert.equal(first.summary.lost, 0);
+  assert.ok(first.lines.some((line) => line.startsWith(ROAD[0]) && line.includes('gained')), first.lines.join('\n'));
+  const later = gate(head, [...rest(), ...roadWith()]);
+  assert.equal(later.failed, false, later.lines.join('\n'));
+});
+
+test('a road that breaks loses both of its weeks and fails the gate whatever the floor was; one of them alone does not', () => {
+  const floor = [...rest(), ...roadWith()];
+  const both = gate([...rest(), ...roadWithout()], floor);
+  assert.equal(both.failed, true, both.lines.join('\n'));
+  assert.ok(both.reasons.some((r) => r.startsWith('2 weeks the floor solves') && ROAD.every((name) => r.includes(name))), both.reasons.join('\n'));
+  for (const [i, name] of ROAD.entries()) {
+    const one = [...rest(), ...roadWith().map((row) => (row.name === name ? roadWithout()[i] : row))];
+    assert.equal(gate(one, floor).failed, false, `${name} alone: a limit of the rows, not a failure`);
+  }
+});
+
+test('a road that lays the weeks at one seed of three loses them (the middle seed finds nothing); at two of three it holds them', () => {
+  const floor = [...rest(), ...roadWith()];
+  // corpus_measure.median_run: a week no seed laid ranks below every week one did, and the middle of three is the row.
+  const laidAt = (seeds) => roadWith().map((row) => {
+    const work = row.seedWork.map((w, i) => (i < seeds ? w : null));
+    const found = work.filter((w) => w !== null).sort((a, b) => a - b);
+    return seeded(row.name, found.length >= 2 ? found[1] : null, work);
+  });
+  assert.equal(gate([...rest(), ...laidAt(1)], floor).failed, true, 'one seed of three');
+  assert.equal(gate([...rest(), ...laidAt(2)], floor).failed, false, 'two seeds of three');
+});
+
+test('a road that throws on one of its weeks fails the gate on that week alone', () => {
+  const floor = [...rest(), ...roadWith()];
+  const broke = roadWith().map((row) => (row.name === ROAD[0]
+    ? { ...row, status: 'ERROR', firstScheduleDeterministic: null, firstScheduleSeconds: null, conflictCodes: ['KeyError'] }
+    : row));
+  const verdict = gate([...rest(), ...broke], floor);
+  assert.equal(verdict.failed, true, verdict.lines.join('\n'));
+  assert.ok(verdict.reasons.some((r) => r.startsWith(ROAD[0]) && r.includes('ERROR (KeyError)')), verdict.reasons.join('\n'));
 });

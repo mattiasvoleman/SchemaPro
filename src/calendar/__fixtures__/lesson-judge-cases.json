@@ -4786,7 +4786,8 @@
    "verdict": {
     "ok": false,
     "reasons": [
-     "LUNCH"
+     "LUNCH",
+     "GRADE_RULE"
     ]
    }
   },
@@ -4815,7 +4816,8 @@
     "ok": false,
     "reasons": [
      "GROUP",
-     "LUNCH"
+     "LUNCH",
+     "GRADE_RULE"
     ]
    }
   },
@@ -5300,7 +5302,8 @@
    "verdict": {
     "ok": false,
     "reasons": [
-     "LUNCH"
+     "LUNCH",
+     "GRADE_RULE"
     ]
    }
   },
@@ -5711,7 +5714,8 @@
    "verdict": {
     "ok": false,
     "reasons": [
-     "LUNCH"
+     "LUNCH",
+     "GRADE_RULE"
     ]
    }
   },
@@ -6298,7 +6302,8 @@
    "verdict": {
     "ok": false,
     "reasons": [
-     "FRAME"
+     "FRAME",
+     "GRADE_RULE"
     ]
    }
   },
@@ -7708,7 +7713,8 @@
    "verdict": {
     "ok": false,
     "reasons": [
-     "FRAME"
+     "FRAME",
+     "GRADE_RULE"
     ]
    }
   },
