@@ -303,9 +303,11 @@ def test_the_first_timetable_is_the_weeks_and_not_a_years_step() -> None:
     assert len(searches) >= 4, "phase 1a, the years' steps (three, one each) and the search that found the week"
     steps = searches[1:-1]
     assert steps and all(s["status"] == "OPTIMAL" for s in steps), "each step solved its part and the measurement went on"
-    assert result["firstScheduleDeterministic"] >= sum(s["deterministic"] for s in searches) - 1e-9, (
-        "the work to the first timetable is the work of everything before it, the steps included"
-    )
+    # Each figure is rounded to a thousandth on its own (corpus_measure.measure), so the sum of the rows is the total
+    # to within a thousandth for each search: CI found 4.061 against 4.062.
+    assert result["firstScheduleDeterministic"] == pytest.approx(
+        sum(s["deterministic"] for s in searches), abs=0.001 * len(searches),
+    ), "the work to the first timetable is the work of everything before it, the steps included"
     assert "YEARS" in result["stages"]
 
 
