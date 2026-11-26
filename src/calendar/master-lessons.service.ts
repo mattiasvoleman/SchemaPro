@@ -3169,9 +3169,9 @@ export class MasterLessonsService {
 export const LESSON_IS_PLACED = 'LESSON_IS_PLACED';
 /** An exemption rests on the lock: a request that grants one and takes the lock off in the same breath contradicts itself. */
 const EXEMPTION_NEEDS_LOCK = 'exempt: an exemption is a locked lesson; isLocked cannot be false in the same request.';
-/** A lesson Generera wrote from a förläggning stands as the post says, and no exemption is given it here. */
 /** A lesson on the tray occupies nothing, so it stands against no rule and is given no exemption (granskaren g467, L-3). */
 const EXEMPTION_NOT_FOR_TRAY = 'exempt: a lesson on the tray is given no exemption; put it back first.';
+/** A lesson Generera wrote from a förläggning stands as the post says, and no exemption is given it here. */
 const EXEMPTION_NOT_FOR_PLACED = 'exempt: a lesson Generera wrote from a förläggning is given no exemption; change the förläggning.';
 
 /**
