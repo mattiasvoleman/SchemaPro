@@ -785,11 +785,17 @@ describe('NotificationDeliveryService (e-mail)', () => {
       }
     });
 
-    it('is not registered where nothing can be sent', () => {
+    it('is registered where nothing can be sent too, and its pass takes no row but sweeps: what a key that is gone left is given up and emptied', async () => {
       delete process.env.RESEND_API_KEY;
-      const register = jest.fn();
-      new NotificationDeliveryService(prisma as unknown as PrismaService, undefined, undefined, { register } as never, store).onModuleInit();
-      expect(register).not.toHaveBeenCalled();
+      const registered: Array<{ name: string; tick: () => Promise<void> }> = [];
+      const jobs = { register: (definition: { name: string; tick: () => Promise<void> }) => registered.push(definition), unregister: jest.fn(), settled: jest.fn() };
+      new NotificationDeliveryService(prisma as unknown as PrismaService, undefined, undefined, jobs as never, store).onModuleInit();
+      expect(registered.map((job) => job.name)).toEqual(['notice-delivery']);
+      const claim = jest.spyOn(store, 'claim');
+      const sweep = jest.spyOn(store, 'sweep');
+      await registered[0]!.tick();
+      expect(sweep).toHaveBeenCalledTimes(1);
+      expect(claim).not.toHaveBeenCalled();
     });
   });
 });

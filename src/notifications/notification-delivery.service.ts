@@ -170,7 +170,10 @@ export class NotificationDeliveryService implements OnModuleInit, OnModuleDestro
   }
 
   onModuleInit(): void {
-    if (!this.jobs || !(this.emailConfigured() || this.pushEnabled())) return;
+    // Registered with a channel or without: a process with none takes no row (kick), but its pass still gives up and empties what a
+    // key that is gone, or a push that was turned off, left behind (app.outbound_sweep). Without it those rows, with the text and the
+    // recipients of the notices, would stay for good, and the table's retention (20 hours, then emptied) would hold only while a key is set.
+    if (!this.jobs) return;
     this.jobs.register({ name: NOTICE_JOB, intervalMs: NOTICE_POLL_MS, tick: () => this.tick() });
     // What the process before this one left waiting is looked at now, not an interval from now.
     setTimeout(() => this.kick(), BOOT_LOOK_MS).unref();

@@ -7708,7 +7708,7 @@ The lanes are two serial consumers in each process, one for the alarm types (`CR
 
 #### What happens to e-mail when `RESEND_API_KEY` is missing (production today)
 
-- **Nothing is sent, and nothing is queued.** `NotificationDeliveryService.wants` is false for a notice whose only way out is a mail, `rowsOf` makes no row for it, no process starts a lane, the `notice-delivery` job is not registered, and the tables are never written. The in-app inbox rows are written as always. `docs/dataskydd-sakbeskrivning.md` flow 9 says the same.
+- **Nothing is sent, and nothing is queued.** `NotificationDeliveryService.wants` is false for a notice whose only way out is a mail, `rowsOf` makes no row for it, no process starts a lane and the tables are never written. The `notice-delivery` job is registered all the same: with no channel its pass takes no row and only sweeps, so that rows left by a key that is gone are given up and emptied after 20 hours. The in-app inbox rows are written as always. `docs/dataskydd-sakbeskrivning.md` flow 9 says the same.
 - **Setting the key does not send what went unsent.** Nothing recorded the mails that were never made; notices from the moment the instances that have the key start are queued. Set `RESEND_API_KEY` (and `EMAIL_FROM`, §0) on every instance of the API in one change; a deploy that gives it to some first is safe (the instances that have it send, and a row that reaches one that has not is left for one that has).
 - **Taking the key away again** leaves the rows that wait where they are: a process with no key does not take them, and they give up after 20 hours.
 - **Push stays as it was**: `PUSH_NOTIFICATIONS=off` queues nothing for push either (§8.1 turns it on, §15.6 tries it first).
