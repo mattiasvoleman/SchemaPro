@@ -134,6 +134,23 @@ describe("a block's card and the mark of an exemption", () => {
     expect(card!.markLabel).toBe("Tyska: Undantag: klassens lunch. Franska: Undantag: ramtiden.");
   });
 
+  it("keeps a member's own mark when the member is shown alone (a filter), in the card that names its block", async () => {
+    const { kit } = mount();
+    await waitFor(() => expect(kit()).not.toBeNull());
+    const marks: Record<string, { mark: string; markLabel: string }> = {
+      "a-ty": { mark: "Undantag", markLabel: "Undantag: klassens lunch." },
+      "b-fr": { mark: "Undantag", markLabel: "Undantag: ramtiden." },
+    };
+    // The block's name arrives with the block's rows: the member is drawn as a lesson of its own, with the block's name under it.
+    const alone = await waitFor(() => {
+      const [card] = kit().grid([lessons[1]!], (member) => gridOf(member, marks[member.id]));
+      expect(card!.recurrenceNote).toContain("Språkval åk 7");
+      return card!;
+    });
+    expect(alone).toMatchObject({ id: "b-fr", mark: "Undantag", markLabel: "Undantag: ramtiden." });
+    expect(alone.blockCard).toBeUndefined();
+  });
+
   it("says nothing when no member has one: the card is what it was", async () => {
     const { kit } = mount();
     await waitFor(() => expect(kit()).not.toBeNull());
