@@ -281,3 +281,18 @@ describe('the sakbeskrivning keeps what only the owner can answer open', () => {
     expect(section).toContain('Beskriver båda lägena (4.2 och 4.3) och säger inte vilket som gäller i produktionen (F3)');
   });
 });
+
+describe("the user manual's 5.2 says what a 'tiden tar slut' row of its table is not (M8's correction of DEPLOYMENT 35.2, handed to Q1)", () => {
+  const manual = read('docs/manual/anvandarmanual.html');
+  const text = flat(manual.slice(manual.indexOf('id="hur-lang-tid"'), manual.indexOf('<h3 id="s53">')).replace(/<[^>]+>/g, ''));
+
+  it("DEPLOYMENT 35.2 still says the row is not the limit of what the engine can lay", () => {
+    expect(flat(deployment)).toContain('It is **not the limit of what the engine can lay**');
+  });
+
+  it('and the manual, which carries the same table to schools, says so too', () => {
+    expect(text).toContain('Det är inte en gräns för vad motorn kan lägga');
+    expect(text).toContain('kan sakna schema inom sin ram');
+    expect(text).toContain('inte skiljer en svår vecka från en omöjlig');
+  });
+});
