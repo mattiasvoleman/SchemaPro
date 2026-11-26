@@ -143,6 +143,18 @@ describe("the choice of where a run starts", () => {
     );
   });
 
+  it("is shown and not changed while a run is going: the choice a run was started with is the one on the screen", async () => {
+    state.job = {
+      id: "job-r", status: "RUNNING", solverStatus: null, error: null, errorCode: null, errorParams: null, conflicts: [],
+      createdAt: new Date().toISOString(), finishedAt: null,
+    };
+    render(<GeneratePage />);
+
+    for (const label of ["generate.startNone", "generate.startCurrent", "generate.startPrevious", "generate.startVersion"]) {
+      expect(await choice(label)).toBeDisabled();
+    }
+  });
+
   it("offers last year's schedule only for a year that was rolled from another, and says why when it is not", async () => {
     render(<GeneratePage />);
 
@@ -361,6 +373,28 @@ describe("what a finished run says of its start", () => {
     expect(note).toHaveTextContent("generate.startNoteTitle(generate.startNoteSourceNamed(Före ändringen))");
     expect(note).toHaveTextContent(
       "generate.startNoteDropped(10|generate.startDrop.NO_SUCCESSOR(8); generate.startDrop.MORE_THAN_ASKED(2))",
+    );
+  });
+
+  it("counts the lessons of the answer as the total, the laid ones with the held and the moved", async () => {
+    state.job = finished({
+      source: "PREVIOUS_YEAR", versionName: null, engine: "USED", offered: 150, used: 140, held: 100, moved: 20, laid: 15, dropped: {},
+    });
+    render(<GeneratePage />);
+
+    expect(await screen.findByTestId("generate-started-from")).toHaveTextContent("generate.startNoteCounts(135|100|20|15)");
+  });
+
+  it("says every reason a lesson was left out, in the order that is worth reading, and counts all of them", async () => {
+    state.job = finished({
+      source: "PREVIOUS_YEAR", versionName: null, engine: "USED", offered: 90, used: 62, held: 50, moved: 6, laid: 6,
+      dropped: { MORE_THAN_ASKED: 7, NOT_STARTABLE: 6, AMBIGUOUS: 5, OTHER_WEEKS: 4, NOT_IN_WEEK: 3, NO_POST: 2, NO_SUCCESSOR: 1 },
+    });
+    render(<GeneratePage />);
+
+    const reasons = ["NO_SUCCESSOR(1)", "NO_POST(2)", "NOT_IN_WEEK(3)", "OTHER_WEEKS(4)", "AMBIGUOUS(5)", "NOT_STARTABLE(6)", "MORE_THAN_ASKED(7)"];
+    expect(await screen.findByTestId("generate-started-from")).toHaveTextContent(
+      `generate.startNoteDropped(28|${reasons.map((reason) => `generate.startDrop.${reason}`).join("; ")})`,
     );
   });
 
