@@ -122,6 +122,20 @@ describe('the room chooser, against a brute force on the hourly school', () => {
     expect(rows(['r3'])).toMatchObject({ state: 'FREE', shared: true, occupants: 0 });
   });
 
+  it('calls a shared room busy, and names who sits in it, when the judge has said its seats are taken (g488)', () => {
+    const lesson = base.data.lessons.find((entry) => entry.dayOfWeek === 1)!;
+    const holder: SwapLesson = { ...lesson, id: 'holder', studentGroupId: 'c9', groupName: 'C9', subjectName: 'Idrott', teacherId: 'tx', roomId: 'r3', dayOfWeek: 4, startMinutes: 600, endMinutes: 660 };
+    const data = { ...base.data, lessons: [lesson, holder] };
+    const world: PossibleWorld = { context: new SwapContext(data, { sharedRooms: new Set(['r3']) }), rooms: ROOMS, wishes: [], needsOf: () => NEEDS };
+    const rows = (full: ReadonlyMap<string, readonly SwapLesson[]>) => roomChoicesOf(world, subjectOf(world, lesson), 4, 600, full);
+    // Without the judge's word a shared room is free as far as a prune can say, and ranked among the rooms the lesson can have.
+    expect(rows(new Map()).find((choice) => choice.roomId === 'r3')).toMatchObject({ state: 'FREE', shared: true });
+    // With it, it is a room a lesson sits in: busy, named, and not ranked; the others are ranked without it.
+    const full = rows(new Map([['r3', [holder]]]));
+    expect(full.find((choice) => choice.roomId === 'r3')).toMatchObject({ state: 'BUSY', shared: true, rank: null, occupants: 1, occupant: { lessonId: 'holder', className: 'C9', subjectName: 'Idrott' } });
+    expect(full.filter((choice) => choice.rank !== null).map((choice) => choice.rank)).toEqual([1, 2, 3, 4]);
+  });
+
   it('names the other school that holds a room, and does not say a hold is a lesson', () => {
     const lesson = base.data.lessons[0]!;
     const hold = { resourceKind: 'ROOM' as const, resourceId: 'r2', dayOfWeek: 4, startTime: '09:00', endTime: '10:00', schools: ['Södra skolan'], kind: 'ROOM_LENT' as const };
