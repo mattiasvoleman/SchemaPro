@@ -41,10 +41,10 @@ class _Built(BaseException):
 class _ReadsRows:
     """Whatever solver it is mixed into: the NoOverlap rows its `_add_group_no_overlap` posts, as lesson names."""
 
-    def _add_group_no_overlap(self, model, decisions, group_conflicts=None):  # type: ignore[no-untyped-def]
+    def _add_group_no_overlap(self, model, decisions, group_conflicts=None, **kwargs):  # type: ignore[no-untyped-def]
         proto = model.Proto()
         before = len(proto.constraints)
-        super()._add_group_no_overlap(model, decisions, group_conflicts)  # type: ignore[misc]
+        super()._add_group_no_overlap(model, decisions, group_conflicts, **kwargs)  # type: ignore[misc]
         names = [proto.constraints[index].name for index in range(len(proto.constraints))]
         self.rows = [
             tuple(names[interval].split("_", 1)[1] for interval in proto.constraints[index].no_overlap.intervals)
@@ -62,9 +62,14 @@ class _EncodingsRows(_ReadsRows, paths.EncodingSolver):
     pass
 
 
-def _rows(week, encoding: str | None) -> list[tuple[str, ...]]:
-    """The rows the build posts for the groups: the engine's own for None, else those of `encoding`."""
-    settings = Settings(SOLVER_MAX_TIME_SECONDS=60, SOLVER_PROBE_SECONDS=0)  # type: ignore[call-arg]
+def _rows(week, encoding: str | None, *, engine_cliques: bool = False) -> list[tuple[str, ...]]:
+    """The rows the build posts for the groups: the engine's own for None, else those of `encoding`.
+
+    THE ENGINE'S OWN ARE ONE ROW PER PAIR unless `engine_cliques` (SOLVER_GROUP_CLIQUES, M8 PR 6 made the full model of a
+    strict solve cliques by default): the benchmark's `pairs` is the encoding the engine had, and this holds it to that."""
+    settings = Settings(  # type: ignore[call-arg]
+        SOLVER_MAX_TIME_SECONDS=60, SOLVER_PROBE_SECONDS=0, SOLVER_GROUP_CLIQUES=engine_cliques,
+    )
     solver = (
         _EnginesRows(settings) if encoding is None
         else _EncodingsRows(
@@ -94,3 +99,10 @@ def test_an_encoding_holds_apart_exactly_the_lessons_the_pairs_do(label: str, en
     engines, ours = _held_apart(engine_rows), _held_apart(rows)
     assert not engines - ours, f"{len(engines - ours)} pairs of lessons the engine keeps apart, {encoding} lets through"
     assert not ours - engines, f"{len(ours - engines)} pairs of lessons {encoding} keeps apart that the engine does not"
+
+
+@pytest.mark.parametrize("label", WEEKS)
+def test_the_engines_clique_rows_are_the_benchmarks_cliques_row_for_row(label: str) -> None:
+    """The measurements of the design note (m8_paths.py's `cliques`) are of the rows the engine now posts: the same cover."""
+    week = build_week(WEEKS[label])
+    assert _rows(week, None, engine_cliques=True) == _rows(week, "cliques")

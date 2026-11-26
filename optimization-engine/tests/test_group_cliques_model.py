@@ -1,0 +1,343 @@
+"""Klickar i den fulla modellen (M8 PR 6): the same rule in fewer rows, and only where it is meant to be.
+
+`cliques.cover` is held by tests/test_cliques.py. What is held here is what the engine does with it:
+
+  * the rows the full model posts for a cover forbid exactly the pairs of lessons the rows posted for the pairs forbid (read off
+    the model's own NoOverlap rows, not off a solve), and a path of groups (A–B, B–C) leaves A and C free to sit at once;
+  * the week is laid either way, and the answer keeps every rule when read from the answer;
+  * only the full model of a strict solve is built so: phase 1a's satisfaction model is byte for byte the model it was, with the
+    setting on and off, which is what keeps the nightly gate measuring the search it measured;
+  * `SOLVER_GROUP_CLIQUES=false` gives the pairs back everywhere.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import sys
+import uuid
+from itertools import combinations
+from pathlib import Path
+
+import pytest
+
+_BENCH = Path(__file__).resolve().parents[1] / "benchmarks"
+if str(_BENCH) not in sys.path:
+    sys.path.insert(0, str(_BENCH))
+
+from app.config import Settings  # noqa: E402
+from app.schemas.schedule import OptimizeScheduleRequest  # noqa: E402
+from app.solver.scheduler_solver import SchedulerSolver  # noqa: E402
+from school_corpus import SchoolShape, build_week  # noqa: E402
+
+#: Six classes of three years with three subjects in groups across the classes: pairs of groups in plenty.
+SHAPE = SchoolShape(classes_per_year=2, group_subjects=3, mixing=0.5, seed=1)
+
+
+def _settings(*, cliques: bool = True, seconds: float = 30.0) -> Settings:
+    return Settings(  # type: ignore[call-arg]
+        SOLVER_MAX_TIME_SECONDS=seconds, SOLVER_PROBE_SECONDS=0, SOLVER_GROUP_CLIQUES=cliques,
+    )
+
+
+def _week(seed: int = 1) -> OptimizeScheduleRequest:
+    from dataclasses import replace
+
+    return build_week(replace(SHAPE, seed=seed)).request
+
+
+def _build(request: OptimizeScheduleRequest, *, objective: bool, by_cliques: bool):  # noqa: ANN202
+    """The model and its decisions, and which lesson each of the PUPILS' intervals belongs to (a spy on the pupil padding)."""
+    import app.solver.scheduler_solver as engine
+
+    owner: dict[int, tuple] = {}
+    real = engine.pupil_padded_of
+
+    def spy(model, decision):  # noqa: ANN001, ANN202
+        interval = real(model, decision)
+        owner[interval.Index()] = decision.lesson.key()
+        return interval
+
+    engine.pupil_padded_of = spy
+    try:
+        solver = SchedulerSolver(_settings())
+        model, _, decisions, _, _ = solver._build_model(
+            request, use_assumptions=False, include_objective=objective, by_cliques=by_cliques,
+        )
+    finally:
+        engine.pupil_padded_of = real
+    return model, decisions, owner
+
+
+def _rows(model) -> list[list[int]]:  # noqa: ANN001
+    """Each NoOverlap row of the model as the indices of its intervals."""
+    return [
+        list(constraint.no_overlap.intervals)
+        for constraint in model.Proto().constraints
+        if constraint.has_no_overlap()
+    ]
+
+
+def _forbidden(model, owner) -> set[frozenset[tuple]]:  # noqa: ANN001
+    """The pairs of lessons that share a row of the pupils' anywhere in the model: what it forbids to overlap."""
+    out: set[frozenset[tuple]] = set()
+    for row in _rows(model):
+        for a, b in combinations(sorted({owner[i] for i in row if i in owner}, key=str), 2):
+            out.add(frozenset((a, b)))
+    return out
+
+
+def _pupil_rows(model, owner) -> int:  # noqa: ANN001
+    return sum(1 for row in _rows(model) if any(i in owner for i in row))
+
+
+def _hash(model) -> str:  # noqa: ANN001
+    return hashlib.sha256(str(model.Proto()).encode()).hexdigest()
+
+
+# ---- the same rule ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_the_rows_of_the_cover_forbid_exactly_the_pairs_of_lessons_the_rows_of_the_pairs_forbid(seed: int) -> None:
+    request = _week(seed)
+    by_pairs, decisions, pair_owner = _build(request, objective=True, by_cliques=False)
+    by_cover, same_decisions, cover_owner = _build(request, objective=True, by_cliques=True)
+
+    assert len(decisions) == len(same_decisions)
+    assert _forbidden(by_cover, cover_owner) == _forbidden(by_pairs, pair_owner), "another rule"
+    assert _forbidden(by_pairs, pair_owner), "a week with pairs forbids some"
+
+
+def _alternating_week() -> tuple[OptimizeScheduleRequest, tuple[str, str, str, str, str, str]]:
+    """Six groups; A–B, A–C, B–C, C–D and E–F pair (A and D share no pupil), and some of their lessons run in some weeks only.
+
+    A has a lesson every week and one in the odd weeks, B one every week and one in the even weeks, C one every week and one in
+    the first period, D one every week and one in the second period. The odd and the even weeks never meet, nor do the two
+    periods: A's odd lesson may sit beside B's even one, and C's first-period lesson beside D's second-period one. E and F
+    have one lesson each: the part of a row with exactly two lessons is a row too, and F's pupils change for ten minutes
+    before and after it (minutesBefore, minutesAfter): the row is posted over the pupils' interval, not the lesson's."""
+    import test_ab_weeks as ab
+
+    a, b, c, d, e, f = (str(uuid.uuid4()) for _ in range(6))
+    requirements = [
+        ab._requirement(a, 1), ab._requirement(a, 1, recurrence="ODD_WEEKS"),
+        ab._requirement(b, 1), ab._requirement(b, 1, recurrence="EVEN_WEEKS"),
+        ab._requirement(c, 1), ab._requirement(c, 1, periods=[True, False]),
+        ab._requirement(d, 1), ab._requirement(d, 1, periods=[False, True]),
+        ab._requirement(e, 1), ab._requirement(f, 1, minutesBefore=10, minutesAfter=10),
+    ]
+    payload = ab._payload(requirements, groupConflicts=[[a, b], [a, c], [b, c], [c, d], [e, f]])
+    return OptimizeScheduleRequest.model_validate(payload), (a, b, c, d, e, f)
+
+
+def test_the_rows_of_the_cover_keep_apart_the_lessons_of_weeks_that_meet_and_only_those() -> None:
+    """The rule is held once per week the pupils have: a row over a clique is cut by weeks as the row of a pair is."""
+    request, (a, b, c, d, e, f) = _alternating_week()
+    by_pairs, decisions, pair_owner = _build(request, objective=True, by_cliques=False)
+    by_cover, _, cover_owner = _build(request, objective=True, by_cliques=True)
+    forbidden = _forbidden(by_cover, cover_owner)
+
+    assert forbidden == _forbidden(by_pairs, pair_owner), "another rule"
+    lesson = {
+        (str(x.lesson.requirement.student_group_id), x.lesson.requirement.recurrence, x.lesson.requirement.periods): x.lesson.key()
+        for x in decisions
+    }
+    assert frozenset((lesson[a, None, None], lesson[b, None, None])) in forbidden, "every week meets every week"
+    assert frozenset((lesson[a, "ODD_WEEKS", None], lesson[b, "EVEN_WEEKS", None])) not in forbidden, "odd and even weeks never meet"
+    assert frozenset((lesson[c, None, (True, False)], lesson[d, None, (False, True)])) not in forbidden, "two periods never meet"
+    assert frozenset((lesson[c, None, (True, False)], lesson[d, None, None])) in forbidden, "a period's lesson meets every week's"
+    assert frozenset((lesson[e, None, None], lesson[f, None, None])) in forbidden, "two groups of one lesson each, one of them changing: a row of two over the pupils' intervals"
+
+
+def test_a_cover_is_fewer_rows_than_the_pairs() -> None:
+    request = _week()
+    by_pairs, _, pair_owner = _build(request, objective=True, by_cliques=False)
+    by_cover, _, cover_owner = _build(request, objective=True, by_cliques=True)
+
+    assert len(request.group_conflicts) > 20
+    assert _pupil_rows(by_cover, cover_owner) < _pupil_rows(by_pairs, pair_owner)
+
+
+def test_two_groups_that_share_no_pupil_may_sit_at_once_though_both_pair_with_a_third() -> None:
+    """A–B and B–C pair and A–C does not: a row over all three would forbid what the school never said."""
+    request = _week()
+    firsts: dict[int | None, uuid.UUID] = {}
+    for requirement in request.requirements:
+        firsts.setdefault(requirement.min_grade_level, requirement.student_group_id)
+    a, b, c = (firsts[year] for year in (7, 8, 9))
+    path = request.model_copy(update={"group_conflicts": [(a, b), (b, c)]})
+    by_cover, decisions, cover_owner = _build(path, objective=True, by_cliques=True)
+    by_pairs, _, pair_owner = _build(path, objective=True, by_cliques=False)
+
+    a_lessons = {d.lesson.key() for d in decisions if d.lesson.requirement.student_group_id == a}
+    c_lessons = {d.lesson.key() for d in decisions if d.lesson.requirement.student_group_id == c}
+    forbidden = _forbidden(by_cover, cover_owner)
+
+    assert forbidden == _forbidden(by_pairs, pair_owner)
+    assert not any(frozenset((x, y)) in forbidden for x in a_lessons for y in c_lessons), (
+        "A and C share no pupil and may sit at once: a row over the path would forbid it"
+    )
+
+
+def test_a_row_over_a_clique_is_never_joined_by_weeks_which_the_row_of_a_pair_never_is(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`week_parts` joins the parts of a LARGE row (past PART_LIMIT parts and ROW_LIMIT members) into unions, which is stricter
+    than the rule. A row over a pair is small and never is; a row over a clique is the lessons of its pairs together, and with
+    the limits lowered here three groups that pair and run in three different periods are such a row: the same rule as the
+    pairs only if it is not joined, so that a lesson of the first period may sit beside one of the second."""
+    from app.solver import weeks as weeks_module
+
+    import test_ab_weeks as ab
+
+    a, b, c = (str(uuid.uuid4()) for _ in range(3))
+    requirements = [
+        ab._requirement(a, 1, periods=[True, False, False]),
+        ab._requirement(b, 1, periods=[False, True, False]),
+        ab._requirement(c, 1, periods=[False, False, True]),
+    ]
+    request = OptimizeScheduleRequest.model_validate(ab._payload(requirements, groupConflicts=[[a, b], [a, c], [b, c]]))
+    monkeypatch.setattr(weeks_module, "PART_LIMIT", 2)
+    monkeypatch.setattr(weeks_module, "ROW_LIMIT", 1)
+
+    by_pairs, _, pair_owner = _build(request, objective=True, by_cliques=False)
+    by_cover, _, cover_owner = _build(request, objective=True, by_cliques=True)
+
+    assert _forbidden(by_pairs, pair_owner) == set(), "three periods never meet: nothing is held apart"
+    assert _forbidden(by_cover, cover_owner) == set(), "a row that joins them holds apart what the school never said"
+
+
+@pytest.mark.parametrize("seed", [1, 2])
+def test_a_week_is_laid_either_way_and_the_answer_keeps_every_rule(seed: int) -> None:
+    request = _week(seed)
+    answers = {}
+    for cliques in (False, True):
+        response = SchedulerSolver(_settings(cliques=cliques, seconds=30.0)).solve(request)
+        assert response.status in ("OPTIMAL", "FEASIBLE"), (cliques, response.status)
+        assert len(response.lessons) == sum(r.lessons_per_week for r in request.requirements)
+        assert _faults(request, response.lessons) == [], cliques
+        answers[cliques] = response
+    # Both are laid and read back from their own answers; the same rule does not mean the same timetable.
+    assert answers[True].lessons and answers[False].lessons
+
+
+def _minutes(clock: str) -> int:
+    hours, minutes, _ = (int(part) for part in clock.split(":"))
+    return hours * 60 + minutes
+
+
+def _faults(request: OptimizeScheduleRequest, lessons) -> list[str]:  # noqa: ANN001
+    requirement = {r.id: r for r in request.requirements}
+    pairs = {frozenset(pair) for pair in request.group_conflicts}
+    faults: list[str] = []
+    for index, a in enumerate(lessons):
+        ra = requirement[a.requirement_id]
+        for b in lessons[index + 1:]:
+            if not (
+                a.day_of_week == b.day_of_week
+                and _minutes(a.start_time) < _minutes(b.end_time)
+                and _minutes(b.start_time) < _minutes(a.end_time)
+            ):
+                continue
+            rb = requirement[b.requirement_id]
+            if a.room_id == b.room_id:
+                faults.append("a room twice at once")
+            if ra.teacher_id is not None and ra.teacher_id == rb.teacher_id:
+                faults.append("a teacher in two places")
+            if ra.student_group_id == rb.student_group_id or frozenset((ra.student_group_id, rb.student_group_id)) in pairs:
+                faults.append("pupils in two places")
+    return faults
+
+
+# ---- only where it is meant to be ---------------------------------------------------------------------------------
+
+
+def test_phase_1a_s_model_is_the_model_it_was_with_the_setting_on_and_off() -> None:
+    """The nightly gate measures phase 1a: its model must not move by a byte."""
+    request = _week()
+    seen: dict[bool, list[tuple[bool, bool]]] = {}
+    satisfaction: dict[bool, str] = {}
+    for cliques in (True, False):
+        calls: list[tuple[bool, bool]] = []
+        solver = SchedulerSolver(_settings(cliques=cliques))
+        real = SchedulerSolver._build_model
+
+        def build(self, req, *, by_cliques=False, **kwargs):  # noqa: ANN001, ANN003, ANN202
+            calls.append((kwargs.get("include_objective", True), by_cliques))
+            built = real(self, req, by_cliques=by_cliques, **kwargs)
+            if not kwargs.get("include_objective", True):
+                satisfaction.setdefault(cliques, _hash(built[0]))  # phase 1a's model as solve() hands it to the search
+            return built
+
+        SchedulerSolver._build_model = build  # type: ignore[method-assign]
+        try:
+            solver.solve(request)
+        finally:
+            SchedulerSolver._build_model = real  # type: ignore[method-assign]
+        seen[cliques] = calls[:2]
+
+    assert seen[True] == [(True, True), (False, False)], "the full model by cliques, the satisfaction model by pairs"
+    assert seen[False] == [(True, False), (False, False)], "the setting off gives the pairs back"
+    assert satisfaction[True] == satisfaction[False], "phase 1a's model moved with the setting"
+
+
+def _builds_of_group_rows(request: OptimizeScheduleRequest, settings: Settings) -> list[bool]:
+    """`by_cliques` of every call that posts the groups' rows during one solve, in the order they were made."""
+    seen: list[bool] = []
+    real = SchedulerSolver._add_group_no_overlap
+
+    def spy(self, model, decisions, group_conflicts=None, *, by_cliques=False):  # noqa: ANN001, ANN202
+        seen.append(by_cliques)
+        return real(self, model, decisions, group_conflicts, by_cliques=by_cliques)
+
+    SchedulerSolver._add_group_no_overlap = spy  # type: ignore[method-assign]
+    try:
+        SchedulerSolver(settings).solve(request)
+    finally:
+        SchedulerSolver._add_group_no_overlap = real  # type: ignore[method-assign]
+    return seen
+
+
+def test_only_the_first_build_of_a_strict_solve_posts_cliques_whatever_the_week_ends_in() -> None:
+    """The explanation's, the probe's, the years' and Bästa möjliga schema's builds call `_build_model` without the keyword: a
+    default of True there would put them on cliques and nothing else here would say so. A week that is laid, and a week the
+    search refuses (five groups in a ring, each pair sharing a pupil, two hours of one day, one group's lesson in the even
+    weeks and another's in the odd: the prechecks hold it and the colouring needs three hours), are solved with the setting
+    on: one call posts cliques, the first, the full model's."""
+    import test_ab_weeks as ab
+
+    groups = [str(uuid.uuid4()) for _ in range(5)]
+    ring = [[groups[i], groups[(i + 1) % 5]] for i in range(5)]
+    refused = OptimizeScheduleRequest.model_validate(ab._payload(
+        [
+            ab._requirement(group, 1, recurrence={2: "EVEN_WEEKS", 4: "ODD_WEEKS"}.get(index))
+            for index, group in enumerate(groups)
+        ],
+        groupConflicts=ring,
+    ))
+    laid = OptimizeScheduleRequest.model_validate(
+        ab._payload([ab._requirement(group, 1) for group in groups[:3]], groupConflicts=ring[:2]),
+    )
+    settings = ab._settings(hours=2, SOLVER_GROUP_CLIQUES=True, SOLVER_PROBE_SECONDS=0)
+
+    for request, status in ((laid, "OPTIMAL"), (refused, "INFEASIBLE")):
+        built = _builds_of_group_rows(request, settings)
+        assert SchedulerSolver(settings).solve(request).status == status
+        assert len(built) >= 2, "the full model and the satisfaction model are built"
+        assert built[0] is True and built.count(True) == 1, (status, built)
+
+
+def test_the_setting_is_on_by_default_and_reads_its_environment_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SOLVER_GROUP_CLIQUES", raising=False)
+    assert Settings(API_KEY="k" * 32, ALLOWED_ORIGINS="http://localhost").solver_group_cliques is True  # type: ignore[call-arg]
+    monkeypatch.setenv("SOLVER_GROUP_CLIQUES", "false")
+    assert Settings(API_KEY="k" * 32, ALLOWED_ORIGINS="http://localhost").solver_group_cliques is False  # type: ignore[call-arg]
+
+
+def test_the_cover_does_not_depend_on_the_order_the_gateway_sends_the_pairs_in() -> None:
+    request = _week()
+    shuffled = list(reversed(request.group_conflicts))
+    other = request.model_copy(update={"group_conflicts": [(b, a) for a, b in shuffled]})
+    first, _, first_owner = _build(request, objective=True, by_cliques=True)
+    second, _, second_owner = _build(other, objective=True, by_cliques=True)
+
+    assert _forbidden(first, first_owner) == _forbidden(second, second_owner)
+    assert uuid.UUID  # keep the import used by neighbours of this module
