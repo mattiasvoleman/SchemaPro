@@ -1527,6 +1527,58 @@ describe("a lesson that stands outside the ramtid on purpose (Undantag med flit)
     expect(within(list).queryByText(/^common\.codes\.MASTER_LESSON_REFUSED/)).toBeNull();
   });
 
+  it("is marked on its card, in a word and not only a colour, and the words a screen reader is told say what it stands against", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), given("l-late", "s-sl", "g-51", "10:00")];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.exemptionCount/);
+    const marks = container.querySelectorAll("[data-lesson-mark]");
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.textContent).toContain("timetable.exemptMark");
+    // The rule it stands against now, and the lesson's own name before it on the card (the grid reads the mark after the name).
+    expect(marks[0]!.textContent).toContain("timetable.exemptMarkLabel(timetable.exemptRuleFRAME)");
+  });
+
+  it("says in its words that nothing stands against the exemption when it does not, and is still marked: the lesson keeps it", async () => {
+    state.frameTimes = [{ ...frame(0, 99), endTime: "12:00:00" }];
+    state.lessons = [given("l-idle", "s-sl", "g-51", "10:00")];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.exemptionCount/);
+    const mark = container.querySelector("[data-lesson-mark]");
+    expect(mark?.textContent).toContain("timetable.exemptMarkIdleLabel(timetable.exemptRuleFRAME)");
+  });
+
+  it("names in its words the rules the lesson stands against now, and says of the rest that nothing stands against them: given the ramtid and the class's meal, with the meal laid elsewhere", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), { ...given("l-late", "s-sl", "g-51", "10:00"), exemptFrom: ["FRAME", "LUNCH"] }];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.exemptionCount/);
+    const words = container.querySelector("[data-lesson-mark]")?.textContent ?? "";
+    // It stands against the ramtid (10:00 is outside 07:00-09:00) and does not stand on any meal: the card says the first of the one and the second of the other.
+    expect(words).toContain("timetable.exemptMarkLabel(timetable.exemptRuleFRAME)");
+    expect(words).toContain("timetable.exemptMarkIdleLabel(timetable.exemptRuleLUNCH)");
+  });
+
+  it("marks no card of a lesson without an exemption", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), lesson("l-late", "s-sl", "g-51", "10:00")];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.conflictCount/);
+    expect(container.querySelector("[data-lesson-mark]")).toBeNull();
+  });
+
+  it("says both rules, joined, of a lesson that stands against both, and the word on the card is the word and not the sentence", async () => {
+    // At 10:00-11:00: outside the ramtid (07:00-09:00) and on the class's meal (10:00-10:30).
+    state.frameTimes = [frame(0, 99)];
+    state.sittings = [{ id: "s-g-51", studentGroupId: "g-51", dayOfWeek: 1, startTime: "10:00:00", endTime: "10:30:00", headcount: 24, isGenerated: false, startDate: null, endDate: null }];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), { ...given("l-late", "s-sl", "g-51", "10:00"), exemptFrom: ["FRAME", "LUNCH"] }];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.exemptionCount/);
+    const mark = container.querySelector("[data-lesson-mark]")!;
+    expect(mark.firstChild?.textContent).toBe("timetable.exemptMark");
+    expect(mark.textContent).toContain("timetable.exemptMarkLabel(timetable.exemptRuleFRAMEtimetable.exemptAndtimetable.exemptRuleLUNCH)");
+  });
+
   it("counts an exemption nothing stands against too, as the publication does, and opens the list for it", async () => {
     // Given for the ramtid, with the ramtid wide enough now for the lesson at 10:00-11:00: nothing stands there, and the lesson still has it.
     state.frameTimes = [{ ...frame(0, 99), endTime: "12:00:00" }];
