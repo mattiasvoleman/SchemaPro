@@ -1,4 +1,5 @@
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
+import type { ExemptRule } from "@/lib/exemptions";
 
 export const NONE = "__none__";
 
@@ -25,6 +26,8 @@ export interface LessonSnapshot {
   recurrence: LessonRecurrence;
   startDate: string | null;
   endDate: string | null;
+  /** Undantag med flit: said only on a lesson that has one, so an undo of a move from an exempt time puts the exemption back with it. */
+  exempt?: ExemptRule[];
 }
 
 export function snapshotOf(lesson: MasterLesson): LessonSnapshot {
@@ -39,6 +42,7 @@ export function snapshotOf(lesson: MasterLesson): LessonSnapshot {
     recurrence: lesson.recurrence,
     startDate: lesson.startDate,
     endDate: lesson.endDate,
+    ...(lesson.exemptFrom && lesson.exemptFrom.length > 0 ? { exempt: lesson.exemptFrom } : {}),
   };
 }
 

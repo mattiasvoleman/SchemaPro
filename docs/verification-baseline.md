@@ -8,33 +8,38 @@ reason. No threshold is recorded as met without a number behind it.
 Regenerate any row with the command in its **How to measure** column. When a
 number changes, update it here in the same commit.
 
-Measured: 2026-08-05, on the development machine (darwin/arm64). Absolute
-wall-clock figures are machine-dependent; CI numbers are the ones that gate.
+Measured: every row carries its own date, and the dates differ. The coverage,
+bundle, accessibility and visual rows were read on 2026-11-25 from the green
+CI run of main at `199140949` (run 45697409672); the rows that say otherwise
+(mutation, latency, the solver's 2,000 pupils, the audits) are older and keep
+their dates. The first version of this file was measured on 2026-08-05 on the
+development machine (darwin/arm64). Absolute wall-clock figures are
+machine-dependent; CI numbers are the ones that gate.
 
 ---
 
 ## Scorecard
 
-Six of eleven gates pass today. The rest have a harness and a measured number
-they are failing against — which is the point: before this work none of them
-could be evaluated at all.
+Seven of fifteen rows pass (2026-11-25). Six have a harness and a measured
+number they are failing against — which is the point: before this work none of
+them could be evaluated at all — and two are not measured.
 
 | Gate | Status |
 | :--- | :--- |
 | API dependency audit | ✓ pass (0 failing, nothing allowlisted; braces and sprintf-js are no longer reported because GitHub withdrew their advisories on 2026-10-23 and 2026-10-22, and minimatch 3.1.5 left GHSA-g3hv-75wg-m249 when its range became >= 7.0.0, < 11.0.1 on 2026-11-04; glob 14.0.2 and minimatch 11.0.1 are locked by overrides since 2026-11-03, measured 2026-11-04) |
 | Mobile dependency audit | ✓ pass (0 failing, nothing allowlisted; zod is locked at 4.6.7 by the override `zod@^3.25.76` in mobile/package.json, because the only package that pulls it in, @expo/cli 57.0.32, declares ^3.25.76 and the fix is 4.6.6 or later; remove the override with Expo SDK 58, where @expo/cli no longer depends on zod (`npm view @expo/cli@58.1.19 dependencies.zod` is empty); it is 4.6.7 and not 4.6.6 because the 4.6.6 release notes report six malicious commits pushed to zod's main on 2026-09-21 with a compromised git credential and later removed from its history, none of them published to npm, and the provenance of 4.6.6 names a commit that is no longer on main, while 4.6.7, whose files differ from 4.6.6 only in the version number, names one that is; @expo/cli imports zod in two files, one that validates DevTools plugin manifests and plugin output and one that builds the input schema for an MCP server, which is not run here because expo-mcp is not installed; on the same plugin manifests, plugin output and MCP input, zod 4.6.7 accepts and rejects exactly what 3.25.76 does and reports the same error paths, but with other error codes and wording, and it trims whitespace around a url; minimatch 3.1.5 left GHSA-g3hv-75wg-m249 when its range became >= 7.0.0, < 11.0.1 on 2026-11-04, and glob 14.0.2 and minimatch 11.0.1 are locked by overrides since 2026-11-03; braces and sprintf-js are no longer reported, and image-size left with Expo SDK 57; measured 2026-11-05) |
-| WCAG 2.1 AA (axe-core) | ✓ pass (10/10, one real defect fixed) |
-| Visual regression | ✓ pass (16/16 on linux-x64 baselines) |
-| API coverage | ✗ 95.09% vs 95% (ratcheted at 95; remainder is module wiring) |
-| Mobile coverage | ✗ 12.83% vs 95% (first floor at 12; runner stood up 2026-08-22) |
-| Solver coverage | ✗ 89.50% vs 95% (ratcheted at 81) |
+| WCAG 2.1 AA (axe-core) | ✓ pass (290 tests in CI's `a11y` project, 2026-11-25: axe on every signed-in page for every role, in light and dark, at desktop and phone width, and on the public pages, with the keyboard checks and the accessibility-tree comparisons; the first run of the suite, 2026-08-06, found one real defect, fixed) |
+| Visual regression | ✓ pass (14 tests in `visual` and `visual-mobile` on linux-x64 baselines, and 5 `document-size` checks; 2026-11-25) |
+| API coverage | ✗ branches 87.46% vs 95%; lines 97.86%, statements 96.85% and functions 95.6% are over (floors: lines 95, statements 95, functions 90, branches 83, all below where it stands; 2026-11-25) |
+| Mobile coverage | ✗ 90.89% statements vs 95% (lines 91.94%, functions 90.01%, branches 90.19%; floors still statements 65, lines 66, functions 66, branches 70; the runner stood up 2026-08-22 at 12.83%) |
+| Solver coverage | ✓ 96.89% vs 95% (statements and branches together; floor 84, the repository variable `ENGINE_COVERAGE_MIN`; the workflow's own fallback is 81; was 89.50% on 2026-08-05) |
 | Mutation score | ✗ 71.31% of the API vs 85% (2026-11-02: 48,433 of 67,921 valid mutants detected, 5,610 of them uncovered ones that count as survived, in 279 files); gated one slice a night against the slice's own floor (59–88%), so that it fails when a slice gets worse |
-| Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
-| Solver, 2,000 students | ✗ 1,300 validated (~9.5 min); 2,000 now measured honestly: TIMEOUT at 570s |
+| Bundle size | ✓ pass (tiered; 93/93 routes, shared runtime 128.7/132KB; tightest margin 2,610 B on the public viewer's three routes and 3,388 B on the shared runtime; 2026-11-25) |
+| Solver, 2,000 students | ✗ 1,300 validated (~9.5 min); 2,000 now measured honestly: TIMEOUT at 570s (that bench school gives every class lessons of its own; the weeks that stop the engine are of another form, measured in `docs/solve-corpus-measurement.md` and DEPLOYMENT §35) |
 | Web dependency audit | ✓ pass (0/0/0) |
 | API P99 latency | ✗ §2 not met on the CI runner: reads p99 46–181ms vs 50ms (their p50 35–61ms, 56–61ms on the slowest CPU model), write p99 17–167ms vs 150ms over 300 samples; gated relative to the run's authenticated-read floor instead, where sixteen healthy runs on three CPU models pass (read shares 0.871–0.962 vs ≥ 0.80) and a handler with four extra statements (about 22% more expensive, as its share has it) fails 4 of 4 |
 | Lighthouse LCP/TTI | — not yet run |
-| Web unit coverage | ✗ 88.98% vs 95% (ratcheted at 87; harness landed) |
+| Web unit coverage | ✗ functions 93.96% and branches 90.77% vs 95%; lines 96.4% and statements 95.52% are over (floors: lines 87, statements 85, functions 83, branches 79; was 88.98% lines on 2026-08-05) |
 | INP | — not lab-measurable at all |
 
 ---
@@ -63,17 +68,29 @@ could be evaluated at all.
 
 | Metric | Target | Measured | Status | How to measure |
 | :--- | :--- | :--- | :--- | :--- |
-| API line coverage | ≥ 95% | **95.10%** (2485/2613) | ✓ | `npm run test:cov` |
-| API statement coverage | ≥ 95% | 95.09% (2717/2857) | ✓ | same |
-| API branch coverage | ≥ 95% | 84.98% (1313/1545) | ✗ | same |
-| API function coverage | ≥ 95% | 90.59% (520/574) | ✗ | same |
-| Solver line coverage | ≥ 95% | **89.50%** (1333 stmts, 125 missed) | ✗ | `npm run test:engine:cov` |
+| API line coverage | ≥ 95% | **97.86%** (47,666/48,706) | ✓ | `npm run test:cov` |
+| API statement coverage | ≥ 95% | 96.85% (56,048/57,867) | ✓ | same |
+| API branch coverage | ≥ 95% | 87.46% (31,743/36,293) | ✗ | same |
+| API function coverage | ≥ 95% | 95.6% (12,056/12,610) | ✓ | same |
+| Solver coverage (statements and branches) | ≥ 95% | **96.89%** (12,758 statements, 298 missed; 5,288 branches, 244 partly taken) | ✓ | `npm run test:engine:cov` |
 | Mutation score, the API | ≥ 85% | **71.31%** (48,433 / 67,921; slices 60.31–89.26%) | ✗ | `npm run test:mutation`, one slice a night |
-| Mobile unit coverage | ≥ 95% | **12.83%** statements (services, utils, hooks) | ✗ | `npm run test:mobile:cov` |
-| Web unit coverage | ≥ 95% | **88.98%** lines (1397/1570) | ✗ | `npm run test:unit:cov` in `web/` |
+| Mobile unit coverage | ≥ 95% | **90.89%** statements, 91.94% lines, 90.01% functions, 90.19% branches | ✗ | `npm run test:mobile:cov` |
+| Web unit coverage | ≥ 95% | **96.4%** lines (21,117/21,905), 95.52% statements, 93.96% functions, 90.77% branches | ✗ (functions, branches) | `npm run test:unit:cov` in `web/` |
 
-The API suite is 868 tests across 47 suites, all passing. The solver suite is
-73 tests; the web unit suite 685 across 51 files.
+**Read 2026-11-25** (CI's green run of main at `199140949`): the API suite is
+18,486 tests in 594 suites (26 tests and 4 suites skipped), the solver's 3,132
+(1 skipped), the web unit suite 14,505 in 659 files (10 skipped) and the
+mobile's 1,882 in 59 suites, all passing. The rows above were 868 tests in 47
+suites, 73 and 685 in 51 files on 2026-08-05, and the API's lines were 95.10%,
+the solver's 89.50%, the mobile's 12.83% and the web's 88.98%.
+
+**The floors have not moved with the numbers.** `jest.base.js` holds the API
+at lines 95, statements 95, functions 90 and branches 83, `mobile/jest.config.js`
+the app at statements 65, lines 66, functions 66 and branches 70, `web/vitest.config.ts`
+the web at lines 87, statements 85, functions 83 and branches 79, and the
+repository variable `ENGINE_COVERAGE_MIN` the solver at 84; each floor sits
+under where its suite stands, by 2 to 26 points. Raising them is a change
+to those files and not to this one.
 
 The line and statement rows were closed by taking the first of the two options
 this section used to describe: the e2e harness (`test/utils/test-app.ts`) now
@@ -226,7 +243,8 @@ before writing tests to chase them.
 
 **Web now has a Vitest + Testing Library harness** (`web/vitest.config.ts`):
 367 tests across 34 files, 87.07% lines / 85.33% statements / 83.28% functions /
-79.87% branches over `lib/`, `components/`, `utils/` and `i18n/`. App-router
+79.87% branches over `lib/`, `components/`, `utils/` and `i18n/` (14,505 tests in
+659 files and 96.4% / 95.52% / 93.96% / 90.77% on 2026-11-25). App-router
 routes (`app/**`) are excluded from unit coverage deliberately — they are server
 components exercised end-to-end by the Playwright suites, and counting them here
 would dilute the number with lines no unit test can honestly execute. Floors are
@@ -244,19 +262,25 @@ hits.
 
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
-| Route-own JS, admin tier | ≤ 190KB | **177.8KB** | ✓ |
-| Route-own JS, core tier | ≤ 170KB | **164.4KB** | ✓ |
-| Route-own JS, auth tier | ≤ 110KB | **96.6KB** | ✓ |
-| Route-own JS, system tier | ≤ 50KB | **22.1KB** | ✓ |
-| Shared framework runtime | ≤ 130KB | **126.1KB** | ✓ |
-| §2 flat total-payload budget | ≤ 150KB | 303.9KB worst | ✗ (see below) |
+| Route-own JS, admin tier | ≤ 190KB | **182.9KB** (`/admin/timetable`; 177.8KB on 2026-08) | ✓ |
+| Route-own JS, core tier | ≤ 170KB | **158.9KB** (`/teacher`; 164.4KB) | ✓ |
+| Route-own JS, auth tier | ≤ 110KB | **10.6KB** (`/login`; 96.6KB) | ✓ |
+| Route-own JS, system tier | ≤ 50KB | **21.6KB** (22.1KB) | ✓ |
+| Route-own JS, public tier (Schemavisaren) | ≤ 6KB | **3.5KB** | ✓ |
+| Route-own JS, other tier | ≤ 170KB | **150.0KB** (`/calendar-feed`) | ✓ |
+| Shared framework runtime | ≤ 132KB (130KB until 2026-11-22) | **128.7KB** (126.1KB) | ✓ |
+| §2 flat total-payload budget | ≤ 150KB | 311.6KB worst (303.9KB), 83 of 93 routes over | ✗ (see below) |
 | LCP (Slow 4G) | ≤ 1.2s | not measured | — |
 | TTI | ≤ 1.5s | not measured | — |
 | INP | ≤ 100ms | **not lab-measurable** | — |
 
-`npm run bench:bundle` — **all 30 routes pass their tier budgets.**
-`npm run bench:bundle:flat` still reports the §2 figure verbatim (28 of 30 over
-a flat 150KB), so the original metric has not been hidden.
+`npm run bench:bundle` — **all 93 routes pass their tier budgets** (30 in
+2026-08; the measurement of 2026-11-25 is CI's run of main at `199140949`, the
+figures in parentheses above are the first measurement's).
+`npm run bench:bundle:flat` still reports the §2
+figure verbatim (83 of 93 routes over a flat 150KB, counted off the total
+column of the tiered run, where 28 of 30 were), so the original metric has not
+been hidden.
 
 ### Why the budget is tiered rather than flat
 
@@ -279,7 +303,8 @@ The tier numbers are ratchets set just above today's measurements, the same
 approach used for the coverage gates. Tighten them as routes shrink.
 
 The decisive number is the third row: at 126.1KB the Next runtime consumes 84%
-of the 150KB budget *before any application code loads*.
+of the 150KB budget *before any application code loads* (128.7KB and 86% on
+2026-11-25).
 No route can pass this gate by trimming page-level imports alone — the shared
 bundle itself has to change (or the budget has to be restated as, say, per-route
 page JS excluding the framework runtime, which is a different metric than §2
@@ -2263,7 +2288,9 @@ known-bad input rather than assumed working:
   passed, since only the dark token moved. Reverted, 16/16 green again.
 - **Accessibility**: the suite failed on first run and caught a real defect
   (58 contrast violations) plus a bug in one of its own assertions.
-- **Bundle size**: fails today on all 30 routes, with per-route numbers.
+- **Bundle size**: failed on all 30 routes, with per-route numbers, against the
+  flat 150KB budget of §2 (2026-08, before the budget was tiered; it passes all
+  93 routes against its tiers now, and still fails the flat one on 83).
 - **Coverage / mutation**: both currently report below threshold and exit
   non-zero.
 - **RLS policies**: dropping `users_service_select` fails with "saw 0 users for

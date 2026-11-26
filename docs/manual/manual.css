@@ -99,6 +99,11 @@
      Chrome hela PDF:en för att få plats. Kolumnens bredd står på thead:s th. */
   td.k { font-weight: 700; color: var(--ink); text-wrap: balance; }
 
+  /* Felsökningens tabell är längre än en sida. Med break-inside: avoid på hela tabellen börjar den på nästa sida och
+     lämnar kapitlets rubrik ensam; den får delas mellan sidor, men aldrig mitt i en rad. */
+  #ch9 table { break-inside: auto; }
+  #ch9 tr { break-inside: avoid; }
+
   /* ---------- block ---------- */
   .check, .note, .warn {
     padding: 3mm 4mm; margin: 3mm 0 5mm; break-inside: avoid;

@@ -83,6 +83,9 @@ export function useUndoableEdits(inputs: {
       const after = { ...before, ...patch };
       history.push({
         label: "update",
+        // The judge's final no (a lesson put back on a time that breaks a rule, beslut 4) is dropped from the history, so that the older
+        // steps are not shut behind it; the toast says so (t("undoRefused")).
+        refusedUndo: (error) => error instanceof ApiError && error.code === "MASTER_LESSON_REFUSED",
         undo: async () => {
           try {
             await updateLesson.mutateAsync({ id: lesson.id, ...before });
