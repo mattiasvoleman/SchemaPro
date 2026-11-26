@@ -206,7 +206,10 @@ export function BoardKeys(props: BoardKeysProps) {
         case "FREE":
         case "CHANGE": {
           const option = optionAt(times, square.dayOfWeek, square.startMinutes);
-          return option ? { key: "markerRank", values: { ...where, rank: option.rank } } : null;
+          if (option) return { key: "markerRank", values: { ...where, rank: option.rank } };
+          // A free square in the lesson's own room is the page's own check to say. One in another room is not: the page knows only the
+          // lesson's own room and would call it taken, against a board that paints it "Ledigt, annan sal". Only a numbered time carries the room.
+          return run.kind === "CHANGE" ? { key: "markerChange", values: where } : null;
         }
         case "CLOSED":
           return { key: "markerClosed", values: { ...where, code: run.code ?? "AVAILABILITY" } };

@@ -111,6 +111,16 @@ describe("the line says what the gateway says of the marker's square", () => {
     expect(said()).toBe("Måndag 09:15–10:15: Svenska 7B ligger i vägen. Enter visar de närmaste lediga tiderna.");
   });
 
+  it("says a square in another room as that, not as taken, when it is not one of the numbered times: the page's own check knows only the lesson's own room", async () => {
+    // The lesson's own room is taken on Wednesday (the page's check says no there); the gateway says the stretch from 10:00 is free in another room.
+    await board("sv", { validateChange: vi.fn().mockImplementation((_id: string, change: { dayOfWeek: number }) => change.dayOfWeek !== 3) });
+    await takeUp();
+    key("a", { key: "ArrowRight" });
+    key("a", { key: "ArrowRight" });
+    for (let i = 0; i < 5; i++) key("a", { key: "ArrowDown" }); // Wednesday 10:15: CHANGE, and not one of the three numbered times (10:00 is the third)
+    expect(said()).toBe("Onsdag 10:15–11:15: ledigt, men i en annan sal än lektionens egen. Lägg den med ett av de bästa förslagen eller i Justera lektion, där salen väljs.");
+  });
+
   it("says how many are in the way when several are", async () => {
     await board();
     await takeUp();
