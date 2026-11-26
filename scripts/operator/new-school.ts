@@ -46,7 +46,9 @@ export async function readSchoolState(db: Pick<PrismaClient, 'school'>, args: Ne
   });
   if (!school) return { kind: 'ABSENT' };
   const [only] = school.users;
-  if (school.users.length === 1 && only && only.role === 'SCHOOL_ADMIN' && only.email.toLowerCase() === args.admin.email.toLowerCase()) {
+  // `email` is nullable from the migration 20270310090000 (a pupil or a guardian may have none), which is not on this branch: read as
+  // the column is, so that the script compiles and answers the same on both sides of that merge. An administrator always has one.
+  if (school.users.length === 1 && only && only.role === 'SCHOOL_ADMIN' && (only.email ?? '').toLowerCase() === args.admin.email.toLowerCase()) {
     return only.invitedAt
       ? { kind: 'DONE', schoolId: school.id, adminId: only.id, invitedAt: only.invitedAt }
       : { kind: 'ADMIN_WAITING', schoolId: school.id, adminId: only.id };
