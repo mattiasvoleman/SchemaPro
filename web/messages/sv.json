@@ -2001,7 +2001,7 @@
     "run": "Generera schema",
     "running": "Optimerar… detta kan ta flera minuter",
     "startTitle": "Utgå från ett schema",
-    "startHint": "Motorn kan börja från ett schema som redan finns i stället för från noll. Den lägger tillbaka varje lektion där den låg, flyttar bara det som krockar med veckan som den är nu och lägger det som saknas. Det är inget lås: en lektion stannar tills veckan visar att den inte kan stå kvar. Låsta och handlagda lektioner är kvar som de är, vilket val du än gör.",
+    "startHint": "Motorn kan börja från ett schema som redan finns i stället för från noll. Den lägger tillbaka varje lektion där den låg, flyttar bara det som krockar med veckan som den är nu och lägger det som saknas. Det är inget lås: en lektion stannar tills veckan visar att den inte kan stå kvar. Låsta och handlagda lektioner är kvar som de är, vilket val du än gör. Valet gäller knappen Generera schema. Schemaförslagen längre ner utgår inte från ett schema.",
     "startNone": "Från början",
     "startNoneBody": "Motorn lägger hela veckan. Schemat som finns används bara som ledtråd, så att så mycket som möjligt hamnar där det låg.",
     "startCurrent": "Årets grundschema som det är",

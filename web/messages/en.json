@@ -2001,7 +2001,7 @@
     "run": "Generate schedule",
     "running": "Optimizing… this can take several minutes",
     "startTitle": "Start from a schedule",
-    "startHint": "The engine can start from a schedule that already exists instead of from nothing. It puts each lesson back where it was, moves only what clashes with the week as it is now and lays what is missing. It is not a lock: a lesson stays until the week shows that it cannot. Locked and hand-placed lessons stay as they are whichever you choose.",
+    "startHint": "The engine can start from a schedule that already exists instead of from nothing. It puts each lesson back where it was, moves only what clashes with the week as it is now and lays what is missing. It is not a lock: a lesson stays until the week shows that it cannot. Locked and hand-placed lessons stay as they are whichever you choose. The choice is for the Generate schedule button. The timetable proposals further down do not start from a schedule.",
     "startNone": "From nothing",
     "startNoneBody": "The engine lays the whole week. The schedule that exists is only a hint, so that as much as possible ends up where it was.",
     "startCurrent": "This year's grundschema as it is",

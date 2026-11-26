@@ -72,4 +72,9 @@ describe("the catalogue of Utgå från ett schema", () => {
     expect(generate(sv)["startHint"]).toMatch(/inget lås/);
     expect(generate(en)["startHint"]).toMatch(/not a lock/);
   });
+
+  it("says that the choice is for the run and not for the timetable proposals", () => {
+    expect(generate(sv)["startHint"]).toMatch(/[Ss]chemaförslagen/);
+    expect(generate(en)["startHint"]).toMatch(/timetable proposals/);
+  });
 });
