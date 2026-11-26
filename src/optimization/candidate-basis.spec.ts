@@ -751,6 +751,31 @@ describe('the candidate basis', () => {
     expect(changedParts(partsOf(counted(40)), partsOf(counted(41), 1))).toEqual(['rosters']);
   });
 
+  it('reads a lock’s exemption from the class’s meal, as a change of rosters (Undantag med flit)', () => {
+    const locked = (exemptFromLunch?: true) => {
+      const real = school();
+      real.payload.fixedLessons = [
+        {
+          id: 'never-mapped',
+          teacherId: 't-anna',
+          coTeacherId: null,
+          studentGroupId: 'grp-7a',
+          roomId: 'room-hall',
+          dayOfWeek: 2,
+          startTime: '12:00:00',
+          endTime: '13:00:00',
+          ...(exemptFromLunch ? { exemptFromLunch } : {}),
+        },
+      ];
+      return real;
+    };
+    expect(partsOf(locked(true), 1)).toEqual(partsOf(locked(true)));
+    // A run solved before an administrator let the lesson stand over the meal answered another question: it is stale, in the rosters' part.
+    expect(changedParts(partsOf(locked()), partsOf(locked(true), 1))).toEqual(['rosters']);
+    // A lock without it hashes as it always did.
+    expect(partsOf(locked(), 1)).toEqual(partsOf(locked()));
+  });
+
   it('reads a conflict pair either way round as one pair', () => {
     const forward = school();
     const backward = school();

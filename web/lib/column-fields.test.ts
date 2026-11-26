@@ -70,11 +70,11 @@ describe("the fields of the flat timetable are its columns", () => {
     },
   );
 
-  it("leaves out exactly the columns Rastra's own export writes and a reader ignores, and nothing else", () => {
+  it("leaves out exactly the columns Rastra's own export writes (and a reader ignores, or takes by its own header: Undantag), and nothing else", () => {
     const ours = new Set(FIELDS.scheduleLessons.filter((field) => field.combined === undefined).map((field) => field.id));
     const left = lessonColumns.columns.map((column) => column.key).filter((key) => !ours.has(key));
     expect(left.sort()).toEqual(
-      ["coTeacherId", "extraGroupIds", "groupId", "lessonId", "length", "locked", "period", "roomId", "subjectId", "teacherId"].sort(),
+      ["coTeacherId", "exempt", "extraGroupIds", "groupId", "lessonId", "length", "locked", "period", "roomId", "subjectId", "teacherId"].sort(),
     );
   });
 
