@@ -224,6 +224,14 @@ describe('DEPLOYMENT.md', () => {
     expect(deployment).toContain("At production's 540 s (private network)");
   });
 
+  it('5.1: the sentence that says how long before the engine\'s ceiling a public road would close the call does the sum', () => {
+    const limit = Number(/PUBLIC_PATH_IDLE_LIMIT_SECONDS = (\d+);/.exec(read('src/config/engine-path.ts'))![1]);
+    const found = /would close the call (\d+) s before the engine's (\d+) s ceiling/.exec(flat(deployment));
+    if (found === null) throw new Error('DEPLOYMENT.md 5.1 no longer says how long before the ceiling a public road would close the call; read the sentence again');
+
+    expect(Number(found[1])).toBe(Number(found[2]) - limit);
+  });
+
   it('38: every part of R1 has the number of its pull request', () => {
     const start = deployment.indexOf('| Part | What it adds | Migration |');
     const table = deployment.slice(start, deployment.indexOf('\n\n', start)).split('\n').slice(2);
