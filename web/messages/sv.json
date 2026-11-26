@@ -468,12 +468,16 @@
       "ROOMS": "Salar",
       "FRAME_TIMES": "Ramtider",
       "RASTS": "Raster",
+      "BREAKS": "Lov och studiedagar",
+      "LUNCH": "Lunch",
+      "SUPERVISION": "Rastvakt",
       "CLASSES": "Klasser",
       "TEACHING_GROUPS": "Undervisningsgrupper",
       "PEOPLE": "Personer",
       "TIMPLAN": "Lokal timplan",
       "REQUIREMENTS": "Timplansposter",
-      "STAFFING": "Tjänstefördelning"
+      "STAFFING": "Tjänstefördelning",
+      "SWITCHES": "Inställningar som är av"
     },
     "found": {
       "years": "{count, plural, one {# läsår} other {# läsår}}",
@@ -487,7 +491,13 @@
       "students": "{count, plural, one {# elev} other {# elever}}",
       "gradesWithTimplan": "{count, plural, one {# årskurs med lokal timplan} other {# årskurser med lokal timplan}}",
       "requirements": "{count, plural, one {# timplanspost} other {# timplansposter}}",
-      "posts": "{count, plural, one {# tjänst} other {# tjänster}}"
+      "posts": "{count, plural, one {# tjänst} other {# tjänster}}",
+      "roomTypes": "{count, plural, one {# salstyp} other {# salstyper}}",
+      "breaks": "{count, plural, one {# lov eller studiedag} other {# lov och studiedagar}}",
+      "lunchServings": "{count, plural, one {# lunchsittning} other {# lunchsittningar}}",
+      "supervisionAreas": "{count, plural, one {# rastvaktsområde} other {# rastvaktsområden}}",
+      "supervisionShifts": "{count, plural, one {# rastvaktspass} other {# rastvaktspass}}",
+      "switchesOn": "{count, plural, one {# av 4 är på} other {# av 4 är på}}"
     },
     "gaps": {
       "NO_YEAR": {
@@ -570,6 +580,38 @@
       "POSTS_WITHOUT_SIGNATURE": {
         "title": "{count, plural, one {# tjänst saknar} other {# tjänster saknar}} signatur",
         "hint": "Ett schema från Untis eller aSc hittar läraren på signatur eller e-postadress. Lägg in signaturerna innan du läser in ett schema."
+      },
+      "NO_ROOM_TYPES": {
+        "title": "Inga salstyper är inlagda",
+        "hint": "Ett ämne kan peka ut en salstyp (Gymnastiksal, Slöjdsal) så att motorn bara lägger det i en sal av den typen. Utan salstyper läggs ämnena i vilken sal som helst. En skola som startat för hand börjar utan dem."
+      },
+      "NO_BREAKS": {
+        "title": "Läsåret har inga lov eller studiedagar",
+        "hint": "Lov och studiedagar hoppas över när schemat publiceras. Utan dem publiceras lektioner också på höstlovet, jullovet och studiedagarna."
+      },
+      "LUNCH_OFF": {
+        "title": "Lunchen är av",
+        "hint": "Utan en lunchregel planerar motorn ingen måltid för klasserna och ger ingen lunchsittning. Fönstret, längden och matsalens platser läggs in under Tillgänglighet."
+      },
+      "NO_SUPERVISION": {
+        "title": "Ingen rastvakt är lagd i läsåret",
+        "hint": "Rastvaktsschemat är områdena skolan vaktar och vem som vaktar när. Det påverkar inte Generera: en lärares pass syns i hens schema."
+      },
+      "ABSENCE_WATCH_OFF": {
+        "title": "Frånvarobevakningen är av",
+        "hint": "Bevakningen räknar elevernas frånvaro mot skolans gränser och skickar sammanställningar till mentor, rektor, expedition och vårdnadshavare. Den är av tills skolan slår på den."
+      },
+      "ACK_OFF": {
+        "title": "Kvittens är av",
+        "hint": "Med kvittens ber en lärare vårdnadshavare bekräfta ett meddelande, och de som inte svarat får en påminnelse. Den är av tills skolan slår på den."
+      },
+      "VIEWER_OFF": {
+        "title": "Schemavisaren är av",
+        "hint": "Schemavisaren visar klassens, gruppens, lärarens eller salens schema för dem skolan väljer. Inget visas förrän skolan väljer vilka slag av schema som visas och vem som får titta."
+      },
+      "SICK_REPORT_OFF": {
+        "title": "Lärarnas egen sjukanmälan är av",
+        "hint": "En lärare kan inte sjukanmäla sig själv i appen: frånvaron läggs in av en administratör. Den slås på bland inställningarna under Lärarfrånvaro."
       }
     }
   },

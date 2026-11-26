@@ -44,28 +44,72 @@ export async function readFacts(tx: PrismaClient, schoolId: string): Promise<Int
   // school holds now is not what that year will hold (the roster-readers inventory classifies this file CURRENT, on purpose).
   const year = await tx.academicYear.findFirst({ where: { isActive: true }, select: { id: true, name: true, isActive: true, gradeNumbering: true } });
 
-  const [years, subjects, rooms, rasts, frameTimes, teachers, students, studentsWithoutClass, policy] = await Promise.all([
+  const [
+    years,
+    subjects,
+    rooms,
+    roomTypes,
+    rasts,
+    frameTimes,
+    teachers,
+    students,
+    studentsWithoutClass,
+    policy,
+    lunch,
+    lunchServings,
+    supervisionAreas,
+    watch,
+    ack,
+    publication,
+    cover,
+  ] = await Promise.all([
     tx.academicYear.count(),
     tx.subject.count(),
     tx.room.count(),
+    tx.roomType.count(),
     tx.rast.count(),
     tx.frameTime.findMany({ select: { minGradeLevel: true, maxGradeLevel: true } }),
     tx.user.count({ where: TEACHES }),
     tx.user.count({ where: { role: 'STUDENT', isActive: true } }),
     tx.user.count({ where: { role: 'STUDENT', isActive: true, studentGroupId: null } }),
     tx.staffingPolicy.findUnique({ where: { schoolId }, select: { unstaffedGeneration: true } }),
+    // The switches and settings below are each a row of the school's with no row meaning off (their defaults are all off), and each is
+    // read by every administrator: a läsare sees the same as a full administrator. Only the one flag of each is selected.
+    tx.lunchSetting.findUnique({ where: { schoolId }, select: { lunchEnabled: true } }),
+    tx.lunchServing.count(),
+    tx.supervisionArea.count(),
+    tx.absenceWatchSetting.findUnique({ where: { schoolId }, select: { enabled: true } }),
+    tx.ackSetting.findUnique({ where: { schoolId }, select: { enabled: true } }),
+    tx.publicationSettings.findUnique({
+      where: { schoolId },
+      select: { viewerClassMode: true, viewerGroupMode: true, viewerTeacherMode: true, viewerStudentMode: true, viewerRoomMode: true },
+    }),
+    tx.coverSettings.findUnique({ where: { schoolId }, select: { teacherSelfReport: true } }),
   ]);
+
+  // Schemavisaren is on when any kind of schedule is shown in it (a mode other than OFF): the audience says who may look, and with every
+  // kind off there is nothing to look at.
+  const viewerOn =
+    publication !== null &&
+    [publication.viewerClassMode, publication.viewerGroupMode, publication.viewerTeacherMode, publication.viewerStudentMode, publication.viewerRoomMode].some(
+      (mode) => mode !== 'OFF',
+    );
 
   const school = {
     years,
     subjects,
     rooms,
+    roomTypes,
     frameTimes,
     rasts,
+    lunchOn: lunch?.lunchEnabled === true,
+    lunchServings,
+    supervisionAreas,
     teachers,
     students,
     studentsWithoutClass,
     unstaffedMode: (policy?.unstaffedGeneration === 'REFUSE' ? 'REFUSE' : 'ALLOW') as IntakeFacts['unstaffedMode'],
+    switches: { absenceWatch: watch?.enabled === true, ack: ack?.enabled === true, viewer: viewerOn, sickReport: cover?.teacherSelfReport === true },
   };
 
   const empty: Named = { count: 0, names: [] };
@@ -75,6 +119,8 @@ export async function readFacts(tx: PrismaClient, schoolId: string): Promise<Int
       year: null,
       subjectsWithoutPost: empty,
       subjectsNeedingMissingRoomType: empty,
+      breaks: 0,
+      supervisionShifts: 0,
       classes: 0,
       classGrades: [],
       classesWithoutGrade: empty,
@@ -91,7 +137,7 @@ export async function readFacts(tx: PrismaClient, schoolId: string): Promise<Int
   }
 
   const academicYearId = year.id;
-  const [classes, teachingGroups, spanlessGroups, withoutPost, subjectsWithoutPost, needingMissingRoomType, timplans, requirements, unstaffed, posts, withoutSignature, withoutPostTeachers] =
+  const [classes, teachingGroups, spanlessGroups, withoutPost, subjectsWithoutPost, needingMissingRoomType, timplans, requirements, unstaffed, posts, withoutSignature, withoutPostTeachers, breaks, supervisionShifts] =
     await Promise.all([
       tx.studentGroup.findMany({ where: { academicYearId, kind: 'CLASS' }, select: { name: true, gradeLevel: true } }),
       tx.studentGroup.count({ where: { academicYearId, kind: 'TEACHING_GROUP' } }),
@@ -130,6 +176,10 @@ export async function readFacts(tx: PrismaClient, schoolId: string): Promise<Int
       // The table refuses an empty signature (TeacherEmployments_signature_is_sane): no signature is a null.
       tx.teacherEmployment.count({ where: { academicYearId, signature: null } }),
       tx.user.count({ where: { ...TEACHES, employments: { none: { academicYearId } } } }),
+      // The year's lov, and the year's passes in the school's rastvakt areas: rows to count, never a person (a shift names its teacher, and no
+      // column of it is selected).
+      tx.schoolBreak.count({ where: { academicYearId } }),
+      tx.supervisionShift.count({ where: { academicYearId } }),
     ]);
 
   const noGrade = classes.filter((row) => row.gradeLevel === null);
@@ -150,6 +200,8 @@ export async function readFacts(tx: PrismaClient, schoolId: string): Promise<Int
     posts,
     postsWithoutSignature: withoutSignature,
     teachersWithoutPost: withoutPostTeachers,
+    breaks,
+    supervisionShifts,
   };
 }
 
