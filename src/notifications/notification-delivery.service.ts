@@ -20,7 +20,7 @@ import {
   type PlanSources,
   type PushTarget,
 } from './notification-plan';
-import { NEVER_EXTERNAL } from './notification-types';
+import { NEVER_PUSHED } from './notification-types';
 import type { NotificationKind } from './notifications.service';
 
 // What the plan decides stays importable from where it always was.
@@ -192,8 +192,8 @@ export class NotificationDeliveryService implements OnModuleInit, OnModuleDestro
 
   /** Whether an entry of this shape has anywhere to go beyond the in-app inbox. */
   wants(entry: { type: NotificationKind; email?: unknown }): boolean {
-    if (NEVER_EXTERNAL.has(entry.type)) return false;
-    return (Boolean(entry.email) && this.emailConfigured()) || this.pushEnabled();
+    const mail = Boolean(entry.email) && this.emailConfigured();
+    return NEVER_PUSHED.has(entry.type) ? mail : mail || this.pushEnabled();
   }
 
   /** PUSH_NOTIFICATIONS=expo, and a client to send with. */
@@ -285,9 +285,10 @@ export class NotificationDeliveryService implements OnModuleInit, OnModuleDestro
     const mail = this.emailConfigured();
     const push = this.pushEnabled();
     for (const entry of batch) {
-      if (entry.recipients.length === 0 || NEVER_EXTERNAL.has(entry.type)) continue;
+      if (entry.recipients.length === 0) continue;
       const email = entry.email && mail ? { subject: entry.email.subject, body: entry.email.body } : undefined;
-      if (!email && !push) continue;
+      // A type that is never pushed has only its mail to go by.
+      if (!email && (!push || NEVER_PUSHED.has(entry.type))) continue;
       const urgent = URGENT_PUSH_TYPES.has(entry.type);
       const key = `${urgent ? 'u' : 'o'}|${entry.schoolId}`;
       let row = open.get(key);

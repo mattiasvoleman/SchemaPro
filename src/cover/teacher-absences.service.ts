@@ -39,6 +39,12 @@ export const ABSENCE_WITHDRAW_TOO_LATE = 'ABSENCE_WITHDRAW_TOO_LATE';
 export const ABSENCE_END = 'ABSENCE_END';
 
 /** Half a year of school-local days, inclusive (the CHECK allows the DST hour on top). */
+/** The e-mail to the school's administrators when a teacher reports an absence (K6): that it happened, and nothing about it. */
+export const ABSENCE_REPORTED_MAIL_SUBJECT = 'A teacher has reported an absence / En lärare har anmält frånvaro';
+export const ABSENCE_REPORTED_MAIL_BODY =
+  'A teacher has reported an absence. Log in to Rastra timetable to see who it is and whether lessons need cover.\n\n' +
+  'En lärare har anmält frånvaro. Logga in i Rastra Schema för att se vem det är och om lektioner behöver täckas.';
+
 export const MAX_ABSENCE_DAYS = 186;
 /** How far back an admin may register an absence. */
 export const ADMIN_BACKDATE_DAYS = 30;
@@ -511,7 +517,10 @@ export class TeacherAbsencesService {
    * A self-report: the school's active admins are told who and when — the
    * teacher's name (their own row, read under their RLS), the period and
    * whether it is whole days, so the bell can say "Karin Ek, 12 okt" — and
-   * never why.
+   * never why. The e-mail (K6), when the school has one set up and the
+   * administrator has not switched it off, says only that a teacher has
+   * reported an absence: no name, no day, no reason, since a mail is read
+   * on any screen. It is never pushed (NEVER_PUSHED).
    */
   private async tellAdmins(user: AuthenticatedUser, row: AbsenceRow): Promise<void> {
     const schoolId = requireSchoolId(user);
@@ -531,6 +540,7 @@ export class TeacherAbsencesService {
             endsAt: row.endsAt.toISOString(),
             wholeDays: row.wholeDays,
           },
+          email: { subject: ABSENCE_REPORTED_MAIL_SUBJECT, body: ABSENCE_REPORTED_MAIL_BODY },
         });
       })
       .catch(() => this.logger.warn(`Absence report notice failed [absence=${row.id}]`));

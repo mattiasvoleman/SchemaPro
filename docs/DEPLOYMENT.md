@@ -7882,3 +7882,18 @@ When the judge says a time breaks the stage's ramtid or the class's lunch, an ad
 
 - The function `app.master_lesson_exemption_ends()` has no `REVOKE ... FROM PUBLIC`, which nearly all of the schema's other trigger functions have: the next migration that touches `MasterLessons` adds it.
 - A school's students and participants read `exemptFrom` through the PostgREST door like every other column of the table; whether to revoke it by column or let it stand is a decision not taken.
+
+## 41. Leave and absence, what was missing ("Ledighet och anmälan", omgång 15, K6)
+
+K6 is made in parts, each its own release; this section grows with them.
+
+### 41.1 The mail about a teacher's absence report (`20270311090000`)
+
+A teacher who reports their own absence (`TeacherAbsencesService.tellAdmins`) has always written an inbox notice, `TEACHER_ABSENCE_REPORTED`, to the school's active administrators. It could not leave the inbox: a `CHECK` on `NotificationOptOuts` (`NotificationOptOuts_absence_report_is_never_a_type`, 20261013100000) kept an opt-out row for it from existing, and the gateway kept the type out of every list and out of the delivery (`NEVER_EXTERNAL`). It now can go as a **mail**, and never as a push:
+
+- **The mail says that a teacher has reported an absence, and nothing more**: no name, no day, no reason (`ABSENCE_REPORTED_MAIL_BODY`, bilingual like the other fixed letters). A mail is read on any screen; the notice in the inbox keeps who and when, behind the login, as before. Never why.
+- **It goes to the same administrators as the inbox notice, through the queue of §40**, and only where `RESEND_API_KEY` is set (production today: it is not, so nothing is sent and nothing is queued; §40.3).
+- **An administrator can switch it off** under their notification settings, like any other type (`TYPES_BY_ROLE.SCHOOL_ADMIN`, the label *Lärarfrånvaro* was already in both apps' lists): the opt-out is read by user when the row is planned. A teacher, a guardian and a pupil are not offered the switch (`NOTIFICATION_TYPE_NOT_OFFERED`).
+- **It is never pushed**: `NEVER_PUSHED` replaces `NEVER_EXTERNAL`, and `app.push_targets` still answers nothing for the type, so the database says the same behind the gateway.
+- **Deploy order.** Run the migration before the merge (§20.2). It drops one `CHECK` on a small table, taking `ACCESS EXCLUSIVE` on `NotificationOptOuts` with `NOWAIT` in a loop of 50 ms for 30 s (nothing is held between tries; after 30 s it stops with nothing changed and can be run again). The API before it works unchanged. The API after it, with the migration not run, cannot store an administrator's switch (a `CHECK` violation, 500) but sends nothing different; nothing else depends on it.
+- **Rolling back**: the gateway can be rolled back at any time. To put the `CHECK` back, delete any opt-out row for the type first: `DELETE FROM "NotificationOptOuts" WHERE "type" = 'TEACHER_ABSENCE_REPORTED';` and then `ALTER TABLE "NotificationOptOuts" ADD CONSTRAINT "NotificationOptOuts_absence_report_is_never_a_type" CHECK ("type" <> 'TEACHER_ABSENCE_REPORTED');`.

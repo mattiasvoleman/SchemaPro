@@ -5,7 +5,7 @@ import type { NotificationsService } from '../notifications/notifications.servic
 import type { RealtimeService } from '../realtime/realtime.service';
 import { CalendarLessonsService } from '../calendar/calendar-lessons.service';
 import { CoverService } from './cover.service';
-import { fieldsOf, periodOf, TeacherAbsencesService } from './teacher-absences.service';
+import { ABSENCE_REPORTED_MAIL_BODY, ABSENCE_REPORTED_MAIL_SUBJECT, fieldsOf, periodOf, TeacherAbsencesService } from './teacher-absences.service';
 
 const TZ = 'Europe/Stockholm';
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
@@ -169,8 +169,12 @@ describe('TeacherAbsencesService', () => {
           endsAt: '2026-10-14T22:00:00.000Z',
           wholeDays: true,
         },
+        // The mail (K6) says that a teacher reported an absence, never who, when or why.
+        email: { subject: ABSENCE_REPORTED_MAIL_SUBJECT, body: ABSENCE_REPORTED_MAIL_BODY },
       });
       expect(JSON.stringify(notifications.notifyUsers.mock.calls)).not.toContain(REASON);
+      const mail = `${ABSENCE_REPORTED_MAIL_SUBJECT} ${ABSENCE_REPORTED_MAIL_BODY}`;
+      expect(mail).not.toMatch(/Karin|Ek\b|okt|2026/);
     });
 
     it('an overlap is a 409 naming the other period — never its reason — under the person’s lock', async () => {

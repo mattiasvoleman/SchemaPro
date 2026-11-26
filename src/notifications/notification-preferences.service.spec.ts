@@ -104,7 +104,9 @@ describe('NotificationPreferencesService', () => {
     ['STUDENT', 'ABSENCE_UNREPORTED', NOTIFICATION_TYPE_NOT_OFFERED],
     ['GUARDIAN', 'ROOM_BOOKING_DECIDED', NOTIFICATION_TYPE_NOT_OFFERED],
     ['TEACHER', 'SCHEDULE_CHANGED', NOTIFICATION_TYPE_NOT_OFFERED],
-    ['SCHOOL_ADMIN', 'TEACHER_ABSENCE_REPORTED', NOTIFICATION_TYPE_NOT_OFFERED],
+    // A teacher's own report of an absence is offered to the school's administrators (the e-mail, K6), and to nobody else.
+    ['TEACHER', 'TEACHER_ABSENCE_REPORTED', NOTIFICATION_TYPE_NOT_OFFERED],
+    ['GUARDIAN', 'TEACHER_ABSENCE_REPORTED', NOTIFICATION_TYPE_NOT_OFFERED],
   ])('refuses a %s choosing %s with %s, writing nothing', async (role, type, code) => {
     const error = await service.put({ optOut: [type] }, as(role)).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(BadRequestException);
