@@ -1,4 +1,5 @@
 import { closingConstraints, toPlacement, type ConflictHit } from "@/lib/conflicts";
+import type { ExemptRule } from "@/lib/exemptions";
 import type { GradeSpan } from "@/lib/grade-span";
 import type { ProblemLookup } from "@/lib/api-error-text";
 import { problemSentence } from "@/lib/problem-codes";
@@ -95,6 +96,22 @@ function reasonOf(
     case "ROOM_LOCK":
       return { kind: hit.kind, values: null };
   }
+}
+
+/** A lesson that stands against a rule ON PURPOSE (Undantag med flit), and the rules. */
+export interface ExemptRow {
+  lesson: MasterLesson;
+  rules: readonly ExemptRule[];
+}
+
+/** The lessons with an exemption, in the week's order (day, then clock, then id): what the krocklistan says under "Undantag". */
+export function exemptRows(exemptions: ReadonlyMap<string, readonly ExemptRule[]>, lessonById: ReadonlyMap<string, MasterLesson>): ExemptRow[] {
+  const rows: ExemptRow[] = [];
+  for (const [id, rules] of exemptions) {
+    const lesson = lessonById.get(id);
+    if (lesson && rules.length > 0) rows.push({ lesson, rules });
+  }
+  return rows.sort((a, b) => a.lesson.dayOfWeek - b.lesson.dayOfWeek || a.lesson.startTime.localeCompare(b.lesson.startTime) || a.lesson.id.localeCompare(b.lesson.id));
 }
 
 /**

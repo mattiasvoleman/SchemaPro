@@ -57,6 +57,15 @@ describe("restorableInput", () => {
     expect(input.coTeacherId).toBe("t2");
   });
 
+  it("says the exemption of a lesson that had one (Undantag med flit), so that the undone delete is not refused as a new lesson on the time that breaks the rule", () => {
+    expect(restorableInput(lesson({ isLocked: true, exemptFrom: ["FRAME", "LUNCH"] })).exempt).toEqual(["FRAME", "LUNCH"]);
+  });
+
+  it("says nothing of an exemption for a lesson that has none: the input is what it was", () => {
+    expect("exempt" in restorableInput(lesson())).toBe(false);
+    expect("exempt" in restorableInput(lesson({ exemptFrom: [] }))).toBe(false);
+  });
+
   it("keeps the lock, so an undone delete does not free a pinned lesson", () => {
     const input = restorableInput(lesson({ isLocked: true }));
     expect(input.isLocked).toBe(true);

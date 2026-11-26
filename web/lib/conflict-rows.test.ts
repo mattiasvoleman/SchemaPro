@@ -7,7 +7,7 @@ import { detectConflicts } from "@/lib/conflicts";
 import type { AvailabilityConstraint } from "@/lib/types";
 import { problemSentence } from "@/lib/problem-codes";
 import type { MasterLesson } from "@/lib/types";
-import { conflictRows, reasonSentences, type ConflictNames } from "./conflict-rows";
+import { conflictRows, exemptRows, reasonSentences, type ConflictNames } from "./conflict-rows";
 
 const lesson = (id: string, overrides: Partial<MasterLesson>): MasterLesson => ({
   id,
@@ -173,6 +173,26 @@ describe("the rows of the krocklista", () => {
       names,
     );
     expect(rows.map((row) => [row.lesson.id, row.reasons.length])).toEqual([["a", 1]]);
+  });
+});
+
+describe("the rows of the krocklista's Undantag", () => {
+  it("are the lessons that have one, in the week's order: the day, then the clock, then the id; a lesson the page does not hold is no row", () => {
+    const early = lesson("b", { dayOfWeek: 2, startTime: "08:00:00" });
+    const sameTimeA = lesson("a", { dayOfWeek: 2, startTime: "09:00:00" });
+    const sameTimeC = lesson("c", { dayOfWeek: 2, startTime: "09:00:00" });
+    const monday = lesson("d", { dayOfWeek: 1, startTime: "15:00:00" });
+    const all = new Map([early, sameTimeA, sameTimeC, monday].map((entry) => [entry.id, entry]));
+    const exemptions = new Map<string, readonly ("FRAME" | "LUNCH")[]>([
+      ["c", ["LUNCH"]],
+      ["b", ["FRAME"]],
+      ["gone", ["FRAME"]],
+      ["a", ["FRAME", "LUNCH"]],
+      ["d", ["FRAME"]],
+      ["empty", []],
+    ]);
+    expect(exemptRows(exemptions, all).map((row) => row.lesson.id)).toEqual(["d", "b", "a", "c"]);
+    expect(exemptRows(exemptions, all).find((row) => row.lesson.id === "a")!.rules).toEqual(["FRAME", "LUNCH"]);
   });
 });
 

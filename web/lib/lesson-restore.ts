@@ -44,5 +44,8 @@ export function restorableInput(lesson: MasterLesson): CreateMasterLessonInput {
     endDate: lesson.endDate,
     extraGroupIds: lesson.extraGroupIds,
     studentIds: lesson.studentIds,
+    // Undantag med flit: a lesson put back where an exemption let it stand is refused as any new place is (a create is judged against every
+    // rule), unless it says it again. Said only on a lesson that has one: every other input is what it was.
+    ...(lesson.exemptFrom && lesson.exemptFrom.length > 0 ? { exempt: lesson.exemptFrom } : {}),
   };
 }
