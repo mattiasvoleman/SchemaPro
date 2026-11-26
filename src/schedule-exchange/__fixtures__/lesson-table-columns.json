@@ -178,6 +178,12 @@
       "sv": "Låst",
       "en": "Locked",
       "aliases": []
+    },
+    {
+      "key": "exempt",
+      "sv": "Undantag",
+      "en": "Exemption",
+      "aliases": []
     }
   ]
 }

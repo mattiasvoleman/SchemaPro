@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import {
   useMutation,
   useQuery,
@@ -1130,17 +1131,55 @@ export interface MasterLessonResponse {
   isLocked: boolean;
 }
 
+/**
+ * What a write of one lesson leaves to read again: the calendar's lists, as before. The year's own list is the lesson cache's
+ * (lib/master-lesson-cache.ts), which patches it with what the gateway answers and says whether it needs a read besides; a
+ * cache that did not come leaves the read to this.
+ */
 function useInvalidateSchedule() {
   const queryClient = useQueryClient();
-  return () => {
-    void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });
+  return (year: "read" | "keep" = "read") => {
+    void queryClient.invalidateQueries({
+      queryKey: ["masterLessons"],
+      ...(year === "keep" ? { refetchType: "none" as const } : {}),
+    });
     void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
     void queryClient.invalidateQueries({ queryKey: ["teacherLessons"] });
   };
 }
 
-export function useUpdateMasterLesson() {
+/**
+ * What patches the year's lists around a write, in a chunk of its own: the 43 routes that share this module would each carry
+ * it for the one page that writes lessons (the timetable and its bulk bar). The page fetches it as it opens, so the first drop
+ * finds it there. A chunk that does not come (a dropped connection) must not stop a write: it is left out, and the write is
+ * followed by a read of the year, as it was before the cache.
+ */
+const lessonCache = () => import("@/lib/master-lesson-cache");
+async function withLessonCache<T>(use: (cache: Awaited<ReturnType<typeof lessonCache>>) => T): Promise<T | undefined> {
+  try {
+    return use(await lessonCache());
+  } catch {
+    return undefined;
+  }
+}
+
+/** The three callbacks every write of a lesson hands to its mutation. */
+function useLessonWrite(kind: "update" | "create" | "delete") {
+  const queryClient = useQueryClient();
   const invalidate = useInvalidateSchedule();
+  useEffect(() => {
+    void withLessonCache(() => 0);
+  }, []);
+  return {
+    onMutate: (input: unknown) => withLessonCache((cache) => cache.began(queryClient, kind, input)),
+    onError: (_error: unknown, _input: unknown, context: unknown) =>
+      withLessonCache((cache) => cache.refused(queryClient, context)),
+    onSuccess: async (result: unknown, input: unknown, context: unknown) =>
+      invalidate((await withLessonCache((cache) => cache.answered(queryClient, kind, result, input, context))) ?? "read"),
+  };
+}
+
+export function useUpdateMasterLesson() {
   return useMutation({
     mutationFn: ({ id, ...body }: UpdateMasterLessonInput) =>
       // removedCalendarLessons: narrowing a lesson's weeks or its date window
@@ -1158,12 +1197,13 @@ export function useUpdateMasterLesson() {
         `/api/v1/master-lessons/${id}`,
         body,
       ),
-    onSuccess: invalidate,
+    // The card moves when the write is asked for, and not when it has been answered and
+    // the year read again. Refused, it goes back.
+    ...useLessonWrite("update"),
   });
 }
 
 export function useCreateMasterLesson() {
-  const invalidate = useInvalidateSchedule();
   return useMutation({
     mutationFn: (body: CreateMasterLessonInput) =>
       // `warnings`: the ämnesfördelning the new lesson breaks, if any — a
@@ -1172,18 +1212,18 @@ export function useCreateMasterLesson() {
         "/api/v1/master-lessons",
         body,
       ),
-    onSuccess: invalidate,
+    // The lesson is in the grid when it is answered, and not after the year is read.
+    ...useLessonWrite("create"),
   });
 }
 
 export function useDeleteMasterLesson() {
-  const invalidate = useInvalidateSchedule();
   return useMutation({
     mutationFn: (id: string) =>
       api.delete<{ id: string; removedCalendarLessons: number }>(
         `/api/v1/master-lessons/${id}`,
       ),
-    onSuccess: invalidate,
+    ...useLessonWrite("delete"),
   });
 }
 

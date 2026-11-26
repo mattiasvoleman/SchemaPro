@@ -15,10 +15,9 @@
 import { useLocale, useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { conflictRows, exemptRows, type ConflictNames, type ConflictRules } from "@/lib/conflict-rows";
+import { conflictRows, exemptRows, reasonSentences, type ConflictNames, type ConflictRules } from "@/lib/conflict-rows";
 import type { ExemptRule } from "@/lib/exemptions";
 import type { ConflictHit } from "@/lib/conflicts";
-import { problemSentence } from "@/lib/problem-codes";
 import type { MasterLesson } from "@/lib/types";
 
 export interface ConflictListProps extends ConflictNames {
@@ -85,9 +84,9 @@ export function ConflictList({ open, rules, onOpenChange, conflictMap, exemption
                   ) : null}
                 </div>
                 <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-destructive">
-                  {reasons.map((reason, index) => (
-                    <li key={`${reason.kind}-${index}`} className="break-words">
-                      {reason.values === null ? t("conflictRoomLock") : (problemSentence("MASTER_LESSON_REFUSED", reason.values, tCommon) ?? "")}
+                  {reasonSentences(reasons, t("conflictRoomLock"), tCommon).map((sentence, index) => (
+                    <li key={`${index}-${sentence}`} className="break-words">
+                      {sentence}
                     </li>
                   ))}
                 </ul>

@@ -2155,7 +2155,7 @@ describe('OptimizationProxyService', () => {
     });
 
     /** The engine's refusal of a field its models do not know. */
-    const extraForbidden = (loc: string[]) => {
+    const extraForbidden = (loc: (string | number)[]) => {
       const refused = new AxiosError('boom');
       refused.response = {
         status: 422,
@@ -2224,6 +2224,39 @@ describe('OptimizationProxyService', () => {
       http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'placements'])));
 
       const error = await callWith({}).catch((thrown: unknown) => thrown);
+
+      expect((error as HttpException).getStatus()).toBe(422);
+      expect(http.post).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends a request again without `exemptFromLunch` to an engine older than Undantag med flit, and the rest of it as it was', async () => {
+      // The key only releases a refusal, so the week is laid without it, or refused by the engine by name as before the exemption.
+      http.post
+        .mockReturnValueOnce(throwError(() => extraForbidden(['body', 'fixedLessons', 1, 'exemptFromLunch'])))
+        .mockReturnValueOnce(of({ data: { status: 'OPTIMAL', lessons: [] } }));
+
+      await expect(
+        callWith({ fixedLessons: [{ id: 'a' }, { id: 'b', exemptFromLunch: true }], rules: { lunchMinutes: 30 } }),
+      ).resolves.toEqual({ status: 'OPTIMAL', lessons: [] });
+
+      expect(http.post).toHaveBeenCalledTimes(2);
+      expect((http.post.mock.calls[0][1] as { fixedLessons: object[] }).fixedLessons[1]).toHaveProperty('exemptFromLunch', true);
+      expect(http.post.mock.calls[1][1]).toEqual({ fixedLessons: [{ id: 'a' }, { id: 'b' }], rules: { lunchMinutes: 30 } });
+    });
+
+    it('leaves a refusal of `exemptFromLunch` on a request that carried none the validation error it is', async () => {
+      http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'fixedLessons', 0, 'exemptFromLunch'])));
+
+      const error = await callWith({ fixedLessons: [{ id: 'a' }] }).catch((thrown: unknown) => thrown);
+
+      expect((error as HttpException).getStatus()).toBe(422);
+      expect(http.post).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves a refusal of another field of a lock the validation error it is, though the request carries an exemption', async () => {
+      http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'fixedLessons', 0, 'studentCount'])));
+
+      const error = await callWith({ fixedLessons: [{ id: 'a', exemptFromLunch: true }] }).catch((thrown: unknown) => thrown);
 
       expect((error as HttpException).getStatus()).toBe(422);
       expect(http.post).toHaveBeenCalledTimes(1);

@@ -507,6 +507,46 @@ describe("TimetableGrid overlap lanes", () => {
     expect(algebra.style.width).toBe("calc(100% - 6px)");
   });
 
+  it("has a place for a mark in the card's corner, as words, and draws nothing where there is none", () => {
+    render(
+      <TimetableGrid
+        lessons={[
+          makeLesson({ id: "a", title: "Algebra" }),
+          makeLesson({ id: "b", title: "Biologi", startMinutes: 660, endMinutes: 720, mark: "Undantag", markLabel: "ramtiden" }),
+        ]}
+      />,
+    );
+    const algebra = screen.getByRole("button", { name: /Algebra/ });
+    const biologi = screen.getByRole("button", { name: /Biologi/ });
+    expect(algebra.querySelector("[data-lesson-mark]")).toBeNull();
+    const mark = biologi.querySelector("[data-lesson-mark]");
+    expect(mark).toHaveTextContent("Undantag");
+    // Not by colour alone, and a screen reader is told what for.
+    expect(mark).toHaveAttribute("title", "ramtiden");
+    expect(biologi.textContent).toContain("Undantag ramtiden");
+    // The mark is among the badges: it takes no lane and no width.
+    expect(biologi.style.width).toBe(algebra.style.width);
+  });
+
+  it("tells a clash in words: the card's name says what it clashes with after what the lesson is, and its hover says it too", () => {
+    render(
+      <TimetableGrid
+        lessons={[
+          makeLesson({ id: "a", title: "Algebra", conflicted: true, conflictNote: "Läraren har Kemi 8B onsdag 14:10–15:10." }),
+          makeLesson({ id: "b", title: "Biologi", startMinutes: 660, endMinutes: 720, conflicted: true }),
+          makeLesson({ id: "c", title: "Chemi", startMinutes: 780, endMinutes: 840 }),
+        ]}
+      />,
+    );
+    const algebra = screen.getByRole("button", { name: /Algebra/ });
+    // A drawing tells a screen reader nothing: "clash" (the mock says the key) and the words, after the lesson.
+    expect(algebra.textContent).toMatch(/Algebra.*clash: Läraren har Kemi 8B onsdag 14:10–15:10\./);
+    expect(algebra).toHaveAttribute("title", expect.stringContaining("clash: Läraren har Kemi 8B"));
+    // The words are on their way, or there are none: it still says that it clashes.
+    expect(screen.getByRole("button", { name: /Biologi/ }).textContent).toMatch(/clash$/);
+    expect(screen.getByRole("button", { name: /Chemi/ }).textContent).not.toContain("clash");
+  });
+
   it("lets back-to-back lessons share a full-width lane", () => {
     render(
       <TimetableGrid

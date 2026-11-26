@@ -39,6 +39,7 @@ import {
 } from './publication-gates';
 import {
   clashFinding,
+  exemptionFinding,
   lessonFindings,
   blockSplitFinding,
   emptyHalfFinding,
@@ -856,6 +857,7 @@ export class PublicationsService {
         yearEnd: context.year.end,
       }),
       ...lessonFindings(context.lessons),
+      exemptionFinding(context.lessons),
       await unstaffedFinding(tx, context.year.id),
       await lunchFinding(tx, context.schoolId),
       await blockSplitFinding(tx, context.year.id, context.lessons),
