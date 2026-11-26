@@ -161,10 +161,8 @@ describe('a stretch a rule shuts', () => {
     expect(closedAt(worldOf({ constraints: [groupRow] }), 3, 840)).toEqual({ kind: 'CLOSED', code: 'AVAILABILITY', params: { resource: 'GROUP' } });
   });
 
-  it('is not the room: a closed room is a question of another room, not of a closed stretch', () => {
+  it('is not the room while another room can be had: a closed room is then a question of another room', () => {
     const roomRow = { resourceType: 'ROOM', userId: null, roomId: mover.roomId, studentGroupId: null, minGradeLevel: null, maxGradeLevel: null, dayOfWeek: 5, startMinutes: 840, endMinutes: 900 };
-    const without = at(probeStarts(worldOf({ constraints: [roomRow] }), subjectOf(worldOf(), mover), WINDOW), 5, 840);
-    expect(without.kind).not.toBe('CLOSED');
     const withRooms = worldOf({ constraints: [roomRow] }, ROOMS);
     const probe = at(probeStarts(withRooms, subjectOf(withRooms, mover), WINDOW), 5, 840);
     expect(probe.kind).toBe('CANDIDATE');
@@ -172,6 +170,21 @@ describe('a stretch a rule shuts', () => {
       expect(probe.roomChanged).toBe(true);
       expect(probe.rooms.get(mover.id)).not.toBe(mover.roomId);
     }
+  });
+
+  it('is the room when no other room fits and no lesson holds it: the weekly row on the room, named with the resource it closes', () => {
+    const roomRow = { resourceType: 'ROOM', userId: null, roomId: mover.roomId, studentGroupId: null, minGradeLevel: null, maxGradeLevel: null, dayOfWeek: 5, startMinutes: 840, endMinutes: 900 };
+    const world = worldOf({ constraints: [roomRow] });
+    expect(at(probeStarts(world, subjectOf(world, mover), WINDOW), 5, 840)).toEqual({ kind: 'CLOSED', code: 'AVAILABILITY', params: { resource: 'ROOM' } });
+  });
+
+  it('is the room when no other room fits and no lesson holds it: a room lent to another school, named OTHER_SCHOOL with the school', () => {
+    const hold = { resourceKind: 'ROOM' as const, resourceId: mover.roomId!, dayOfWeek: 5, startTime: '14:00', endTime: '15:00', schools: ['Norra skolan'], kind: 'ROOM_LENT' as const };
+    const world = worldOf({ holds: [hold] as never });
+    expect(at(probeStarts(world, subjectOf(world, mover), WINDOW), 5, 840)).toEqual({ kind: 'CLOSED', code: 'OTHER_SCHOOL', params: { schools: 'Norra skolan' } });
+    // Another room that fits gets the lesson out of it instead.
+    const withRooms = worldOf({ holds: [hold] as never }, ROOMS);
+    expect(at(probeStarts(withRooms, subjectOf(withRooms, mover), WINDOW), 5, 840).kind).toBe('CANDIDATE');
   });
 });
 

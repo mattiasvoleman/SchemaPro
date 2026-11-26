@@ -110,6 +110,18 @@ describe('the room chooser, against a brute force on the hourly school', () => {
     expect(roomChoicesOf(world, subject, 2, 720).find((choice) => choice.roomId === 'r3')).toMatchObject({ state: 'FREE' });
   });
 
+  it('does not call a room taken that the school lets several lessons share, and says it is shared: the judge counts the pupils', () => {
+    const lesson = base.data.lessons.find((entry) => entry.dayOfWeek === 1)!;
+    const holder: SwapLesson = { ...lesson, id: 'holder', studentGroupId: 'c9', groupName: 'C9', teacherId: 'tx', roomId: 'r3', dayOfWeek: 4, startMinutes: 600, endMinutes: 660 };
+    const data = { ...base.data, lessons: [lesson, holder] };
+    const rows = (shared: string[]) => {
+      const world: PossibleWorld = { context: new SwapContext(data, { sharedRooms: new Set(shared) }), rooms: ROOMS, wishes: [], needsOf: () => NEEDS };
+      return roomChoicesOf(world, subjectOf(world, lesson), 4, 600).find((choice) => choice.roomId === 'r3')!;
+    };
+    expect(rows([])).toMatchObject({ state: 'BUSY', shared: false, occupants: 1 });
+    expect(rows(['r3'])).toMatchObject({ state: 'FREE', shared: true, occupants: 0 });
+  });
+
   it('names the other school that holds a room, and does not say a hold is a lesson', () => {
     const lesson = base.data.lessons[0]!;
     const hold = { resourceKind: 'ROOM' as const, resourceId: 'r2', dayOfWeek: 4, startTime: '09:00', endTime: '10:00', schools: ['Södra skolan'], kind: 'ROOM_LENT' as const };

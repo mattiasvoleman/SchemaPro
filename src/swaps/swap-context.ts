@@ -3,6 +3,7 @@ import { hasDistributionRule } from '../common/subject-distribution';
 import { pupilCohortsOf, lockMarginOf } from '../optimization/pupil-cohorts';
 import { gradeSpanOf } from '../optimization/room-eligibility';
 import type { OtherSchoolHold } from '../optimization/other-school-holds';
+import { meetOnlyInClosedWeeks, type ClosedWeeks } from '../calendar/school-weeks';
 import { boardCodeOf, indexSittings, type BoardFacts } from './board-rules';
 import type { GapConstraint, GapSpan } from './swap-gaps';
 import { buildSoftMeasure, type SoftMeasure } from './swap-soft';
@@ -70,6 +71,10 @@ export class SwapContext {
   private readonly gapConstraints: GapConstraint[];
   /** The lessons the school plans that stand nowhere yet (the constructor's `unplaced`). */
   private readonly unplacedIds: ReadonlySet<string>;
+  /** The weeks of the läsår in which no lesson is written (jullov): two lessons that meet only in them are no double booking. */
+  private readonly closedWeeks: ClosedWeeks | null;
+  /** The rooms the school lets hold several lessons at once (Placeringsregel 3): whether one more fits is the judge's count, not the prune's. */
+  private readonly sharedRooms: ReadonlySet<string>;
   /**
    * group -> the groups that hold a pupil of it, or null at a school with a
    * replacing group. A class and a teaching group cut across it (språkval,
@@ -89,8 +94,24 @@ export class SwapContext {
    */
   constructor(
     readonly data: SwapData,
-    options: { unplaced?: readonly SwapLesson[] } = {},
+    options: {
+      unplaced?: readonly SwapLesson[];
+      /**
+       * The läsår's closed weeks (school-weeks.ts readClosedWeeks), for the reader that must say what the judge says: findConflicts
+       * does not count two lessons that meet only in a week no one sits (a jullov) as a double booking. Absent: every shared week
+       * counts, as it did (the swap search keeps its prune a subset of the judge's, which is looser here and never stricter).
+       */
+      closedWeeks?: ClosedWeeks | null;
+      /**
+       * The rooms that may hold several lessons together while their pupils fit the seats (shared-rooms.ts, only when the school
+       * holds the rule on). findConflicts counts the pupils and does not call such a room taken, so the prune must not hold a lesson
+       * in one against another lesson of the room: the judge is asked, and it counts.
+       */
+      sharedRooms?: ReadonlySet<string>;
+    } = {},
   ) {
+    this.closedWeeks = options.closedWeeks ?? null;
+    this.sharedRooms = options.sharedRooms ?? new Set();
     const unplaced = options.unplaced ?? [];
     const everyLesson = [...data.lessons, ...unplaced];
     this.lessonById = new Map(everyLesson.map((lesson) => [lesson.id, lesson]));
@@ -307,14 +328,19 @@ export class SwapContext {
       return firstOnly;
     };
     const day = to.dayOfWeek;
-    const meets = (other: SwapLesson) => !vacating.has(other.id) && other.id !== lesson.id && weeksMeet(lesson, other);
+    const closed = this.closedWeeks;
+    const meets = (other: SwapLesson) =>
+      !vacating.has(other.id) &&
+      other.id !== lesson.id &&
+      weeksMeet(lesson, other) &&
+      !(closed !== null && meetOnlyInClosedWeeks(lesson, other, closed, day));
     for (const teacherId of [lesson.teacherId, lesson.coTeacherId]) {
       if (teacherId === null) continue;
       for (const other of this.byTeacherDay.get(`${teacherId}|${day}`) ?? []) {
         if (meets(other) && overlaps(to.startMinutes, to.endMinutes, other.startMinutes, other.endMinutes) && hit(other)) return way;
       }
     }
-    if (lesson.roomId !== null) {
+    if (lesson.roomId !== null && !this.sharedRooms.has(lesson.roomId)) {
       for (const other of this.byRoomDay.get(`${lesson.roomId}|${day}`) ?? []) {
         if (meets(other) && overlaps(to.startMinutes, to.endMinutes, other.startMinutes, other.endMinutes) && hit(other)) return way;
       }
@@ -379,6 +405,11 @@ export class SwapContext {
       boardCodeOf(this.board, groups, to, { startDate: lesson.startDate, endDate: lesson.endDate }) ??
       (this.holdsAt(lesson, to).length > 0 ? 'OTHER_SCHOOL' : null)
     );
+  }
+
+  /** A room the school lets several lessons share while their pupils fit: the prune does not hold a lesson in it, the judge counts. */
+  isSharedRoom(roomId: string): boolean {
+    return this.sharedRooms.has(roomId);
   }
 
   /** The other schools, by name, whose hold on a lesson's teachers or room a landing sits inside (E3 names the closed stretch with them). */
