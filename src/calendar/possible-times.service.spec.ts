@@ -2,7 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { fakeTx, makeWorld, rowOf, YEAR, type World } from '../swaps/__fixtures__/swap-world';
 import { readSwapData, type SwapData } from '../swaps/swap-snapshot';
 import type { PossibleTimesDto } from './dto/possible-times.dto';
-import { judgeLessons, type JudgeItem, type LessonVerdict } from './lesson-judge';
+import { judgeLessons, type JudgeItem, type LessonRefusal, type LessonVerdict } from './lesson-judge';
 import { PossibleTimesService } from './possible-times.service';
 
 jest.mock('../swaps/swap-snapshot', () => ({ readSwapData: jest.fn() }));
@@ -13,6 +13,9 @@ const world: World = makeWorld({ seed: 11 });
 const mover = world.data.lessons.find((lesson) => lesson.dayOfWeek === 1 && lesson.startMinutes === 480) ?? world.data.lessons[0]!;
 
 type Fake = ReturnType<typeof fakeTx>;
+
+/** A verdict as the judge gives it: the exemption fields (E1b) are not what these tests are about, and never set. */
+const verdict = (ok: boolean, refusals: LessonRefusal[] = []): LessonVerdict => ({ ok, refusals, exempted: [], exemptable: false });
 
 function txFor(over: { lesson?: Record<string, unknown> | null; wishes?: unknown[]; rooms?: unknown[] } = {}): Fake & Record<string, unknown> {
   const base = fakeTx(world);
@@ -41,7 +44,7 @@ function service(tx: unknown, judge?: (items: readonly JudgeItem[]) => LessonVer
   (readSwapData as jest.Mock).mockResolvedValue(data);
   (judgeLessons as jest.Mock).mockReset();
   (judgeLessons as jest.Mock).mockImplementation(async (_tx: unknown, _masters: unknown, _world: unknown, items: readonly JudgeItem[]) =>
-    (judge ?? ((all) => all.map(() => ({ ok: true, refusals: [] }))))(items),
+    (judge ?? ((all) => all.map(() => verdict(true))))(items),
   );
   const prisma = { withRls: (_user: unknown, run: (tx: unknown) => unknown) => run(tx) };
   // The clash rule is the judge's, and the judge is replaced here: the masters are never asked.
@@ -104,7 +107,7 @@ describe('possible times: what the service reads, asks and says', () => {
   });
 
   it('never calls a time free that the judge refused, and says how many it refused', async () => {
-    const svc = service(txFor(), (items) => items.map((item) => (item.candidate.dayOfWeek === 5 ? { ok: false, refusals: [{ reason: 'ROOM' as const, params: {} }] } : { ok: true, refusals: [] })));
+    const svc = service(txFor(), (items) => items.map((item) => (item.candidate.dayOfWeek === 5 ? verdict(false, [{ reason: 'ROOM', params: {} }]) : verdict(true))));
     const answer = await ask(svc, { lessonId: mover.id, limit: 40 });
     expect(answer.options.every((option) => option.dayOfWeek !== 5)).toBe(true);
     const friday = answer.days.find((entry) => entry.dayOfWeek === 5)!.runs;
