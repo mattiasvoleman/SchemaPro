@@ -19,6 +19,7 @@ import {
   mapSubjectRows,
   classesToCsv,
   membershipsToCsv,
+  membersWithoutAddress,
   requirementsToCsv,
   roomTypesToCsv,
   studentsToCsv,
@@ -2261,6 +2262,25 @@ describe("export round trips", () => {
     );
 
     expect(exported.trimEnd().split("\r\n").at(-1)).toBe("Alma;Berg;alma@s.se;;");
+  });
+
+  it("counts the memberships a pupil with no address leaves out of the file, in the listed groups and among the active", () => {
+    const groups = [{ id: "g-ma71", name: "Ma71" }];
+    const people = [
+      { id: "st-1", email: "alma@s.se" },
+      { id: "st-2", email: null },
+      { id: "st-3", email: null, isActive: false },
+    ];
+    const memberships = [
+      { studentGroupId: "g-ma71", studentId: "st-1" },
+      { studentGroupId: "g-ma71", studentId: "st-2" },
+      { studentGroupId: "g-ma71", studentId: "st-3" },
+      { studentGroupId: "g-en74", studentId: "st-2" },
+    ];
+
+    expect(membersWithoutAddress(groups, people, memberships)).toBe(1);
+    // And the file has exactly the rest.
+    expect(parseCsv(membershipsToCsv(groups, people, memberships)).rows).toEqual([["Ma71", "alma@s.se"]]);
   });
 
   it("memberships survive as one row per membership", () => {

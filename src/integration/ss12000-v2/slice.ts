@@ -51,7 +51,8 @@ export interface UserRow {
   role: 'SCHOOL_ADMIN' | 'TEACHER' | 'STUDENT' | 'GUARDIAN';
   firstName: string;
   lastName: string;
-  email: string;
+  /** NULL for a pupil or a guardian the school added without an address (Personer utan e-postadress): no `emails` entry is made for them. */
+  email: string | null;
   ss12000Id: string | null;
   studentGroupId: string | null;
   createdAt: Date;

@@ -69,7 +69,11 @@ export function CsvExportButton({ exports }: { exports: CsvExport[] }) {
       if (typeof built !== "string") {
         toast.info(t(`heldOut.${built.unit ?? "people"}`, { count: built.heldOut }), { duration: 10000 });
         // What the file cannot name: a link where the pupil or the guardian has no address (Personer utan e-postadress).
-        if (built.withoutAddress) toast.info(t("withoutAddressLinks", { count: built.withoutAddress }), { duration: 10000 });
+        if (built.withoutAddress) {
+          toast.info(t(built.withoutAddressUnit === "members" ? "withoutAddressMembers" : "withoutAddressLinks", { count: built.withoutAddress }), {
+            duration: 10000,
+          });
+        }
       }
     } finally {
       running.current = false;

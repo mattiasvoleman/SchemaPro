@@ -35,6 +35,8 @@ export interface HeldOutFile {
    * counted apart from the protected. Absent from a gateway older than the web.
    */
   withoutAddress?: number;
+  /** What `withoutAddress` counts: links of a guardians file (the default), or the members of a teaching groups file. */
+  withoutAddressUnit?: "links" | "members";
 }
 
 /** The school's marked persons, read now. */

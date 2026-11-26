@@ -59,6 +59,9 @@ export const ADDRESS_OF_AN_INVITED_PERSON = 'ADDRESS_OF_AN_INVITED_PERSON';
  * either until the hour turns or the limit is raised. 429, with a code the web pauses a mass invitation on.
  */
 export const INVITATION_RATE_LIMITED = 'INVITATION_RATE_LIMITED';
+
+/** The address of a person was corrected while the invitation to the old one was on its way: the login is not put on the row. 409. */
+export const ADDRESS_CHANGED_WHILE_INVITING = 'ADDRESS_CHANGED_WHILE_INVITING';
 /** A last working day (`leftOn`) names a person who is, or stays, active. */
 export const USER_LEFT_ON_NEEDS_INACTIVE = 'USER_LEFT_ON_NEEDS_INACTIVE';
 /** A last working day after the school's today. */
@@ -439,7 +442,7 @@ export class UsersService {
       throw error;
     }
 
-    const adopted = await this.adoptIdentity(created.id, invite.authId, user);
+    const adopted = await this.adoptIdentity(created.id, invite.authId, user, email);
     if (adopted.sharedLogin) await this.supabaseAdmin.markSeveralSchools(invite.authId);
     return adopted.row;
   }
@@ -531,13 +534,13 @@ export class UsersService {
         if (!change.confirmed) {
           await this.resendInvitation(target.email);
         }
-        await this.adoptIdentity(id, login, user);
+        await this.adoptIdentity(id, login, user, target.email);
         return { id, emailSent: !change.confirmed, loginMoved: change.outcome === 'changed', sharedLogin: false };
       }
     }
 
     const invite = await this.mintIdentity(target.email, target.id);
-    const adopted = await this.adoptIdentity(id, invite.authId, user);
+    const adopted = await this.adoptIdentity(id, invite.authId, user, target.email);
     if (adopted.sharedLogin) await this.supabaseAdmin.markSeveralSchools(invite.authId);
 
     // The login the row left: the row's own when another login had the
@@ -1317,15 +1320,28 @@ export class UsersService {
    * other (trigger Users_a_login_joins_another_school_by_invitation, 23505)
    * unless the transaction names the row in app.login_join, which is set
    * here. `sharedLogin` says whether the login is another row's too.
+   *
+   * `address` is the one the invitation went to. The row is locked and its address read before the login is put on it: the address of
+   * a person who was never invited can be corrected (Personer utan e-postadress), and a correction made while the invitation was on
+   * its way would otherwise leave the row with a login minted for the address it replaced, and the mail with whoever owns that one.
+   * The correction takes the same lock, so one of them is wholly before the other: the correction after the login is a 409 for an
+   * invited person, and the login after the correction is the 409 here.
    */
   private async adoptIdentity(
     id: string,
     authId: string,
     user: AuthenticatedUser,
+    address: string | null = null,
   ): Promise<{ row: User; sharedLogin: boolean }> {
     try {
       return await this.prisma.withRls(user, async (tx) => {
         await tx.$executeRaw`SELECT set_config('app.login_join', ${id}, true)`;
+        if (address !== null) {
+          const [now] = await tx.$queryRaw<Array<{ email: string | null }>>`
+            SELECT "email" FROM "Users" WHERE "id" = ${id}::uuid FOR NO KEY UPDATE`;
+          // No row is the update's 404 below; a row with another address is the correction that overtook this invitation.
+          if (now !== undefined && (now.email ?? '').toLowerCase() !== address.toLowerCase()) throw addressChangedWhileInviting();
+        }
         const row = await tx.user.update({
           where: { id },
           data: { authId, invitedAt: new Date() },
@@ -1516,6 +1532,14 @@ function hasNoAddress(): ConflictException {
     message:
       'Personen har ingen e-postadress, så det finns ingenstans att skicka inbjudan. Lägg till en adress på personen först. Personen syns i listor, närvaro och schema utan den.',
     code: PERSON_HAS_NO_ADDRESS,
+  });
+}
+
+function addressChangedWhileInviting(): ConflictException {
+  return new ConflictException({
+    message:
+      'Personens adress ändrades medan inbjudan skickades, så inloggningen sattes inte på personen. Skicka inbjudan igen, till den nya adressen.',
+    code: ADDRESS_CHANGED_WHILE_INVITING,
   });
 }
 

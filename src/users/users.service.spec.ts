@@ -453,6 +453,34 @@ describe('UsersService', () => {
       expect(args.data.invitedAt).toBeInstanceOf(Date);
     });
 
+    it('does not put a login on a row whose address was corrected while the invitation was on its way', async () => {
+      // The invitation went to anna@school.se; before the login was written the address was changed, so the login is for an address
+      // the row no longer has (the mail is with whoever owns the old one). Nothing is written, and the retry invites the new one.
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      arrangeUser(target());
+      tx.$queryRaw.mockImplementation((...call: unknown[]) =>
+        Promise.resolve(rawSql(call).includes('FOR NO KEY UPDATE') ? [{ email: 'anna.rattad@school.se' }] : []),
+      );
+
+      const refusal = await service.invite(USER_ID, testUser()).catch((error: unknown) => error);
+
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({ code: 'ADDRESS_CHANGED_WHILE_INVITING' });
+      expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna@school.se', USER_ID);
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
+    it('puts the login on the row when its address is the one the invitation went to, in any case', async () => {
+      arrangeUser(target());
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+      tx.$queryRaw.mockImplementation((...call: unknown[]) =>
+        Promise.resolve(rawSql(call).includes('FOR NO KEY UPDATE') ? [{ email: 'Anna@School.se' }] : [{ held: false }]),
+      );
+
+      await expect(service.invite(USER_ID, testUser())).resolves.toMatchObject({ id: USER_ID, emailSent: true });
+      expect(tx.user.update).toHaveBeenCalledTimes(1);
+    });
+
     it('reports honestly when the address already had an identity', async () => {
       // No email leaves GoTrue in this case; claiming one did would send the
       // admin waiting for a message that is never coming.

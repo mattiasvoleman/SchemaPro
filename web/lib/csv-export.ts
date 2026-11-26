@@ -554,6 +554,21 @@ export function studentsToCsv(
 }
 
 /**
+ * How many memberships of the listed groups membershipsToCsv leaves out because the pupil has no address (Personer utan e-postadress):
+ * the file names a pupil by address, and a pupil with none is in the group and not in the file. Said once the file is handed over,
+ * so that a file that looks whole is not taken for one.
+ */
+export function membersWithoutAddress(
+  groups: { id: string }[],
+  people: { id: string; email: string | null; isActive?: boolean }[],
+  memberships: { studentGroupId: string; studentId: string }[],
+): number {
+  const inGroups = new Set(groups.map((group) => group.id));
+  const none = new Set(people.filter((person) => isActivePerson(person) && person.email === null).map((person) => person.id));
+  return memberships.filter((row) => inGroups.has(row.studentGroupId) && none.has(row.studentId)).length;
+}
+
+/**
  * One row per membership — the same shape the import reads.
  *
  * A membership whose group or student is not in the loaded lists is skipped
