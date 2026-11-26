@@ -155,10 +155,10 @@ export class SupabaseAdminService {
       data: { [INVITATION_NONCE]: nonce },
     });
     if (error || !data.user) {
-      // The project's mail limit is spent: GoTrue made the user and could not send the mail (429). Looking the address up would find
-      // that user and answer "already registered, no mail needed", and the person would be marked invited and told nothing. It is
-      // the refusal, said as one, and the person is not invited. (The user GoTrue made stays, unconfirmed: the next invitation of the
-      // address is the one GoTrue sends again.)
+      // The project's mail limit is spent (429). GoTrue makes no user for an address it refuses (read against v2.195.0), so a first
+      // invitation has nothing to look up; but an address whose user already exists (an earlier invitation that went out and whose row was
+      // never marked, or a person at another school) would be found, and answered "already registered, no mail needed": the person
+      // marked invited without a mail from this call. It is the refusal, said as one, and the person is not invited.
       if (error && isMailRateLimited(error)) {
         throw new InvitationRefused(`Supabase invite failed: ${error.message}`, 'RATE_LIMITED', error.status, error.code);
       }

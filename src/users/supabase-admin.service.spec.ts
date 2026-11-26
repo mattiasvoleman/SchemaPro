@@ -246,13 +246,14 @@ describe('SupabaseAdminService', () => {
       expect(call(0).url.searchParams.get('redirect_to')).toBeNull();
     });
 
-    // Första veckan utan operatören: the project's mail limit is spent. GoTrue MAKES the user and cannot send the mail (429), so the lookup
-    // below would find that user and answer "already registered, nothing needed": the person was marked invited, told nothing, and the
-    // administrator told they had an account. It is the refusal now, and the lookup is not made.
-    it('refuses with the mail limit as a refusal of its own, and does not look the address up: the user GoTrue made is no account the person has', async () => {
+    // Första veckan utan operatören: the project's mail limit is spent (429). GoTrue makes no user for the address it refuses, but a user
+    // with the address can exist (an earlier invitation that went out and whose row was never marked), and the lookup below would find it
+    // and answer "already registered, nothing needed": the person marked invited, told nothing, and the administrator told they had an
+    // account. It is the refusal now, and the lookup is not made.
+    it('refuses with the mail limit as a refusal of its own, and does not look the address up: the user that exists is no mail the person has had', async () => {
       fetchMock
         .mockResolvedValueOnce(refusal('over_email_send_rate_limit', 'email rate limit exceeded', 429))
-        // What a lookup would have found: the user the refused invitation created.
+        // What a lookup would have found: a user that already has the address.
         .mockResolvedValueOnce(jsonResponse({ users: [{ id: AUTH_ID, email: EMAIL }], aud: 'authenticated' }));
 
       const error = await makeService().inviteUser(EMAIL, USER_ID).catch((e: unknown) => e);

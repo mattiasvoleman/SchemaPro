@@ -598,11 +598,14 @@ own sender.
   invited and sends only those. The gateway skips a person who is invited already (`alreadyInvited`) unless the request says `resend`, and one
   who another request is inviting that moment, so **nobody gets two invitations**, whether the run stopped for the limit, a network error, a
   Stop or a closed tab. A person with no address (§7.2) is counted apart (`noAddress`).
-- **When the project's mail limit is spent**, GoTrue makes the user and cannot send the mail (429). Until now the API looked the address up,
-  found that user and answered "already registered, no mail needed", marked the person invited and told the administrator they had an
-  account. It is now the refusal (`INVITATION_RATE_LIMITED`, 429) and the person is **not** marked invited; the mass invitation stops at the
-  first (`stopped`, `notTried`) and the dialog says how many are left. A person whose first invitation was refused has an unconfirmed user at
-  Supabase; the next invitation of the address is the one GoTrue sends again.
+- **When the project's mail limit is spent**, GoTrue refuses the invitation (429 `over_email_send_rate_limit`) **and makes no user** (read
+  against GoTrue v2.195.0: the refused address has no row in `auth.users` afterwards, and the refused invitation of an address never invited
+  before leaves nothing behind to look up). Until now the API read every refusal as "already registered, no mail needed" **when a user with
+  the address existed**, which is the case for an address whose earlier invitation went out and whose row was never marked, or an address a
+  person at another school holds: the person was marked invited without a mail from this call. A first invitation was a 503 ("Could not
+  send the invitation email") and no more. It is now the refusal (`INVITATION_RATE_LIMITED`, 429) and the person is **not** marked
+  invited; the mass invitation stops at the first (`stopped`, `notTried`) and the dialog says how many are left, in place of an error for
+  each person. The next invitation of the address is a first one.
 - **Rate limit per login, not per address.** `POST /api/v1/users/invitations` is limited to 30 parts a minute per verified login, with a
   high ceiling per address for the route (1 200): a school is one NAT address, and the web calls the API from every browser, so the earlier 5 a
   minute per address stopped a run at its sixth part and took every other administrator of the school with it.
