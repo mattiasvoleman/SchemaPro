@@ -254,6 +254,7 @@ def test_phase_1a_s_model_is_the_model_it_was_with_the_setting_on_and_off() -> N
     """The nightly gate measures phase 1a: its model must not move by a byte."""
     request = _week()
     seen: dict[bool, list[tuple[bool, bool]]] = {}
+    satisfaction: dict[bool, str] = {}
     for cliques in (True, False):
         calls: list[tuple[bool, bool]] = []
         solver = SchedulerSolver(_settings(cliques=cliques))
@@ -261,7 +262,10 @@ def test_phase_1a_s_model_is_the_model_it_was_with_the_setting_on_and_off() -> N
 
         def build(self, req, *, by_cliques=False, **kwargs):  # noqa: ANN001, ANN003, ANN202
             calls.append((kwargs.get("include_objective", True), by_cliques))
-            return real(self, req, by_cliques=by_cliques, **kwargs)
+            built = real(self, req, by_cliques=by_cliques, **kwargs)
+            if not kwargs.get("include_objective", True):
+                satisfaction.setdefault(cliques, _hash(built[0]))  # phase 1a's model as solve() hands it to the search
+            return built
 
         SchedulerSolver._build_model = build  # type: ignore[method-assign]
         try:
@@ -272,9 +276,53 @@ def test_phase_1a_s_model_is_the_model_it_was_with_the_setting_on_and_off() -> N
 
     assert seen[True] == [(True, True), (False, False)], "the full model by cliques, the satisfaction model by pairs"
     assert seen[False] == [(True, False), (False, False)], "the setting off gives the pairs back"
-    clean_on, _, _ = _build(_week(), objective=False, by_cliques=False)
-    clean_again, _, _ = _build(_week(), objective=False, by_cliques=False)
-    assert _hash(clean_on) == _hash(clean_again)
+    assert satisfaction[True] == satisfaction[False], "phase 1a's model moved with the setting"
+
+
+def _builds_of_group_rows(request: OptimizeScheduleRequest, settings: Settings) -> list[bool]:
+    """`by_cliques` of every call that posts the groups' rows during one solve, in the order they were made."""
+    seen: list[bool] = []
+    real = SchedulerSolver._add_group_no_overlap
+
+    def spy(self, model, decisions, group_conflicts=None, *, by_cliques=False):  # noqa: ANN001, ANN202
+        seen.append(by_cliques)
+        return real(self, model, decisions, group_conflicts, by_cliques=by_cliques)
+
+    SchedulerSolver._add_group_no_overlap = spy  # type: ignore[method-assign]
+    try:
+        SchedulerSolver(settings).solve(request)
+    finally:
+        SchedulerSolver._add_group_no_overlap = real  # type: ignore[method-assign]
+    return seen
+
+
+def test_only_the_first_build_of_a_strict_solve_posts_cliques_whatever_the_week_ends_in() -> None:
+    """The explanation's, the probe's, the years' and Bästa möjliga schema's builds call `_build_model` without the keyword: a
+    default of True there would put them on cliques and nothing else here would say so. A week that is laid, and a week the
+    search refuses (five groups in a ring, each pair sharing a pupil, two hours of one day, one group's lesson in the even
+    weeks and another's in the odd: the prechecks hold it and the colouring needs three hours), are solved with the setting
+    on: one call posts cliques, the first, the full model's."""
+    import test_ab_weeks as ab
+
+    groups = [str(uuid.uuid4()) for _ in range(5)]
+    ring = [[groups[i], groups[(i + 1) % 5]] for i in range(5)]
+    refused = OptimizeScheduleRequest.model_validate(ab._payload(
+        [
+            ab._requirement(group, 1, recurrence={2: "EVEN_WEEKS", 4: "ODD_WEEKS"}.get(index))
+            for index, group in enumerate(groups)
+        ],
+        groupConflicts=ring,
+    ))
+    laid = OptimizeScheduleRequest.model_validate(
+        ab._payload([ab._requirement(group, 1) for group in groups[:3]], groupConflicts=ring[:2]),
+    )
+    settings = ab._settings(hours=2, SOLVER_GROUP_CLIQUES=True, SOLVER_PROBE_SECONDS=0)
+
+    for request, status in ((laid, "OPTIMAL"), (refused, "INFEASIBLE")):
+        built = _builds_of_group_rows(request, settings)
+        assert SchedulerSolver(settings).solve(request).status == status
+        assert len(built) >= 2, "the full model and the satisfaction model are built"
+        assert built[0] is True and built.count(True) == 1, (status, built)
 
 
 def test_the_setting_is_on_by_default_and_reads_its_environment_name(monkeypatch: pytest.MonkeyPatch) -> None:
