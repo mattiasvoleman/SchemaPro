@@ -244,6 +244,39 @@ describe("the choice of where a run starts", () => {
       );
     });
 
+    it("sends the version the select shows when the choice was made before the list arrived, and when the chosen one is gone from it", async () => {
+      // The radio is on offer while the versions are being read; the pick is then the newest of them, as the select shows, and not nothing.
+      state.versions = undefined;
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const page = () => (
+        <QueryClientProvider client={client}>
+          <GeneratePage />
+        </QueryClientProvider>
+      );
+      const view = renderPlain(page());
+      const user = userEvent.setup();
+      await user.click(await choice("generate.startVersion"));
+
+      state.versions = VERSIONS;
+      view.rerender(page());
+      expect(await screen.findByRole("combobox", { name: "generate.startVersionPick" })).toHaveValue("v-new");
+      await user.click(runButton());
+      await waitFor(() =>
+        expect(startMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ startFrom: { source: "VERSION", versionId: "v-new" } })),
+      );
+
+      // And a version that was chosen and has gone from the list (deleted in another tab) is not sent: the select's first one is.
+      startMutation.mutateAsync.mockClear();
+      await user.selectOptions(screen.getByRole("combobox", { name: "generate.startVersionPick" }), "v-old");
+      state.versions = [VERSIONS[0]!];
+      view.rerender(page());
+      await waitFor(() => expect(screen.getByRole("combobox", { name: "generate.startVersionPick" })).toHaveValue("v-new"));
+      await user.click(runButton());
+      await waitFor(() =>
+        expect(startMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ startFrom: { source: "VERSION", versionId: "v-new" } })),
+      );
+    });
+
     it("is not on offer for a year with none, and says so", async () => {
       state.versions = [];
       render(<GeneratePage />);

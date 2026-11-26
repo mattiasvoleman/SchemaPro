@@ -76,6 +76,14 @@ export function StartFromCard({ year, value, onChange, disabled }: StartFromCard
   };
   const date = new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", { dateStyle: "medium", timeStyle: "short" });
 
+  // A saved version is chosen from the list, and the select shows the one the choice holds. A choice made before the list arrived holds none,
+  // and one that has gone from the list (deleted elsewhere) holds a version the select no longer has: the select then shows its first, so the
+  // choice takes it, and the run is not sent with another than the one on the screen.
+  useEffect(() => {
+    if (value?.source !== "VERSION" || versions.length === 0) return;
+    if (!versions.some((version) => version.id === value.versionId)) onChange({ source: "VERSION", versionId: versions[0]!.id });
+  }, [value, versions, onChange]);
+
   const options: {
     key: StartSource | "NONE";
     label: string;
