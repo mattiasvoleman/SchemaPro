@@ -48,7 +48,9 @@ export function PlanningYearPicker({
     </Button>
   );
   return (
-    <div role="group" aria-label={t("label")} className={className ? `flex gap-1 ${className}` : "flex gap-1"}>
+    // Wraps, and is never wider than the line it stands on: its two buttons are 323 px at their widest, and on a phone (320 px) a row
+    // that does not wrap made the whole page scroll sideways. The pages that said so themselves (Förlägg i veckan) say it twice, harmlessly.
+    <div role="group" aria-label={t("label")} className={className ? `flex max-w-full flex-wrap gap-1 ${className}` : "flex max-w-full flex-wrap gap-1"}>
       {option(active, t("optionActive", { name: active.name }))}
       {option(successor, t("optionNext", { name: successor.name }))}
     </div>

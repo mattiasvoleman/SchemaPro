@@ -112,6 +112,7 @@ import {
   type YearPeriods,
 } from './year-periods';
 import { datedMeals, MealPartsError, type DatedMeal } from './lunch-parts';
+import { exemptFromLunch } from '../calendar/lesson-exemption';
 import { computeScheduledCoverage, type ScheduledLessonInput } from '../common/timplan-scheduled';
 import type { PlannedGroup, PlannedRequirement, PlannedSubject } from '../common/timplan-planned';
 import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
@@ -1394,6 +1395,38 @@ class EngineLacksPlacements extends Error {}
  * school that asked to start from a schedule reads it.
  */
 class EngineLacksStartLessons extends Error {}
+
+/**
+ * The engine refused `exemptFromLunch` on a lock as a field it does not know: it is older than Undantag med flit (E1b, the engine's
+ * second PR), which the gateway that sends the key must follow. The API and the engine deploy within minutes of each other and not
+ * atomically, so a school that has given an exemption meets it in that window (and whenever the engine alone is rolled back), and
+ * without this its Generera, whole, is refused as "validation failed". The key only releases a refusal (a meal the school placed on the
+ * lock, LUNCH_PLACEMENT_COLLIDES) and changes nothing else, so callAiEngine sends the same request without it: a week the exemption was
+ * never needed for is laid as it would have been, and one it was needed for is refused by the engine by name, as before the exemption.
+ */
+class EngineLacksLunchExemption extends Error {}
+
+/**
+ * The engine's refusal of `exemptFromLunch` as an unknown field of a lock:
+ * {type: 'extra_forbidden', loc: ['body', 'fixedLessons', <index>, 'exemptFromLunch']}.
+ */
+function refusesLunchExemption(body: { details?: { errors?: unknown } | null } | null): boolean {
+  const errors = body?.details?.errors;
+  return (
+    Array.isArray(errors) &&
+    errors.some((entry: unknown) => {
+      const { type, loc } = (entry ?? {}) as { type?: unknown; loc?: unknown };
+      return (
+        type === 'extra_forbidden' &&
+        Array.isArray(loc) &&
+        loc.length === 4 &&
+        loc[0] === 'body' &&
+        loc[1] === 'fixedLessons' &&
+        loc[3] === 'exemptFromLunch'
+      );
+    })
+  );
+}
 
 /**
  * The engine refused `deadlineSeconds` as a field it does not know. It said it
@@ -3108,6 +3141,8 @@ export class OptimizationProxyService {
         recurrence: true,
         startDate: true,
         endDate: true,
+        // Undantag med flit: a lock whose lesson stands over its class's meal on purpose is told to the engine (FixedLesson.exemptFromLunch).
+        exemptFrom: true,
         extraGroups: { select: { studentGroupId: true } },
         // The pupils a hand-placed lesson names one by one. Not forwarded —
         // the engine plans around the lesson's groups — but a pupil who is
@@ -3842,6 +3877,8 @@ export class OptimizationProxyService {
       // Sent only on such a lock. A dated lock's periods are added further
       // down, once the läsår is read (yearPeriodsOf).
       ...((weeks) => (weeks ? { recurrence: weeks } : {}))(alternatingWeeksOf(lesson)),
+      // Undantag med flit: sent only on a lock whose lesson an administrator let stand over the class's meal.
+      ...(exemptFromLunch(lesson) ? { exemptFromLunch: true as const } : {}),
     }));
 
     /*
@@ -5024,6 +5061,10 @@ export class OptimizationProxyService {
     const carriesRelaxation = (payload as { relaxation?: unknown }).relaxation !== undefined;
     const carriesPlacements = (payload as { placements?: unknown }).placements !== undefined;
     const carriesStartLessons = (payload as { startLessons?: unknown }).startLessons !== undefined;
+    // Undantag med flit: a lock that carries the key. Sent only on a lock whose lesson stands over its class's meal on purpose.
+    const carriesLunchExemption = ((payload as { fixedLessons?: { exemptFromLunch?: unknown }[] }).fixedLessons ?? []).some(
+      (lock) => lock.exemptFromLunch !== undefined,
+    );
     // Fästa lektioner: a requirement that carries the key. The released forms under `placements` never do.
     const carriesPins = ((payload as { requirements?: { pinnedLessons?: unknown }[] }).requirements ?? []).some(
       (requirement) => requirement.pinnedLessons !== undefined,
@@ -5236,6 +5277,12 @@ export class OptimizationProxyService {
                 if (error.response.status === 422 && carriesStartLessons && refusesField(body, 'startLessons')) {
                   throw new EngineLacksStartLessons();
                 }
+                // And older than `exemptFromLunch` on a lock: sent again without it, below. Each of the two sends the week again without what
+                // it names and nothing else, and each reads `carries…` off the payload it is sent, so an engine older than both is answered
+                // once for each and the third call carries neither: the two never send each other's field again.
+                if (error.response.status === 422 && carriesLunchExemption && refusesLunchExemption(body)) {
+                  throw new EngineLacksLunchExemption();
+                }
                 // The engine's own ceiling, from any of its four routes: said as what it is
                 // (ENGINE_TIMED_OUT). By the code, or by the sentence for an engine older than the code.
                 if (error.response.status === HttpStatus.SERVICE_UNAVAILABLE && isEngineCeilingBody(body)) {
@@ -5335,6 +5382,12 @@ export class OptimizationProxyService {
       if (error instanceof EngineLacksPlacements) {
         this.logger.warn(`AI engine at ${this.aiConfig.baseUrl} predates placements; sent again without them.`);
         const { placements: _placements, ...without } = payload as { placements?: unknown };
+        return this.callAiEngine<TResponse>(path, without, maps, options);
+      }
+      if (error instanceof EngineLacksLunchExemption) {
+        this.logger.warn(`AI engine at ${this.aiConfig.baseUrl} predates exemptFromLunch; sent again without it.`);
+        const { fixedLessons, ...rest } = payload as { fixedLessons?: Record<string, unknown>[] };
+        const without = { ...rest, fixedLessons: (fixedLessons ?? []).map(({ exemptFromLunch: _exempt, ...lock }) => lock) };
         return this.callAiEngine<TResponse>(path, without, maps, options);
       }
       if (error instanceof HttpException) throw error;

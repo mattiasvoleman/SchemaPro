@@ -600,6 +600,12 @@ export interface AnonymousFixedLesson {
    * some period leaves out (FixedLesson.periods).
    */
   periods?: boolean[];
+  /**
+   * Undantag med flit: the lesson stands over its class's meal on purpose (an administrator answered yes to "Lägg ändå"), so a meal the
+   * school placed by hand on it is not refused (FixedLesson.exempt_from_lunch). Sent only on such a lock; the ramtid needs no field, a lock
+   * may lie outside its class's frame.
+   */
+  exemptFromLunch?: true;
   roomId: string | null;
   dayOfWeek: DayOfWeek;
   /** HH:MM:SS */

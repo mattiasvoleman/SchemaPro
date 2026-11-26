@@ -43,6 +43,7 @@ import type {
   TeacherQualificationKind,
   StaffingWarning,
 } from "@/lib/types";
+import type { ExemptRule } from "@/lib/exemptions";
 
 // ---------------------------------------------------------------------------
 // Reads — the school's own tables straight from Supabase under RLS; other
@@ -635,7 +636,7 @@ export function useMasterLessons(academicYearId: string | null) {
         supabase
           .from("MasterLessons")
           .select(
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, exemptFrom, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
           )
           .eq("academicYearId", academicYearId!)
           .order("dayOfWeek")
@@ -1075,6 +1076,11 @@ export interface UpdateMasterLessonInput {
   roomId?: string | null;
   teacherId?: string | null;
   isLocked?: boolean;
+  /**
+   * Undantag med flit: the rules the administrator answered "Lägg ändå" to for THIS time (FRAME, LUNCH); the gateway lets through those the
+   * time breaks, saves their names on the lesson and locks it. `[]` takes an exemption back. Absent leaves what the lesson has.
+   */
+  exempt?: ExemptRule[];
   propagate?: boolean;
   extraGroupIds?: string[];
   studentIds?: string[];
@@ -1105,6 +1111,11 @@ export interface CreateMasterLessonInput {
   endDate?: string | null;
   extraGroupIds?: string[];
   studentIds?: string[];
+  /**
+   * Undantag med flit: the rules answered "Lägg ändå" to for this time (FRAME, LUNCH), as on an update. Said by the undo of a delete of a lesson
+   * that had an exemption, which would otherwise be refused as a new lesson on a time that breaks the rule.
+   */
+  exempt?: ExemptRule[];
 }
 
 export interface MasterLessonResponse {

@@ -290,6 +290,84 @@ describe('OptimizationProxyService: Generera starts from a schedule (M9)', () =>
     });
   });
 
+  describe('an engine older than startLessons and than exemptFromLunch (Undantag med flit, E1b)', () => {
+    const forbidden = (...locs: (string | number)[][]) =>
+      refusedWith(422, {
+        code: 'VALIDATION_ERROR',
+        message: 'Request payload failed schema validation.',
+        details: { errors: locs.map((loc) => ({ type: 'extra_forbidden', loc, msg: 'Extra inputs are not permitted' })) },
+      });
+    const maps = () => ({
+      requirementAnonMap: new Map<string, string>(),
+      roomAnonMap: new Map<string, string>(),
+      groupAnonMap: new Map<string, string>(),
+      roomTypeAnonMap: new Map<string, string>(),
+      constraintAnonMap: new Map<string, string>(),
+      workRuleAnonMap: new Map<string, string>(),
+      nameById: new Map<string, string>(),
+      lessonAnonMap: new Map<string, string>(),
+    });
+    const WEEK = {
+      requestId: 'r',
+      requirements: [],
+      fixedLessons: [{ id: 'l-1' }, { id: 'l-2', exemptFromLunch: true }],
+      startLessons: [{ requirementId: 'a-math', dayOfWeek: 1, startTime: '08:00:00', endTime: '08:50:00' }],
+    };
+    const call = (service: OptimizationProxyService, fellBack: { startLessons?: boolean }) =>
+      (service as unknown as { callAiEngine: (p: string, body: unknown, m: unknown, o: unknown) => Promise<unknown> }).callAiEngine(
+        '/v1/schedule',
+        WEEK,
+        maps(),
+        { fellBack },
+      );
+
+    it('answers each refusal once and sends neither field again: three calls, the third with neither', async () => {
+      const { service, post } = await build(null, prepared());
+      post
+        .mockReturnValueOnce(throwError(() => forbidden(['body', 'startLessons'], ['body', 'fixedLessons', 1, 'exemptFromLunch'])))
+        .mockReturnValueOnce(throwError(() => forbidden(['body', 'fixedLessons', 1, 'exemptFromLunch'])))
+        .mockReturnValueOnce(of({ data: { requestId: 'r', status: 'OPTIMAL', lessons: [] } }));
+      const fellBack: { startLessons?: boolean } = {};
+
+      await expect(call(service, fellBack)).resolves.toMatchObject({ status: 'OPTIMAL' });
+
+      expect(post).toHaveBeenCalledTimes(3);
+      const sent = post.mock.calls.map(([, body]) => body as { startLessons?: unknown; fixedLessons: Record<string, unknown>[] });
+      expect(sent.map((body) => [body.startLessons !== undefined, body.fixedLessons[1]!['exemptFromLunch'] !== undefined])).toEqual([
+        [true, true],
+        [false, true],
+        [false, false],
+      ]);
+      // The lock itself is what it was, less the one key.
+      expect(sent[2]!.fixedLessons).toEqual([{ id: 'l-1' }, { id: 'l-2' }]);
+      expect(fellBack.startLessons).toBe(true);
+    });
+
+    it('does not send the week again for ever when the engine lists both on every refusal: after the two answers the third refusal is the refusal', async () => {
+      const { service, post } = await build(null, prepared());
+      post.mockReturnValue(throwError(() => forbidden(['body', 'startLessons'], ['body', 'fixedLessons', 1, 'exemptFromLunch'])));
+
+      const thrown = await call(service, {}).catch((error: unknown) => error);
+
+      expect(thrown).toBeInstanceOf(HttpException);
+      expect(post).toHaveBeenCalledTimes(3);
+    });
+
+    it('strips only the field that is refused: an engine that knows startLessons and not exemptFromLunch keeps the start', async () => {
+      const { service, post } = await build(null, prepared());
+      post
+        .mockReturnValueOnce(throwError(() => forbidden(['body', 'fixedLessons', 1, 'exemptFromLunch'])))
+        .mockReturnValueOnce(of({ data: { requestId: 'r', status: 'OPTIMAL', lessons: [] } }));
+      const fellBack: { startLessons?: boolean } = {};
+
+      await call(service, fellBack);
+
+      expect(post).toHaveBeenCalledTimes(2);
+      expect((post.mock.calls[1]![1] as { startLessons?: unknown }).startLessons).toHaveLength(1);
+      expect(fellBack.startLessons).toBeUndefined();
+    });
+  });
+
   it('counts nothing for a week the engine refused: the school reads the refusal, not a count of lessons that were never written', async () => {
     const { service, post, persist } = await build(WITH_START, prepared());
     persist.mockResolvedValue(null);

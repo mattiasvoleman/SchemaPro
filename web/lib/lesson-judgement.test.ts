@@ -40,6 +40,31 @@ const standing: JudgedDraft = {
   endDate: "",
 };
 
+describe("what the fields say of an exemption (Undantag med flit)", () => {
+  it("asks with the rules the reader answered yes to, and says them in the order the gateway writes them", () => {
+    expect(moveOf(lesson, { ...standing, startTime: "14:30", endTime: "15:30", exempt: ["LUNCH", "FRAME"] }, NONE)).toEqual({
+      lessonId: "l-1",
+      startTime: "14:30",
+      endTime: "15:30",
+      exempt: ["FRAME", "LUNCH"],
+    });
+  });
+
+  it("asks nothing when the answer is the lesson's own: a lesson that already stands with an exemption, left as it is", () => {
+    const exempt = { ...lesson, exemptFrom: ["FRAME" as const], isLocked: true };
+    expect(moveOf(exempt, { ...standing, exempt: ["FRAME"] }, NONE)).toBeNull();
+    // A lesson that stands against a rule can be made an exemption without moving it (låt stå): the answer yes is what moved.
+    expect(moveOf(lesson, { ...standing, exempt: ["FRAME"] }, NONE)).toEqual({ lessonId: "l-1", exempt: ["FRAME"] });
+    // Taken back, nothing is asked: a lesson with fewer exemptions is let through by every rule it was.
+    expect(moveOf(exempt, { ...standing, exempt: [] }, NONE)).toBeNull();
+  });
+
+  it("is a request like any other without an answer: no `exempt` key, so the question is the one it always was", () => {
+    expect(moveOf(lesson, { ...standing, startTime: "13:10", endTime: "14:10" }, NONE)).toEqual({ lessonId: "l-1", startTime: "13:10", endTime: "14:10" });
+    expect(moveOf(lesson, { ...standing, startTime: "13:10", endTime: "14:10", exempt: [] }, NONE)).toEqual({ lessonId: "l-1", startTime: "13:10", endTime: "14:10" });
+  });
+});
+
 describe("what the fields have moved", () => {
   it("is nothing for a lesson left as it stands: no question is asked", () => {
     expect(moveOf(lesson, standing, NONE)).toBeNull();

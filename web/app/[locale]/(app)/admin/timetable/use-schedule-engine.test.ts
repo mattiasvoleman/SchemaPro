@@ -114,6 +114,37 @@ describe("judging a drag", () => {
   });
 });
 
+describe("a lesson that stands outside the ramtid on purpose (Undantag med flit)", () => {
+  // The day of grade 4 runs 08:00-15:00; this lesson ends at 15:30.
+  const frame = [{ id: "f-1", minGradeLevel: 4, maxGradeLevel: 4, dayOfWeek: null, startTime: "08:00:00", endTime: "15:00:00" }];
+  const late = lessonAt("late", "g-1", "14:30:00", "15:30:00");
+  const given = { ...late, isLocked: true, exemptFrom: ["FRAME"] } as MasterLesson;
+
+  it("is a conflict until an administrator has said it stands there on purpose, and then it is an exemption and no conflict", () => {
+    const before = renderHook(() => useScheduleEngine(inputs({ lessons: [late] as never, frameTimes: frame as never })));
+    expect([...before.result.current.conflictMap.keys()]).toEqual(["late"]);
+    expect(before.result.current.exemptionMap.size).toBe(0);
+
+    const after = renderHook(() => useScheduleEngine(inputs({ lessons: [given] as never, frameTimes: frame as never })));
+    expect(after.result.current.conflictMap.size).toBe(0);
+    expect(after.result.current.exemptionMap.get("late")).toEqual(["FRAME"]);
+  });
+
+  it("is a conflict again when it is moved to a time that breaks another rule: an exemption lifts one rule and no other", () => {
+    const clash = { ...given, id: "late2", studentGroupId: "g-2" } as MasterLesson;
+    const result = renderHook(() => useScheduleEngine(inputs({ lessons: [given, clash] as never, frameTimes: frame as never }))).result;
+    // Same teacher, same hour: the clash is a clash for both, the frame is the exemption's.
+    expect([...result.current.conflictMap.keys()].sort()).toEqual(["late", "late2"]);
+    expect(result.current.conflictMap.get("late")!.map((hit) => hit.kind)).not.toContain("FRAME");
+    expect(result.current.exemptionMap.get("late")).toEqual(["FRAME"]);
+  });
+
+  it("leaves a lesson with no exemption exactly as the grid found it", () => {
+    const result = renderHook(() => useScheduleEngine(inputs({ lessons: [late] as never, frameTimes: frame as never }))).result;
+    expect(result.current.conflictMap.get("late")!.map((hit) => hit.kind)).toEqual(["FRAME"]);
+  });
+});
+
 describe("the weeks of a lov", () => {
   // A lesson written for the two Monday-to-Friday weeks inside the jullov (22 December to 9 January), weeks in which nobody sits: a drag
   // beside it meets it in no week with school. The candidate of a drag carries no window of its own, so it is the

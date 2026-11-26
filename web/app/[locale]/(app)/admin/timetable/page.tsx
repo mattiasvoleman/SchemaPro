@@ -23,6 +23,8 @@ import {
 import { useCreateMasterLesson, useDeleteMasterLesson, useUpdateMasterLesson } from "@/lib/queries";
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { PlanningYearPicker, ProjectedRostersBanner } from "@/components/schedule/planning-year";
+import type { LessonCommand } from "@/components/schedule/board-keys";
+import { useConflictNotes } from "./use-conflict-notes";
 import type { MessageLookup } from "@/lib/engine-message";
 import { savedToast } from "@/lib/staffing-warnings";
 import { FilterPicker } from "@/components/schedule/filter-picker";
@@ -314,12 +316,24 @@ export default function TimetablePage() {
     yearGroups, closedWeeks, teachers, students, studentGroupOf,
     gradeSpanOf, homeClassIds, rosterIndex, groupConflictMap, subjectById,
     groupById, roomById, teacherById, personById, lessonById,
-    lunchOf, pupilBuffers, conflictMap, remoteEditors, placements,
+    lunchOf, pupilBuffers, conflictMap, exemptionMap, exemptionStanding, remoteEditors, placements,
     validateChange,
   } = engine;
+  // What each clashing card says, in words: made by a module fetched only when something clashes.
+  const conflictNotes = useConflictNotes({
+    conflictMap,
+    lessonById,
+    groupById,
+    subjectById,
+    constraints: reads.constraints,
+    gradeSpanOf,
+    roomLock: t("conflictRoomLock"),
+    tCommon,
+  });
   const view = useTimetableView({
     ...reads,
     ...engine,
+    conflictNotes,
     t,
     tLunch,
     locale,
@@ -498,6 +512,24 @@ export default function TimetablePage() {
         .catch(showError);
     },
     [undoableUpdate, showError, t, lessonName],
+  );
+
+  /**
+   * The keys that are writes (L, P and Delete on a lesson, board-keys.tsx): the page's own, each one step of undo. A block's card is
+   * not a lesson of its own and has its dialog, where the lock, the tray and the removal say what they do to the whole block.
+   */
+  const handleLessonCommand = useCallback(
+    (id: string, command: LessonCommand) => {
+      const lesson = lessonById.get(id);
+      if (!lesson) return void openEditor(id);
+      if (command === "park") return park(lesson);
+      if (command === "lock") return void undoableUpdate(lesson, { isLocked: !lesson.isLocked }).catch(showError);
+      void undoableDelete(lesson)
+        .then((result) => toast.success(t("deleted", { count: result.removedCalendarLessons })))
+        .catch(showError);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lessonById, park, undoableUpdate, undoableDelete, showError, t, blockKit],
   );
 
   /**
@@ -745,6 +777,8 @@ export default function TimetablePage() {
       recurrence: lesson.recurrence,
       startDate: lesson.startDate ?? "",
       endDate: lesson.endDate ?? "",
+      // Undantag med flit: the lesson's own, so that it is said, and can be taken back, before anything is moved.
+      exempt: lesson.exemptFrom ?? [],
     });
   };
 
@@ -763,6 +797,9 @@ export default function TimetablePage() {
         // API stores as null — not as an empty string.
         startDate: editDraft.startDate === "" ? null : editDraft.startDate,
         endDate: editDraft.endDate === "" ? null : editDraft.endDate,
+        // Undantag med flit: the rules answered "Lägg ändå" for this time, or [] to take back one the lesson had. Said only then, so a
+        // save of a lesson that has none is the request it always was.
+        ...(editDraft.exempt && editDraft.exempt.length > 0 ? { exempt: editDraft.exempt } : editing.exemptFrom && editing.exemptFrom.length > 0 ? { exempt: [] } : {}),
       });
       if (!blockKit?.announce(editing, result)) announceSaved(result);
       setEditing(null);
@@ -1175,7 +1212,9 @@ export default function TimetablePage() {
             {t("conflictCount", { count: conflictCount })}
           </Badge>
         ) : null}
-        {conflictCount > 0 ? (
+        {/* Undantag med flit: lessons that stand against the ramtid or the class's meal on purpose are counted apart, never as conflicts. */}
+        {exemptionMap.size > 0 ? <Badge variant="outline">{t("exemptionCount", { count: exemptionMap.size })}</Badge> : null}
+        {conflictCount > 0 || exemptionMap.size > 0 ? (
           <Button
             variant="link"
             size="sm"
@@ -1397,6 +1436,8 @@ export default function TimetablePage() {
               <TimetableGrid
                 lessons={board.lessons}
                 editable={!readOnly}
+                board
+                onLessonCommand={handleLessonCommand}
                 onLessonClick={readOnly ? undefined : (lesson) => openEditor(lesson.id)}
                 onLessonChange={handleGridChange}
                 validateChange={validateGridChange}
@@ -1419,6 +1460,8 @@ export default function TimetablePage() {
           ref={gridRef}
           lessons={gridLessons}
           editable={!readOnly}
+          board
+          onLessonCommand={handleLessonCommand}
           onLessonClick={readOnly ? undefined : (lesson) => openEditor(lesson.id)}
           onLessonChange={handleGridChange}
           validateChange={validateGridChange}
@@ -1553,6 +1596,8 @@ export default function TimetablePage() {
               rules={{ constraints: constraints ?? [], gradeSpanOf }}
               onOpenChange={setConflictsOpen}
               conflictMap={conflictMap}
+              exemptions={exemptionMap}
+              exemptionStanding={exemptionStanding}
               lessonById={lessonById}
               group={(id) => groupById.get(id)?.name ?? ""}
               subject={(id) => subjectById.get(id)?.name ?? ""}

@@ -15,9 +15,9 @@
 import { useLocale, useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { conflictRows, type ConflictNames, type ConflictRules } from "@/lib/conflict-rows";
+import { conflictRows, exemptRows, reasonSentences, type ConflictNames, type ConflictRules } from "@/lib/conflict-rows";
+import type { ExemptRule } from "@/lib/exemptions";
 import type { ConflictHit } from "@/lib/conflicts";
-import { problemSentence } from "@/lib/problem-codes";
 import type { MasterLesson } from "@/lib/types";
 
 export interface ConflictListProps extends ConflictNames {
@@ -26,6 +26,16 @@ export interface ConflictListProps extends ConflictNames {
   rules?: ConflictRules;
   onOpenChange: (open: boolean) => void;
   conflictMap: ReadonlyMap<string, readonly ConflictHit[]>;
+  /**
+   * Undantag med flit: lesson id → the rules it stands against on purpose (lib/exemptions.ts splitExemptions). Said under a heading of its
+   * own and not in red: an exemption is an answer an administrator gave, and "Får stå" is a lesson nobody has answered for.
+   */
+  exemptions?: ReadonlyMap<string, readonly ExemptRule[]>;
+  /**
+   * Lesson id → the rules of its exemptions the lesson breaks now (lib/exemptions.ts). A rule not here is said as an exemption nothing
+   * needs at the moment. Absent: every rule is said to stand.
+   */
+  exemptionStanding?: ReadonlyMap<string, readonly ExemptRule[]>;
   lessonById: ReadonlyMap<string, MasterLesson>;
   /**
    * Opens Justera lektion for the lesson. Absent for a reader (Läsbehörighet): the page gives a profile that changes nothing no
@@ -34,7 +44,7 @@ export interface ConflictListProps extends ConflictNames {
   onGo?: (lessonId: string) => void;
 }
 
-export function ConflictList({ open, rules, onOpenChange, conflictMap, lessonById, group, subject, onGo }: ConflictListProps) {
+export function ConflictList({ open, rules, onOpenChange, conflictMap, exemptions, exemptionStanding, lessonById, group, subject, onGo }: ConflictListProps) {
   const t = useTranslations("timetable");
   const tCommon = useTranslations("common");
   const tDays = useTranslations("days");
@@ -42,6 +52,15 @@ export function ConflictList({ open, rules, onOpenChange, conflictMap, lessonByI
   const locale = useLocale();
   const dayName = (day: number) => (locale === "sv" ? tDays(String(day)).toLocaleLowerCase("sv") : tDays(String(day)));
   const rows = open ? conflictRows(conflictMap, lessonById, { group, subject }, rules) : [];
+  const exempt = open && exemptions ? exemptRows(exemptions, lessonById) : [];
+  const lessonSentence = (lesson: MasterLesson) =>
+    t("conflictListLesson", {
+      subjectName: subject(lesson.subjectId),
+      className: group(lesson.studentGroupId),
+      day: dayName(lesson.dayOfWeek),
+      start: lesson.startTime.slice(0, 5),
+      end: lesson.endTime.slice(0, 5),
+    });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -57,15 +76,7 @@ export function ConflictList({ open, rules, onOpenChange, conflictMap, lessonByI
             {rows.map(({ lesson, reasons }) => (
               <li key={lesson.id} className="min-w-0 rounded-md border px-3 py-2">
                 <div className="flex flex-wrap items-start justify-between gap-2">
-                  <p className="min-w-0 break-words text-sm font-medium">
-                    {t("conflictListLesson", {
-                      subjectName: subject(lesson.subjectId),
-                      className: group(lesson.studentGroupId),
-                      day: dayName(lesson.dayOfWeek),
-                      start: lesson.startTime.slice(0, 5),
-                      end: lesson.endTime.slice(0, 5),
-                    })}
-                  </p>
+                  <p className="min-w-0 break-words text-sm font-medium">{lessonSentence(lesson)}</p>
                   {onGo ? (
                     <Button variant="outline" size="sm" onClick={() => onGo(lesson.id)} data-writes="SCHEMALAGGNING DRIFT">
                       {t("conflictListGo")}
@@ -73,9 +84,9 @@ export function ConflictList({ open, rules, onOpenChange, conflictMap, lessonByI
                   ) : null}
                 </div>
                 <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-destructive">
-                  {reasons.map((reason, index) => (
-                    <li key={`${reason.kind}-${index}`} className="break-words">
-                      {reason.values === null ? t("conflictRoomLock") : (problemSentence("MASTER_LESSON_REFUSED", reason.values, tCommon) ?? "")}
+                  {reasonSentences(reasons, t("conflictRoomLock"), tCommon).map((sentence, index) => (
+                    <li key={`${index}-${sentence}`} className="break-words">
+                      {sentence}
                     </li>
                   ))}
                 </ul>
@@ -83,6 +94,37 @@ export function ConflictList({ open, rules, onOpenChange, conflictMap, lessonByI
             ))}
           </ul>
         )}
+        {exempt.length > 0 ? (
+          <section aria-labelledby="conflict-list-exemptions" className="space-y-2">
+            <h3 id="conflict-list-exemptions" className="text-sm font-semibold">
+              {t("conflictListExemptionsTitle")}
+            </h3>
+            <p className="text-xs text-muted-foreground">{t("conflictListExemptionsBody")}</p>
+            <ul className="space-y-3">
+              {exempt.map(({ lesson, rules: given }) => (
+                <li key={lesson.id} className="min-w-0 rounded-md border border-dashed px-3 py-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <p className="min-w-0 break-words text-sm font-medium">{lessonSentence(lesson)}</p>
+                    {onGo ? (
+                      <Button variant="outline" size="sm" onClick={() => onGo(lesson.id)} data-writes="SCHEMALAGGNING DRIFT">
+                        {t("conflictListGo")}
+                      </Button>
+                    ) : null}
+                  </div>
+                  <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">
+                    {given.map((rule) => (
+                      <li key={rule} className="break-words">
+                        {exemptionStanding === undefined || exemptionStanding.get(lesson.id)?.includes(rule)
+                          ? t(`conflictExempt${rule}` as never)
+                          : t("conflictExemptIdle", { rule })}
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
       </DialogContent>
     </Dialog>
   );
