@@ -567,9 +567,11 @@ export class UsersService {
    * IT NEVER INVITES A PERSON TWICE (Första veckan utan operatören). A person with an `invitedAt` already is skipped and counted
    * (`alreadyInvited`) unless the caller says `resend`, and so is one that another request is inviting this moment (the Set below,
    * which a retry of a part whose answer was lost meets): the web takes a run up again from the register's own list after a stop or a
-   * closed tab, and the part that was running when it stopped may be running still. The register is read once for the part, and each
-   * person's own invitation reads them again, so a person invited by somebody else between the two is the invitation's to see (invite()
-   * answers a login that has the address as "already registered", never as a second mail).
+   * closed tab, and the part that was running when it stopped may be running still. Whether the person is invited is read AFTER the
+   * person is claimed in the Set, and for that person alone: a list read before the part began is stale for everyone another request
+   * invites while this one is on its way, and invite() does not refuse such a person (GoTrue sends an unconfirmed user the invitation
+   * again), so two runs over the same people, two administrators or a second tab, mailed most of them twice. The claim is released
+   * after the row is written (adoptIdentity), so a request that finds the Set empty finds `invitedAt` set.
    *
    * THE PROJECT'S MAIL LIMIT STOPS IT. Supabase answers 429 when the hour's mails are spent, and the next person would be refused the
    * same way: the run stops there (`stopped`, `notTried`) and does not try them, which would only spend the limit's next hour on
@@ -588,24 +590,19 @@ export class UsersService {
       errors: [],
     };
 
-    const invited = options.resend
-      ? new Map<string, boolean>()
-      : new Map(
-          (
-            await this.prisma.withRls(user, (tx) =>
-              tx.user.findMany({ where: { id: { in: ids } }, select: { id: true, invitedAt: true } }),
-            )
-          ).map((row) => [row.id, row.invitedAt !== null] as const),
-        );
-
     for (const [index, id] of ids.entries()) {
       const key = id.toLowerCase();
-      if (invited.get(key) === true || this.invitingNow.has(key)) {
+      if (this.invitingNow.has(key)) {
         report.alreadyInvited += 1;
         continue;
       }
       this.invitingNow.add(key);
       try {
+        // Read now, under the claim: the person may have been invited since this part began (another request, another tab).
+        if (!options.resend && (await this.isInvited(id, user))) {
+          report.alreadyInvited += 1;
+          continue;
+        }
         const result = await this.invite(id, user);
         if (result.emailSent) {
           report.sent += 1;
@@ -635,6 +632,14 @@ export class UsersService {
     }
 
     return report;
+  }
+
+  /** Whether the person has been invited (`invitedAt`), as the database says it now. A person who is not found is the invitation's to refuse. */
+  private async isInvited(id: string, user: AuthenticatedUser): Promise<boolean> {
+    const row = await this.prisma.withRls(user, (tx) =>
+      tx.user.findUnique({ where: { id }, select: { invitedAt: true } }),
+    );
+    return row?.invitedAt != null;
   }
 
   /**

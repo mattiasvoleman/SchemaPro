@@ -962,37 +962,41 @@ describe('UsersService', () => {
 
     // Första veckan utan operatören: a mass invitation taken up again invites nobody twice.
     describe('taken up again', () => {
-      const onePerson = () => arrangeUser({ id: USER_ID, email: 'anna@school.se', isActive: true });
-      const registerHas = (rows: Array<{ id: string; invitedAt: Date | null }>) => tx.user.findMany.mockResolvedValue(rows);
+      const person = { email: 'anna@school.se', isActive: true, authId: AUTH_ID, role: UserRole.STUDENT };
+      /** The register as it is now: who has been invited (a date) and who has not (null). A person not named is not there. */
+      const registerHas = (rows: Record<string, Date | null>) =>
+        tx.user.findUnique.mockImplementation(({ where, select }: { where: { id: string }; select?: Record<string, unknown> }) =>
+          Promise.resolve(where.id in rows ? asSelected({ ...person, id: where.id, invitedAt: rows[where.id] }, select) : null),
+        );
 
       it('skips the people who were invited already, counts them, and invites the others: the register is the memory', async () => {
-        onePerson();
-        registerHas([
-          { id: 'id-1', invitedAt: new Date('2026-11-25T09:00:00.000Z') },
-          { id: 'id-2', invitedAt: null },
-          { id: 'id-3', invitedAt: new Date('2026-11-25T09:00:01.000Z') },
-        ]);
+        registerHas({
+          'id-1': new Date('2026-11-25T09:00:00.000Z'),
+          'id-2': null,
+          'id-3': new Date('2026-11-25T09:00:01.000Z'),
+        });
 
         const report = await service.inviteMany(ids, testUser());
 
         expect(report).toMatchObject({ sent: 1, alreadyInvited: 2, errors: [] });
         expect(supabaseAdmin.inviteUser).toHaveBeenCalledTimes(1);
-        expect(tx.user.findMany).toHaveBeenCalledWith({ where: { id: { in: ids } }, select: { id: true, invitedAt: true } });
       });
 
       it('sends again to those who were invited when it is asked to, and then reads nobody first', async () => {
-        onePerson();
+        registerHas({ 'id-1': new Date(), 'id-2': new Date(), 'id-3': new Date() });
         supabaseAdmin.inviteUser.mockResolvedValue({ authId: AUTH_ID, emailSent: true });
+        supabaseAdmin.changeUserEmail.mockResolvedValue({ outcome: 'unchanged', confirmed: false });
 
         const report = await service.inviteMany(ids, testUser(), { resend: true });
 
         expect(report).toMatchObject({ sent: 3, alreadyInvited: 0 });
         expect(tx.user.findMany).not.toHaveBeenCalled();
+        // Three reads, the invitations' own: no read of the register of its own before them.
+        expect(tx.user.findUnique).toHaveBeenCalledTimes(3);
       });
 
       it('leaves a person it does not find to the invitation, which says so: a person who is gone is an error, not an invited one', async () => {
         arrangeUser(null);
-        registerHas([]);
 
         const report = await service.inviteMany(['id-1'], testUser());
 
@@ -1001,8 +1005,7 @@ describe('UsersService', () => {
       });
 
       it('does not invite a person another request of this process is inviting this moment: a part whose answer was lost, sent again', async () => {
-        onePerson();
-        registerHas([{ id: 'id-1', invitedAt: null }]);
+        registerHas({ 'id-1': null });
         let release!: (value: { authId: string; emailSent: boolean }) => void;
         supabaseAdmin.inviteUser.mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
 
@@ -1015,9 +1018,36 @@ describe('UsersService', () => {
         await expect(first).resolves.toMatchObject({ sent: 1 });
         expect(supabaseAdmin.inviteUser).toHaveBeenCalledTimes(1);
         // And once the first is done the person is free to be asked about again: nothing is held for good.
-        registerHas([{ id: 'id-1', invitedAt: null }]);
+        registerHas({ 'id-1': null });
         supabaseAdmin.inviteUser.mockResolvedValueOnce({ authId: AUTH_ID, emailSent: true });
         await expect(service.inviteMany(['id-1'], testUser())).resolves.toMatchObject({ sent: 1 });
+      });
+
+      it('does not invite a person a request that began earlier has invited since this one began: two administrators, a second tab', async () => {
+        // The register as the database has it: the first request writes `invitedAt` when it has invited a person.
+        const invitedAt: Record<string, Date | null> = { 'id-1': null, 'id-2': null, 'id-3': null };
+        tx.user.findUnique.mockImplementation(({ where, select }: { where: { id: string }; select?: Record<string, unknown> }) =>
+          Promise.resolve(asSelected({ ...person, id: where.id, invitedAt: invitedAt[where.id] }, select)),
+        );
+        tx.user.update.mockImplementation(({ where }: { where: { id: string } }) => {
+          invitedAt[where.id] = new Date();
+          return Promise.resolve({ id: where.id });
+        });
+        // A read of the register that was made when both began and answers when the first request is done: what the second request
+        // would have gone by if it read the register once for its part.
+        const began = Object.keys(invitedAt).map((id) => ({ id, invitedAt: null }));
+        let open!: () => void;
+        const firstDone = new Promise<void>((resolve) => (open = resolve));
+        tx.user.findMany.mockResolvedValueOnce(began).mockImplementation(() => firstDone.then(() => began));
+
+        const first = await service.inviteMany(ids, testUser());
+        const second = service.inviteMany(ids, testUser());
+        open();
+        const again = await second;
+
+        expect(first).toMatchObject({ sent: 3, alreadyInvited: 0 });
+        expect(again).toMatchObject({ sent: 0, alreadyInvited: 3 });
+        expect(supabaseAdmin.inviteUser).toHaveBeenCalledTimes(3);
       });
     });
 
@@ -1027,7 +1057,6 @@ describe('UsersService', () => {
       it('stops at the first refusal, says how many it did not try, and keeps what went out: the next person would be refused the same', async () => {
         jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
         arrangeUser({ id: USER_ID, email: 'anna@school.se', isActive: true });
-        tx.user.findMany.mockResolvedValue([]);
         supabaseAdmin.inviteUser
           .mockResolvedValueOnce({ authId: AUTH_ID, emailSent: true })
           .mockRejectedValueOnce(spent())
@@ -1041,8 +1070,11 @@ describe('UsersService', () => {
 
       it('counts the people it skipped before the refusal as handled, so that only the people not tried are left', async () => {
         jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-        arrangeUser({ id: USER_ID, email: 'anna@school.se', isActive: true });
-        tx.user.findMany.mockResolvedValue([{ id: 'id-1', invitedAt: new Date() }]);
+        tx.user.findUnique.mockImplementation(({ where, select }: { where: { id: string }; select?: Record<string, unknown> }) =>
+          Promise.resolve(
+            asSelected({ id: where.id, email: 'anna@school.se', isActive: true, authId: AUTH_ID, role: UserRole.STUDENT, invitedAt: where.id === 'id-1' ? new Date() : null }, select),
+          ),
+        );
         supabaseAdmin.inviteUser.mockRejectedValueOnce(spent());
 
         const report = await service.inviteMany(['id-1', 'id-2', 'id-3'], testUser());

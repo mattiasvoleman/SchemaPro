@@ -26,7 +26,6 @@ describe('the mass invitation under the rate limiter (e2e)', () => {
   });
 
   beforeEach(() => {
-    harness.tx['user']!['findMany']!.mockResolvedValue([{ id: PERSON, invitedAt: null }]);
     harness.tx['user']!['findUnique']!.mockResolvedValue({ id: PERSON, email: 'elev@example.com', isActive: true, authId: PERSON, invitedAt: null, role: 'STUDENT' });
     harness.tx['user']!['update']!.mockResolvedValue({ id: PERSON });
   });
@@ -52,7 +51,8 @@ describe('the mass invitation under the rate limiter (e2e)', () => {
   });
 
   it('skips a person invited already and says so, over the real pipe', async () => {
-    harness.tx['user']!['findMany']!.mockResolvedValue([{ id: PERSON, invitedAt: new Date('2026-11-25T09:00:00.000Z') }]);
+    // The person is read after being claimed, one at a time (UsersService.inviteMany), not from a list read before the part began.
+    harness.tx['user']!['findUnique']!.mockResolvedValue({ id: PERSON, email: 'elev@example.com', isActive: true, authId: PERSON, invitedAt: new Date('2026-11-25T09:00:00.000Z'), role: 'STUDENT' });
     harness.supabase.inviteUser.mockClear();
 
     const response = await part(administrator(6)).expect(200);
