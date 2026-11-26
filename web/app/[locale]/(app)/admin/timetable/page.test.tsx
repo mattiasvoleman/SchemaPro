@@ -1527,6 +1527,35 @@ describe("a lesson that stands outside the ramtid on purpose (Undantag med flit)
     expect(within(list).queryByText(/^common\.codes\.MASTER_LESSON_REFUSED/)).toBeNull();
   });
 
+  it("is marked on its card, in a word and not only a colour, and the words a screen reader is told say what it stands against", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), given("l-late", "s-sl", "g-51", "10:00")];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.exemptionCount/);
+    const marks = container.querySelectorAll("[data-lesson-mark]");
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.textContent).toContain("timetable.exemptMark");
+    // The rule it stands against now, and the lesson's own name before it on the card (the grid reads the mark after the name).
+    expect(marks[0]!.textContent).toContain("timetable.exemptMarkLabel(timetable.exemptRuleFRAME)");
+  });
+
+  it("says in its words that nothing stands against the exemption when it does not, and is still marked: the lesson keeps it", async () => {
+    state.frameTimes = [{ ...frame(0, 99), endTime: "12:00:00" }];
+    state.lessons = [given("l-idle", "s-sl", "g-51", "10:00")];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.exemptionCount/);
+    const mark = container.querySelector("[data-lesson-mark]");
+    expect(mark?.textContent).toContain("timetable.exemptMarkIdleLabel(timetable.exemptRuleFRAME)");
+  });
+
+  it("marks no card of a lesson without an exemption", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), lesson("l-late", "s-sl", "g-51", "10:00")];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.conflictCount/);
+    expect(container.querySelector("[data-lesson-mark]")).toBeNull();
+  });
+
   it("counts an exemption nothing stands against too, as the publication does, and opens the list for it", async () => {
     // Given for the ramtid, with the ramtid wide enough now for the lesson at 10:00-11:00: nothing stands there, and the lesson still has it.
     state.frameTimes = [{ ...frame(0, 99), endTime: "12:00:00" }];
