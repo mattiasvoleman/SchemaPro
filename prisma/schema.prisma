@@ -3294,6 +3294,11 @@ model OptimizationJob {
   /// run before the column. No person's name and no figure of a post is in it (a part-timer's days are stored in their hidden form). DB CHECK:
   /// a JSON object, at most 8 KiB.
   suggestions           Json?
+  /// The schedule a run was asked to start from and what became of its lessons (omgång 15, M9 Ett schema som start; 20270308090000):
+  /// {source: CURRENT | PREVIOUS_YEAR | VERSION, versionName, engine: USED | OLDER, offered, used, held, moved, laid, dropped: {reason: count}},
+  /// as the gateway whitelisted it (src/optimization/start-schedule.ts startedFromOf). No lesson and no person is in it. Null when the run
+  /// started from nothing, as every run before the column did. DB CHECK: a JSON object, at most 2 KiB.
+  startedFrom           Json?
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 

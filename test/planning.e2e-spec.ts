@@ -1336,7 +1336,10 @@ describe('Planning surface (e2e)', () => {
 
         expect(response.body).toMatchObject({ status: 409, code: 'STAFF_TEACHER_OVER_SCOPE_HIDDEN', params: { role: 'TEACHER' } });
         expect(Object.keys(response.body.params)).toEqual(['role']);
-        expect(JSON.stringify(response.body)).not.toMatch(/602|600/);
+        // The hours are not in the body anywhere. Not the trace id, which is a random UUID: one in a hundred holds "600" or "602"
+        // among its digits, and this assertion failed the API job of #474 for that reason alone.
+        const { traceId: _traceId, ...withoutTrace } = response.body as Record<string, unknown>;
+        expect(JSON.stringify(withoutTrace)).not.toMatch(/602|600/);
         expect(harness.tx['teachingRequirement']!['update']).not.toHaveBeenCalled();
       });
     });

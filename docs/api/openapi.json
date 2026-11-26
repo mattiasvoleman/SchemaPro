@@ -35265,6 +35265,26 @@
           "academicYearId"
         ]
       },
+      "StartFromDto": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "CURRENT",
+              "PREVIOUS_YEAR",
+              "VERSION"
+            ]
+          },
+          "versionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
       "StartRunDto": {
         "type": "object",
         "properties": {
@@ -35549,6 +35569,9 @@
           },
           "rules": {
             "$ref": "#/components/schemas/ScheduleRulesDto"
+          },
+          "startFrom": {
+            "$ref": "#/components/schemas/StartFromDto"
           }
         },
         "required": [

@@ -1,13 +1,16 @@
 import { Type } from 'class-transformer';
 import {
+  IsIn,
   IsInt,
   IsOptional,
   IsUUID,
   Matches,
   Max,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import { START_SOURCES, type StartSource } from '../start-schedule';
 
 const TIME_HHMMSS = /^\d{2}:\d{2}:\d{2}$/;
 
@@ -74,6 +77,24 @@ export class ScheduleRulesDto {
 }
 
 /**
+ * Ett schema som start (M9): the schedule a run starts from instead of from nothing. Absent is Generera as it was. The
+ * engine holds each lesson of the schedule where it was, lets go of what clashes with the week and lays only that.
+ *
+ *   CURRENT        this year's grundschema as it stands (what the next Generera replaces);
+ *   PREVIOUS_YEAR  last year's grundschema, under each class's successor;
+ *   VERSION        a saved version of this year, which `versionId` names (a schedule read in from a file is saved as one).
+ */
+export class StartFromDto {
+  @IsIn(START_SOURCES, { message: 'source must be CURRENT, PREVIOUS_YEAR or VERSION.' })
+  source!: StartSource;
+
+  /** The saved version, for VERSION and for no other source. */
+  @ValidateIf((dto: StartFromDto) => dto.source === 'VERSION')
+  @IsUUID('4', { message: 'versionId must be a valid UUIDv4.' })
+  versionId?: string;
+}
+
+/**
  * Request body for `POST /api/v1/optimization/jobs` and `/trigger`.
  * Only the `academicYearId` is needed; the proxy fetches all other
  * scheduling data itself and strips PII before forwarding to the AI engine.
@@ -91,4 +112,10 @@ export class TriggerOptimizationDto {
   @ValidateNested()
   @Type(() => ScheduleRulesDto)
   rules?: ScheduleRulesDto;
+
+  /** Where the run starts from; absent starts from nothing, as Generera always did. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => StartFromDto)
+  startFrom?: StartFromDto;
 }
