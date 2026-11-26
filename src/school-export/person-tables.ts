@@ -248,7 +248,7 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   // Den utgående kön (H3, 20270309090000): id:n på de personer en notis gäller, så länge notisen väntar på att skickas.
   OutboundNotices: {
     excluded:
-      'Kön med utgående mejl och push. Raden bär id:n på de personer en notis gäller och mejlets text, och bara medan notisen väntar på att skickas: samma id:n och samma text som personens notiser.csv och mejlet redan har, och ingen adress och ingen token. När notisen är skickad eller har gett upp, högst 20 timmar efter att den lades in, töms raden på allt om en person (en CHECK i databasen håller det), och det som blir kvar är några tal utan person som tas bort efter sju dagar. En person som tas bort får ingenting skickat: adressen läses ur Users när raden planeras.',
+      'Kön med utgående mejl och push. Raden bär id:n på de personer en notis gäller och mejlets text, och bara medan notisen väntar på att skickas: samma id:n och samma text som personens notiser.csv och mejlet redan har, och ingen adress och ingen token. När notisen är skickad eller har gett upp, högst 20 timmar efter att den lades in, töms raden på allt om en person (en CHECK i databasen håller det), och det som blir kvar är några tal utan person som tas bort efter sju dagar. En person som tas bort innan raden planeras får ingenting skickat (adressen läses ur Users när raden planeras). En rad som redan är planerad bär adressen i sin plan och mejlar personen vid ett omförsök, så länge raden väntar (högst 20 timmar).',
   },
   PublishedLessons: {
     excluded:
