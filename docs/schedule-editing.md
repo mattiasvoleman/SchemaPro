@@ -89,8 +89,9 @@ whatever the request names (decision 5: no forced clash).
 - **Att låsa eller låsa upp frågar inte klashregeln** (granskaren g461, L-5). Ett PATCH som inte ändrar något domaren läser (dag, klockslag, veckor, lärare, sal,
   klasser, elever) och inte namnger `exempt` flyttar ingenting och krockar inte med något nytt, så en lektion som redan är dubbelbokad kan låsas och låsas upp.
   En ny sal, en flytt och en ny lärare frågas som förut.
-- **Ett undantag ges inte åt en lektion på parkeringen** (granskaren g467, L-3): `exempt` på en parkerad lektion, eller i samma PATCH som parkerar den, är 400, och
-  den läsande frågan svarar inget undantag för en sådan.
+- **Ett undantag ges inte åt en lektion på parkeringen** (granskaren g467, L-3): `exempt` på en lektion som redan ligger på parkeringen är 400, och den läsande
+  frågan svarar inget undantag för en sådan. Det PATCH som parkerar lektionen får bära `exempt` (webbens Gör om skickar lektionens ögonblicksbild, undantaget med):
+  parkeringen frågas inget och tar undantaget, så inget sparas och inget nekas.
 - **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, och en dubbelbokad
   lektion kan låsas) och `src/calendar/master-lessons.lock-at-move.spec.ts`.
 

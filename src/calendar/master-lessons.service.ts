@@ -840,7 +840,9 @@ export class MasterLessonsService {
       if (lesson.fromPlacement) assertPlacedLessonStands(lesson, candidate);
       // Undantag med flit: a lesson from a förläggning stands as the post says, and no exemption is given it here.
       if (lesson.fromPlacement && (dto.exempt?.length ?? 0) > 0) throw new BadRequestException(EXEMPTION_NOT_FOR_PLACED);
-      if ((dto.exempt?.length ?? 0) > 0 && (dto.isParked === true || (lesson.isParked && dto.isParked !== false))) {
+      // Only for a lesson that stays on the tray. The request that parks a lesson may carry `exempt` (Gör om of a parking sends the snapshot of the
+      // lesson as it stood, exemption and all): parking is not judged and ends the exemption, so nothing is saved and nothing is refused.
+      if ((dto.exempt?.length ?? 0) > 0 && lesson.isParked && dto.isParked !== false) {
         throw new BadRequestException(EXEMPTION_NOT_FOR_TRAY);
       }
 

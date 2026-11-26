@@ -191,13 +191,21 @@ describe('MasterLessonsService: ett lås vid flytt', () => {
     }
   });
 
-  it('refuses an exemption for a lesson that is, or goes, on the tray: it occupies nothing there (granskaren g467, L-3)', async () => {
+  it('refuses an exemption for a lesson that stays on the tray: it occupies nothing there (granskaren g467, L-3)', async () => {
     standing({ isParked: true });
     await expect(service.update(LESSON, { exempt: ['FRAME'] }, testUser())).rejects.toThrow(/tray/);
-    standing({ isParked: false });
     await expect(service.update(LESSON, { isParked: true, exempt: ['FRAME'] }, testUser())).rejects.toThrow(/tray/);
     // Taken back on the tray is no exemption and stays allowed.
-    standing({ isParked: true });
     await expect(service.update(LESSON, { exempt: [] }, testUser())).resolves.toBeDefined();
+  });
+
+  // Gör om of a parking (g486): the page's redo sends the snapshot of the lesson as it stood, `exempt` included, with `isParked: true`. Parking is not
+  // judged and ends the exemption, so the request is let through and saves none, as it did before the refusal above was written.
+  it('lets the request that parks a lesson carry the exemption it has, and saves none', async () => {
+    standing({ isLocked: true, exemptFrom: ['FRAME'] });
+    const saved = await service.update(LESSON, { isParked: true, isLocked: true, exempt: ['FRAME'] }, testUser());
+    expect(writtenData()).toMatchObject({ isParked: true, exemptFrom: [] });
+    expect(saved).toMatchObject({ isParked: true });
+    expect(saved).not.toHaveProperty('lockedByMove');
   });
 });
