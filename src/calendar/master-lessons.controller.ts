@@ -28,14 +28,19 @@ import { CreateMasterLessonDto } from './dto/create-master-lesson.dto';
 import { LockBlockDto, MoveBlockCardDto } from './dto/block-card.dto';
 import { UpdateMasterLessonDto } from './dto/update-master-lesson.dto';
 import { JudgeLessonsDto } from './dto/judge-lessons.dto';
+import { PossibleTimesDto } from './dto/possible-times.dto';
 import type { LessonJudgement } from './lesson-judge';
+import { PossibleTimesService, type PossibleTimes } from './possible-times.service';
 
 @Controller('api/v1/master-lessons')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
 @Area('SCHEMALAGGNING', 'DRIFT')
 export class MasterLessonsController {
-  constructor(private readonly masterLessons: MasterLessonsService) {}
+  constructor(
+    private readonly masterLessons: MasterLessonsService,
+    private readonly possibleTimes: PossibleTimesService,
+  ) {}
 
   /**
    * `POST /api/v1/master-lessons` — manually add a timetable slot. Validated
@@ -63,6 +68,17 @@ export class MasterLessonsController {
   @HttpCode(200)
   judge(@Body() dto: JudgeLessonsDto, @CurrentUser() user: AuthenticatedUser): Promise<LessonJudgement> {
     return this.masterLessons.judgeMoves(dto, user);
+  }
+
+  /**
+   * `POST /api/v1/master-lessons/possible-times` — where a lesson (or a brick that is not a lesson yet) can stand: the times
+   * the judge lets through, best first with the soft figures that rank them, the stretches a rule shuts (named by the rule),
+   * and the lessons that hold the rest. Nothing written. A POST because the question is a body.
+   */
+  @Post('possible-times')
+  @HttpCode(200)
+  possible(@Body() dto: PossibleTimesDto, @CurrentUser() user: AuthenticatedUser): Promise<PossibleTimes> {
+    return this.possibleTimes.possibleTimes(dto, user);
   }
 
   /**
