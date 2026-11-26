@@ -442,7 +442,9 @@ describe('NotificationDeliveryService (e-mail)', () => {
     });
 
     it.each([
-      ['a rate limit with the wait it names', { ok: false, status: 429, headers: { get: (name: string) => (name === 'retry-after' ? '7' : null) } }, 7_000],
+      // The wait a provider names is the least it waits: the queue's own first backoff is half a minute.
+      ['a rate limit with a wait shorter than the backoff', { ok: false, status: 429, headers: { get: (name: string) => (name === 'retry-after' ? '7' : null) } }, 30_000],
+      ['a rate limit with a wait longer than the backoff', { ok: false, status: 429, headers: { get: (name: string) => (name === 'retry-after' ? '90' : null) } }, 90_000],
       ['a server that is down', { ok: false, status: 503 }, null],
       ['a request still being served under the key', { ok: false, status: 409, json: async () => ({ name: 'concurrent_idempotent_requests' }) }, 5_000],
       ['a day’s quota that is used up', { ok: false, status: 429, json: async () => ({ name: 'daily_quota_exceeded' }) }, 30 * 60_000],
@@ -460,6 +462,25 @@ describe('NotificationDeliveryService (e-mail)', () => {
       const waits = row.notBefore - before;
       expect(waits).toBeGreaterThanOrEqual((waitMs ?? 30_000) - 50);
       expect(waits).toBeLessThanOrEqual((waitMs ?? 30_000) + 2_000);
+    });
+
+    it('gives a mail hours and not minutes under a rate limit that names a second: its thirty tries are spread over the backoff', async () => {
+      jest.spyOn(logOf(delivery), 'warn').mockImplementation(() => undefined);
+      fetchMock.mockResolvedValue({ ok: false, status: 429, headers: { get: (name: string) => (name === 'retry-after' ? '1' : null) } });
+      await enqueue([entry()]);
+      await delivery.idle();
+      let waited = 0;
+      while (store.rows[0]!.attempts < 30) {
+        const wait = Math.max(0, store.rows[0]!.notBefore - store.now()) + 1;
+        store.forward(wait);
+        waited += wait;
+        delivery.kick();
+        await delivery.idle();
+      }
+      // The sweep gives a row up at its thirtieth try (app.outbound_sweep), so the tries must cover the provider's trouble
+      // for hours: at one a poll (ten seconds) they covered five minutes.
+      expect(store.rows[0]!.status).toBe('PENDING');
+      expect(waited).toBeGreaterThanOrEqual(60 * 60_000);
     });
 
     it('that Resend will not take at all (a bad address) is counted failed, not tried again, and the rest of the row goes', async () => {

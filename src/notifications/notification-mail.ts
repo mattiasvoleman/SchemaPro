@@ -33,7 +33,11 @@ export interface MailPacket {
 export type MailResult =
   | { kind: 'taken' }
   | { kind: 'refused'; status: number; name: string | null }
-  | { kind: 'retry'; why: string; delayMs: number | null };
+  /**
+   * `backoff` is false only for a request still being served under our key: that is nobody failing, and it is asked about again
+   * shortly. Every other wait is a failure, and the queue never waits less than its own backoff for one (see `send`).
+   */
+  | { kind: 'retry'; why: string; delayMs: number | null; backoff?: boolean };
 
 /** Resend's endpoint. */
 export const RESEND_URL = 'https://api.resend.com/emails';
@@ -79,7 +83,7 @@ export async function sendMailPacket(apiKey: string, packet: MailPacket, timeout
   const status = response.status;
   const name = await errorName(response);
   if (status === 409) {
-    if (name === 'concurrent_idempotent_requests') return { kind: 'retry', why: `status=${status}`, delayMs: IN_FLIGHT_WAIT_MS };
+    if (name === 'concurrent_idempotent_requests') return { kind: 'retry', why: `status=${status}`, delayMs: IN_FLIGHT_WAIT_MS, backoff: false };
     return { kind: 'refused', status, name };
   }
   if (status === 429) {

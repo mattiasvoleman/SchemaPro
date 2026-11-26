@@ -444,7 +444,10 @@ export class NotificationDeliveryService implements OnModuleInit, OnModuleDestro
       );
       if (result.kind === 'retry') {
         this.logger.warn(`Email dispatch failed [${result.why}, will be tried again]`);
-        mailWait = result.delayMs ?? retryDelayMs(row.attempts);
+        // What the provider names is the least to wait, not the whole wait: Resend's rate limit names a second or two, and a row
+        // that came back every ten seconds for that would use its thirty tries up in five minutes and lose the mail (the sweep gives
+        // up at thirty). A failure waits at least the queue's own backoff (half a minute doubling to a quarter of an hour).
+        mailWait = result.backoff === false ? (result.delayMs ?? retryDelayMs(row.attempts)) : Math.max(result.delayMs ?? 0, retryDelayMs(row.attempts));
         break;
       }
       const taken = result.kind === 'taken';
