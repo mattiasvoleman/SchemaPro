@@ -298,6 +298,20 @@ class TestTheWeekThatBinds:
 
         assert line.params["over"] == 60
 
+    def test_a_line_with_over_alone_is_ordered_by_over_as_it_was_before_needed_was_read(self) -> None:
+        # CI of #493: the details of test_phantom_weeks and test_refusals carry `over` and no `needed`, and the first version KeyError'd on them.
+        def bare(week_name: str, over: int) -> tuple[None, ConflictDetail]:
+            return None, ConflictDetail(
+                category="DEVIATION", code="DEVIATION_TEACHER_DAILY_CAP", message="m",
+                params={"rule": RULE, "day": 1, "over": over, "week": week_name},
+                requirement_ids=[uuid4()], resource_ids=[UUID(RULE)],
+            )
+
+        (line,) = relaxation._worst_week([bare("odd", 30), bare("even", 60)], ("rule", "day"), (None, None))
+
+        assert line.params["over"] == 60
+        assert "needed" not in line.params, "no figure is made up for a line that never had one"
+
 
 def test_the_teacher_the_tests_name_is_the_one_of_the_week() -> None:
     assert TEACHER

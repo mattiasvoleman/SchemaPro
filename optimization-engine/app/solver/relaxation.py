@@ -673,8 +673,13 @@ def _worse(detail: ConflictDetail) -> tuple[int, int]:
     leave, `needed` is the value the whole week needs: they agree where nothing is locked, and where a locked lesson already stands over
     the cap in one of two weeks the other week can go over by more and still need less. A line that says `needed` 120 for a rule that
     holds only at 150 is the wrong number for the schedule the school reads it against; the week with the higher `needed` is the one
-    that binds. `over` breaks a tie, as it has always been the line's measure."""
-    return (int(detail.params["needed"]), int(detail.params["over"]))
+    that binds. `over` breaks a tie, as it has always been the line's measure.
+
+    A LINE WITHOUT `needed` IS READ BY `over`. Every line the rules write has both; a line that carries `over` alone (the tests' own
+    details, an older writer of a deviation) was ordered by `over` before this, and is still: `needed` is taken to be `over`, so that
+    two such lines tie on the first figure and the second decides, as it did."""
+    over = int(detail.params["over"])
+    return (int(detail.params.get("needed", over)), over)
 
 
 def _worst_week(
