@@ -156,9 +156,10 @@ describe('MasterLessonsService: ett undantag med flit', () => {
   });
 
   it('saves nothing for a rule the time does not break, and refuses a name that cannot be exempted before the service', async () => {
-    await service.update(LESSON, { startTime: '09:00', endTime: '10:00', exempt: ['FRAME', 'LUNCH'] }, testUser());
+    const saved = await service.update(LESSON, { startTime: '09:00', endTime: '10:00', exempt: ['FRAME', 'LUNCH'] }, testUser());
     expect(writtenData()['exemptFrom']).toEqual([]);
-    expect(writtenData()['isLocked']).not.toBe(true);
+    // The lock is the move's (E4, beslut 2: a lesson moved by hand is locked, in sight), not an exemption's: nothing was granted.
+    expect(saved).toMatchObject({ lockedByMove: true });
   });
 
   it('is for the time it was given for: the lesson moved to a time that holds loses it, and the answer says so', async () => {
@@ -235,9 +236,9 @@ describe('MasterLessonsService: ett undantag med flit', () => {
     expect(tx['masterLesson']!['create']).not.toHaveBeenCalled();
     await expect(service.update(LESSON, { startTime: '14:30', endTime: '15:30', exempt: ['FRAME'], isLocked: false }, testUser())).rejects.toBeInstanceOf(BadRequestException);
     expect(tx['masterLesson']!['update']).not.toHaveBeenCalled();
-    // Naming a rule the time does not break, with the lock off, is no contradiction: nothing is granted.
+    // Naming a rule the time does not break, with the lock off, is no contradiction: nothing is granted. (The move locks it, as every move by hand does.)
     await service.update(LESSON, { startTime: '09:00', endTime: '10:00', exempt: ['FRAME'], isLocked: false }, testUser());
-    expect(writtenData()).toMatchObject({ exemptFrom: [], isLocked: false });
+    expect(writtenData()).toMatchObject({ exemptFrom: [], isLocked: true });
   });
 
   it('gives no exemption to a lesson Generera wrote from a förläggning', async () => {
