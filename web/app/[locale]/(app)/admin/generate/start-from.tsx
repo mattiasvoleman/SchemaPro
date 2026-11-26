@@ -50,18 +50,24 @@ export function StartFromCard({ year, value, onChange, disabled }: StartFromCard
   const versions = versionsQuery.data ?? [];
   const source: StartSource | "NONE" = value?.source ?? "NONE";
 
-  // The rollover's offer of last year's schedule links here with ?start=PREVIOUS_YEAR: taken once per page load, and only for a year that was
-  // rolled from another, so that choosing another year later does not choose it again.
+  // The rollover's offer of last year's schedule links here with ?year=<the new year>&start=PREVIOUS_YEAR: taken once per page load, for the
+  // year the link names (the card may be drawn for another first, while the years are read, or for good when the page cannot plan the year
+  // the link names) and only when that year was rolled from another, so that choosing another year later does not choose it again.
   const linked = useRef(false);
   useEffect(() => {
     if (linked.current) return;
-    linked.current = true;
-    if (year.predecessorId !== null && new URLSearchParams(window.location.search).get("start") === "PREVIOUS_YEAR") {
-      onChange({ source: "PREVIOUS_YEAR" });
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("start") !== "PREVIOUS_YEAR") {
+      linked.current = true;
+      return;
     }
-    // Once, when the card first is drawn.
+    const named = params.get("year");
+    if (named !== null && named !== year.id) return;
+    linked.current = true;
+    if (year.predecessorId !== null) onChange({ source: "PREVIOUS_YEAR" });
+    // When the year on the card changes, not when the page rerenders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [year.id, year.predecessorId]);
 
   const choose = (next: StartSource | "NONE") => {
     if (next === "NONE") onChange(null);

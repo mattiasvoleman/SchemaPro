@@ -168,6 +168,41 @@ describe("the choice of where a run starts", () => {
     expect(startMutation.mutateAsync.mock.calls[0]![0]).not.toHaveProperty("startFrom");
   });
 
+  it("takes the link only for the year it names: a year the page cannot show leaves the shown year (rolled itself) with nothing chosen", async () => {
+    // The rollover that made y-3 started from y-2, which is not the active year: the page offers y-1 and y-2 only, and shows y-1.
+    const ROLLED = { ...ACTIVE, predecessorId: "y-0" };
+    const FAR = { id: "y-3", name: "2028/29", isActive: false, predecessorId: "y-2", startDate: "2028-08-14", endDate: "2029-06-08" };
+    state.years = [ROLLED, NEXT, FAR];
+    window.history.replaceState(null, "", "/?year=y-3&start=PREVIOUS_YEAR");
+    render(<GeneratePage />);
+
+    expect(await choice("generate.startNone")).toBeChecked();
+    expect(await choice("generate.startPrevious")).not.toBeChecked();
+    await userEvent.setup().click(runButton());
+    await waitFor(() => expect(startMutation.mutateAsync).toHaveBeenCalled());
+    expect(startMutation.mutateAsync.mock.calls[0]![0]).toMatchObject({ academicYearId: "y-1" });
+    expect(startMutation.mutateAsync.mock.calls[0]![0]).not.toHaveProperty("startFrom");
+  });
+
+  it("takes the link when the year it names arrives after the card was first drawn for another (the years were read before the rollover)", async () => {
+    // First drawn for y-1, which was not rolled from another; the list of years is read again and y-2 appears: the link is for y-2.
+    state.years = [ACTIVE];
+    window.history.replaceState(null, "", "/?year=y-2&start=PREVIOUS_YEAR");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const page = () => (
+      <QueryClientProvider client={client}>
+        <GeneratePage />
+      </QueryClientProvider>
+    );
+    const view = renderPlain(page());
+    expect(await choice("generate.startNone")).toBeChecked();
+
+    state.years = [ACTIVE, NEXT];
+    view.rerender(page());
+
+    await waitFor(async () => expect(await choice("generate.startPrevious")).toBeChecked());
+  });
+
   describe("a saved version", () => {
     const VERSIONS = [
       { id: "v-new", academicYearId: "y-1", name: "Före ändringen", lessonCount: 180, createdAt: "2026-11-24T10:00:00.000Z" },
