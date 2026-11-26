@@ -202,6 +202,15 @@ export class PossibleTimesService {
   /** How long the judge is asked for, in milliseconds: a field so that a probe on a loaded host can be given all the time it needs. */
   judgeBudgetMs = JUDGE_BUDGET_MS;
 
+  /**
+   * How long the question's transaction may run: the default 15 s, and never less than the judge's budget and ten seconds more. In the
+   * service the budget is 1.2 s; a probe on a loaded host raises it to minutes, and a transaction that expired under the judge would be
+   * a failure of the host and not an answer.
+   */
+  transactionMs(): number {
+    return Math.max(15_000, this.judgeBudgetMs + 10_000);
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly masterLessons: MasterLessonsService,
@@ -301,7 +310,7 @@ export class PossibleTimesService {
           phasesMs: { read: indexing - reading, index: warming - indexing, warm: probing - warming, probe: judging - probing, judge: Date.now() - judging },
         },
       };
-    });
+    }, { timeoutMs: this.transactionMs() });
   }
 
   /**
