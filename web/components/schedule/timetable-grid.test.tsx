@@ -642,6 +642,19 @@ describe("TimetableGrid lesson appearance", () => {
     expect(screen.getByText("Room 214")).toHaveClass("text-muted-foreground");
   });
 
+  it("says the mark's sentence on the hover of the whole card, as it says a clash's, and adds nothing to a card without a mark", () => {
+    render(
+      <TimetableGrid
+        lessons={[
+          makeLesson({ id: "a", title: "Algebra" }),
+          makeLesson({ id: "b", title: "Biologi", startMinutes: 660, endMinutes: 720, mark: "Undantag", markLabel: "Undantag: lektionen står mot ramtiden med flit." }),
+        ]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Biologi/ }).getAttribute("title")).toMatch(/Biologi.*Undantag: lektionen står mot ramtiden med flit\.$/);
+    expect(screen.getByRole("button", { name: /Algebra/ }).getAttribute("title")).toBe("09:00-10:00 · Algebra");
+  });
+
   it("marks conflicted lessons with a red ring and warning icon", () => {
     const { container } = render(
       <TimetableGrid lessons={[makeLesson({ conflicted: true })]} />,

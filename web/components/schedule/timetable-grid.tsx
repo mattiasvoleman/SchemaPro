@@ -531,6 +531,8 @@ const LessonCard = memo(function LessonCard({
         lesson.pupilTimeNote,
         // The words of a clash are on the hover as they are in the name: a clash that can only be told by a ring is not told.
         lesson.conflicted ? [clashLabel, lesson.conflictNote].filter(Boolean).join(": ") : undefined,
+        // The words of a mark likewise: the hover of the whole card says what the mark is about, and not only the hover of its small corner.
+        lesson.markLabel,
       ]
         .filter((fact): fact is string => Boolean(fact))
         .join(" · ")}
