@@ -86,6 +86,14 @@ describe('PRODUCT.md says what the schema, the gateway, the web and the app hold
     expect(product).not.toContain('Signed-in screens are not scanned automatically');
   });
 
+  it("gives the count of CI's `a11y` project to the project, not to the one spec file that is part of it", () => {
+    // The project runs three files (the signed-in pages, the public pages with the keyboard checks, and the accessibility trees).
+    expect(read('web/playwright.config.ts')).toContain('testMatch: /(a11y|a11y-app|aria)\\.spec\\.ts/');
+    expect(product).not.toMatch(/a11y-app\.spec\.ts`, \d+ tests/);
+    expect(product).toContain("CI's `a11y` project");
+    expect(baseline).toContain("290 tests in CI's `a11y` project");
+  });
+
   it('gives each manual the edition its own page prints', () => {
     for (const [file, label] of [
       ['anvandarmanual', 'docs/manual/anvandarmanual.html'],
