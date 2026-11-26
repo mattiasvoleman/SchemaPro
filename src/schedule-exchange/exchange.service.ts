@@ -333,6 +333,16 @@ export class ScheduleExchangeService {
             studentIds: [],
           });
         }
+        // A file none of whose rows fits the year is not a schedule to start from. Saved all the same it would be a version of no lesson,
+        // announced as saved ("Sparade 0 lektioner"), listed beside the school's real versions and offered on Generera's page, which then
+        // refuses it (START_NOTHING_TO_START_FROM). Said here, with how many rows were read and why none fits, and nothing is written.
+        if (lessons.length === 0) {
+          throw new BadRequestException({
+            message: `Ingen av filens ${parsed.lessons.length} rader hör till läsåret, så ingen version sparades. Förhandsgranska filen för att se vad som saknas.`,
+            code: 'IMPORT_NO_ROW_FITS_THE_YEAR',
+            params: { read: parsed.lessons.length, unreadable: parsed.problems.length, ...unresolved },
+          });
+        }
         // The teachers the file named and this read matched are read about, as a preview records them.
         await recordRead(tx, 'PEOPLE', new Set(lessons.flatMap((lesson) => [lesson.teacherId, lesson.coTeacherId ?? null]).filter((id): id is string => id !== null)), user.channel);
         const name = `${START_VERSION_PREFIX}${shortName(dto.files[0]?.name)}`;

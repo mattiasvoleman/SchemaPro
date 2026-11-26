@@ -249,6 +249,20 @@ describe('ScheduleExchangeService.saveAsVersion (Ett schema som start, M9)', () 
     expect(hasPersonalNumber(saved.name)).toBe(false);
   });
 
+  it('refuses a file none of whose rows fits the year, with how many it read and why, and saves no version of no lesson', async () => {
+    const { service, tx } = saving();
+
+    const thrown = await save(service, [base({ group: '9Z' }), base({ group: '9Y', day: 2 })]).catch((error: unknown) => error);
+
+    expect(thrown).toBeInstanceOf(BadRequestException);
+    expect((thrown as BadRequestException).getResponse()).toMatchObject({
+      code: 'IMPORT_NO_ROW_FITS_THE_YEAR',
+      params: { read: 2, unreadable: 0, UNKNOWN_GROUP: 2 },
+    });
+    expect(tx.scheduleVersion.create).not.toHaveBeenCalled();
+    expect(recordRead).not.toHaveBeenCalled();
+  });
+
   it('refuses a file that cannot be read with the same 400 and code a preview gives, before it reads the school', async () => {
     const { service, tx } = saving();
 
