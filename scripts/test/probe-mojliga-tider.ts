@@ -21,6 +21,11 @@
  *   (mt-c) the best is the best: the first option's score is the lowest of every start the judge lets through, costed by the swap
  *          search's own measure, and the options are in that order;
  *   (mt-d) the cases are not vacuous: every answer and every rule is given somewhere, and a good many starts are free;
+ *   (mt-f) "vad kan ligga här?": at each of several starts, every lesson of the world and a brick for each class and teacher are asked
+ *          at once, and the ones that fit are exactly the ones the judge lets through (a lesson that fits in another room is let through
+ *          by the judge in that room);
+ *   (mt-g) the room chooser: for every room, at several starts, a room it calls free is one the judge's room rule leaves alone, one it
+ *          calls busy is refused for the room by the lesson it names, and one it calls shut is refused by a weekly row on the room;
  *   (mt-e) the same over a högstadium laid by scripts/fixtures/hogstadium-week.ts, which the small worlds are not: parallel blocks whose
  *          lessons move as one, halves and teaching groups that share pupils, the pupils' ombyte and dusch. The judge here is the public
  *          one, POST /judge, asked of the whole unit as the card's move, so that the query's own call into the judge is not the only
@@ -37,6 +42,7 @@ import { judgeLessons, type JudgeItem } from '../../src/calendar/lesson-judge';
 import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
 import { costOf, type PossibleWorld } from '../../src/calendar/possible-times';
 import { PossibleTimesService } from '../../src/calendar/possible-times.service';
+import { WhatFitsService } from '../../src/calendar/what-fits.service';
 import { PrismaService } from '../../src/database/prisma.service';
 import { SwapContext } from '../../src/swaps/swap-context';
 import { readSwapData } from '../../src/swaps/swap-snapshot';
@@ -61,6 +67,7 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
   const notifications = { recipientsForLessons: async () => [], notifyUsers: async () => undefined };
   const masters = new MasterLessonsService(api, realtime as never, notifications as never);
   const possible = new PossibleTimesService(api, masters);
+  const fitting = new WhatFitsService(api, possible);
   // What is asked here is whether the answer is right, not how fast it is: the judge gets all the time it needs on a loaded host.
   possible.judgeBudgetMs = 10 * 60_000;
 
@@ -231,6 +238,125 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
       console.log(
         `     ${seen.worlds} worlds, ${seen.lessons} lessons: ${seen.free} free, ${seen.change} with another room, ${seen.inTheWay} with a lesson in the way, ${seen.crowded} crowded, closed ${[...seen.closed].map(([code, count]) => `${code} ${count}`).join(', ')}; the judge let ${seen.judgedOk} through`,
       );
+    });
+
+    await check('(mt-f/g) what can lie here, and the room chooser, against the judge', async () => {
+      const fitsSeen = { lit: 0, dim: 0, changed: 0, free: 0, busy: 0, shut: 0 };
+      for (const [index, world] of worlds.slice(0, wanted).entries()) {
+        const planted = await plant(owner, `${SLUG}-${index}`, world);
+        const { caller } = planted;
+        const starts = [
+          [1, '08:30'], [2, '09:15'], [3, '10:00'], [3, '13:30'], [4, '11:05'], [5, '08:00'], [5, '14:45'],
+        ] as const;
+        const classKeys = world.classes.map((entry) => entry.key);
+        for (const [day, start] of starts) {
+          const startMinutes = minutesOf(start);
+          // (mt-f) every lesson of the world, and a brick of each class with each teacher of the world.
+          const bricks = classKeys.flatMap((key) => world.teachers.map((teacher) => ({ key, teacher })));
+          const answer = await fitting.whatFits(
+            {
+              academicYearId: planted.year,
+              dayOfWeek: day,
+              startTime: start,
+              candidates: [
+                ...world.lessons.map((lesson) => ({ lessonId: planted.lessonId.get(lesson.key)! })),
+                ...bricks.map(({ key, teacher }) => ({
+                  brick: { academicYearId: planted.year, studentGroupId: planted.classId.get(key)!, subjectId: planted.subjectId.get(world.subjects[0]!)!, minutes: 45, teacherId: planted.teacherId.get(teacher)! },
+                })),
+              ],
+            },
+            caller,
+          );
+          assert.equal(answer.stats.truncated, false);
+          assert.equal(answer.stats.refused, 0, `world ${index} ${day} ${start}: the prune let ${answer.stats.refused} lesson(s) through that the judge refused`);
+          for (const entry of answer.answers) {
+            const label = `world ${index}, day ${day} ${start}, candidate ${entry.index} (${entry.lessonId ?? 'a brick'})`;
+            const lesson = entry.lessonId === null ? null : world.lessons.find((candidate) => planted.lessonId.get(candidate.key) === entry.lessonId)!;
+            const minutes = entry.minutes;
+            let own: { ok: boolean };
+            if (lesson) {
+              own = await masters.judgeMoves({ moves: [{ lessonId: entry.lessonId!, dayOfWeek: day, startTime: start, endTime: clockOf(startMinutes + minutes) }] }, caller);
+            } else {
+              const { key, teacher } = bricks[entry.index - world.lessons.length]!;
+              own = await api.withRls(caller, async (tx) => {
+                const data = await readSwapData(tx, caller, planted.year);
+                const [verdict] = await judgeLessons(
+                  tx,
+                  masters,
+                  { academicYearId: planted.year, schoolId: planted.school, basis: CURRENT, gradeNumbering: 'NIOARIG' },
+                  [{ lesson: { id: null, studentGroupId: planted.classId.get(key)!, subjectId: planted.subjectId.get(world.subjects[0]!)! }, candidate: { dayOfWeek: day, startMinutes, endMinutes: startMinutes + minutes, teacherId: planted.teacherId.get(teacher)!, roomId: null } }],
+                  { reads: new ConflictReads() },
+                );
+                void data;
+                return verdict!;
+              });
+            }
+            if (entry.answer === 'STANDS') continue;
+            if (own.ok) assert.equal(entry.answer, 'FREE', `${label}: the judge lets it through and the query says ${entry.answer}`);
+            if (entry.answer === 'FREE') {
+              assert.ok(own.ok, `${label}: the query says FREE and the judge refuses`);
+              fitsSeen.lit += 1;
+            } else if (entry.answer === 'CHANGE') {
+              fitsSeen.changed += 1;
+              assert.ok(!own.ok, `${label}: the query says CHANGE although the own room is free`);
+              // In the room it offers, the judge lets it through.
+              const roomId = entry.lessons![0]!.roomId;
+              const there = await masters.judgeMoves({ moves: [{ lessonId: entry.lessonId!, dayOfWeek: day, startTime: start, endTime: clockOf(startMinutes + minutes), roomId }] }, caller);
+              assert.ok(there.ok, `${label}: the judge refuses the room the query offers`);
+            } else {
+              fitsSeen.dim += 1;
+              assert.ok(!own.ok, `${label}: the query says ${entry.answer} and the judge lets it through`);
+            }
+          }
+          assert.deepEqual(
+            answer.fits.map((entry) => answer.answers[entry]!.rank),
+            answer.fits.map((_, at) => at + 1),
+            `world ${index}, day ${day} ${start}: the ranks`,
+          );
+
+          // (mt-g) the rooms, for a few lessons at this start.
+          for (const lesson of world.lessons.slice(0, 4)) {
+            if (lesson.room === undefined) continue;
+            const lessonId = planted.lessonId.get(lesson.key)!;
+            const minutes = minutesOf(planted.slot.get(lesson.key)!.end) - minutesOf(planted.slot.get(lesson.key)!.start);
+            const chosen = await fitting.roomChoices({ lessonId, dayOfWeek: day, startTime: start }, caller);
+            for (const room of chosen.rooms) {
+              const verdict = await masters.judgeMoves({ moves: [{ lessonId, dayOfWeek: day, startTime: start, endTime: clockOf(startMinutes + minutes), roomId: room.roomId }] }, caller);
+              const refusals = verdict.moves[0]!.refusals;
+              const roomRefused = refusals.some((refusal) => refusal.reason === 'ROOM' || (refusal.reason === 'AVAILABILITY' && refusal.params['resource'] === 'ROOM'));
+              const label = `world ${index}, ${lesson.key} at day ${day} ${start}, room ${room.name}`;
+              if (room.state === 'FREE') {
+                fitsSeen.free += 1;
+                assert.ok(!roomRefused, `${label}: the chooser says free and the judge refuses the room (${refusals.map((refusal) => refusal.reason).join(',')})`);
+              } else if (room.state === 'BUSY') {
+                fitsSeen.busy += 1;
+                const named = refusals.filter((refusal) => refusal.reason === 'ROOM');
+                assert.ok(named.length > 0, `${label}: the chooser says busy and the judge does not refuse the room`);
+                assert.ok(
+                  named.some(
+                    (refusal) =>
+                      refusal.params['className'] === room.occupant!.className &&
+                      refusal.params['subjectName'] === room.occupant!.subjectName &&
+                      refusal.params['day'] === room.occupant!.dayOfWeek &&
+                      refusal.params['start'] === clockOf(room.occupant!.startMinutes) &&
+                      refusal.params['end'] === clockOf(room.occupant!.endMinutes),
+                  ) || room.occupants > 1,
+                  `${label}: the chooser names ${JSON.stringify(room.occupant)}, the judge ${JSON.stringify(named.map((refusal) => refusal.params))}`,
+                );
+              } else {
+                fitsSeen.shut += 1;
+                assert.ok(refusals.some((refusal) => refusal.reason === 'AVAILABILITY' && refusal.params['resource'] === 'ROOM'), `${label}: the chooser says shut and the judge does not say the room is unavailable`);
+              }
+            }
+          }
+        }
+        await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [`${SLUG}-${index}`]);
+      }
+      if (wanted >= worlds.length) {
+        assert.ok(fitsSeen.lit >= 100 && fitsSeen.dim >= 100, `${fitsSeen.lit} lit, ${fitsSeen.dim} dim`);
+        assert.ok(fitsSeen.free >= 100 && fitsSeen.busy >= 50 && fitsSeen.shut >= 1, `${fitsSeen.free} free, ${fitsSeen.busy} busy, ${fitsSeen.shut} shut rooms`);
+      }
+      console.log(`     what fits: ${fitsSeen.lit} lit, ${fitsSeen.changed} lit in another room, ${fitsSeen.dim} dim; rooms: ${fitsSeen.free} free, ${fitsSeen.busy} busy, ${fitsSeen.shut} shut, each held against the judge`);
     });
 
     await check('(mt-e) a högstadium, with blocks and teaching groups: the unit moves as one, and the query and POST /judge agree on every start', async () => {

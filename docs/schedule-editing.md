@@ -70,6 +70,24 @@ Optional: `days` (Monday to Friday), `from` and `to` (the board's visible day, 0
   `possible-times.service.spec.ts` and `scripts/test/probe-mojliga-tider.ts` (every start of the week of every lesson of the judge's fall
   file, over real Postgres: the judge and the query must agree).
 
+### What can lie here, and the room chooser (E3)
+
+Two more questions over the same machinery, both the scheduler's door, both writing nothing.
+
+- `POST /api/v1/master-lessons/what-fits-here` turns the question around: the schemaläggare picked an empty `dayOfWeek` and `startTime` on
+  the board, and `candidates` are the lessons that are waiting (up to 200, each `lessonId` or `brick`). A lesson on the tray is a brick
+  with its own id, so putting it out moves that lesson and creates no new one. The answer has one row per candidate in the order of the
+  request (`FREE`, `CHANGE`, `CLOSED` with the rule, `IN_THE_WAY` with the lesson named in `blockers`, `CROWDED`, `STANDS`, `PLACED` for a
+  förläggning's lesson, or `UNJUDGED` when the judge's time ran out) and `fits`, the indices of the ones that fit, best first by the
+  written cost, each with its `rank`, figures, wishes and the room it would stand in. A candidate fits only when the judge lets it through.
+- `POST /api/v1/master-lessons/room-choices` lists the school's rooms for a `lessonId` or `brick` laid at a day and clock: the free rooms
+  the generator would put the lesson in first, ranked (the lesson's own room, then its own kind of room, then the smallest that is big
+  enough, then its own building), then the free ones it would not (too small, another type, outside the group's years), then the busy
+  ones naming the lesson that stands in them (class, subject, day, clock), then the shut ones (a weekly row on the room, or another school's
+  hold, named). Each row has its seats against the pupils the lesson needs. The teacher and the class are not part of this question.
+- **Held in place by** `src/calendar/room-choices.spec.ts` (against a brute force on the hourly school), `what-fits.service.spec.ts`, and the
+  probe's (mt-f/g): every candidate and every room, over the judge's fall file, held against `POST /judge`.
+
 ## Undantag med flit (E1b)
 
 Under a no for the stage's ramtid or the class's meal the administrator may answer **"Lägg ändå"**. It is a question that says what

@@ -1260,6 +1260,45 @@ describe('Scheduling surface (e2e)', () => {
       });
     });
 
+    describe('what can lie here, and the room chooser (E3)', () => {
+      const post = (route: string, body: object, user: string = admin()) => request(http()).post(`/api/v1/master-lessons/${route}`).set('x-test-user', user).send(body);
+      const BRICK = { academicYearId: YEAR_ID, studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, minutes: 60 };
+
+      it.each(['what-fits-here', 'room-choices'])('%s is the scheduler’s door, as the judge is: no caller is 401, a teacher is 403', async (route) => {
+        await request(http()).post(`/api/v1/master-lessons/${route}`).send({}).expect(401);
+        await post(route, {}, asUser({ role: 'TEACHER' as never })).expect(403);
+      });
+
+      it('asks what fits with candidates that are lessons or bricks, at a school day and a clock', async () => {
+        const ok = { academicYearId: YEAR_ID, dayOfWeek: 2, startTime: '09:00' };
+        for (const body of [
+          {},
+          { ...ok },
+          { ...ok, candidates: [] },
+          { ...ok, candidates: [{ lessonId: 'nope' }] },
+          { ...ok, candidates: [{ brick: { ...BRICK, minutes: 2 } }] },
+          { ...ok, candidates: Array.from({ length: 201 }, () => ({ lessonId: LESSON_ID })) },
+          { ...ok, dayOfWeek: 6, candidates: [{ lessonId: LESSON_ID }] },
+          { ...ok, startTime: '34:00', candidates: [{ lessonId: LESSON_ID }] },
+          { ...ok, candidates: [{ lessonId: LESSON_ID, extra: 1 }] },
+        ]) {
+          await post('what-fits-here', body).expect(400);
+        }
+        // Both or neither of lessonId and brick is the service's 400, before it reads anything.
+        await post('what-fits-here', { ...ok, candidates: [{}] }).expect(400);
+        await post('what-fits-here', { ...ok, candidates: [{ lessonId: LESSON_ID, brick: BRICK }] }).expect(400);
+      });
+
+      it('asks for the rooms of one lesson or brick at a school day and a clock', async () => {
+        const ok = { dayOfWeek: 2, startTime: '09:00' };
+        for (const body of [{}, { ...ok, lessonId: 'nope' }, { ...ok, lessonId: LESSON_ID, dayOfWeek: 0 }, { ...ok, lessonId: LESSON_ID, startTime: '9.00' }, { ...ok, lessonId: LESSON_ID, extra: 1 }, { ...ok, brick: {} }]) {
+          await post('room-choices', body).expect(400);
+        }
+        await post('room-choices', { ...ok }).expect(400);
+        await post('room-choices', { ...ok, lessonId: LESSON_ID, brick: BRICK }).expect(400);
+      });
+    });
+
     it('rejects a time that is not HH:MM, naming the field', async () => {
       const response = await request(http())
         .post('/api/v1/master-lessons')
