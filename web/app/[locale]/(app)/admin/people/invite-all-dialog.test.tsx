@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
@@ -190,5 +191,56 @@ describe("InviteAllDialog", () => {
     await screen.findByText(/Alla i urvalet är inbjudna/);
     await user.click(screen.getByRole("button", { name: "Klart" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // The page mounts the dialog while it is open and drops it on onClose (people/page.tsx): a dialog that is gone has no Stoppa.
+  it("sends nothing more once the page has been left: a run does not go on where nobody can see it or stop it", async () => {
+    const user = userEvent.setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let calls = 0;
+    const { send, unmount, onRunEnded } = setup({
+      count: 60,
+      send: async (part) => {
+        calls += 1;
+        if (calls === 1) await gate;
+        return sentAll(part);
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Bjud in 60 personer" }));
+    await screen.findByRole("button", { name: "Stoppa" });
+    unmount();
+    release();
+
+    await waitFor(() => expect(onRunEnded).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts nothing when Avbryt was pressed while the register was being read", async () => {
+    const user = userEvent.setup();
+    let release!: (ids: string[]) => void;
+    const read = new Promise<string[]>((resolve) => (release = resolve));
+    const readPending = vi.fn(() => read);
+    const send = vi.fn(async (part: string[]) => sentAll(part));
+    function Page() {
+      const [open, setOpen] = useState(true);
+      return open ? (
+        <InviteAllDialog open onClose={() => setOpen(false)} count={30} perHour={null} send={send} readPending={readPending} onRunEnded={() => undefined} />
+      ) : null;
+    }
+    render(
+      <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm">
+        <Page />
+      </NextIntlClientProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Bjud in 30 personer" }));
+    await waitFor(() => expect(readPending).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Avbryt" }));
+    release(ids(30));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(send).not.toHaveBeenCalled();
   });
 });

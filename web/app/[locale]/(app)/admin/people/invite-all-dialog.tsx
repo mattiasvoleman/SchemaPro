@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import {
@@ -50,7 +50,19 @@ export function InviteAllDialog({
   const [reading, setReading] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
   const stop = useRef(false);
+  const mounted = useRef(true);
   const running = progress?.phase === "running";
+
+  // A dialog that is gone (the page was left, or Avbryt was pressed while the register was being read) has no Stoppa to press and no
+  // progress to show: a run that went on would send invitations nobody sees, and a second run started beside it would invite the same
+  // people twice. Leaving stops the run after the part that is on its way, as Stoppa does.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      stop.current = true;
+    };
+  }, []);
 
   const start = async () => {
     setReadError(null);
@@ -59,11 +71,12 @@ export function InviteAllDialog({
     try {
       pending = await readPending();
     } catch (error) {
-      setReadError(apiErrorText(error, tCommon));
+      if (mounted.current) setReadError(apiErrorText(error, tCommon));
       return;
     } finally {
-      setReading(false);
+      if (mounted.current) setReading(false);
     }
+    if (!mounted.current) return;
     stop.current = false;
     const carried = progress;
     // What an earlier part of the same run did stays in the sums: a run taken up again is one run on the screen.
