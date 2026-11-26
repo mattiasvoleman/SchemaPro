@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
-import { possibleStore } from "@/lib/possible-store";
-import { askPossibleTimes, type PossibleRun } from "@/lib/possible-times";
+import { boardCommands, possibleStore } from "@/lib/possible-store";
+import { askPossibleTimes, type PossibleOption, type PossibleRun } from "@/lib/possible-times";
 
 /*
  * THE BOARD PAINTS WHERE THE LESSON IN HAND CAN STAND (E3, "Se").
@@ -114,5 +114,98 @@ export function PossibleDay({ day, scale }: { day: number; scale: { startMinutes
           </span>
         ))}
     </div>
+  );
+}
+
+/** What laying the lesson at a time does to the week, in words: only what moves, and nothing when nothing does. */
+export function costWords(option: PossibleOption): string[] {
+  const figure = (code: string) => option.costs.find((cost) => cost.code === code)?.delta ?? 0;
+  const words: string[] = [];
+  const pupils = figure("PUPIL_GAPS");
+  if (pupils < 0) words.push("pupilsBetter");
+  if (pupils > 0) words.push("pupilsWorse");
+  const teacher = figure("TEACHER_GAPS");
+  if (teacher < 0) words.push("teacherLess");
+  if (teacher > 0) words.push("teacherMore");
+  if (figure("DISTRIBUTION") < 0) words.push("distributionBetter");
+  if (figure("DISTRIBUTION") > 0) words.push("distributionWorse");
+  if (figure("TEACHER_DAY") < 0) words.push("dayBetter");
+  if (figure("TEACHER_DAY") > 0) words.push("dayWorse");
+  if (option.wishes.met > 0) words.push("wishMet");
+  if (option.wishes.avoided > 0) words.push("wishBroken");
+  if (option.roomChanged) words.push("roomChanged");
+  return words;
+}
+
+const clock = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+
+/**
+ * The best times as a list, for the lesson in hand: what the painting says, for a reader who cannot see it and for anybody who has no
+ * use for a marker. Each is a button that lays the lesson there (the keyboard layer's own path: the same write, the same line), and a
+ * clock can be typed to move the marker to it. Drawn below the week, and only while a lesson is in hand.
+ */
+export function PossibleList() {
+  const t = useTranslations("boardPossible");
+  const tDays = useTranslations("days");
+  const state = useSyncExternalStore(possibleStore.subscribe, possibleStore.get, () => null);
+  const [typed, setTyped] = useState("");
+  if (!state) return null;
+  const times = state.status === "done" ? state.times : null;
+  const lesson = times ? `${times.subject.subjectName} ${times.subject.className}`.trim() : "";
+  const typedMinutes = /^([01]\d|2[0-3]):([0-5]\d)$/.test(typed) ? Number(typed.slice(0, 2)) * 60 + Number(typed.slice(3, 5)) : null;
+
+  return (
+    <section aria-label={t("list.title", { lesson })} aria-busy={state.status === "loading"} data-possible-list className="mt-2 rounded-md border bg-card p-3 text-sm">
+      <h3 className="mb-2 font-semibold">{t("list.title", { lesson })}</h3>
+      {state.status === "loading" ? <p className="text-muted-foreground">{t("list.loading")}</p> : null}
+      {state.status === "failed" ? <p className="text-muted-foreground">{t("list.failed")}</p> : null}
+      {times && times.options.length === 0 ? <p className="text-muted-foreground">{t("list.none", { lesson })}</p> : null}
+      {times && times.options.length > 0 ? (
+        <ol className="grid gap-1">
+          {times.options.map((option) => {
+            const where = { day: tDays(String(option.dayOfWeek)), from: clock(option.startMinutes), to: clock(option.endMinutes) };
+            const words = costWords(option);
+            return (
+              <li key={option.rank} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="font-medium tabular-nums">{t("list.option", { rank: option.rank, ...where })}</span>
+                <span className="text-muted-foreground">{words.length > 0 ? words.map((word) => t(`list.words.${word}`)).join(", ") : t("list.plain")}</span>
+                <button
+                  type="button"
+                  onClick={() => boardCommands.current?.lay(option.rank)}
+                  aria-label={t("list.layLabel", { lesson, ...where })}
+                  className="ml-auto min-h-8 rounded-md border px-3 text-xs font-medium hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                >
+                  {t("list.lay")}
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+      <form
+        className="mt-3 flex flex-wrap items-end gap-2 border-t pt-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (typedMinutes !== null) boardCommands.current?.goTo(typedMinutes);
+        }}
+      >
+        <label className="grid gap-1 text-xs font-medium">
+          {t("list.typeLabel")}
+          <input
+            type="time"
+            step={300}
+            value={typed}
+            onChange={(event) => setTyped(event.target.value)}
+            className="min-h-8 rounded-md border bg-background px-2 text-sm"
+          />
+        </label>
+        <button type="submit" disabled={typedMinutes === null} className="min-h-8 rounded-md border px-3 text-xs font-medium hover:bg-accent disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+          {t("list.typeGo")}
+        </button>
+        <button type="button" onClick={() => boardCommands.current?.layAtMarker()} className="min-h-8 rounded-md border px-3 text-xs font-medium hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+          {t("list.layAtMarker")}
+        </button>
+      </form>
+    </section>
   );
 }

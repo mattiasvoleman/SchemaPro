@@ -2307,7 +2307,33 @@
       "AVAILABILITY": "Unavailable"
     },
     "inTheWay": "{subject} {className} in the way",
-    "inTheWayUnnamed": "A lesson in the way"
+    "inTheWayUnnamed": "A lesson in the way",
+    "list": {
+      "title": "Possible times for {lesson}",
+      "loading": "Looking for times …",
+      "failed": "The possible times could not be fetched. The arrow keys and Enter work as before.",
+      "none": "There is no time in the week to put {lesson} at.",
+      "option": "{rank}. {day} {from}–{to}",
+      "plain": "no difference to the rest of the week",
+      "lay": "Place",
+      "layLabel": "Place {lesson} {day} {from}–{to}",
+      "typeLabel": "Type a time",
+      "typeGo": "Move the marker",
+      "layAtMarker": "Place where the marker is",
+      "words": {
+        "pupilsBetter": "fewer gaps for the pupils",
+        "pupilsWorse": "more gaps for the pupils",
+        "teacherLess": "fewer gaps for the teacher",
+        "teacherMore": "more gaps for the teacher",
+        "distributionBetter": "the subject is spread better over the week",
+        "distributionWorse": "the subject is spread worse over the week",
+        "dayBetter": "the teacher's day gets better",
+        "dayWorse": "breaks a limit of the teacher's day",
+        "wishMet": "meets a wish",
+        "wishBroken": "breaks a wish",
+        "roomChanged": "in another room"
+      }
+    }
   },
   "boardKeys": {
     "clash": "Clash",
@@ -2322,6 +2348,7 @@
     "markerInTheWay": "{day} {from}–{to}: {subject} {className} is in the way. Enter shows the nearest free times.",
     "markerCrowded": "{day} {from}–{to}: {units, plural, =0 {something is in the way} one {a lesson is in the way} other {# lessons are in the way}}. Enter shows the nearest free times.",
     "numberNone": "There is no suggestion {rank}.",
+    "typedOutside": "That time is outside the day: type a time between {from} and {to}.",
     "placed": "Moving {lesson} to {day} {from}–{to}.",
     "refused": "{lesson} cannot go on {day} {from}–{to}. The nearest free times are shown.",
     "letGo": "Let go of {lesson}. Nothing changed.",

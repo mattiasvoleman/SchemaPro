@@ -128,6 +128,32 @@ test("Grundschemat: 1 takes the marker to the best time and Enter lays the lesso
   expect(misses, MISSES).toEqual([]);
 });
 
+test("Grundschemat: the list of possible times below the week lays a lesson with a button, and a typed clock moves the marker", async ({ page, baseURL }) => {
+  const { misses, written } = await open(page, baseURL!, { width: 1280, height: 800 }, "light");
+  const status = page.locator("[data-board-status]").first();
+  await card(page, MATH_LESSON.id).focus();
+  await page.keyboard.press("Space");
+  const list = page.locator("[data-possible-list]");
+  await expect(list).toBeVisible();
+  await expect(list.getByRole("heading", { name: /^Möjliga tider för Matematik/ })).toBeVisible();
+  // The numbered times are an ordered list of sentences, each with a button that has the whole sentence for a name.
+  const buttons = list.getByRole("button", { name: /^Lägg Matematik/ });
+  await expect(buttons.first()).toBeVisible();
+  expect(await buttons.count()).toBeGreaterThan(1);
+
+  // A typed clock moves the marker, on the marker's own day, and the line says what the gateway says of it.
+  await list.getByLabel("Skriv en tid").fill("11:30");
+  await list.getByRole("button", { name: "Flytta markören" }).click();
+  await expect(status).toContainText(/11:30–12:30: /);
+
+  // A button lays the lesson at the time it names, with the page's own write: no drag, no marker.
+  await buttons.first().click();
+  await expect.poll(() => written.length).toBe(1);
+  expect(written[0]!.id).toBe(MATH_LESSON.id);
+  expect(Object.keys(written[0]!.body).sort()).toEqual(["dayOfWeek", "endTime", "startTime"]);
+  expect(misses, MISSES).toEqual([]);
+});
+
 test("Grundschemat: a click is a press and a let go, and asks the gateway nothing", async ({ page, baseURL }) => {
   const { asked } = await open(page, baseURL!, { width: 1280, height: 800 }, "light");
   await card(page, MATH_LESSON.id).click();

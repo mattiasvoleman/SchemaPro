@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { TIMES } from "@/lib/possible-times.fixture";
-import { possibleStore } from "@/lib/possible-store";
+import { boardCommands, possibleStore } from "@/lib/possible-store";
 import { HOLD_BEFORE_ASKING_MS } from "./possible-layer";
 import { TimetableGrid, type TimetableLesson } from "./timetable-grid";
 import sv from "@/messages/sv.json";
@@ -211,5 +211,84 @@ describe("1 to 9: the marker goes to the best times", () => {
     expect(said()).toBe("Monday 11:15–12:15: closed by the class's lunch. Enter shows the nearest free times.");
     key("a", { key: "1" });
     expect(said()).toBe("Tuesday 08:00–09:00: suggestion 1. Enter places it.");
+  });
+});
+
+describe("the list of possible times, below the week, does what the keys do", () => {
+  const lay = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
+
+  it("is drawn while a lesson is in hand, and gone when it is let go", async () => {
+    await board();
+    expect(document.querySelector("[data-possible-list]")).toBeNull();
+    key("a", { key: " " });
+    await waitFor(() => expect(document.querySelector("[data-possible-list]")).not.toBeNull());
+    expect(boardCommands.current).not.toBeNull();
+    await waitFor(() => expect(within(document.querySelector("[data-possible-list]") as HTMLElement).getAllByRole("listitem")).toHaveLength(3));
+    key("a", { key: "Escape" });
+    await waitFor(() => expect(document.querySelector("[data-possible-list]")).toBeNull());
+  });
+
+  it("lays the lesson at the numbered time when its button is pressed, as Enter on that number does", async () => {
+    const onLessonChange = vi.fn();
+    await board("sv", { onLessonChange });
+    await takeUp();
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /^Lägg Matematik 7A/ })).toHaveLength(3));
+    lay("Lägg Matematik 7A Tisdag 08:30–09:30");
+    expect(onLessonChange).toHaveBeenCalledWith("a", { dayOfWeek: 2, startMinutes: 510, endMinutes: 570 });
+    expect(said()).toBe("Flyttar Matematik 7A till Tisdag 08:30–09:30.");
+  });
+
+  it("lays a time offered in another room with that room, the button's way as the key's", async () => {
+    const onLessonChange = vi.fn();
+    await board("sv", { onLessonChange, validateChange: vi.fn().mockReturnValue(false) });
+    await takeUp();
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /^Lägg Matematik 7A/ })).toHaveLength(3));
+    lay("Lägg Matematik 7A Onsdag 10:00–11:00");
+    expect(onLessonChange).toHaveBeenCalledWith("a", { dayOfWeek: 3, startMinutes: 600, endMinutes: 660, roomId: "r2" });
+  });
+
+  it("moves the marker to a typed clock on the marker's own day, and says what the gateway says of it", async () => {
+    await board();
+    await takeUp();
+    await waitFor(() => expect(screen.getByLabelText("Skriv en tid")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Skriv en tid"), { target: { value: "11:30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Flytta markören" }));
+    // 11:30 on Monday is inside the class's lunch (the stretch from 11:15).
+    expect(said()).toBe("Måndag 11:30–12:30: stängt av klassens lunch. Enter visar de närmaste lediga tiderna.");
+    fireEvent.change(screen.getByLabelText("Skriv en tid"), { target: { value: "08:15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Flytta markören" }));
+    expect(said()).toBe("Måndag 08:15–09:15: går att lägga. Enter lägger.");
+  });
+
+  it("says a clock outside the day is none, and leaves the marker", async () => {
+    const onLessonChange = vi.fn();
+    await board("sv", { onLessonChange });
+    await takeUp();
+    await waitFor(() => expect(screen.getByLabelText("Skriv en tid")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Skriv en tid"), { target: { value: "03:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Flytta markören" }));
+    expect(said()).toMatch(/^Tiden ligger utanför veckans dag: skriv en tid mellan 08:00 och /);
+    fireEvent.click(screen.getByRole("button", { name: "Lägg där markören står" }));
+    // The marker never left the lesson's own square: putting it down there is no move.
+    expect(onLessonChange).not.toHaveBeenCalled();
+  });
+
+  it("lays where the marker stands after it has been moved to a typed clock", async () => {
+    const onLessonChange = vi.fn();
+    await board("sv", { onLessonChange });
+    await takeUp();
+    await waitFor(() => expect(screen.getByLabelText("Skriv en tid")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Skriv en tid"), { target: { value: "08:15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Flytta markören" }));
+    fireEvent.click(screen.getByRole("button", { name: "Lägg där markören står" }));
+    expect(onLessonChange).toHaveBeenCalledWith("a", { dayOfWeek: 1, startMinutes: 495, endMinutes: 555 });
+  });
+
+  it("takes its commands away with the keyboard layer", async () => {
+    const view = await board();
+    key("a", { key: " " });
+    await waitFor(() => expect(boardCommands.current).not.toBeNull());
+    view.unmount();
+    expect(boardCommands.current).toBeNull();
   });
 });

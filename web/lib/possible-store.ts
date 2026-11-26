@@ -31,6 +31,22 @@ export const possibleStore = {
   },
 };
 
+/**
+ * What the list of possible times (possible-layer.tsx) asks the keyboard layer (board-keys.tsx) to do with the lesson in hand: a pointer, a
+ * touch or a screen reader that cannot move a marker lays a numbered time, moves the marker to a typed clock, or lays where it stands. The
+ * layer sets them while it is up and takes them away when it goes; the list reads them when a button is pressed.
+ */
+export interface BoardCommands {
+  /** Lays the lesson at the numbered time (1 to 9), in the room the gateway named for it. */
+  lay(rank: number): void;
+  /** Moves the marker to a clock of the marker's own day, and says what the gateway says of it. */
+  goTo(minutes: number): void;
+  /** Lays the lesson where the marker stands. */
+  layAtMarker(): void;
+}
+
+export const boardCommands: { current: BoardCommands | null } = { current: null };
+
 /** What is known of this lesson's possible times: the answer when it has come, else nothing. */
 export function possibleOf(lessonId: string): PossibleTimes | null {
   return state?.lessonId === lessonId && state.status === "done" ? state.times : null;

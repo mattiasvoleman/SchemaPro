@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { TIMES } from "@/lib/possible-times.fixture";
-import { possibleStore } from "@/lib/possible-store";
-import { HOLD_BEFORE_ASKING_MS, PossibleDay, PossibleHold } from "./possible-layer";
+import { boardCommands, possibleStore } from "@/lib/possible-store";
+import { costWords, HOLD_BEFORE_ASKING_MS, PossibleDay, PossibleHold, PossibleList } from "./possible-layer";
 import sv from "@/messages/sv.json";
 import en from "@/messages/en.json";
 
@@ -25,6 +25,7 @@ const day = (n: number, locale: "sv" | "en" = "sv") =>
 beforeEach(() => {
   post.mockReset();
   possibleStore.set(null);
+  boardCommands.current = null;
 });
 afterEach(() => {
   cleanup();
@@ -158,6 +159,100 @@ describe("holding a lesson", () => {
     possibleStore.set({ lessonId: "b", status: "loading" });
     first.unmount();
     expect(possibleStore.get()).toEqual({ lessonId: "b", status: "loading" });
+  });
+});
+
+describe("the list of possible times", () => {
+  const list = (locale: "sv" | "en" = "sv") =>
+    render(
+      <NextIntlClientProvider locale={locale} messages={(locale === "sv" ? sv : en) as never}>
+        <PossibleList />
+      </NextIntlClientProvider>,
+    );
+  const commands = () => {
+    const calls = { lay: vi.fn(), goTo: vi.fn(), layAtMarker: vi.fn() };
+    boardCommands.current = calls;
+    return calls;
+  };
+
+  it("is nothing before a lesson is in hand, and says it is looking, and that it could not look", () => {
+    const { container } = list();
+    expect(container.querySelector("[data-possible-list]")).toBeNull();
+    act(() => possibleStore.set({ lessonId: "a", status: "loading" }));
+    expect(screen.getByRole("region", { name: "Möjliga tider för" })).toBeTruthy();
+    expect(screen.getByText("Letar efter tider …")).toBeTruthy();
+    expect(container.querySelector("[data-possible-list]")!.getAttribute("aria-busy")).toBe("true");
+    act(() => possibleStore.set({ lessonId: "a", status: "failed" }));
+    expect(screen.getByText(/Det gick inte att hämta de möjliga tiderna/)).toBeTruthy();
+  });
+
+  it("lists the best times in their order, each as a sentence with what it does to the week and a button that lays it", () => {
+    list();
+    act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
+    const region = screen.getByRole("region", { name: "Möjliga tider för Matematik 7A" });
+    const items = within(region).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      "1. Tisdag 08:00–09:00ingen skillnad för veckan i övrigtLägg",
+      "2. Tisdag 08:30–09:30ingen skillnad för veckan i övrigtLägg",
+      "3. Onsdag 10:00–11:00i en annan salLägg",
+    ]);
+    const commandsAsked = commands();
+    fireEvent.click(within(region).getByRole("button", { name: "Lägg Matematik 7A Onsdag 10:00–11:00" }));
+    expect(commandsAsked.lay).toHaveBeenCalledWith(3);
+  });
+
+  it("says in words what a time does: fewer gaps, a better spread, a wish met, another room", () => {
+    const base = TIMES.options[0]!;
+    const cost = (code: string, delta: number) => ({ code, unit: "MINUTES", before: 0, after: delta, delta });
+    expect(costWords({ ...base, costs: [cost("PUPIL_GAPS", -50), cost("TEACHER_GAPS", 15), cost("DISTRIBUTION", -1), cost("TEACHER_DAY", 1), cost("MOVED_LESSONS", 1)], wishes: { met: 1, avoided: 0 }, roomChanged: true })).toEqual([
+      "pupilsBetter",
+      "teacherMore",
+      "distributionBetter",
+      "dayWorse",
+      "wishMet",
+      "roomChanged",
+    ]);
+    expect(costWords({ ...base, costs: [cost("PUPIL_GAPS", 20), cost("TEACHER_GAPS", -5), cost("DISTRIBUTION", 2), cost("TEACHER_DAY", -1)], wishes: { met: 0, avoided: 2 } })).toEqual([
+      "pupilsWorse",
+      "teacherLess",
+      "distributionWorse",
+      "dayBetter",
+      "wishBroken",
+    ]);
+    // Nothing moves, nothing is said (the one lesson moved is no news).
+    expect(costWords({ ...base, costs: [cost("MOVED_LESSONS", 1)] })).toEqual([]);
+  });
+
+  it("says there is no time when there is none, and says every word in English too", () => {
+    list("en");
+    act(() => possibleStore.set({ lessonId: "a", status: "done", times: { ...TIMES, options: [] } }));
+    expect(screen.getByText("There is no time in the week to put Matematik 7A at.")).toBeTruthy();
+    act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
+    expect(screen.getByRole("button", { name: "Place Matematik 7A Tuesday 08:00–09:00" })).toBeTruthy();
+    expect(screen.getByText("in another room")).toBeTruthy();
+  });
+
+  it("moves the marker to a typed clock, only when it is a clock, and lays where the marker stands", () => {
+    list();
+    act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
+    const asked = commands();
+    const move = screen.getByRole("button", { name: "Flytta markören" });
+    const field = screen.getByLabelText("Skriv en tid") as HTMLInputElement;
+    expect((move as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(field, { target: { value: "09:35" } });
+    expect((move as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(move);
+    expect(asked.goTo).toHaveBeenCalledWith(9 * 60 + 35);
+    fireEvent.click(screen.getByRole("button", { name: "Lägg där markören står" }));
+    expect(asked.layAtMarker).toHaveBeenCalledTimes(1);
+    fireEvent.change(field, { target: { value: "" } });
+    expect((move as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("does nothing, and says nothing, when the keyboard layer has not come to answer the buttons", () => {
+    list();
+    act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
+    expect(() => fireEvent.click(screen.getByRole("button", { name: "Lägg Matematik 7A Tisdag 08:00–09:00" }))).not.toThrow();
   });
 });
 

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
-import { possibleOf } from "@/lib/possible-store";
+import { boardCommands, possibleOf } from "@/lib/possible-store";
 import { optionAt, optionNumbered, runAt } from "@/lib/possible-times";
 import {
   focusAfter,
@@ -419,6 +419,48 @@ export function BoardKeys(props: BoardKeysProps) {
       }
     };
 
+    // What the list of possible times asks of the lesson in hand (possible-layer.tsx): the same moves as the keys, for a pointer or a
+    // screen reader that does not use them. Each is the key's own path, so that what is said and what is written are what a key says and writes.
+    boardCommands.current = {
+      lay: (rank) => {
+        const { props: p } = live.current;
+        const taking = held.current;
+        const lesson = taking && p.lessons.find((candidate) => candidate.id === taking.id);
+        const times = taking ? possibleOf(taking.id) : null;
+        const option = times ? optionNumbered(times, rank) : null;
+        if (!taking || !lesson || !option) return;
+        const length = lesson.endMinutes - lesson.startMinutes;
+        const at = { dayOfWeek: option.dayOfWeek, startMinutes: option.startMinutes, endMinutes: option.startMinutes + length };
+        const room = option.roomChanged ? (option.lessons.find((entry) => entry.lessonId === taking.id)?.roomId ?? null) : undefined;
+        put(lesson, at, room);
+      },
+      goTo: (minutes) => {
+        const { props: p } = live.current;
+        const taking = held.current;
+        const lesson = taking && p.lessons.find((candidate) => candidate.id === taking.id);
+        if (!taking || !lesson) return;
+        const length = lesson.endMinutes - lesson.startMinutes;
+        // A clock the day does not hold is no square: the marker stays, and the line says so.
+        if (minutes < p.dayStartMinutes || minutes + length > p.dayEndMinutes) {
+          say("typedOutside", { from: clock(p.dayStartMinutes), to: clock(p.dayEndMinutes - length) });
+          return;
+        }
+        taking.at = { dayOfWeek: taking.at.dayOfWeek, startMinutes: minutes, endMinutes: minutes + length };
+        taking.room = undefined;
+        const ok = verdict(taking.id, taking.at);
+        const known = knownAbout(taking.id, taking.at);
+        if (known) say(known.key, known.values);
+        else say(ok ? "markerFree" : "markerTaken", squareOf(taking.at));
+      },
+      layAtMarker: () => {
+        const taking = held.current;
+        const lesson = taking && live.current.props.lessons.find((candidate) => candidate.id === taking.id);
+        if (!taking || !lesson) return;
+        if (sameSquare(taking.at, lesson)) letGo();
+        else put(lesson, taking.at, taking.room);
+      },
+    };
+
     // Focus, however it got there (a key, a click, Tab), is where the arrows start from.
     const onFocusIn = (event: FocusEvent) => {
       const card = cardOf(event);
@@ -436,6 +478,7 @@ export function BoardKeys(props: BoardKeysProps) {
       body.removeEventListener("keydown", onKeyDown);
       body.removeEventListener("focusin", onFocusIn);
       body.removeEventListener("pointerdown", onPointerDown, true);
+      boardCommands.current = null;
     };
   }, [props.bodyRef]);
 

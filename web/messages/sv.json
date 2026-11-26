@@ -2307,7 +2307,33 @@
       "AVAILABILITY": "Inte tillgänglig"
     },
     "inTheWay": "{subject} {className} i vägen",
-    "inTheWayUnnamed": "En lektion i vägen"
+    "inTheWayUnnamed": "En lektion i vägen",
+    "list": {
+      "title": "Möjliga tider för {lesson}",
+      "loading": "Letar efter tider …",
+      "failed": "Det gick inte att hämta de möjliga tiderna. Pilarna och Enter fungerar som förut.",
+      "none": "Det finns ingen tid i veckan att lägga {lesson} på.",
+      "option": "{rank}. {day} {from}–{to}",
+      "plain": "ingen skillnad för veckan i övrigt",
+      "lay": "Lägg",
+      "layLabel": "Lägg {lesson} {day} {from}–{to}",
+      "typeLabel": "Skriv en tid",
+      "typeGo": "Flytta markören",
+      "layAtMarker": "Lägg där markören står",
+      "words": {
+        "pupilsBetter": "färre håltimmar för eleverna",
+        "pupilsWorse": "fler håltimmar för eleverna",
+        "teacherLess": "färre håltimmar för läraren",
+        "teacherMore": "fler håltimmar för läraren",
+        "distributionBetter": "ämnet fördelas bättre över veckan",
+        "distributionWorse": "ämnet fördelas sämre över veckan",
+        "dayBetter": "lärarens dag blir bättre",
+        "dayWorse": "lärarens dag bryter en gräns",
+        "wishMet": "uppfyller ett önskemål",
+        "wishBroken": "bryter ett önskemål",
+        "roomChanged": "i en annan sal"
+      }
+    }
   },
   "boardKeys": {
     "clash": "Krock",
@@ -2322,6 +2348,7 @@
     "markerInTheWay": "{day} {from}–{to}: {subject} {className} ligger i vägen. Enter visar de närmaste lediga tiderna.",
     "markerCrowded": "{day} {from}–{to}: {units, plural, =0 {något är i vägen} one {en lektion ligger i vägen} other {# lektioner ligger i vägen}}. Enter visar de närmaste lediga tiderna.",
     "numberNone": "Det finns inget förslag {rank}.",
+    "typedOutside": "Tiden ligger utanför veckans dag: skriv en tid mellan {from} och {to}.",
     "placed": "Flyttar {lesson} till {day} {from}–{to}.",
     "refused": "{lesson} går inte att lägga {day} {from}–{to}. De närmaste lediga tiderna visas.",
     "letGo": "Släppte {lesson}. Ingenting ändrades.",

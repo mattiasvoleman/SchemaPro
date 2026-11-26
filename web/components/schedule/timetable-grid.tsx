@@ -1656,6 +1656,7 @@ function TimetableGridInner({
       />
     ) : null}
     {possible && holding ? <possible.PossibleHold lessonId={holding} /> : null}
+    {possible && holding && !narrow ? <possible.PossibleList /> : null}
     </>
   );
 }
