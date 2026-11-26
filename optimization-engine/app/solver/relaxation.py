@@ -666,13 +666,24 @@ def _unnamed(detail: ConflictDetail) -> dict[str, str | int | float]:
     return {name: value for name, value in detail.params.items() if name not in WEEK_WORDS}
 
 
+def _worse(detail: ConflictDetail) -> tuple[int, int]:
+    """How hard a week breaks a rule, by what a school would have to set it to first (`needed`), then by how far over it went (`over`).
+
+    BY `needed`, AND NOT BY `over` ALONE (g384-L-2). `over` counts what the generated lessons add beyond what the school's own locked lessons
+    leave, `needed` is the value the whole week needs: they agree where nothing is locked, and where a locked lesson already stands over
+    the cap in one of two weeks the other week can go over by more and still need less. A line that says `needed` 120 for a rule that
+    holds only at 150 is the wrong number for the schedule the school reads it against; the week with the higher `needed` is the one
+    that binds. `over` breaks a tie, as it has always been the line's measure."""
+    return (int(detail.params["needed"]), int(detail.params["over"]))
+
+
 def _worst_week(
     found: list[tuple[Weeks | None, ConflictDetail]],
     key: tuple[str, ...],
     weeks: tuple[Weeks | None, ...],
     phantom: Weeks | None = None,
 ) -> list[ConflictDetail]:
-    """One line per rule (and day), the week that breaks it by most.
+    """One line per rule (and day), the week that needs most of it (`needed`, then `over`: _worse).
 
     A school without alternating lessons has one week; one with them has
     two, or one per period, and a reader is told about the worst and not
@@ -699,7 +710,7 @@ def _worst_week(
         identity = tuple(detail.params[name] for name in key)
         lines[identity].append((week, detail))
         held = best.get(identity)
-        if held is None or int(detail.params["over"]) > int(held.params["over"]):
+        if held is None or _worse(detail) > _worse(held):
             best[identity] = detail
     out: list[ConflictDetail] = []
     for identity, detail in best.items():
