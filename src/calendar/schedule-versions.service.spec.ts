@@ -125,6 +125,7 @@ type MasterLessonRow = {
   isGenerated: boolean;
   fromPlacement?: boolean;
   isParked: boolean;
+  exemptFrom: string[];
   recurrence: LessonRecurrence;
   startDate: Date | null;
   endDate: Date | null;
@@ -146,6 +147,7 @@ const masterLessonRow = (
   isLocked: true,
   isGenerated: false,
   isParked: false,
+  exemptFrom: [],
   recurrence: 'ALL_WEEKS',
   startDate: null,
   endDate: null,
@@ -352,6 +354,21 @@ describe('ScheduleVersionsService', () => {
       expect(lessons[0]).toMatchObject({ fromPlacement: true });
       // A school without förläggningar stores the blob it always stored.
       expect(lessons[1]).not.toHaveProperty('fromPlacement');
+    });
+
+    it('snapshots an exemption by name, and no key for a lesson without one (Undantag med flit)', async () => {
+      arrangeYear();
+      timetable([masterLessonRow({ exemptFrom: ['FRAME', 'LUNCH'] }), masterLessonRow({ exemptFrom: [] })]);
+
+      await service.create(YEAR_ID, 'Draft v1', testUser());
+
+      expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ select: expect.objectContaining({ exemptFrom: true }) }),
+      );
+      const { lessons } = tx.scheduleVersion.create.mock.calls[0][0].data;
+      expect(lessons[0]).toMatchObject({ exemptFrom: ['FRAME', 'LUNCH'] });
+      // A school without an exemption stores the blob it always stored.
+      expect(lessons[1]).not.toHaveProperty('exemptFrom');
     });
 
     it('snapshots the tray along with the grid', async () => {
@@ -758,6 +775,17 @@ describe('ScheduleVersionsService', () => {
           data: expect.objectContaining({ isParked: false }),
         }),
       );
+    });
+
+    it('puts an exemption back on the lesson it was taken from, and none on a lesson of a snapshot that has no key', async () => {
+      arrangeRestore([{ ...fullLesson(), exemptFrom: ['LUNCH'] }, fullLesson(), minimalLesson()]);
+
+      await service.restore(VERSION_ID, testUser());
+
+      const written = tx.masterLesson.create.mock.calls.map((call: [{ data: Record<string, unknown> }]) => call[0].data);
+      expect(written[0]).toMatchObject({ exemptFrom: ['LUNCH'], isLocked: true });
+      expect(written[1]).not.toHaveProperty('exemptFrom');
+      expect(written[2]).not.toHaveProperty('exemptFrom');
     });
 
     it('reads a snapshot stored before parking was carried as placed', async () => {

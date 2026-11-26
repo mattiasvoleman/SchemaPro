@@ -2297,6 +2297,8 @@
     "notRun": "{count, plural, one {# subject} other {# subjects}} could not be counted again in time."
   },
   "boardKeys": {
+    "clash": "Clash",
+    "blockDialog": "{lesson} is a block: its own dialog opens, where lock, park and remove apply to the whole block.",
     "dayPicker": "Show a day",
     "dayTab": "{day}: {count, plural, =0 {no lessons} one {# lesson} other {# lessons}}",
     "pickedUp": "Picked up {lesson}, {day} {from}–{to}. The arrow keys move the marker, Enter puts it down, Esc lets go.",
@@ -2424,7 +2426,7 @@
     "conflictListGo": "Open",
     "conflictListEmpty": "No conflicts in the timetable.",
     "conflictRoomLock": "The room is locked for the subject.",
-    "dragHint": "Drag lessons to move, drag the bottom edge to resize, click an empty slot to add, shift-click to multi-select. By keyboard: the arrow keys move a lesson 15 minutes or a day, Enter opens it and Shift-Enter selects it.",
+    "dragHint": "Drag lessons to move, drag the bottom edge to resize, click an empty slot to add, shift-click to multi-select. By keyboard: the arrow keys move focus between the lessons, Enter opens a lesson and Shift-Enter selects it. Space picks a lesson up, the arrow keys move it and Enter puts it down. On a lesson, ? shows all the keys.",
     "versions": "Versions",
     "versionsTitle": "Schedule versions",
     "versionsBody": "Save named snapshots of the timetable and roll back at any time. A safety snapshot is taken automatically before every restore.",
@@ -6579,6 +6581,7 @@
       "PUB_STAFFING_REFUSE": "The staffing stop rules find {count, plural, one {# thing} other {# things}}.",
       "PUB_TIMPLAN": "{count, plural, one {# line of the timplan is} other {# lines of the timplan are}} below level.",
       "PUB_BLOCK_SPLIT": "{count, plural, one {# lesson does} other {# lessons do}} not stand at the same times as the rest of its parallel block.",
+      "PUB_EXEMPTIONS": "{count, plural, one {# lesson stands} other {# lessons stand}} outside the stage’s time frame or over the class’s meal on purpose: an exemption an administrator gave, for that time.",
       "PUB_EMPTY_HALF": "{count, plural, one {# class half has lessons but no pupils placed in it.} other {# class halves have lessons but no pupils placed in them.}}",
       "PUB_RANGE_OVERLAP": "The validity shares its period with {count, plural, one {a published timetable} other {# published timetables}}.",
       "PUB_RANGE_GAP": "{count, plural, one {# school day ahead has} other {# school days ahead have}} no published timetable.",

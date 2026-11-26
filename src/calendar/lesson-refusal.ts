@@ -15,7 +15,7 @@ export const lessonRefusalText = (refusal: LessonRefusal): string =>
 /** A lesson the edit named, with what the judge found of it: `requirement` is "Idrott för 7A" (requirementName) on a block's card. */
 export interface RefusedLesson {
   requirement?: string;
-  verdict: LessonVerdict;
+  verdict: Pick<LessonVerdict, 'refusals'>;
 }
 
 const unique = <T>(items: readonly T[]): T[] => [...new Set(items)];

@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsUUID,
@@ -12,6 +13,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { EXEMPTABLE_RULES, type ExemptableRule } from '../lesson-exemption';
 
 const TIME = /^\d{2}:\d{2}$/;
 
@@ -108,6 +110,18 @@ export class UpdateMasterLessonDto {
   propagate?: boolean;
 
   /** Replaces the additional-classes list when provided. */
+  /**
+   * UNDANTAG MED FLIT: the rules of the board the administrator answers yes to ("Lägg ändå") for THIS time, by name: `FRAME` (the stage's
+   * ramtid) and `LUNCH` (the class's meal). Only these two can be named; a teacher, a room, a class or its pupils, a closed hour, a rule on
+   * årskurser, another school's time and the school day cannot. A rule named that the time does not break is saved on nothing. A saved
+   * exemption locks the lesson and is for the time it was given for. `[]` takes back what the lesson had.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(EXEMPTABLE_RULES.length)
+  @IsIn(EXEMPTABLE_RULES, { each: true })
+  exempt?: ExemptableRule[];
+
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(20)

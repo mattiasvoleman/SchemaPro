@@ -3,8 +3,10 @@ import type { GradeNumbering } from '../common/grade-numbering';
 import { windowOf } from '../common/lunch-window';
 import { readOtherSchoolHolds, type OtherSchoolHold } from '../optimization/other-school-holds';
 import { boardCodeOf, readBoardFacts, type BoardCode, type BoardFacts } from '../swaps/board-rules';
+import type { SwapSlot } from '../swaps/swap-types';
 import type { RosterBasis } from '../year-rollover/projected-rosters';
 import type { ConflictReads } from './conflict-reads';
+import { exemptionsOf, isExemptable, type ExemptableRule } from './lesson-exemption';
 import type { DayLesson, MasterLessonConflict, MasterLessonsService } from './master-lessons.service';
 
 /*
@@ -80,6 +82,16 @@ export interface LessonVerdict {
   ok: boolean;
   /** Every reason found, the heaviest first. Empty when `ok`. */
   refusals: LessonRefusal[];
+  /**
+   * The rules the request named (`exempt`) that the time really breaks: what the answer yes gives, and what is saved on the lesson. A rule
+   * that is named and not broken is not here (a time that holds carries no exemption). Empty when nothing was named.
+   */
+  exempted: ExemptableRule[];
+  /**
+   * The refusals are the ramtid and the class's meal and nothing else: the answer "Lägg ändå" can let the time through. False when
+   * the time is let through, and false when anything else (a clash, a closed årskurs, another school's time, the school day) refuses.
+   */
+  exemptable: boolean;
 }
 
 /** The läsande frågan's answer for one tänkt drag: the verdict, each reason with its sentence, and whether the lesson may be moved at all. */
@@ -89,6 +101,9 @@ export interface MoveJudgement {
   /** The lesson is a förläggning's, written by Generera: it is changed on the timplan, and no drag of it stands (LESSON_IS_PLACED). */
   placed?: true;
   refusals: Array<LessonRefusal & { text: string }>;
+  /** What the answer yes to the request's `exempt` would save, and whether a refusal could be let through by one (LessonVerdict). */
+  exempted: ExemptableRule[];
+  exemptable: boolean;
 }
 
 export interface LessonJudgement {
@@ -128,6 +143,12 @@ export interface JudgeItem {
   /** A block card's move: the lessons not where they stood, and the ones moved with this. */
   excludeIds?: readonly string[];
   alongside?: readonly DayLesson[];
+  /**
+   * The rules an administrator has answered yes to ("Lägg ändå") for THIS candidate: they are let through, and no other. Naming a rule that
+   * the time does not break is no error and saves nothing. A lesson that stands (`stands` unchanged) is asked nothing of the board, except
+   * to find out which of these rules it stands against.
+   */
+  exempt?: readonly ExemptableRule[];
 }
 
 export interface JudgeWorld {
@@ -323,8 +344,12 @@ export async function judgeLessons(
     }
   });
 
-  // 2. The board's rules, from facts read once per weekday, for the items that moved where they stand.
-  const boardItems = items.flatMap((item, index) => (item.stands && !placementChanged(item.candidate, item.stands) ? [] : [index]));
+  // 2. The board's rules, from facts read once per weekday, for the items that moved where they stand and for the ones asked which rules
+  // they stand against (an exemption named). EVERY rule a time breaks is answered, in the order FRAME, LUNCH, GRADE_RULE: an exemption for
+  // the ramtid must not hide the lunch, and the refusal that is left says which of the two is still to be answered.
+  const exempted: ExemptableRule[][] = items.map(() => []);
+  const moved = items.map((item) => !item.stands || placementChanged(item.candidate, item.stands));
+  const boardItems = items.flatMap((item, index) => (moved[index] || (item.exempt?.length ?? 0) > 0 ? [index] : []));
   if (boardItems.length > 0) {
     const gradeNumbering = world.gradeNumbering ?? (await gradeNumberingOf(tx, world.academicYearId));
     const days = [...new Set(boardItems.map((index) => items[index]!.candidate.dayOfWeek))];
@@ -351,14 +376,18 @@ export async function judgeLessons(
     }
     for (const index of boardItems) {
       const item = items[index]!;
-      const code = boardCodeOf(
+      const broken = brokenBoardRules(
         boards.get(item.candidate.dayOfWeek)!,
         [item.lesson.studentGroupId, ...(item.candidate.extraGroupIds ?? [])],
         { dayOfWeek: item.candidate.dayOfWeek, startMinutes: item.candidate.startMinutes, endMinutes: item.candidate.endMinutes },
         // The lesson's weeks: a meal of another part of the läsår is not its meal.
         windowOf(item.candidate),
       );
-      if (code !== null) refusals[index]!.push({ reason: code, params: {} });
+      // In the order a row is written in (the names once each), whatever order the request named them.
+      exempted[index] = exemptionsOf(item.exempt).filter((rule) => broken.includes(rule));
+      // A lesson that stands is asked nothing of the board: what it stands against is for the exemption alone.
+      if (!moved[index]) continue;
+      for (const code of broken) if (!exempted[index]!.includes(code as ExemptableRule)) refusals[index]!.push({ reason: code, params: {} });
     }
   }
 
@@ -376,7 +405,29 @@ export async function judgeLessons(
     }
   }
 
-  return refusals.map((found) => ({ ok: found.length === 0, refusals: found }));
+  return refusals.map((found, index) => ({
+    ok: found.length === 0,
+    refusals: found,
+    exempted: exempted[index]!,
+    exemptable: found.length > 0 && found.every((refusal) => isExemptable(refusal.reason)),
+  }));
+}
+
+const NO_MEALS: BoardFacts['sittings'] = new Map();
+
+/**
+ * EVERY rule among FRAME, LUNCH and GRADE_RULE a landing breaks, in that order. boardCodeOf (swaps/board-rules.ts, the one reading of the three)
+ * answers the first only, so each is asked of the facts with the other two taken away: one reading of a ramtid, a meal and a rule on årskurser,
+ * and no second.
+ */
+function brokenBoardRules(facts: BoardFacts, groups: readonly string[], to: SwapSlot, window: ReturnType<typeof windowOf>): BoardCode[] {
+  const only = (rule: BoardCode): BoardFacts => ({
+    ...facts,
+    frames: rule === 'FRAME' ? facts.frames : [],
+    sittings: rule === 'LUNCH' ? facts.sittings : NO_MEALS,
+    gradeRules: rule === 'GRADE_RULE' ? facts.gradeRules : [],
+  });
+  return (['FRAME', 'LUNCH', 'GRADE_RULE'] as const).filter((rule) => boardCodeOf(only(rule), groups, to, window) === rule);
 }
 
 /** The lessons the clash rule named, called by class and subject, and where they stand (a card's own movers: where they will). */
