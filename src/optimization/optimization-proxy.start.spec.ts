@@ -96,6 +96,8 @@ const lessonAt = (requirementId: string, dayOfWeek: number, startTime: string, e
 interface Built {
   service: OptimizationProxyService;
   post: jest.Mock;
+  /** What the engine answers when the API asks it for its times (GET /api/v1/timing). */
+  get: jest.Mock;
   tx: { scheduleVersion: { findFirst: jest.Mock }; academicYear: { findUnique: jest.Mock } };
   persist: jest.SpyInstance;
 }
@@ -116,7 +118,7 @@ async function build(timingBody: unknown | null, fetched: PreparedSchedule): Pro
   const service = new OptimizationProxyService(prisma, http, config, undefined, timing);
   jest.spyOn(service, 'prepareSchedule').mockResolvedValue(fetched);
   const persist = jest.spyOn(service as unknown as { persistMasterLessons: () => Promise<unknown> }, 'persistMasterLessons').mockResolvedValue([]);
-  return { service, post, tx, persist };
+  return { service, post, get, tx, persist };
 }
 
 describe('OptimizationProxyService: Generera starts from a schedule (M9)', () => {
@@ -239,6 +241,43 @@ describe('OptimizationProxyService: Generera starts from a schedule (M9)', () =>
       expect(post.mock.calls[1]![1]).not.toHaveProperty('startLessons');
       expect(result.status).toBe('OPTIMAL');
       expect(result.startedFrom).toMatchObject({ engine: 'OLDER', used: 0, held: null, moved: null, laid: null });
+    });
+
+    it('that said it could and was rolled back since: sent the week again without the field, and the next run asks the engine again instead of believing what it said', async () => {
+      const { service, post, get, tx } = await build(WITH_START, prepared());
+      const answer = { data: { requestId: 'r-1', status: 'OPTIMAL', lessons: [lessonAt('a-math', 1, '08:00:00', '08:50:00')], lunches: [] } };
+      post
+        .mockReturnValueOnce(
+          throwError(() =>
+            refusedWith(422, {
+              code: 'VALIDATION_ERROR',
+              message: 'Request payload failed schema validation.',
+              details: { errors: [{ type: 'extra_forbidden', loc: ['body', 'startLessons'], msg: 'Extra inputs are not permitted' }] },
+            }),
+          ),
+        )
+        .mockReturnValue(of(answer));
+      // What the rolled-back engine says when it is asked again.
+      get.mockClear();
+      get.mockReturnValue(of({ data: WITHOUT_START }));
+
+      const first = await service.triggerScheduling('y-1', USER, null, null, { source: 'CURRENT' });
+
+      expect(post).toHaveBeenCalledTimes(2);
+      expect(post.mock.calls[0]![1]).toHaveProperty('startLessons');
+      expect(post.mock.calls[1]![1]).not.toHaveProperty('startLessons');
+      expect(first.startedFrom).toMatchObject({ engine: 'OLDER', held: null });
+      // It was asked at once, not left to the ten minutes between readings.
+      expect(get).toHaveBeenCalledTimes(1);
+
+      // The next run believes the new answer: the field is not sent and the schedule is not even read.
+      tx.scheduleVersion.findFirst.mockClear();
+      const second = await service.triggerScheduling('y-1', USER, null, null, { source: 'VERSION', versionId: 'v-1' });
+
+      expect(post).toHaveBeenCalledTimes(3);
+      expect(post.mock.calls[2]![1]).not.toHaveProperty('startLessons');
+      expect(tx.scheduleVersion.findFirst).not.toHaveBeenCalled();
+      expect(second.startedFrom).toMatchObject({ engine: 'OLDER', offered: 0, used: 0 });
     });
 
     it('is not mistaken for another refusal: a 422 about a different field is not read as "older than startLessons"', async () => {
