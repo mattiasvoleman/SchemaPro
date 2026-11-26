@@ -269,3 +269,134 @@ describe('landingsOf', () => {
     ]);
   });
 });
+
+describe('inTheWay: the prune, asked what it holds', () => {
+  it('is empty exactly where mayStand says yes, for every lesson at every half hour of a busy school', () => {
+    let asked = 0;
+    for (const seed of [3, 11]) {
+      const world = makeWorld({ seed });
+      const ctx = new SwapContext(world.data);
+      for (const unit of new Set(ctx.unitOf.values())) {
+        const vacating = new Set(unit.members.map((member) => member.id));
+        for (let day = 1; day <= 5; day++) {
+          for (let start = 450; start <= 780; start += 30) {
+            const to = slot(day, start);
+            const way = ctx.landingsOf(unit, to).map((landing) => ctx.inTheWay(landing, vacating));
+            const free = way.every((entry) => entry.lessons.length === 0 && entry.closures.length === 0);
+            // The world has no frame, meal or hold, so mayStand is the plain overlap and nothing else.
+            expect(ctx.mayStand(unit, to, vacating)).toBe(free);
+            asked += 1;
+          }
+        }
+      }
+    }
+    expect(asked).toBeGreaterThan(500);
+  });
+
+  it('names each lesson in the way once, however many things it holds', () => {
+    const mover = lesson('mover', 'c1', 1, 480, { teacherId: 'T', roomId: 'R' });
+    const all = lesson('all', 'c1', 2, 540, { teacherId: 'T', roomId: 'R' });
+    const other = lesson('other', 'c2', 2, 570, { roomId: 'R' });
+    const ctx = context([mover, all, other]);
+    const landing = ctx.landingsOf(unitOf(ctx, 'mover'), slot(2, 540))[0]!;
+    const way = ctx.inTheWay(landing, new Set(['mover']));
+    expect(way.lessons.map((entry) => entry.id).sort()).toEqual(['all', 'other']);
+    expect(way.closures).toEqual([]);
+    expect(ctx.inTheWay(landing, new Set(['mover']), true).lessons).toHaveLength(1);
+  });
+
+  it('says which resource a weekly row closes', () => {
+    const mover = lesson('mover', 'c1', 1, 480, { teacherId: 'T', roomId: 'R' });
+    const row = (over: Partial<SwapData['constraints'][number]>) => ({
+      resourceType: 'TEACHER',
+      userId: null,
+      roomId: null,
+      studentGroupId: null,
+      minGradeLevel: null,
+      maxGradeLevel: null,
+      dayOfWeek: 3,
+      startMinutes: 540,
+      endMinutes: 600,
+      ...over,
+    });
+    const ctx = context([mover], {
+      constraints: [row({ userId: 'T' }), row({ resourceType: 'ROOM', roomId: 'R' }), row({ resourceType: 'STUDENT_GROUP', studentGroupId: 'c1' })],
+    });
+    const landing = ctx.landingsOf(unitOf(ctx, 'mover'), slot(3, 540))[0]!;
+    expect(ctx.inTheWay(landing, new Set(['mover'])).closures).toEqual(['TEACHER', 'ROOM', 'GROUP']);
+    expect(ctx.inTheWay(landing, new Set(['mover']), true).closures).toEqual(['TEACHER']);
+  });
+});
+
+describe('unplaced lessons: planned, standing nowhere', () => {
+  const brick = lesson('brick', 'c1', 1, 0, { teacherId: 'T', roomId: 'R' });
+
+  it('are a unit of their own, known by id, and in no one’s way', () => {
+    const standing = lesson('standing', 'c1', 2, 540, { teacherId: 'T', roomId: 'R' });
+    const ctx = new SwapContext({ ...base.data, lessons: [standing], posts: [] }, { unplaced: [brick] });
+    expect(ctx.unitOf.get('brick')).toMatchObject({ id: 'brick', members: [brick], links: [], locked: false });
+    expect(ctx.lessonById.get('brick')).toBe(brick);
+    // The placeholder day and clock are nothing anyone reads: the standing lesson is held by nothing at 00:00 Monday.
+    const way = ctx.inTheWay(ctx.landingsOf(unitOf(ctx, 'standing'), slot(1, 0))[0]!, new Set(['standing']));
+    expect(way.lessons).toEqual([]);
+    // The brick itself is held by the standing lesson where it would overlap it: same teacher, room and class.
+    expect(ctx.mayStand(unitOf(ctx, 'brick'), slot(2, 540), new Set(['brick']))).toBe(false);
+    expect(ctx.mayStand(unitOf(ctx, 'brick'), slot(2, 600), new Set(['brick']))).toBe(true);
+  });
+
+  it('leave the school as it was when there are none', () => {
+    const lessons = [lesson('a', 'c1', 1, 480), lesson('b', 'c1', 1, 600)];
+    const plain = new SwapContext({ ...base.data, lessons, posts: [] });
+    const same = new SwapContext({ ...base.data, lessons, posts: [] }, { unplaced: [] });
+    expect([...same.unitOf.keys()]).toEqual([...plain.unitOf.keys()]);
+    const moves = [{ lessonId: 'b', from: slot(1, 600), to: slot(1, 540) }];
+    expect(same.soft.evaluate(moves)).toEqual(plain.soft.evaluate(moves));
+  });
+});
+
+describe('inTheWay: weeks no one sits (jullov)', () => {
+  // An autumn lesson to the 1st of January and a spring lesson from the 28th of December meet in one week only, and that week is lov:
+  // findConflicts (meetOnlyInClosedWeeks) says they are no double booking, so the prune must not hold the one in the other's way.
+  const closed = { from: '2026-08-15', to: '2027-06-11', mondays: new Set(['2026-12-28']) };
+  const autumn = lesson('autumn', 'c1', 2, 540, { teacherId: 'T', roomId: 'R', endDate: '2027-01-01' });
+  const spring = lesson('spring', 'c2', 3, 540, { teacherId: 'T', roomId: 'R', startDate: '2026-12-28' });
+  const asked = (ctx: SwapContext) => ctx.inTheWay(ctx.landingsOf(unitOf(ctx, 'spring'), slot(2, 540))[0]!, new Set(['spring']));
+
+  it('holds a lesson that meets the mover in a week with school, as it always did', () => {
+    expect(asked(context([autumn, spring])).lessons.map((entry) => entry.id)).toEqual(['autumn']);
+  });
+
+  it('does not hold one that meets the mover only in a closed week', () => {
+    const ctx = new SwapContext({ ...base.data, lessons: [autumn, spring], posts: [] }, { closedWeeks: closed });
+    expect(asked(ctx).lessons).toEqual([]);
+    expect(ctx.mayStand(unitOf(ctx, 'spring'), slot(2, 540), new Set(['spring']))).toBe(true);
+  });
+
+  it('still holds one that meets the mover in a week that is not closed', () => {
+    const open = lesson('open', 'c1', 2, 540, { teacherId: 'T', endDate: '2027-01-08' });
+    const ctx = new SwapContext({ ...base.data, lessons: [open, spring], posts: [] }, { closedWeeks: closed });
+    expect(asked(ctx).lessons.map((entry) => entry.id)).toEqual(['open']);
+  });
+});
+
+describe('inTheWay: a room several lessons may share', () => {
+  const mover = lesson('mover', 'c1', 1, 480, { teacherId: 'T', roomId: 'HALL' });
+  const inHall = lesson('inHall', 'c2', 2, 540, { roomId: 'HALL' });
+  const asked = (ctx: SwapContext) => ctx.inTheWay(ctx.landingsOf(unitOf(ctx, 'mover'), slot(2, 540))[0]!, new Set(['mover']));
+
+  it('holds a lesson in the room, as it always did, when the school shares no room', () => {
+    expect(asked(context([mover, inHall])).lessons.map((entry) => entry.id)).toEqual(['inHall']);
+  });
+
+  it('leaves the count of pupils to the judge in a room the school lets several lessons share', () => {
+    const ctx = new SwapContext({ ...base.data, lessons: [mover, inHall], posts: [] }, { sharedRooms: new Set(['HALL']) });
+    expect(asked(ctx).lessons).toEqual([]);
+  });
+
+  it('still holds the teacher and the class in a shared room', () => {
+    const sameTeacher = lesson('sameTeacher', 'c3', 2, 540, { teacherId: 'T', roomId: 'HALL' });
+    const sameClass = lesson('sameClass', 'c1', 2, 540, { roomId: 'HALL' });
+    const ctx = new SwapContext({ ...base.data, lessons: [mover, sameTeacher, sameClass], posts: [] }, { sharedRooms: new Set(['HALL']) });
+    expect(asked(ctx).lessons.map((entry) => entry.id).sort()).toEqual(['sameClass', 'sameTeacher']);
+  });
+});

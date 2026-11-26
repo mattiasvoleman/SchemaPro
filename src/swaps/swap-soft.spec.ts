@@ -144,3 +144,49 @@ describe('the soft costs of a set of moves', () => {
     expect(buildSoftMeasure(input([a, odd, c], {}, 1)).baseline().pupilIdleMinutes).toBe((60 + 120) / 2);
   });
 });
+
+describe('a lesson that stands nowhere yet (E3: a brick)', () => {
+  const a = lesson('a', 1, 480);
+  const c = lesson('c', 1, 720);
+  const brick = lesson('brick', 1, 0, { teacherId: 't1' });
+
+  it('counts for nothing until a move lays it: the figures before are the school without it', () => {
+    const without = buildSoftMeasure(input([a, c]));
+    const withBrick = buildSoftMeasure(input([a, c, brick], {}, 2));
+    const absent = buildSoftMeasure({ ...input([a, c, brick], {}, 2), absent: new Set(['brick']) });
+    // The baseline of the whole timetable does not know it is planned.
+    expect(absent.baseline()).toEqual(without.baseline());
+    expect(withBrick.baseline()).not.toEqual(without.baseline());
+    // Laid between the two lessons it closes the hole: before is the hole as it stands, after has none of it.
+    const laid = absent.evaluate([{ lessonId: 'brick', from: { dayOfWeek: 1, startMinutes: 0, endMinutes: 60 }, to: { dayOfWeek: 1, startMinutes: 600, endMinutes: 660 } }]);
+    expect(cost(laid.costs, 'PUPIL_GAPS')).toMatchObject({ before: 2 * 180, after: 2 * 120 });
+    // Laid at the end of the day, after the second lesson, it adds no hole and takes none away.
+    const far = absent.evaluate([{ lessonId: 'brick', from: { dayOfWeek: 1, startMinutes: 0, endMinutes: 60 }, to: { dayOfWeek: 1, startMinutes: 780, endMinutes: 840 } }]);
+    expect(cost(far.costs, 'PUPIL_GAPS')).toMatchObject({ before: 2 * 180, after: 2 * 180 });
+  });
+
+  it('is in its teacher’s week and its post only once laid', () => {
+    const teacherRules = new Map([
+      ['t1', { maxTeachingMinutesPerDay: 120, maxTeachingDaysPerWeek: null, maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null }],
+    ]);
+    const distribution = new Map([['7A:ma', { maxLessonsPerDay: 2, minDaysBetween: null }]]);
+    const measure = buildSoftMeasure({ ...input([a, c, brick], { teacherRules, distribution }), absent: new Set(['brick']) });
+    const moveTo = (day: number, start: number): SwapMove => ({ lessonId: 'brick', from: { dayOfWeek: 1, startMinutes: 0, endMinutes: 60 }, to: { dayOfWeek: day, startMinutes: start, endMinutes: start + 60 } });
+    // Two lessons stand on Monday for t1 and the post: a third on the same day breaks both rules, which were whole before it.
+    const monday = measure.evaluate([moveTo(1, 840)]);
+    expect(cost(monday.costs, 'TEACHER_DAY')).toMatchObject({ before: 0, after: 1 });
+    expect(cost(monday.costs, 'DISTRIBUTION')).toMatchObject({ before: 0, after: 1 });
+    // On another day it breaks nothing.
+    const tuesday = measure.evaluate([moveTo(2, 480)]);
+    expect(cost(tuesday.costs, 'TEACHER_DAY')).toMatchObject({ before: 0, after: 0 });
+    expect(cost(tuesday.costs, 'DISTRIBUTION')).toMatchObject({ before: 0, after: 0 });
+  });
+
+  it('does not change a thing for the lessons that do stand: no absent lesson is the measure as it was', () => {
+    const plain = buildSoftMeasure(input([a, c]));
+    const same = buildSoftMeasure({ ...input([a, c]), absent: new Set() });
+    const moves = [move(c, 2, 480)];
+    expect(same.evaluate(moves)).toEqual(plain.evaluate(moves));
+    expect(same.baseline()).toEqual(plain.baseline());
+  });
+});

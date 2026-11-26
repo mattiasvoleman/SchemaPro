@@ -65,24 +65,39 @@ describe('NotificationDeliveryService.sendLetter', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('says false when the mail itself cannot be started, and logs only the class of the error', async () => {
-    const delivery = service();
-    (delivery as unknown as { sendEmails: () => Promise<boolean> }).sendEmails = async () => {
-      throw Object.assign(new Error('secret kok@skolan.se'), { name: 'TurnError' });
-    };
-    await expect(delivery.sendLetter('kok@skolan.se', 's', 'b')).resolves.toBe(false);
+  it('says false for a Resend that is down or asks to be asked again later, and logs the status and never the address', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+    await expect(service().sendLetter('kok@skolan.se', 's', 'b')).resolves.toBe(false);
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 429, headers: { get: () => '3' } });
+    await expect(service().sendLetter('kok@skolan.se', 's', 'b')).resolves.toBe(false);
     const logged = warn.mock.calls.map((call) => String(call[0])).join('\n');
-    expect(logged).toContain('Letter dispatch failed [TurnError]');
+    expect(logged).toContain('Email dispatch failed [status=503]');
+    expect(logged).toContain('Email dispatch failed [status=429]');
     expect(logged).not.toContain('kok@');
   });
 
-  it('says false when the mail never gets its turn at the pace, and true once it has been taken', async () => {
-    const delivery = service();
-    (delivery as unknown as { mailTurn: () => Promise<void> }).mailTurn = async () => {
-      throw new Error('no turn');
+  it('goes under a key that is the letter’s own fingerprint: the same letter asked for again is the same mail, another is not', async () => {
+    const keys = async (address: string, subject: string, body: string) => {
+      fetchMock.mockClear();
+      await service().sendLetter(address, subject, body);
+      return (fetchMock.mock.calls[0]![1] as { headers: Record<string, string> }).headers['Idempotency-Key'];
     };
-    await expect(delivery.sendLetter('kok@skolan.se', 's', 'b')).resolves.toBe(false);
-    expect(fetchMock).not.toHaveBeenCalled();
-    await expect(service().sendLetter('kok@skolan.se', 's', 'b')).resolves.toBe(true);
+    const first = await keys('kok@skolan.se', 'Portioner torsdag', 'Totalt: 80 portioner.');
+    expect(await keys('kok@skolan.se', 'Portioner torsdag', 'Totalt: 80 portioner.')).toBe(first);
+    expect(await keys('kok@skolan.se', 'Portioner fredag', 'Totalt: 80 portioner.')).not.toBe(first);
+    expect(await keys('annan@skolan.se', 'Portioner torsdag', 'Totalt: 80 portioner.')).not.toBe(first);
+    // A fingerprint, not the letter: no address and no text in it, and it fits the provider's 256.
+    expect(first).toMatch(/^letter\/[0-9a-f]{64}$/);
+  });
+
+  it('takes its place in the pace from the database, and the mail goes all the same when the database cannot say', async () => {
+    const delivery = service();
+    delivery.emailIntervalMs = 40;
+    const slot = jest.fn().mockResolvedValueOnce(0).mockRejectedValueOnce(new Error('the database is down'));
+    (delivery as unknown as { store: { slot: unknown } }).store = { slot };
+    await expect(delivery.sendLetter('kok@skolan.se', 's', 'b')).resolves.toBe(true);
+    await expect(delivery.sendLetter('kok@skolan.se', 's2', 'b')).resolves.toBe(true);
+    expect(slot).toHaveBeenCalledWith('EMAIL', 40);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

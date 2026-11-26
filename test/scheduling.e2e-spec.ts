@@ -1334,6 +1334,43 @@ describe('Scheduling surface (e2e)', () => {
       });
     });
 
+    describe('possible times (E3): where can this lesson stand', () => {
+      const ask = (body: object, user: string = admin()) => request(http()).post('/api/v1/master-lessons/possible-times').set('x-test-user', user).send(body);
+      const BRICK = { academicYearId: YEAR_ID, studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, minutes: 60 };
+
+      it('is the scheduler’s door, as the judge is: no caller is 401, a teacher is 403', async () => {
+        await request(http()).post('/api/v1/master-lessons/possible-times').send({ lessonId: LESSON_ID }).expect(401);
+        await ask({ lessonId: LESSON_ID }, asUser({ role: 'TEACHER' as never })).expect(403);
+      });
+
+      it('asks for a lesson or a brick, and for nothing it does not know', async () => {
+        for (const body of [
+          { lessonId: 'nope' },
+          { brick: {} },
+          { brick: { ...BRICK, minutes: 2 } },
+          { brick: { ...BRICK, minutes: 1000 } },
+          { brick: { ...BRICK, studentGroupId: 'x' } },
+          { lessonId: LESSON_ID, days: [] },
+          { lessonId: LESSON_ID, days: [6] },
+          { lessonId: LESSON_ID, days: [1, 2, 3, 4, 5, 1] },
+          { lessonId: LESSON_ID, from: '34:00' },
+          { lessonId: LESSON_ID, to: '8.20' },
+          { lessonId: LESSON_ID, stepMinutes: 0 },
+          { lessonId: LESSON_ID, stepMinutes: 61 },
+          { lessonId: LESSON_ID, limit: 0 },
+          { lessonId: LESSON_ID, limit: 41 },
+          { lessonId: LESSON_ID, extra: 1 },
+        ]) {
+          await ask(body).expect(400);
+        }
+      });
+
+      it('names the one it is asked about: both, or neither, is a 400', async () => {
+        await ask({}).expect(400);
+        await ask({ lessonId: LESSON_ID, brick: BRICK }).expect(400);
+      });
+    });
+
     it('rejects a time that is not HH:MM, naming the field', async () => {
       const response = await request(http())
         .post('/api/v1/master-lessons')
