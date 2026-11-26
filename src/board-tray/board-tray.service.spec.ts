@@ -24,6 +24,7 @@ const BO = '55555555-5555-4555-8555-555555555555';
 const POST_MATH = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const POST_KEM = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const POST_BLOCK = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const BLOCK = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 
 const time = (value: string): Date => new Date(`1970-01-01T${value}:00.000Z`);
 type Row = Record<string, unknown>;
@@ -104,10 +105,12 @@ describe('BoardTrayService: Att lägga', () => {
     expect(tray.tally).toMatchObject({ lessons: 3, laid: 2, left: 1 });
   });
 
-  it('does not count a lesson on the tray (it occupies nothing) and asks for none of them', async () => {
+  it('does not count a lesson on the tray (it occupies nothing) and asks for exactly what stands on the grundschema, no arm of what Generera keeps', async () => {
     await service.trayOfYear(YEAR, undefined, testUser());
     const where = (tx['masterLesson']!['findMany']!.mock.calls[0]![0] as { where: Row }).where;
-    expect(where).toMatchObject({ academicYearId: YEAR, isParked: false, fromPlacement: false });
+    // Exactly this: the mocked read below answers whatever it is asked, so only the question itself says that a lesson Generera laid and
+    // nobody locked is read at all (an `OR: PRESERVED_FROM_REGENERATION` beside these keys would drop it, and no row of this spec would notice).
+    expect(where).toEqual({ academicYearId: YEAR, isParked: false, fromPlacement: false });
   });
 
   it('lets a förläggning answer a lesson: it is placed, and no brick is left for it', async () => {
@@ -150,5 +153,49 @@ describe('BoardTrayService: Att lägga', () => {
     posts = [...posts].reverse();
     const second = (await service.trayOfYear(YEAR, undefined, testUser())).bricks.map((brick) => `${brick.postId}#${brick.nth}`);
     expect(second).toEqual(first);
+  });
+
+  it('gives a brick the weeks its post runs, which the lesson inherits, and a lesson that does not run them answers none', async () => {
+    posts = [post({ recurrence: 'ODD_WEEKS', startDate: new Date('2098-08-16T00:00:00.000Z'), endDate: new Date('2098-12-19T00:00:00.000Z'), lessonsPerWeek: 2 })];
+    lessons = [lesson({ id: 'every-week', isLocked: true })];
+    const none = await service.trayOfYear(YEAR, undefined, testUser());
+    expect(none.bricks).toHaveLength(2);
+    expect(none.bricks.every((brick) => brick.recurrence === 'ODD_WEEKS' && brick.startDate === '2098-08-16' && brick.endDate === '2098-12-19')).toBe(true);
+    expect(none.tally).toMatchObject({ laid: 0, left: 2 });
+    lessons = [lesson({ id: 'odd', isLocked: true, recurrence: 'ODD_WEEKS', startDate: new Date('2098-08-16T00:00:00.000Z'), endDate: new Date('2098-12-19T00:00:00.000Z') })];
+    const one = await service.trayOfYear(YEAR, undefined, testUser());
+    expect(one.bricks).toHaveLength(1);
+    expect(one.tally).toMatchObject({ laid: 1, left: 1 });
+  });
+
+  it('numbers the bricks of a part from 1, the ones that are left', async () => {
+    lessons = [lesson({ id: 'hand', isLocked: true })];
+    const tray = await service.trayOfYear(YEAR, undefined, testUser());
+    expect(tray.bricks.map((brick) => brick.nth)).toEqual([1, 2]);
+  });
+
+  it('lists every class that has a post, the answered ones with 0 left, in a fixed order', async () => {
+    posts = [post({ id: POST_KEM, studentGroupId: G7B, subjectId: KEM, lessonsPerWeek: 1 }), post()];
+    lessons = [lesson({ id: 'kem', studentGroupId: G7B, subjectId: KEM, isLocked: true })];
+    const tray = await service.trayOfYear(YEAR, undefined, testUser());
+    expect(tray.groups).toEqual([{ studentGroupId: G7A, left: 3 }, { studentGroupId: G7B, left: 0 }]);
+  });
+
+  it('lets a lesson of a parallel block that is placed answer one lesson of each member, as the week of förläggningar does', async () => {
+    const member = (id: string, groupId: string) => post({ id, studentGroupId: groupId, subjectId: KEM, blockId: BLOCK, lessonsPerWeek: 3 });
+    posts = [member(POST_BLOCK, G7A), member(POST_KEM, G7B)];
+    tx['teachingBlock']!['findMany']!.mockResolvedValue([
+      {
+        id: BLOCK,
+        name: 'Språkval',
+        sameTimesAsBlockId: null,
+        requirements: posts.map((entry) => ({ ...entry })),
+        placements: [{ id: 'bp-1', dayOfWeek: 2, startTime: time('10:00'), minutes: 60, recurrence: 'ALL_WEEKS', updatedAt: new Date('2026-11-13T08:00:00.000Z'), rooms: [] }],
+      },
+    ]);
+    const tray = await service.trayOfYear(YEAR, undefined, testUser());
+    expect(tray.bricks).toHaveLength(4);
+    expect(tray.bricks.every((brick) => brick.blockId === BLOCK && brick.cannotPlace === 'BLOCK')).toBe(true);
+    expect(tray.tally).toMatchObject({ lessons: 6, placedByRow: 2, left: 4 });
   });
 });
