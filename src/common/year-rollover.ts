@@ -609,7 +609,13 @@ export function easterSunday(year: number): string {
 
 // ---- lov
 
-export type BreakAnchor = 'CHRISTMAS' | 'EASTER' | 'ISO_WEEK' | 'NONE';
+/** Days from Easter Sunday that a lov holds when it moves with Easter: Good Friday, Easter Monday, Ascension Day, Whit Sunday. */
+const EASTER_DAYS: readonly number[] = [-2, 1, 39, 49];
+
+/** MM-DD of the public holidays that keep their date, and are a lov of their own when they fall on a weekday. */
+const FIXED_HOLIDAYS: readonly string[] = ['01-01', '01-06', '05-01', '06-06', '12-25', '12-26', '12-31'];
+
+export type BreakAnchor = 'CHRISTMAS' | 'EASTER' | 'FIXED_DATE' | 'ISO_WEEK' | 'NONE';
 
 export interface BreakProposal {
   proposedStart: string | null;
@@ -628,7 +634,14 @@ export interface BreakProposal {
  *    move keeps its weekdays. Not by the year's own shift, which is 371
  *    across a week 53 for a school that starts in the same ISO week.
  *  - A lov containing the source year's Easter Monday (påsklov) moves with
- *    Easter: 2027-03-29 → 2028-04-17, because Easter 2028 is 16 April.
+ *    Easter: 2027-03-29 → 2028-04-17, because Easter 2028 is 16 April. So
+ *    does one containing Good Friday, Ascension Day or Whit Sunday (Skolans
+ *    kalender): they hang on Easter by a fixed number of days, and a week
+ *    number would put Kristi himmelsfärd 2028 on 4 May, three weeks early.
+ *  - A single day that is a fixed public holiday (1 and 6 January, 1 May,
+ *    6 June, 25, 26 and 31 December) keeps its date: 2027-05-01 is
+ *    Saturday, so there is no proposal, and a lov for a day nobody teaches
+ *    on is no lov. 24 December is the jullov's rule above.
  *  - Anything else (höstlov, sportlov, studiedagar) keeps its ISO week and
  *    weekday in the next year: höstlov v44 stays v44, which a 364-day shift
  *    across 2026's week 53 would have moved to v43.
@@ -665,12 +678,24 @@ export function proposeBreak(lov: DayBounds, source: DayBounds, target: DayBound
   }
 
   const sourceEaster = easterSunday(Number(source.endDate.slice(0, 4)));
-  const easterMonday = addDays(sourceEaster, 1);
-  if (easterMonday >= lov.startDate && easterMonday <= lov.endDate) {
+  const holdsEasterDay = EASTER_DAYS.some((offset) => {
+    const day = addDays(sourceEaster, offset);
+    return day >= lov.startDate && day <= lov.endDate;
+  });
+  if (holdsEasterDay) {
     const moved = daysBetween(sourceEaster, easterSunday(Number(target.endDate.slice(0, 4))));
     const start = addDays(lov.startDate, moved);
     const end = addDays(lov.endDate, moved);
     return { proposedStart: start, proposedEnd: end, anchor: 'EASTER', fits: fits(start, end) };
+  }
+
+  if (lov.startDate === lov.endDate && FIXED_HOLIDAYS.includes(lov.startDate.slice(5))) {
+    const day = `${Number(lov.startDate.slice(0, 4)) + yearDelta}${lov.startDate.slice(4)}`;
+    // Saturday and Sunday are not school days: the holiday costs the school nothing that year.
+    if (isoWeekOf(day).weekday > 5) {
+      return { proposedStart: null, proposedEnd: null, anchor: 'NONE', fits: false };
+    }
+    return { proposedStart: day, proposedEnd: day, anchor: 'FIXED_DATE', fits: fits(day, day) };
   }
 
   const sameWeek = (day: string) => {

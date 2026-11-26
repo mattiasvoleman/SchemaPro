@@ -1176,6 +1176,150 @@
         "anchor": "CHRISTMAS",
         "fits": true
       }
+    },
+    {
+      "lov": {
+        "startDate": "2027-03-26",
+        "endDate": "2027-03-26"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2028-04-14",
+        "proposedEnd": "2028-04-14",
+        "anchor": "EASTER",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2027-05-06",
+        "endDate": "2027-05-06"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2028-05-25",
+        "proposedEnd": "2028-05-25",
+        "anchor": "EASTER",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2027-05-06",
+        "endDate": "2027-05-07"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2028-05-25",
+        "proposedEnd": "2028-05-26",
+        "anchor": "EASTER",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2027-05-14",
+        "endDate": "2027-05-18"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2028-06-02",
+        "proposedEnd": "2028-06-06",
+        "anchor": "EASTER",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2027-01-06",
+        "endDate": "2027-01-06"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2028-01-06",
+        "proposedEnd": "2028-01-06",
+        "anchor": "FIXED_DATE",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2026-12-25",
+        "endDate": "2026-12-25"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": null,
+        "proposedEnd": null,
+        "anchor": "NONE",
+        "fits": false
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2027-05-01",
+        "endDate": "2027-05-01"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2028-05-01",
+        "proposedEnd": "2028-05-01",
+        "anchor": "FIXED_DATE",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2027-06-06",
+        "endDate": "2027-06-06"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2028-06-06",
+        "proposedEnd": "2028-06-06",
+        "anchor": "FIXED_DATE",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2027-01-04",
+        "endDate": "2027-01-08"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2028-01-03",
+        "proposedEnd": "2028-01-07",
+        "anchor": "ISO_WEEK",
+        "fits": true
+      }
     }
   ],
   "easter": [

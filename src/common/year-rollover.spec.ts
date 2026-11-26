@@ -293,6 +293,51 @@ describe('dates', () => {
   });
 });
 
+describe('the proposals for the public holidays (Skolans kalender)', () => {
+  it('moves a lov that holds Good Friday, Ascension Day or Whit Sunday with Easter, not with the week number', () => {
+    // Easter 2027 is 28 March and 2028 is 16 April: 19 days on. Kristi himmelsfärd 2027 is Thursday 6 May and 2028 is 25 May; the ISO
+    // week rule would have said 4 May 2028, three weeks before it.
+    expect(proposeBreak({ startDate: '2027-05-06', endDate: '2027-05-06' }, SOURCE, TARGET)).toEqual({
+      proposedStart: '2028-05-25',
+      proposedEnd: '2028-05-25',
+      anchor: 'EASTER',
+      fits: true,
+    });
+    expect(proposeBreak({ startDate: '2027-03-26', endDate: '2027-03-26' }, SOURCE, TARGET)).toMatchObject({
+      proposedStart: '2028-04-14',
+      anchor: 'EASTER',
+    });
+    expect(proposeBreak({ startDate: '2027-05-14', endDate: '2027-05-18' }, SOURCE, TARGET)).toMatchObject({
+      proposedStart: '2028-06-02',
+      proposedEnd: '2028-06-06',
+      anchor: 'EASTER',
+    });
+  });
+
+  it('keeps a fixed public holiday on its date, and proposes nothing when next year puts it on a weekend', () => {
+    expect(proposeBreak({ startDate: '2027-01-06', endDate: '2027-01-06' }, SOURCE, TARGET)).toEqual({
+      proposedStart: '2028-01-06',
+      proposedEnd: '2028-01-06',
+      anchor: 'FIXED_DATE',
+      fits: true,
+    });
+    // 25 December 2026 is a Friday and 2027's a Saturday.
+    expect(proposeBreak({ startDate: '2026-12-25', endDate: '2026-12-25' }, SOURCE, TARGET)).toEqual({
+      proposedStart: null,
+      proposedEnd: null,
+      anchor: 'NONE',
+      fits: false,
+    });
+  });
+
+  it('leaves the same dates as a range to the ISO-week rule: only a single day is a holiday of its own', () => {
+    expect(proposeBreak({ startDate: '2027-01-04', endDate: '2027-01-08' }, SOURCE, TARGET)).toMatchObject({
+      proposedStart: '2028-01-03',
+      anchor: 'ISO_WEEK',
+    });
+  });
+});
+
 describe('the jullov proposal', () => {
   it('keeps 24 December inside when the year’s own shift is 371 days across a week 53', () => {
     // A school that starts in ISO week 34 both years: 2026-08-17 → 2027-08-23.

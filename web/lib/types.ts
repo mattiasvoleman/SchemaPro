@@ -1163,7 +1163,7 @@ export interface RolloverPreview {
     endDate: string;
     proposedStart: string | null;
     proposedEnd: string | null;
-    anchor: "CHRISTMAS" | "EASTER" | "ISO_WEEK" | "NONE";
+    anchor: "CHRISTMAS" | "EASTER" | "FIXED_DATE" | "ISO_WEEK" | "NONE";
     fits: boolean;
     selected: boolean;
     startDateToWrite: string | null;

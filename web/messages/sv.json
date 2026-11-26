@@ -5773,14 +5773,15 @@
       "volume": "Skiljer sig från {plan} i {count, plural, one {# ämne} other {# ämnen}}"
     },
     "volumeLine": "{subject}: {carried} min/vecka, timplanen {planned}",
-    "breaksHint": "Inga lov följer med om du inte bockar för dem. Datumen är förslag: jullovet flyttas hela veckor, påsklovet följer påsken och övriga behåller sitt veckonummer. Ändra dem om skolan har beslutat annat.",
+    "breaksHint": "Inga lov följer med om du inte bockar för dem. Datumen är förslag: jullovet flyttas hela veckor, påsklovet och de röda dagarna kring påsken (långfredag, Kristi himmelsfärd, pingst) följer påsken, en röd dag med fast datum behåller det, och övriga behåller sitt veckonummer. Ändra dem om skolan har beslutat annat.",
     "noBreaks": "Läsåret har inga lov eller studiedagar.",
     "breakThisYear": "I år {start} – {end}",
     "anchor": {
       "CHRISTMAS": "Förslag {start} – {end} (hela veckor, som julen)",
       "EASTER": "Förslag {start} – {end} (följer påsken)",
+      "FIXED_DATE": "Förslag {start} (samma datum varje år)",
       "ISO_WEEK": "Förslag {start} – {end} (samma veckor)",
-      "NONE": "Inget förslag — veckan finns inte nästa år. Ange datumen."
+      "NONE": "Inget förslag — veckan finns inte nästa år, eller dagen är en lördag eller söndag. Ange datumen eller lämna lovet."
     },
     "breakStartFor": "Första dag för {name}",
     "breakEndFor": "Sista dag för {name}",
