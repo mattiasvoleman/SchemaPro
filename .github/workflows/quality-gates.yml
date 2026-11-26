@@ -370,7 +370,9 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ !inputs.latency_floor }}
     # 40, from 30 (M8 PR 7): the two weeks the years' road lays (school_corpus.py GATE_WEEKS) cost a phase 1a that gives up, the
-    # road's steps and a phase 1b on this tree, and two searches that give up on the floor, at three seeds each.
+    # road's steps and a phase 1b on this tree, and two searches that give up on the floor, at three seeds each. They are
+    # the longest weeks of the pool, so corpus_measure.py gives them to it first (LONGEST_FIRST): last, they would have been
+    # the end of the job, at 37 to 40 of these 40 minutes (DEPLOYMENT §35.3).
     timeout-minutes: 40
     env:
       # CP-SAT deterministic seconds a search may spend: the same budget for both trees.

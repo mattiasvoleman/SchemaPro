@@ -340,10 +340,27 @@ def measure_shape(
     return {"name": week.name, "facts": week.facts, **result}
 
 
+#: The gate's weeks that take the longest, longest first, by name (a name the profile does not hold is passed over). The pool
+#: takes its weeks in the order it is given them, and a week is one worker's three seeds one after the other, so a long week
+#: given last is the end of the job. M8 PR 7 added two: in a tree without the years' road each is a TIMEOUT of two whole
+#: searches at every seed (8 and 11 minutes for the three seeds on this Mac, whose 13 other weeks took the runner 10 to 12
+#: minutes a tree), and last in a pool of four they added about 8 minutes to each tree; first, about 2. Only the ORDER of the
+#: submissions moves: the rows come back in the profile's order, and a week is the same search on whichever worker takes it.
+LONGEST_FIRST: tuple[str, ...] = (
+    "n12-g6-m0-s1-e1645", "n12-g3-m0-s1-t3", "n9-g6-m0-s1", "n12-g4-m0-s2",
+)
+
+
+def submission_order(shapes) -> list[int]:
+    """The indices of `shapes` in the order the pool is given them: LONGEST_FIRST's weeks first, the rest as they come."""
+    rank = {name: place for place, name in enumerate(LONGEST_FIRST)}
+    return sorted(range(len(shapes)), key=lambda index: (rank.get(shapes[index].name(), len(rank)), index))
+
+
 def run_profile(
     shapes, *, mode: str, budget: float, deterministic_budget: float, jobs: int, seeds: int = 1,
 ) -> list[dict[str, object]]:
-    """Every shape of a profile, `jobs` at a time, in the profile's order."""
+    """Every shape of a profile, `jobs` at a time: the rows in the profile's order, the pool given LONGEST_FIRST's weeks first."""
     if jobs <= 1:
         return [
             measure_shape(
@@ -354,14 +371,14 @@ def run_profile(
     from concurrent.futures import ProcessPoolExecutor
 
     with ProcessPoolExecutor(max_workers=jobs) as pool:
-        futures = [
-            pool.submit(
-                measure_shape, shape, mode=mode, budget=budget,
+        futures = {
+            index: pool.submit(
+                measure_shape, shapes[index], mode=mode, budget=budget,
                 deterministic_budget=deterministic_budget, seeds=seeds,
             )
-            for shape in shapes
-        ]
-        return [future.result() for future in futures]
+            for index in submission_order(shapes)
+        }
+        return [futures[index].result() for index in range(len(shapes))]
 
 
 def main() -> int:
