@@ -1717,6 +1717,9 @@ model PublishedLesson {
   /// Förlagda poster: the lesson's MasterLesson.fromPlacement, written back
   /// when the draft is discarded (20270207090000).
   fromPlacement  Boolean          @default(false)
+  /// E1b: the lesson's MasterLesson.exemptFrom, written back when the draft
+  /// is discarded (20270307090000).
+  exemptFrom     String[]         @default([])
   recurrence     LessonRecurrence
   startDate      DateTime?        @db.Date
   endDate        DateTime?        @db.Date
@@ -2799,6 +2802,15 @@ model MasterLesson {
   /// lesson placed freely once nothing pins it. False on every other lesson,
   /// and set by Generera alone.
   fromPlacement Boolean @default(false)
+  /// E1b Undantag med flit: the rules the lesson breaks on purpose, by name
+  /// (FRAME: the stage's ramtid, LUNCH: the class's meal), given by an
+  /// administrator who answered "Lägg ändå" for the time the lesson stands at.
+  /// The lesson is locked in the same moment. Only a request that names the
+  /// rule writes it (PATCH and POST with `exempt`, a file that names it in the
+  /// column Undantag); a restore or a discarded draft gives it back. Ended by
+  /// the trigger MasterLessons_exemption_ends when day, clock, dates or the
+  /// lock change. Empty on every other lesson (20270307090000).
+  exemptFrom  String[]  @default([])
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @db.Timestamptz(6)
 

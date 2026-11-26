@@ -36,6 +36,7 @@ import {
   PUBLISH_WARNINGS_UNACKNOWLEDGED,
   type PublishModeName,
 } from './publications.service';
+import { exemptionsOf, keepExemptions } from '../calendar/lesson-exemption';
 
 const asDay = (value: Date): string => value.toISOString().slice(0, 10);
 const day = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
@@ -312,6 +313,8 @@ export class DraftService {
         const { count: removed } = await tx.masterLesson.deleteMany({
           where: { academicYearId, id: { notIn: [...keep] } },
         });
+        // A row put back across a changed time keeps its exemption only when the writer says so (MasterLessons_exemption_ends).
+        await keepExemptions(tx);
         for (const row of published) {
           const data = {
             subjectId: row.subjectId,
@@ -328,6 +331,8 @@ export class DraftService {
             // Generera replaces it rather than meeting it beside its
             // förläggning (review of #293, MEDEL-2).
             fromPlacement: row.fromPlacement ?? false,
+            // Undantag med flit: as it was published, and [] where it was none, so a draft's exemption does not outlive the discard.
+            exemptFrom: exemptionsOf(row.exemptFrom),
             isParked: row.isParked,
             recurrence: row.recurrence,
             startDate: row.startDate,

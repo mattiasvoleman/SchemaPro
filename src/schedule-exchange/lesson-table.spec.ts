@@ -75,16 +75,16 @@ const FIXTURES: [string, () => ExchangeDocument][] = [
 // ---------------------------------------------------------------------------
 
 describe('the columns', () => {
-  it('are the twenty-eight of the contract, in order, in Swedish and in English', () => {
+  it('are the twenty-nine of the contract, in order, in Swedish and in English', () => {
     expect(LESSON_TABLE_HEADER).toEqual([
       'Lektions-id', 'Klass/grupp', 'Grupp-id', 'Ytterligare klasser', 'Ytterligare klass-id', 'Ämne', 'Ämneskod', 'Ämnes-id',
       'Lärare', 'Lärarnamn', 'Lärare e-post', 'Lärar-id', 'Medlärare', 'Medlärarnamn', 'Medlärare e-post', 'Medlärar-id',
-      'Sal', 'Sal-id', 'Dag', 'Start', 'Slut', 'Längd', 'Period', 'Från', 'Till', 'Veckomönster', 'Block', 'Låst',
+      'Sal', 'Sal-id', 'Dag', 'Start', 'Slut', 'Längd', 'Period', 'Från', 'Till', 'Veckomönster', 'Block', 'Låst', 'Undantag',
     ]);
     expect(LESSON_TABLE_HEADER_EN).toEqual([
       'Lesson id', 'Class/group', 'Group id', 'Additional classes', 'Additional class ids', 'Subject', 'Subject code', 'Subject id',
       'Teacher', 'Teacher name', 'Teacher e-mail', 'Teacher id', 'Co-teacher', 'Co-teacher name', 'Co-teacher e-mail', 'Co-teacher id',
-      'Room', 'Room id', 'Day', 'Start', 'End', 'Length (min)', 'Period', 'From', 'To', 'Week pattern', 'Block', 'Locked',
+      'Room', 'Room id', 'Day', 'Start', 'End', 'Length (min)', 'Period', 'From', 'To', 'Week pattern', 'Block', 'Locked', 'Exemption',
     ]);
   });
 
@@ -96,7 +96,7 @@ describe('the columns', () => {
       values[english.indexOf(header)] = value;
     };
     set('Class/group', '7A'); set('Subject', 'Matematik'); set('Day', 'Tue'); set('Start', '08:10'); set('End', '09:10');
-    set('Length (min)', '60'); set('From', '2026-08-17'); set('To', '2026-12-18'); set('Week pattern', 'A');
+    set('Length (min)', '60'); set('Exemption', ''); set('From', '2026-08-17'); set('To', '2026-12-18'); set('Week pattern', 'A');
     const parsed = tableToLessons([english, values]);
     expect(parsed.problems).toEqual([]);
     expect(canonical({ ...parsed.lessons[0], ref: '' })).toBe(
@@ -137,7 +137,7 @@ describe('lessonsToTable', () => {
     expect(small[0]).toEqual([...LESSON_TABLE_HEADER]);
     expect(small).toHaveLength(1 + 7);
     expect(high).toHaveLength(1 + 19);
-    for (const r of [...small, ...high]) expect(r).toHaveLength(28);
+    for (const r of [...small, ...high]) expect(r).toHaveLength(29);
   });
 
   it('sorts by group in natural order, then day, start, subject and teacher', () => {
@@ -165,9 +165,9 @@ describe('lessonsToTable', () => {
   });
 
   it('writes a lesson in full: names, codes, teachers, room, day, times, length, period, weeks, block, locked', () => {
-    expect(small[1]).toEqual(['', '1A', '', '', '', 'Matematik', 'MA', '', 'ABE', 'Anna Berg', 'anna.berg@skolan.example', '', '', '', '', '', 'Klassrum 1', '', 'Mån', '08:30', '09:15', '45', 'Hela läsåret', '', '', '', '', 'Ja']);
+    expect(small[1]).toEqual(['', '1A', '', '', '', 'Matematik', 'MA', '', 'ABE', 'Anna Berg', 'anna.berg@skolan.example', '', '', '', '', '', 'Klassrum 1', '', 'Mån', '08:30', '09:15', '45', 'Hela läsåret', '', '', '', '', 'Ja', '']);
     const coTaught = high.find((r) => r[1] === '8A' && r[5] === 'Idrott och hälsa')!;
-    expect(coTaught).toEqual(['', '8A', '', '', '', 'Idrott och hälsa', 'IDH', '', 'EST', 'Eva Strand', 'eva.strand@skolan.example', '', 'FAL', 'Farid Alm', 'farid.alm@skolan.example', '', 'Gymnastiksalen', '', 'Tors', '08:10', '09:40', '90', 'Hela läsåret', '', '', '', '', 'Ja']);
+    expect(coTaught).toEqual(['', '8A', '', '', '', 'Idrott och hälsa', 'IDH', '', 'EST', 'Eva Strand', 'eva.strand@skolan.example', '', 'FAL', 'Farid Alm', 'farid.alm@skolan.example', '', 'Gymnastiksalen', '', 'Tors', '08:10', '09:40', '90', 'Hela läsåret', '', '', '', '', 'Ja', '']);
     const music = high.find((r) => r[1] === '8A' && r[5] === 'Musik')!;
     expect([music[3], music[9], music[10]]).toEqual(['8B', 'Dan Nord', '']);
     const alternating = high.find((r) => r[1] === '7A' && r[5] === 'Slöjd')!;
@@ -320,6 +320,41 @@ describe('the round trip: what is written is read back, every field, as a multis
 // ---------------------------------------------------------------------------
 // Finding the header
 // ---------------------------------------------------------------------------
+
+describe('the column Undantag (Undantag med flit)', () => {
+  const doc = (): ExchangeDocument => {
+    const document = smallSchoolDocument();
+    document.lessons[0]!.exempt = ['FRAME', 'LUNCH'];
+    document.lessons[1]!.exempt = ['LUNCH'];
+    return document;
+  };
+  const columnOf = (rows: string[][]): string[] => rows.slice(1).map((row) => row[LESSON_TABLE_HEADER.indexOf('Undantag')]!);
+
+  it('is written in Swedish words, empty for a lesson with none', () => {
+    const cells = columnOf(lessonsToTable(doc()));
+    expect(cells.filter((cell) => cell !== '').sort()).toEqual(['Lunch', 'Ramtid | Lunch']);
+    expect(columnOf(lessonsToTable(smallSchoolDocument())).every((cell) => cell === '')).toBe(true);
+  });
+
+  it('is read back through CSV and Excel, and a lesson without one is the object it was', () => {
+    const rows = lessonsToTable(doc());
+    for (const result of [tableToLessons(parseCsv(writeCsv(rows, { delimiter: ';' })).rows), tableToLessons(readXlsx(writeXlsx(rows, { sheetName: 'Schema', frozenHeader: true })).rows)]) {
+      expect(result.problems).toEqual([]);
+      expect(multiset(result.lessons)).toEqual(multiset(doc().lessons));
+      expect(result.lessons.filter((lesson) => lesson.exempt === undefined)).toHaveLength(doc().lessons.length - 2);
+    }
+  });
+
+  it('takes the English words, in either order, and refuses a word that is none of them, naming the row', () => {
+    const header = ['Klass/grupp', 'Ämne', 'Dag', 'Start', 'Slut', 'Undantag'];
+    const read = (cell: string) => tableToLessons([header, ['7A', 'Matematik', 'Mån', '08:10', '09:10', cell]]);
+    expect(read('meal; Frame').lessons[0]!.exempt).toEqual(['FRAME', 'LUNCH']);
+    expect(read('ramtid, ramtid').lessons[0]!.exempt).toEqual(['FRAME']);
+    const bad = read('Ramtid | Lärare');
+    expect(bad.lessons).toEqual([]);
+    expect(bad.problems).toMatchObject([{ code: 'TABLE_BAD_EXEMPTION', ref: 'rad 2' }]);
+  });
+});
 
 describe('tableToLessons: the header row', () => {
   const header = [...LESSON_TABLE_HEADER];

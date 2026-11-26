@@ -46,6 +46,7 @@ const state = vi.hoisted(() => ({
   requirements: [] as unknown[],
   /** The weekly rows that close an hour (resource availability), as useConstraints reads them. */
   constraints: [] as unknown[],
+  frameTimes: [] as unknown[],
   /** GROUPS and PEOPLE unless a row adds to them; null between tests. */
   groups: null as unknown[] | null,
   people: null as unknown[] | null,
@@ -160,7 +161,7 @@ vi.mock("@/lib/queries", () => ({
   },
   useConstraints: () => ({ data: state.constraints }),
   useGroupMemberships: () => ({ data: state.memberships }),
-  useFrameTimes: () => ({ data: [] }),
+  useFrameTimes: () => ({ data: state.frameTimes }),
   useLunchSettings: () => ({ data: state.lunchSettings }),
   useLunchSittings: (yearId: string | null) => {
     state.askedFor.sittings = yearId;
@@ -645,6 +646,7 @@ beforeEach(() => {
   state.yearsLoading = false;
   state.requirements = [];
   state.constraints = [];
+  state.frameTimes = [];
   state.groups = null;
   state.people = null;
   state.rooms = null;
@@ -713,6 +715,12 @@ function subjectsOnScreen(): string[] {
  * render. timetable-split.test.ts shows each reset gives a new wrapper; these show the page asks for it where
  * the failure is caught, and draws from the one it is given (brokenPieces, at the top).
  */
+/** The keyboard of the board is a chunk the grid fetches when it is editable: waits for it, and for its listeners to be put up. */
+async function boardKeysCame() {
+  await waitFor(() => expect(document.querySelector("[data-board-status]")).not.toBeNull());
+  await act(async () => {});
+}
+
 describe("a piece that did not arrive is fetched again through a new wrapper", () => {
   beforeEach(() => {
     toasts.error.mockClear();
@@ -1462,6 +1470,28 @@ describe("a refusal of the one judge, and the krocklista (E1)", () => {
     expect(await screen.findByText("timetable.editTitle")).toBeTruthy();
   });
 
+  it("says what a clashing card clashes with in the card's own name and hover, in the sentence the list uses, and says it only once there is a clash", async () => {
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), lesson("l-b", "s-sl", "g-51", "08:00")];
+    render(<TimetablePage />);
+
+    // The words come a moment after the picture: a module fetched when something clashes. The card is drawn as clashing at once.
+    const words = await waitFor(() => {
+      const clashing = [...document.querySelectorAll<HTMLElement>("[data-lesson-id]")].filter((card) => card.textContent?.includes("boardKeys.clash"));
+      expect(clashing).toHaveLength(2);
+      expect(clashing[0]!.textContent).toMatch(/boardKeys\.clash: common\.codes\.MASTER_LESSON_REFUSED\(TEACHER/);
+      return clashing;
+    });
+    // After what the lesson is, in its name, and on the hover.
+    expect(words[0]!.textContent!.indexOf("boardKeys.clash")).toBeGreaterThan(words[0]!.textContent!.indexOf("08:00"));
+    expect(words[0]!.getAttribute("title")).toMatch(/boardKeys\.clash: common\.codes\.MASTER_LESSON_REFUSED\(TEACHER/);
+  });
+
+  it("says nothing of a clash on a card that does not clash", async () => {
+    render(<TimetablePage />);
+    await screen.findAllByRole("button");
+    expect([...document.querySelectorAll("[data-lesson-id]")].some((card) => card.textContent?.includes("boardKeys.clash"))).toBe(false);
+  });
+
   it("says whose hour a weekly row closes, from the page's own rows: the teacher's, as a refused save says it", async () => {
     state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00")];
     state.constraints = [
@@ -1473,6 +1503,95 @@ describe("a refusal of the one judge, and the krocklista (E1)", () => {
     const list = await screen.findByRole("dialog");
     // The echo of the catalogue's sentence: reason, schools, resource.
     expect(within(list).getByText(/^common\.codes\.MASTER_LESSON_REFUSED\(AVAILABILITY\|\|TEACHER\|/)).toBeTruthy();
+  });
+});
+
+describe("a lesson that stands outside the ramtid on purpose (Undantag med flit)", () => {
+  // The day of the stage the lessons' classes belong to runs 07:00-09:00; the lesson is at 08:00-09:00 and the other at 10:00-11:00.
+  const frame = (minGradeLevel: number, maxGradeLevel: number) => ({ id: "f-1", minGradeLevel, maxGradeLevel, dayOfWeek: null, startTime: "07:00:00", endTime: "09:00:00" });
+  const given = (id: string, subjectId: string, groupId: string, startTime: string) => ({ ...lesson(id, subjectId, groupId, startTime), isLocked: true, exemptFrom: ["FRAME"] });
+
+  it("is no conflict: the header counts no conflict for it, says the exemption beside, and the list says it under its own heading", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), given("l-late", "s-sl", "g-51", "10:00")];
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    // The lesson at 10:00 is outside the ramtid and the one at 08:00 is not: no conflict is counted, one exemption is.
+    expect(await screen.findByText(/timetable\.exemptionCount/)).toBeTruthy();
+    expect(screen.queryByText(/timetable\.conflictCount/)).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "timetable.conflictListOpen" }));
+    const list = await screen.findByRole("dialog");
+    expect(within(list).getByRole("heading", { name: "timetable.conflictListExemptionsTitle" })).toBeTruthy();
+    expect(within(list).getByText("timetable.conflictExemptFRAME")).toBeTruthy();
+    expect(within(list).queryByText(/^common\.codes\.MASTER_LESSON_REFUSED/)).toBeNull();
+  });
+
+  it("counts an exemption nothing stands against too, as the publication does, and opens the list for it", async () => {
+    // Given for the ramtid, with the ramtid wide enough now for the lesson at 10:00-11:00: nothing stands there, and the lesson still has it.
+    state.frameTimes = [{ ...frame(0, 99), endTime: "12:00:00" }];
+    state.lessons = [given("l-idle", "s-sl", "g-51", "10:00")];
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    expect(await screen.findByText(/timetable\.exemptionCount/)).toBeTruthy();
+    expect(screen.queryByText(/timetable\.conflictCount/)).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "timetable.conflictListOpen" }));
+    const list = await screen.findByRole("dialog");
+    expect(within(list).getByRole("heading", { name: "timetable.conflictListExemptionsTitle" })).toBeTruthy();
+    expect(within(list).getByText(/timetable\.conflictExemptIdle/)).toBeTruthy();
+  });
+
+  it("is a conflict as before for a lesson without the exemption, and the header says conflicts and no exemption", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-late", "s-sl", "g-51", "10:00")];
+    render(<TimetablePage />);
+    expect(await screen.findByText(/timetable\.conflictCount/)).toBeTruthy();
+    expect(screen.queryByText(/timetable\.exemptionCount/)).toBeNull();
+  });
+});
+
+describe("Justera lektion for a lesson that has an exemption (Undantag med flit)", () => {
+  // The ramtid runs 07:00-09:00 and the lesson stands at 10:00-11:00 with an exemption for it.
+  const frame = { id: "f-1", minGradeLevel: 0, maxGradeLevel: 99, dayOfWeek: null, startTime: "07:00:00", endTime: "09:00:00" };
+  const openSlojd = async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+    return user;
+  };
+  afterEach(() => {
+    noMutation.mutateAsync.mockReset().mockResolvedValue({ id: "x" });
+  });
+
+  it("opens with the exemption said, and a save after Ta tillbaka Lägg ändå says exempt: [] so that the gateway takes it back, the lock as the lesson had it", async () => {
+    state.frameTimes = [frame];
+    state.lessons = [{ ...lesson("l-late", "s-sl", "g-51", "10:00"), isLocked: true, exemptFrom: ["FRAME"] }];
+    const user = await openSlojd();
+
+    expect(await screen.findByText(/timetable\.exemptHas/)).toBeTruthy();
+    await user.click(await screen.findByRole("button", { name: "timetable.exemptTakeBack" }));
+    await user.click(await screen.findByRole("button", { name: "common.save" }));
+
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-late", exempt: [], isLocked: true }));
+  });
+
+  it("says the exemption it has when a lesson is saved as it stands: the answer is kept", async () => {
+    state.frameTimes = [frame];
+    state.lessons = [{ ...lesson("l-late", "s-sl", "g-51", "10:00"), isLocked: true, exemptFrom: ["FRAME"] }];
+    const user = await openSlojd();
+    await user.click(await screen.findByRole("button", { name: "common.save" }));
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-late", exempt: ["FRAME"], isLocked: true }));
+  });
+
+  it("says no word of an exemption for a lesson that has none: the save is the request it always was", async () => {
+    state.lessons = [lesson("l-late", "s-sl", "g-51", "10:00")];
+    const user = await openSlojd();
+    await user.click(await screen.findByRole("button", { name: "common.save" }));
+    const sent = noMutation.mutateAsync.mock.calls[0]![0] as Record<string, unknown>;
+    expect(sent).toMatchObject({ id: "l-late" });
+    expect("exempt" in sent).toBe(false);
   });
 });
 
@@ -3530,6 +3649,21 @@ describe("a parallel block (Block i schemat)", () => {
   };
   const focusedId = () => document.activeElement?.getAttribute("data-lesson-id");
 
+  it("says in words what a clashing member of the block clashes with, on the block's card, also when it is not the first member", async () => {
+    // Nils (the block's Musik, its second lesson) is also teaching 5.1 at the same hour on Monday: the second member clashes, the first does not.
+    state.lessons = [...LESSONS, ...BLOCK_LESSONS, lesson("l-nils", "s-ma", "g-51", "13:00", { teacherId: "t-2" })];
+    showPage();
+    const drawn = await card();
+    await waitFor(() => expect(drawn.textContent).toMatch(/boardKeys\.clash: common\.codes\.MASTER_LESSON_REFUSED\(TEACHER/));
+    expect(drawn).toHaveAttribute("title", expect.stringMatching(/boardKeys\.clash: common\.codes\.MASTER_LESSON_REFUSED\(TEACHER/));
+  });
+
+  it("says nothing of a clash on the card of a block that does not clash", async () => {
+    showPage();
+    const drawn = await card();
+    expect(drawn.textContent).not.toContain("boardKeys.clash");
+  });
+
   it("draws the block as one card naming the block and its members", async () => {
     showPage();
 
@@ -3660,6 +3794,34 @@ describe("a parallel block (Block i schemat)", () => {
     expect(toasts.success).toHaveBeenCalledWith("timetable.blocks.locked(Språkval åk 4|2)");
   });
 
+  it("answers L, P and Delete on the block's card by opening its dialog, and says that and not what the key does to a lesson", async () => {
+    const user = userEvent.setup();
+    showPage();
+    const drawn = await card();
+    await boardKeysCame();
+    const line = () => document.querySelector("[data-board-status]")!.textContent;
+    for (const key of ["l", "p", "Delete"]) {
+      fireEvent.keyDown(drawn, { key });
+      // The block by its name: "Språkval åk 4", and not by the first of the classes it is for ("… 4ma1").
+      expect(line(), `after ${key}`).toBe("boardKeys.blockDialog(Språkval åk 4)");
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByRole("button", { name: "timetable.blocks.lock" })).toBeTruthy();
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    }
+    // Nothing was locked, parked or removed by a key that only opened a dialog.
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+    expect(blockApi.patch).not.toHaveBeenCalled();
+  });
+
+  it("calls a block's card by the block when it is taken up", async () => {
+    showPage();
+    const drawn = await card();
+    await boardKeysCame();
+    fireEvent.keyDown(drawn, { key: " " });
+    expect(document.querySelector("[data-board-status]")!.textContent).toBe("boardKeys.pickedUp(Språkval åk 4|days.1|13:00|14:00)");
+  });
+
   it("says with the lock that the block's lessons on the tray were not locked", async () => {
     blockApi.patch.mockResolvedValue({ blockId: "b-sv", isLocked: true, lessonIds: ["l-sv1", "l-sv2"], parked: 1 });
     const user = userEvent.setup();
@@ -3681,7 +3843,12 @@ describe("a parallel block (Block i schemat)", () => {
     blockApi.patch.mockResolvedValue({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [] });
     showPage();
 
-    fireEvent.keyDown(await card(), { key: "ArrowRight" });
+    // The keyboard of the board (board-keys.tsx): Space takes the card up, an arrow moves the marker, Enter puts it down.
+    const drawn = await card();
+    await boardKeysCame();
+    fireEvent.keyDown(drawn, { key: " " });
+    fireEvent.keyDown(drawn, { key: "ArrowRight" });
+    fireEvent.keyDown(drawn, { key: "Enter" });
     await confirmClasses();
 
     await waitFor(() =>
@@ -4068,7 +4235,10 @@ describe("a parallel block (Block i schemat)", () => {
     const drawn = document.querySelector<HTMLElement>('[data-lesson-id="block:l-sv1"]')!;
 
     drawn.focus();
+    await boardKeysCame();
+    fireEvent.keyDown(drawn, { key: " " });
     fireEvent.keyDown(drawn, { key: "ArrowRight" });
+    fireEvent.keyDown(drawn, { key: "Enter" });
     await confirmClasses();
     await waitFor(() => expect(blockApi.patch).toHaveBeenCalled());
     // The refetch: all three on Tuesday 13:00, one card.
@@ -4309,5 +4479,111 @@ describe("two lessons that meet only in the weeks of a lov (lib/closed-weeks.ts)
     render(<TimetablePage />);
     await waitFor(() => expect(ringed("Matematik")).toBe(true));
     expect(ringed("Slöjd")).toBe(true);
+  });
+});
+
+/*
+ * The keys of the board that WRITE (L, P, Delete), and the tab stop, through the page: board-keys.test.tsx says that the layer asks for
+ * a command, and the page's handler is what does it. A mutant of that handler that never unlocks, removes nothing, or is not wired to
+ * the grids of Per lärare, Per sal and Per klass passed every other test of the page (the one browser spec locks once and parks once).
+ */
+describe("the board's keys that write, through the page (E2)", () => {
+  const cardOf = (id: string) => document.querySelector<HTMLElement>(`[data-lesson-id="${id}"]`)!;
+
+  beforeEach(() => {
+    toasts.success.mockClear();
+    toasts.error.mockClear();
+  });
+
+  it("L locks a lesson and L on a locked one unlocks it, and each is a step that Ångra takes back", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await screen.findAllByRole("button", { name: /Matematik/ });
+    await boardKeysCame();
+
+    fireEvent.keyDown(cardOf("l-ma1"), { key: "l" });
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-ma1", isLocked: true })));
+    noMutation.mutateAsync.mockClear();
+    await user.click(screen.getByRole("button", { name: "timetable.undo" }));
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-ma1", isLocked: false })));
+    cleanup();
+
+    // A lesson that is locked is unlocked by the same key.
+    state.lessons = LESSONS.map((entry) => (entry.id === "l-ma1" ? { ...entry, isLocked: true } : entry));
+    noMutation.mutateAsync.mockClear();
+    render(<TimetablePage />);
+    await screen.findAllByRole("button", { name: /Matematik/ });
+    await boardKeysCame();
+    fireEvent.keyDown(cardOf("l-ma1"), { key: "L" });
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-ma1", isLocked: false })));
+  });
+
+  it("P parks the lesson, and says it did", async () => {
+    render(<TimetablePage />);
+    await screen.findAllByRole("button", { name: /Matematik/ });
+    await boardKeysCame();
+    fireEvent.keyDown(cardOf("l-ma1"), { key: "p" });
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-ma1", isParked: true })));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith(expect.stringContaining("timetable.parked")));
+  });
+
+  it("Delete and Backspace remove the lesson, say it, and Ångra makes it again", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await screen.findAllByRole("button", { name: /Matematik/ });
+    await boardKeysCame();
+
+    fireEvent.keyDown(cardOf("l-ma1"), { key: "Delete" });
+    // The delete mutation is given the id and nothing else; every other write of the page is given an object.
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith("l-ma1"));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith(expect.stringContaining("timetable.deleted")));
+    noMutation.mutateAsync.mockClear();
+    await user.click(screen.getByRole("button", { name: "timetable.undo" }));
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ subjectId: "s-ma", studentGroupId: "g-ma1" })),
+    );
+
+    noMutation.mutateAsync.mockClear();
+    fireEvent.keyDown(cardOf("l-ma2"), { key: "Backspace" });
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith("l-ma2"));
+  });
+
+  it("gives the week one tab stop, and the arrows carry it with the focus", async () => {
+    render(<TimetablePage />);
+    await screen.findAllByRole("button", { name: /Matematik/ });
+    await boardKeysCame();
+    const stops = () => [...document.querySelectorAll<HTMLElement>("[data-lesson-id]")].filter((card) => card.tabIndex >= 0);
+    expect(stops()).toHaveLength(1);
+
+    const first = stops()[0]!;
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(stops()).toHaveLength(1);
+    expect(document.activeElement).toBe(stops()[0]);
+    expect(stops()[0]).not.toBe(first);
+  });
+
+  it("is a board in Per lärare as well: a line for each board, and a key on a card in one board writes and speaks in that board alone", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await screen.findAllByRole("button", { name: /Matematik/ });
+    await user.click(screen.getByRole("combobox", { name: "timetable.viewLabel" }));
+    await user.click(await screen.findByRole("option", { name: "timetable.viewByTeacher" }));
+    const boards = () => document.querySelectorAll("section[aria-labelledby^='board-']");
+    await waitFor(() => expect(boards().length).toBeGreaterThan(1));
+    await waitFor(() => expect(document.querySelectorAll("[data-board-status]")).toHaveLength(boards().length));
+    await act(async () => {});
+
+    // Anna (t-2) has the one lesson l-ma2: her board's line speaks when it is taken up, and the others' stay silent.
+    const mine = cardOf("l-ma2");
+    const lineOf = (inside: HTMLElement) => inside.closest("section")!.querySelector("[data-board-status]")!.textContent;
+    fireEvent.keyDown(mine, { key: " " });
+    expect(lineOf(mine)).toMatch(/^boardKeys\.pickedUp\(/);
+    const others = [...document.querySelectorAll("[data-board-status]")].filter((line) => line !== mine.closest("section")!.querySelector("[data-board-status]"));
+    expect(others.map((line) => line.textContent)).toEqual(others.map(() => ""));
+    fireEvent.keyDown(mine, { key: "Escape" });
+
+    fireEvent.keyDown(mine, { key: "l" });
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-ma2", isLocked: true })));
   });
 });

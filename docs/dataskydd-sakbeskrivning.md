@@ -706,6 +706,15 @@ Det här är det som dokumentet **inte** kan säga. Ingenting av det är ifyllt 
 - **F, fakta.** Ett svar finns i produktionsmiljön eller hos en leverantör, och repot kan inte ge det. Svaren kan läggas till här med datum och källa.
 - **K, kontroll.** Något som går att kontrollera i repot och som inte har gjorts för det här dokumentet.
 
+**Läge 2026-11-25 (omgång 15, beslut 14): fyra frågor väntar på användaren.** De gäller fakta som bara användaren har, så de står öppna och ingen är besvarad eller gissad. Dokumentet beskriver konstruktionen, och det ändras först när svaret finns, med datum och källa.
+
+| Fråga | Punkt | Vad ett svar ändrar | När den blir brådskande |
+|---|---|---|---|
+| Vilken **region** har Supabase-projektet och Vercel-projektet? | F1 | Regionkolumnen i 5.1 och underlaget till B3 | Före ett biträdesavtal |
+| Är **säkerhetskopior** (PITR eller dagliga) på, och hur långt tillbaka? | F2 | 5.2 och 8 (gallring går bara att ångra ur en kopia) | Före den första gallringsperioden en skola sätter |
+| Vilken **avsändare och SMTP** använder Supabase Auth för inbjudan och lösenordsåterställning? | F5 | 3.3, 4.3 och 5.1 | **Med P3 (första veckan utan operatören):** Supabases egen avsändare är begränsad till några få mejl i timmen (`docs/DEPLOYMENT.md` §1, steg 3), och det räcker inte till en massinbjudan till en hel skola |
+| Är det **avsiktligt** att e-post är av tills `RESEND_API_KEY` är satt? | B8 | 4.2 (flöde 9), 4.3 och 5.1 | Före en skola som räknar med att larm och beslut når familjerna |
+
 ### 13.1 Beslut
 
 | # | Punkt | Varför den är öppen | Vad dokumentet gör i väntan |
@@ -717,6 +726,7 @@ Det här är det som dokumentet **inte** kan säga. Ingenting av det är ifyllt 
 | **B5** | **Rättslig grund och ändamål** per slags uppgift, och vilken information som ska ges till elever, vårdnadshavare och personal. | Skolans val som personuppgiftsansvarig. Ingen sådan text finns i koden (avsnitt 10.5). | Beskriver bara vad som lagras och varför funktionen finns. |
 | **B6** | **AI-förordningen.** Att en jurist bekräftar om lösaren och de funktioner som listas i avsnitt 12.3 omfattas, och i så fall vad som följer. | Slutsatsen är juristens. Förordningens text, och datumen för när reglerna för högrisksystem inom utbildning börjar gälla, har inte lästs för det här arbetet. | Beskriver vad lösaren är och inte är och vilka funktioner som rör personers arbetsuppgifter (avsnitt 12). |
 | **B7** | **Namnet "AI-motorn"** i webbtexterna och handböckerna. | PRODUCT.md beslutade 2026-10-11 att motorn ska beskrivas efter vad den gör och att texterna ska flyttas till ett enda vanligt namn, som ännu inte är valt (`PRODUCT.md:74`). Texterna säger fortfarande "AI-driven" och "AI-motorn" (`web/messages/sv.json:14`, `:263`, `:1840`, `docs/manual/anvandarmanual.html:24`). | Säger det rakt ut (avsnitt 12.1). |
+| **B8** | **Är det avsiktligt att e-post är av tills en `RESEND_API_KEY` finns?** Och ska en driftsättning som tar emot en riktig skola ha nyckeln från början? | Utan nyckeln skickas ingen e-post alls och inget köas (`src/notifications/notification-delivery.service.ts:138-139`, flöde 9 i 4.2). Det gäller varje brevtyp i 4.3: oanmäld frånvaro, beslut om ledighet, nya ledighetsansökningar, avbokningssammanfattningar, vikariepass och kökets brev. Inkorgen i appen och i webbens klocka berörs inte, och inte heller inbjudan och lösenordsåterställning, som skickas av Supabase Auth (F5). Att köra utan e-post kan vara ett val eller en lucka, och bara användaren vet vilket; koden gör ingen skillnad. | Beskriver båda lägena (4.2 och 4.3) och säger inte vilket som gäller i produktionen (F3). |
 
 ### 13.2 Fakta som repot inte kan ge
 
@@ -756,8 +766,8 @@ Frågorna är skrivskyddade och gäller konfiguration, inte persondata.
 
 | Text | Säger | Koden eller driftboken säger |
 |---|---|---|
-| `PRODUCT.md:131` | Inloggning bara med e-post och lösenord; skolkonto är inte byggt. | Skolkonto (Entra, Google) finns och beskrivs i `docs/DEPLOYMENT.md:2917-3000`. |
-| `PRODUCT.md` (avsnittet Accessibility & Inclusion) | axe körs bara på de publika sidorna; inloggade sidor skannas inte. | Sedan 2026-10-15 körs axe på varje inloggad sida (`web/e2e/a11y-app.spec.ts`). |
+| `PRODUCT.md:131` | Inloggning bara med e-post och lösenord; skolkonto är inte byggt. | Skolkonto (Entra, Google) finns och beskrivs i `docs/DEPLOYMENT.md:2917-3000`. **Rättad i PRODUCT.md 2026-11-25 (omgång 15, Q1).** |
+| `PRODUCT.md` (avsnittet Accessibility & Inclusion) | axe körs bara på de publika sidorna; inloggade sidor skannas inte. | Sedan 2026-10-15 körs axe på varje inloggad sida (`web/e2e/a11y-app.spec.ts`). **Rättad i PRODUCT.md 2026-11-25 (omgång 15, Q1)**, och med den de andra raderna där som koden sa emot: huvudman och administratörsprofiler, block och A/B-veckor, flera skolor per inloggning, appens administratör, reducerad rörelse och menylådan. |
 | `prisma/schema.prisma:372` | `Users` är "the ONLY table that stores PII". | Fler tabeller har namn och kontaktuppgifter (avsnitt 3.1). |
 | `prisma/schema.prisma:844-851` | Markeringen anger "never which protection". | Synkens markering kan bära registrets art (`prisma/schema.prisma:878-883`). |
 | `src/gallring/retention.ts:11`, `docs/DEPLOYMENT.md:552-556`, `web/messages/sv.json:7552` | Se avsnitt 8.6. | Se avsnitt 8.6. |
