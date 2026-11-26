@@ -231,6 +231,21 @@ describe('ScheduleExchangeService.saveAsVersion (Ett schema som start, M9)', () 
     expect(lessons[1]).toMatchObject({ extraGroupIds: ['g-7b'] });
   });
 
+  it('saves a lesson that runs from the year’s first day to its last as a lesson with no dates, the way a post of every week has none, and keeps any other dates', async () => {
+    const { service, tx } = saving();
+
+    await save(service, [
+      base({ from: '2026-08-17', to: '2027-06-11' }),
+      base({ day: 2, from: '2026-08-17', to: '2026-12-18' }),
+      base({ day: 3, from: '2027-01-11', to: '2027-06-11' }),
+    ]);
+
+    const lessons = (tx.scheduleVersion.create.mock.calls[0]![0].data as { lessons: Record<string, unknown>[] }).lessons;
+    expect(lessons[0]).toMatchObject({ startDate: null, endDate: null });
+    expect(lessons[1]).toMatchObject({ startDate: '2026-08-17', endDate: '2026-12-18' });
+    expect(lessons[2]).toMatchObject({ startDate: '2027-01-11', endDate: '2027-06-11' });
+  });
+
   it('records the read of the teachers it matched, as a preview does', async () => {
     const { service, tx } = saving();
 

@@ -327,8 +327,12 @@ export class ScheduleExchangeService {
             isGenerated: true,
             isParked: false,
             recurrence: RECURRENCE_OF[l.weeks],
-            startDate: l.from,
-            endDate: l.to,
+            // A lesson that runs from the year's first day to its last is a lesson of every week of the year, which the model says as no dates
+            // (exchange-model.ts: null is "from the start of the year" and "until the year ends"). A post of the year has none either, and a
+            // start matches a lesson to its post by the weeks they run: left as dates, every lesson of a table that spells the year out is
+            // taken to run other weeks than its post (OTHER_WEEKS), and Generera refuses to start from the whole file.
+            startDate: l.from === loaded.ctx.year.start && l.to === loaded.ctx.year.end ? null : l.from,
+            endDate: l.from === loaded.ctx.year.start && l.to === loaded.ctx.year.end ? null : l.to,
             extraGroupIds: l.extraGroups.map((g) => g.id),
             studentIds: [],
           });
