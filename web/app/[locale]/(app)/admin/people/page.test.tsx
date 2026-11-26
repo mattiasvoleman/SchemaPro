@@ -112,13 +112,18 @@ const state = vi.hoisted(() => ({
   withGuardian: false,
   /** Whether the school also has a pupil and a guardian with no address (Personer utan e-postadress). */
   withoutAddress: false,
+  /** GET /users/invitation-channel as the page reads it for the mass invitation's estimate; undefined while it is not read. */
+  channel: undefined as { configured: boolean; smtp: "CUSTOM" | "NOT_STATED"; perHour: number | null } | undefined,
   /** Skyddad identitet: the marks the exports read at the click, or a read that fails. */
   marks: [] as Array<{ userId: string; source: string }>,
   marksFail: false,
 }));
 
-const { saveEmployment, createPerson, updatePerson, unlinkGuardian, inviteOne, downloadCsv, guardiansCsvFor, apiGet } =
+const { saveEmployment, createPerson, updatePerson, unlinkGuardian, inviteOne, invitePart, readPeople, endRun, downloadCsv, guardiansCsvFor, apiGet } =
   vi.hoisted(() => ({
+    invitePart: vi.fn(),
+    readPeople: vi.fn(),
+    endRun: vi.fn(),
     saveEmployment: vi.fn(),
     createPerson: vi.fn(),
     updatePerson: vi.fn(),
@@ -142,6 +147,14 @@ vi.mock("@/lib/csv-export", async (importOriginal) => ({
   downloadCsv,
 }));
 vi.mock("@/lib/guardians-csv-export", () => ({ guardiansCsvFor }));
+// The mass invitation's dialog is its own file's (invite-all-dialog.test.tsx); the page's part is what it is opened with.
+const inviteDialog = vi.hoisted(() => ({ props: null as null | Record<string, unknown> }));
+vi.mock("./invite-all-dialog", () => ({
+  InviteAllDialog: (props: Record<string, unknown>) => {
+    inviteDialog.props = props;
+    return <div role="dialog" aria-label="inviteAllDialog" />;
+  },
+}));
 
 // Held by the tests, so that they can say that nothing was written.
 const workRuleWrites = vi.hoisted(() => ({ save: vi.fn(), remove: vi.fn() }));
@@ -187,8 +200,11 @@ vi.mock("@/lib/queries", () => ({
   }),
   useInvitations: () => ({
     inviteOne: { mutateAsync: inviteOne, isPending: false },
-    inviteMany: { mutateAsync: vi.fn(), isPending: false },
+    inviteMany: { mutateAsync: invitePart, isPending: false },
+    readPeople,
+    endRun,
   }),
+  useInvitationChannel: () => ({ data: state.channel }),
   useCrudMutations: () => ({
     create: { mutateAsync: createPerson, isPending: false },
     update: { mutateAsync: updatePerson, isPending: false },
@@ -306,6 +322,7 @@ describe("People page", () => {
     state.roleChanges = [];
     state.withGuardian = false;
     state.withoutAddress = false;
+    state.channel = undefined;
     state.marks = [];
     state.marksFail = false;
     apiGet.mockImplementation((path: string) =>
@@ -481,6 +498,82 @@ describe("People page", () => {
     await user.type(searchBox(), "7a alma");
 
     expect(rowNames()).toEqual(["Alma Berg"]);
+  });
+
+  // Första veckan utan operatören: the mass invitation is a dialog that sends in parts, opened with the people on screen.
+  describe("the mass invitation", () => {
+    beforeEach(() => {
+      inviteDialog.props = null;
+      readPeople.mockReset();
+    });
+
+    it("opens a dialog for the people on screen who were never invited, and none before the button is pressed", async () => {
+      state.channel = { configured: true, smtp: "CUSTOM", perHour: 30 };
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+      expect(screen.queryByRole("dialog", { name: "inviteAllDialog" })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /inviteAll\(2\)/ }));
+
+      expect(await screen.findByRole("dialog", { name: "inviteAllDialog" })).toBeInTheDocument();
+      expect(inviteDialog.props).toMatchObject({ open: true, count: 2, perHour: 30 });
+      // The button is not pressed twice while the dialog is open.
+      expect(screen.getByRole("button", { name: /inviteAll\(2\)/ })).toBeDisabled();
+    });
+
+    it("is scoped to what the search leaves on screen, and the scope is fixed when it opens", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+      await user.type(searchBox(), "alma");
+
+      await user.click(screen.getByRole("button", { name: /inviteAll\(1\)/ }));
+      await screen.findByRole("dialog", { name: "inviteAllDialog" });
+
+      expect(inviteDialog.props).toMatchObject({ count: 1 });
+    });
+
+    it("reads the register again for what is left, and only the scope's people who are still to be invited, active, with an address", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+      await user.click(screen.getByRole("button", { name: /inviteAll\(2\)/ }));
+      await screen.findByRole("dialog", { name: "inviteAllDialog" });
+      // The register as it is now: Alma was invited meanwhile, Nils was not, and Karin was never in the scope.
+      readPeople.mockResolvedValue([
+        { ...people[0], invitedAt: "2026-11-26T01:00:00.000Z" },
+        people[1],
+        { ...person("st-9", "Zeb", "Utan", "STUDENT", null), email: null },
+      ]);
+
+      const pending = await (inviteDialog.props!.readPending as () => Promise<string[]>)();
+
+      expect(pending).toEqual(["st-2"]);
+    });
+
+    it("sends one part through the part-wise call, and reads the register once when a run has ended", async () => {
+      invitePart.mockResolvedValue({ sent: 2, alreadyRegistered: 0, errors: [] });
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+      await user.click(screen.getByRole("button", { name: /inviteAll\(2\)/ }));
+      await screen.findByRole("dialog", { name: "inviteAllDialog" });
+
+      await (inviteDialog.props!.send as (ids: string[]) => Promise<unknown>)(["st-1", "st-2"]);
+      (inviteDialog.props!.onRunEnded as () => void)();
+
+      expect(invitePart).toHaveBeenCalledWith(["st-1", "st-2"]);
+      expect(endRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("closes by clearing the scope, so the button is free again", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+      await user.click(screen.getByRole("button", { name: /inviteAll\(2\)/ }));
+      await screen.findByRole("dialog", { name: "inviteAllDialog" });
+
+      (inviteDialog.props!.onClose as () => void)();
+
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "inviteAllDialog" })).not.toBeInTheDocument());
+      expect(screen.getByRole("button", { name: /inviteAll\(2\)/ })).toBeEnabled();
+    });
   });
 
   // Personer utan e-postadress (20270310090000): a pupil or a guardian with no address is in the register, and has no login.

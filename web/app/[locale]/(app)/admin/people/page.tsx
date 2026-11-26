@@ -80,6 +80,8 @@ const DutiesCard = lazy(() =>
  * Ta bort in the selection bar and mounted only while open, as the work-time
  * dialog above.
  */
+// The mass invitation (Första veckan utan operatören): opened by one button, so it is loaded when it is pressed and not with the page.
+const InviteAllDialog = lazy(() => import("./invite-all-dialog").then((module) => ({ default: module.InviteAllDialog })));
 const StudentsBulkDialogs = lazy(() =>
   import("./students-bulk-dialogs").then((module) => ({ default: module.StudentsBulkDialogs })),
 );
@@ -110,6 +112,7 @@ import {
   useGroupMemberships,
   useGroups,
   useGuardianLinkActions,
+  useInvitationChannel,
   useInvitations,
   usePeople,
   useRequirements,
@@ -898,25 +901,19 @@ export default function PeoplePage() {
     }
   };
 
-  const inviteAllUninvited = async () => {
-    try {
-      const report = await invitations.inviteMany.mutateAsync(
-        uninvited.map((person) => person.id),
-      );
-      // Report what actually happened rather than the count asked for: some
-      // addresses already have accounts and receive nothing.
-      toast.success(
-        t("invitationsSent", {
-          sent: report.sent,
-          skipped: report.alreadyRegistered,
-        }),
-      );
-      if (report.errors.length > 0) {
-        toast.error(t("invitationsFailed", { count: report.errors.length }));
-      }
-    } catch (error) {
-      toast.error(apiErrorText(error, tCommon));
-    }
+  /**
+   * The mass invitation's dialog, with the people on screen who were never invited as its scope, fixed when it opens. What is left to do
+   * is asked of the register each time a run starts (readPending), never remembered: a run taken up again after a stop, a refusal or a
+   * closed tab invites nobody twice.
+   */
+  const [inviteAll, setInviteAll] = useState<string[] | null>(null);
+  const channel = useInvitationChannel();
+  const readPending = async (): Promise<string[]> => {
+    const scope = new Set(inviteAll ?? []);
+    const fresh = await invitations.readPeople();
+    return fresh
+      .filter((person) => scope.has(person.id) && person.invitedAt === null && person.isActive && person.email !== null)
+      .map((person) => person.id);
   };
 
   const confirmDelete = async () => {
@@ -1041,8 +1038,8 @@ export default function PeoplePage() {
             {uninvited.length > 0 && writesPeople ? (
               <Button
                 variant="outline"
-                onClick={() => void inviteAllUninvited()}
-                disabled={invitations.inviteMany.isPending}
+                onClick={() => setInviteAll(uninvited.map((person) => person.id))}
+                disabled={inviteAll !== null}
               >
                 <Mail aria-hidden="true" />
                 {t("inviteAll", { count: uninvited.length })}
@@ -1364,6 +1361,20 @@ export default function PeoplePage() {
               setBulkMode(null);
               selection.clear();
             }}
+          />
+        </Suspense>
+      ) : null}
+
+      {inviteAll ? (
+        <Suspense fallback={null}>
+          <InviteAllDialog
+            open
+            onClose={() => setInviteAll(null)}
+            count={inviteAll.length}
+            perHour={channel.data?.perHour ?? null}
+            send={(ids) => invitations.inviteMany.mutateAsync(ids)}
+            readPending={readPending}
+            onRunEnded={invitations.endRun}
           />
         </Suspense>
       ) : null}
