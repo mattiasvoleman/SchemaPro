@@ -353,3 +353,50 @@ describe('unplaced lessons: planned, standing nowhere', () => {
     expect(same.soft.evaluate(moves)).toEqual(plain.soft.evaluate(moves));
   });
 });
+
+describe('inTheWay: weeks no one sits (jullov)', () => {
+  // An autumn lesson to the 1st of January and a spring lesson from the 28th of December meet in one week only, and that week is lov:
+  // findConflicts (meetOnlyInClosedWeeks) says they are no double booking, so the prune must not hold the one in the other's way.
+  const closed = { from: '2026-08-15', to: '2027-06-11', mondays: new Set(['2026-12-28']) };
+  const autumn = lesson('autumn', 'c1', 2, 540, { teacherId: 'T', roomId: 'R', endDate: '2027-01-01' });
+  const spring = lesson('spring', 'c2', 3, 540, { teacherId: 'T', roomId: 'R', startDate: '2026-12-28' });
+  const asked = (ctx: SwapContext) => ctx.inTheWay(ctx.landingsOf(unitOf(ctx, 'spring'), slot(2, 540))[0]!, new Set(['spring']));
+
+  it('holds a lesson that meets the mover in a week with school, as it always did', () => {
+    expect(asked(context([autumn, spring])).lessons.map((entry) => entry.id)).toEqual(['autumn']);
+  });
+
+  it('does not hold one that meets the mover only in a closed week', () => {
+    const ctx = new SwapContext({ ...base.data, lessons: [autumn, spring], posts: [] }, { closedWeeks: closed });
+    expect(asked(ctx).lessons).toEqual([]);
+    expect(ctx.mayStand(unitOf(ctx, 'spring'), slot(2, 540), new Set(['spring']))).toBe(true);
+  });
+
+  it('still holds one that meets the mover in a week that is not closed', () => {
+    const open = lesson('open', 'c1', 2, 540, { teacherId: 'T', endDate: '2027-01-08' });
+    const ctx = new SwapContext({ ...base.data, lessons: [open, spring], posts: [] }, { closedWeeks: closed });
+    expect(asked(ctx).lessons.map((entry) => entry.id)).toEqual(['open']);
+  });
+});
+
+describe('inTheWay: a room several lessons may share', () => {
+  const mover = lesson('mover', 'c1', 1, 480, { teacherId: 'T', roomId: 'HALL' });
+  const inHall = lesson('inHall', 'c2', 2, 540, { roomId: 'HALL' });
+  const asked = (ctx: SwapContext) => ctx.inTheWay(ctx.landingsOf(unitOf(ctx, 'mover'), slot(2, 540))[0]!, new Set(['mover']));
+
+  it('holds a lesson in the room, as it always did, when the school shares no room', () => {
+    expect(asked(context([mover, inHall])).lessons.map((entry) => entry.id)).toEqual(['inHall']);
+  });
+
+  it('leaves the count of pupils to the judge in a room the school lets several lessons share', () => {
+    const ctx = new SwapContext({ ...base.data, lessons: [mover, inHall], posts: [] }, { sharedRooms: new Set(['HALL']) });
+    expect(asked(ctx).lessons).toEqual([]);
+  });
+
+  it('still holds the teacher and the class in a shared room', () => {
+    const sameTeacher = lesson('sameTeacher', 'c3', 2, 540, { teacherId: 'T', roomId: 'HALL' });
+    const sameClass = lesson('sameClass', 'c1', 2, 540, { roomId: 'HALL' });
+    const ctx = new SwapContext({ ...base.data, lessons: [mover, sameTeacher, sameClass], posts: [] }, { sharedRooms: new Set(['HALL']) });
+    expect(asked(ctx).lessons.map((entry) => entry.id).sort()).toEqual(['sameClass', 'sameTeacher']);
+  });
+});

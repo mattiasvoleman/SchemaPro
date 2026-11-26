@@ -26,6 +26,9 @@ import {
   type WishRow,
 } from './possible-times';
 import { MasterLessonsService } from './master-lessons.service';
+import { readClosedWeeks } from './school-weeks';
+import { sharedSeatsByRoom } from '../common/shared-rooms';
+import { readSharedMode } from '../common/shared-rooms.reader';
 import type { PossibleTimesDto } from './dto/possible-times.dto';
 
 /*
@@ -164,7 +167,19 @@ export class PossibleTimesService {
       const data = await readSwapData(tx, user, academicYearId);
       const indexing = Date.now();
       const unplaced = found.lesson.unplaced ? [found.lesson.lesson] : [];
-      const context = new SwapContext(data, { unplaced });
+      // A lesson of the autumn to the 10th of January and one of the spring from the 4th meet only in a jullov: no clash, as the judge says.
+      // A room the school lets several lessons share while their pupils fit is not taken by a lesson in it: the judge counts the pupils.
+      const sharedMode = await readSharedMode(tx, { academicYearId });
+      const sharedRooms =
+        sharedMode === 'OFF'
+          ? new Set<string>()
+          : new Set(
+              sharedSeatsByRoom(
+                sharedMode,
+                await tx.room.findMany({ where: { schoolId: data.schoolId, canBeShared: true, capacity: { not: null } }, select: { id: true, canBeShared: true, capacity: true } }),
+              ).keys(),
+            );
+      const context = new SwapContext(data, { unplaced, closedWeeks: await readClosedWeeks(tx, academicYearId), sharedRooms });
       const unit = context.unitOf.get(found.lesson.lesson.id);
       if (!unit) throw new NotFoundException('The lesson is not in the year read.');
       const subject: PossibleSubject = { unit, lesson: found.lesson.lesson, unplaced: found.lesson.unplaced };
