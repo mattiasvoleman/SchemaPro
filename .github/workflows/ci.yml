@@ -654,6 +654,20 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-maltidskollen.ts
 
+      # Skolans kalender (P4): a whole calendar of lov in one call through the
+      # real SchoolBreaksService on the API's role. The dry run counts what the
+      # write then takes, to the lesson (a cancelled lesson and one that has
+      # begun stay), and writes nothing; a list with one row outside the läsår
+      # writes none and names the row; the same list again is unchanged and
+      # takes no lesson; a week for some årskurser takes those groups' lessons
+      # only; a row with an id moves that lov; a teacher is refused by the
+      # table. It removes the school it made.
+      - name: School calendar probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-skolans-kalender.ts
+
       # Klassens måltid håller veckor (20270209090000): the oracle over the
       # calendar, date by date through a läsår that starts on a Saturday, of a
       # school whose classes eat at another time in the autumn and in the spring
