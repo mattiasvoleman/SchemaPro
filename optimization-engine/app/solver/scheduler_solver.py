@@ -6598,12 +6598,17 @@ class SchedulerSolver:
             # ---- phase 1y: the week a year at a time -----------------------
             # Between the two searches, on a week without the walk (whose planned sites it does not plan) that phase 1a
             # did not lay: a timetable it finds is the hint phase 1b starts from. See _lay_by_years.
+            on_the_road = travel is None and remaining >= 2 * self.MIN_PHASE_SECONDS
             laid = (
                 self._lay_by_years(request, min(remaining * self.YEARS_SHARE, self.YEARS_CAP_SECONDS))
-                if travel is None and remaining >= 2 * self.MIN_PHASE_SECONDS
+                if on_the_road
                 else None
             )
-            if laid is not None:
+            if on_the_road:
+                # WHAT THE ROAD TOOK IS GONE FROM THE BUDGET WHETHER IT LAID A WEEK OR NOT: a road that ended in nothing (a step
+                # out of time, INFEASIBLE with the years above it held) has spent up to YEARS_CAP_SECONDS, and phase 1b has what
+                # is LEFT. `remaining` was read before the road, and phase 1b given it as it stood ran that long past the budget,
+                # and past the ceiling (budget + probe + headroom) with it: a 503 where the week's TIMEOUT and its account were due.
                 remaining = _remaining()
                 if remaining < self.MIN_PHASE_SECONDS:
                     logger.warning(self._timeout_diagnosis(
