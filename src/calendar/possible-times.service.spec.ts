@@ -189,6 +189,19 @@ describe('possible times: what the service reads, asks and says', () => {
     }
   });
 
+  it('lets a block through only when the judge lets every one of its lessons through', async () => {
+    const sibling = { ...mover, id: 'sibling', studentGroupId: 'c9', groupName: 'C9', subjectId: 'sb', teacherId: 'tz', roomId: 'rz' };
+    const post = (studentGroupId: string, subjectId: string) => ({ studentGroupId, subjectId, blockId: 'B1', minutesBefore: 0, minutesAfter: 0, distribution: { maxLessonsPerDay: null, minDaysBetween: null } });
+    const data: SwapData = { ...world.data, lessons: [mover, sibling], blocks: [{ id: 'B1', sameTimesAsBlockId: null }], posts: [post(mover.studentGroupId, mover.subjectId), post('c9', 'sb')] };
+    // The judge has no objection to the first lesson of the block, and refuses the second wherever it is laid on a Wednesday.
+    const svc = service(txFor(), (items) => items.map((item) => verdict(!(item.lesson.id === 'sibling' && item.candidate.dayOfWeek === 3))), data);
+    const answer = await ask(svc, { lessonId: mover.id, limit: 40, days: [3] });
+    expect(answer.options).toEqual([]);
+    expect(answer.stats.refused).toBeGreaterThan(0);
+    const other = await ask(svc, { lessonId: mover.id, limit: 40, days: [4] });
+    expect(other.options.length).toBeGreaterThan(0);
+  });
+
   it('says a förläggning’s lesson is moved on the timplan and offers no time', async () => {
     const svc = service(txFor({ lesson: { fromPlacement: true } }));
     const answer = await ask(svc, { lessonId: mover.id });

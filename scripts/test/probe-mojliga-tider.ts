@@ -418,6 +418,23 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
           }
         }
         assert.equal(answer.stats.refused, 0, `${label}: the prune let ${answer.stats.refused} start(s) through that the judge refused`);
+
+        // The rooms of a unit: the unit is moved as one with the asked lesson in the room asked about, and the judge agrees with the chooser.
+        if (members.length > 1) {
+          for (const [day, start] of [[2, 9 * 60], [4, 13 * 60]] as const) {
+            const chosen = await fitting.roomChoices({ lessonId: row.id, dayOfWeek: day, startTime: clockOf(start) }, caller);
+            for (const room of chosen.rooms) {
+              const verdict = await masters.judgeMoves(
+                { moves: members.map((member) => ({ lessonId: member.id, dayOfWeek: day, startTime: clockOf(start), endTime: clockOf(start + member.minutes), ...(member.id === row.id ? { roomId: room.roomId } : {}) })) },
+                caller,
+              );
+              const roomRefusals = verdict.moves.filter((move) => move.lessonId === row.id).flatMap((move) => move.refusals).filter((refusal) => refusal.reason === 'ROOM' || (refusal.reason === 'AVAILABILITY' && refusal.params['resource'] === 'ROOM'));
+              const where = `${label}, day ${day} ${clockOf(start)}, room ${room.name}`;
+              if (room.state === 'FREE') assert.equal(roomRefusals.length, 0, `${where}: the chooser says free and the judge refuses the room`);
+              else assert.ok(roomRefusals.length > 0, `${where}: the chooser says ${room.state} and the judge has no objection to the room`);
+            }
+          }
+        }
       }
       assert.ok(multi >= 1, `${multi} of ${units} units had more than one lesson`);
       timings.sort((a, b) => a - b);

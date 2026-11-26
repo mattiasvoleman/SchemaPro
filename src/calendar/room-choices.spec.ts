@@ -94,6 +94,22 @@ describe('the room chooser, against a brute force on the hourly school', () => {
     expect(choices.find((choice) => choice.roomId === lesson.roomId)).toMatchObject({ state: 'FREE', current: true, rank: 1 });
   });
 
+  it('holds the room of a lesson that moves with it: the two land on one time, and one room cannot take both', () => {
+    const lesson = base.data.lessons[0]!;
+    const mover: SwapLesson = { ...lesson, id: 'mover', studentGroupId: 'c1', groupName: 'C1', teacherId: 'ta', roomId: 'r1', subjectId: 's1', dayOfWeek: 2, startMinutes: 480, endMinutes: 540 };
+    const sibling: SwapLesson = { ...mover, id: 'sibling', studentGroupId: 'c2', groupName: 'C2', subjectName: 'Idrott', teacherId: 'tb', roomId: 'r2', subjectId: 's2' };
+    const post = (studentGroupId: string, subjectId: string) => ({ studentGroupId, subjectId, blockId: 'B1', minutesBefore: 0, minutesAfter: 0, distribution: { maxLessonsPerDay: null, minDaysBetween: null } });
+    const world = worldOf({ lessons: [mover, sibling], blocks: [{ id: 'B1', sameTimesAsBlockId: null }], posts: [post('c1', 's1'), post('c2', 's2')] });
+    const subject = subjectOf(world, mover);
+    expect(subject.unit.members.map((entry) => entry.id).sort()).toEqual(['mover', 'sibling']);
+    // At 08:30 the sibling is where it stands, and lands in r2 at 08:30 as well: r2 is not free for the mover whoever it is.
+    const at = (start: number) => roomChoicesOf(world, subject, 2, start).find((choice) => choice.roomId === 'r2')!;
+    expect(at(510)).toMatchObject({ state: 'BUSY', occupants: 1, occupant: { lessonId: 'sibling', className: 'C2', subjectName: 'Idrott', dayOfWeek: 2, startMinutes: 510, endMinutes: 570 } });
+    // The two always land on one start, so at any time the sibling's room is the sibling's, and a room it does not keep is free.
+    expect(at(720)).toMatchObject({ state: 'BUSY', occupant: { lessonId: 'sibling', startMinutes: 720, endMinutes: 780 } });
+    expect(roomChoicesOf(world, subject, 2, 720).find((choice) => choice.roomId === 'r3')).toMatchObject({ state: 'FREE' });
+  });
+
   it('names the other school that holds a room, and does not say a hold is a lesson', () => {
     const lesson = base.data.lessons[0]!;
     const hold = { resourceKind: 'ROOM' as const, resourceId: 'r2', dayOfWeek: 4, startTime: '09:00', endTime: '10:00', schools: ['Södra skolan'], kind: 'ROOM_LENT' as const };

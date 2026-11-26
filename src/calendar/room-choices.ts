@@ -100,6 +100,21 @@ export function roomChoicesOf(world: PossibleWorld, subject: PossibleSubject, da
     };
   });
 
+  // The lessons that move with it land on this very time, each in its own room: a room one of them keeps is theirs, whoever
+  // stood in it before. The judge holds the unit as one move and would refuse the two in one room.
+  for (const sibling of subject.unit.members) {
+    if (sibling.id === member.id || sibling.roomId === null) continue;
+    const landing = { dayOfWeek, startMinutes, endMinutes: startMinutes + lengthOf(sibling) };
+    if (!(landing.startMinutes < to.endMinutes && to.startMinutes < landing.endMinutes)) continue;
+    const row = rows.find((candidate) => candidate.roomId === sibling.roomId);
+    if (!row || row.state === 'CLOSED') continue;
+    if (row.state === 'FREE') {
+      row.state = 'BUSY';
+      row.occupant = { lessonId: sibling.id, className: sibling.groupName, subjectName: sibling.subjectName, dayOfWeek, startMinutes: landing.startMinutes, endMinutes: landing.endMinutes, isLocked: sibling.isLocked };
+    }
+    row.occupants += 1;
+  }
+
   const byName = (a: RoomChoice, b: RoomChoice) => a.name.localeCompare(b.name, 'sv') || (a.roomId < b.roomId ? -1 : 1);
   // The free rooms that fit: the lesson's own first when it is free, then as the generator would pick.
   const fits = rows

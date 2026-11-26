@@ -160,6 +160,9 @@ describe('what can lie here: the bricks that fit an empty time', () => {
     await expect(ask(svc, { candidates: [{ lessonId: '00000000-0000-4000-8000-000000000001', brick: brick() }] })).rejects.toBeInstanceOf(BadRequestException);
     await expect(ask(svc, { candidates: [{ brick: brick({ academicYearId: '00000000-0000-4000-8000-0000000000bb' }) }] })).rejects.toBeInstanceOf(BadRequestException);
     await expect(ask(svc, { candidates: [{ lessonId: 'a' }, { lessonId: 'a' }] })).rejects.toBeInstanceOf(BadRequestException);
+    // A stored lesson of another läsår is no candidate of this one.
+    const elsewhere = { ...rowOf(world.data.lessons[0]!), academicYearId: '00000000-0000-4000-8000-0000000000dd', isLocked: false, isGenerated: true, fromPlacement: false, studentGroup: { name: 'C1' }, extraGroups: [], participants: [] };
+    await expect(ask(service(txFor([elsewhere])), { candidates: [{ lessonId: world.data.lessons[0]!.id }] })).rejects.toBeInstanceOf(BadRequestException);
     await expect(ask(svc, { candidates: [{ lessonId: '00000000-0000-4000-8000-0000000000cc' }] })).rejects.toBeInstanceOf(NotFoundException);
     await expect(ask(svc, { candidates: [{ brick: brick({ studentGroupId: 'nope' }) }] })).rejects.toBeInstanceOf(NotFoundException);
   });
