@@ -63,6 +63,8 @@ describe('loadConfiguration', () => {
         url: 'https://project.supabase.invalid',
         serviceRoleKey: 'service-role-key-000000',
       },
+      // Unset: nobody has said the project sends through its own SMTP, and no limit is stated.
+      authMail: { smtp: 'not-stated', perHour: null },
       // Unset: the viewer trusts no forwarded address.
       publicViewer: { proxyKey: undefined },
       // Unset: no school can save a school-account row.

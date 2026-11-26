@@ -8,6 +8,7 @@ import {
   NotFoundException,
   Optional,
   ServiceUnavailableException,
+  HttpStatus,
 } from '@nestjs/common';
 import { Prisma, type AdminProfile, type PrismaClient, type User, type UserRole } from '@prisma/client';
 import { profileDecides } from '../auth/admin-areas';
@@ -23,6 +24,7 @@ import { addDays } from '../common/year-rollover';
 import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { lockTeachers } from '../cover/cover-decisions';
 import {
+  InvitationRefused,
   SupabaseAdminService,
   UserLookupError,
   type EmailChange,
@@ -52,6 +54,11 @@ export const ADDRESS_REQUIRED = 'ADDRESS_REQUIRED';
 export const PERSON_HAS_NO_ADDRESS = 'PERSON_HAS_NO_ADDRESS';
 /** An address is set on a person who was invited: their login has the address it has, and the row follows it. 409. */
 export const ADDRESS_OF_AN_INVITED_PERSON = 'ADDRESS_OF_AN_INVITED_PERSON';
+/**
+ * The project's mail limit is spent (Supabase answers 429, over_email_send_rate_limit): the invitation did not go, and the next one will not
+ * either until the hour turns or the limit is raised. 429, with a code the web pauses a mass invitation on.
+ */
+export const INVITATION_RATE_LIMITED = 'INVITATION_RATE_LIMITED';
 /** A last working day (`leftOn`) names a person who is, or stays, active. */
 export const USER_LEFT_ON_NEEDS_INACTIVE = 'USER_LEFT_ON_NEEDS_INACTIVE';
 /** A last working day after the school's today. */
@@ -251,7 +258,18 @@ export interface BulkInvitationReport {
   alreadyRegistered: number;
   /** People with no address to send to (Personer utan e-postadress): counted, not errors, as they are nobody's failure. */
   noAddress: number;
+  /**
+   * People skipped because they were invited already, or are being invited this moment by another request: they get no second
+   * invitation. A mass invitation taken up again after a stop, a refusal or a closed tab therefore invites nobody twice.
+   */
+  alreadyInvited: number;
   errors: { userId: string; message: string }[];
+  /**
+   * Set when the project's mail limit was spent: the rest of the people were NOT tried, and `notTried` says how many. A refusal that
+   * was the same for the next person is a reason to stop, not a failure of each of them.
+   */
+  stopped?: 'RATE_LIMITED';
+  notTried?: number;
 }
 
 /**
@@ -276,6 +294,8 @@ export interface BulkInvitationReport {
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
+  /** The people a mass invitation of this process is inviting this moment (inviteMany), by id in lower case. */
+  private readonly invitingNow = new Set<string>();
 
   /**
    * NotificationsService is optional for the scripts and specs that build
@@ -540,19 +560,48 @@ export class UsersService {
    * an external side effect that no transaction can roll back, so one failure
    * must not discard the ones that already went out. The report names the
    * people who failed rather than the count alone.
+   *
+   * IT NEVER INVITES A PERSON TWICE (Första veckan utan operatören). A person with an `invitedAt` already is skipped and counted
+   * (`alreadyInvited`) unless the caller says `resend`, and so is one that another request is inviting this moment (the Set below,
+   * which a retry of a part whose answer was lost meets): the web takes a run up again from the register's own list after a stop or a
+   * closed tab, and the part that was running when it stopped may be running still. The register is read once for the part, and each
+   * person's own invitation reads them again, so a person invited by somebody else between the two is the invitation's to see (invite()
+   * answers a login that has the address as "already registered", never as a second mail).
+   *
+   * THE PROJECT'S MAIL LIMIT STOPS IT. Supabase answers 429 when the hour's mails are spent, and the next person would be refused the
+   * same way: the run stops there (`stopped`, `notTried`) and does not try them, which would only spend the limit's next hour on
+   * errors. Everything before it stands.
    */
   async inviteMany(
     ids: string[],
     user: AuthenticatedUser,
+    options: { resend?: boolean } = {},
   ): Promise<BulkInvitationReport> {
     const report: BulkInvitationReport = {
       sent: 0,
       alreadyRegistered: 0,
+      alreadyInvited: 0,
       noAddress: 0,
       errors: [],
     };
 
-    for (const id of ids) {
+    const invited = options.resend
+      ? new Map<string, boolean>()
+      : new Map(
+          (
+            await this.prisma.withRls(user, (tx) =>
+              tx.user.findMany({ where: { id: { in: ids } }, select: { id: true, invitedAt: true } }),
+            )
+          ).map((row) => [row.id, row.invitedAt !== null] as const),
+        );
+
+    for (const [index, id] of ids.entries()) {
+      const key = id.toLowerCase();
+      if (invited.get(key) === true || this.invitingNow.has(key)) {
+        report.alreadyInvited += 1;
+        continue;
+      }
+      this.invitingNow.add(key);
       try {
         const result = await this.invite(id, user);
         if (result.emailSent) {
@@ -565,6 +614,11 @@ export class UsersService {
           report.noAddress += 1;
           continue;
         }
+        if (isCoded(error, INVITATION_RATE_LIMITED)) {
+          report.stopped = 'RATE_LIMITED';
+          report.notTried = ids.length - index;
+          break;
+        }
         report.errors.push({
           userId: id,
           message:
@@ -572,6 +626,8 @@ export class UsersService {
               ? error.message
               : 'Inbjudan kunde inte skickas.',
         });
+      } finally {
+        this.invitingNow.delete(key);
       }
     }
 
@@ -1148,7 +1204,11 @@ export class UsersService {
   ): Promise<{ authId: string; emailSent: boolean }> {
     try {
       return await this.supabaseAdmin.inviteUser(email, id);
-    } catch {
+    } catch (error) {
+      if (error instanceof InvitationRefused && error.kind === 'RATE_LIMITED') {
+        this.logger.warn('Supabase refused an invitation: the project\'s mail limit is spent.'); // no PII in logs
+        throw invitationRateLimited();
+      }
       this.logger.error('Supabase invite failed.'); // no PII in logs
       throw new ServiceUnavailableException(
         'Could not send the invitation email. Please try again.',
@@ -1181,7 +1241,11 @@ export class UsersService {
   private async resendInvitation(email: string): Promise<void> {
     try {
       await this.supabaseAdmin.resendInvitation(email);
-    } catch {
+    } catch (error) {
+      if (error instanceof InvitationRefused && error.kind === 'RATE_LIMITED') {
+        this.logger.warn('Supabase refused an invitation: the project\'s mail limit is spent.'); // no PII in logs
+        throw invitationRateLimited();
+      }
       this.logger.error('Supabase invite failed.'); // no PII in logs
       throw new ServiceUnavailableException(
         'Could not send the invitation email. Please try again.',
@@ -1434,6 +1498,17 @@ function addressRequired(role: UserRole): BadRequestException {
     message: `${who} behöver en e-postadress: det är med den personen bjuds in och loggar in. Bara elever och vårdnadshavare kan läggas upp utan.`,
     code: ADDRESS_REQUIRED,
   });
+}
+
+function invitationRateLimited(): HttpException {
+  return new HttpException(
+    {
+      message:
+        'Supabase har inte släppt igenom fler mejl just nu: projektets gräns för mejl i timmen är nådd. Vänta en stund, eller höj gränsen under Authentication → Rate Limits i Supabase, och försök igen. Den som redan fått en inbjudan får ingen ny.',
+      code: INVITATION_RATE_LIMITED,
+    },
+    HttpStatus.TOO_MANY_REQUESTS,
+  );
 }
 
 function hasNoAddress(): ConflictException {

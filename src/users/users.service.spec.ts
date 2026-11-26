@@ -21,7 +21,7 @@ import { BULK_TIMEOUT_MS } from '../common/bulk';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
-import { UserLookupError, type SupabaseAdminService } from './supabase-admin.service';
+import { InvitationRefused, UserLookupError, type SupabaseAdminService } from './supabase-admin.service';
 import { UsersService } from './users.service';
 
 /**
@@ -883,7 +883,7 @@ describe('UsersService', () => {
         Promise.resolve(asSelected(rows[where.id], select)),
       );
 
-      await expect(service.inviteMany(ids, testUser())).resolves.toEqual({ sent: 1, alreadyRegistered: 0, noAddress: 2, errors: [] });
+      await expect(service.inviteMany(ids, testUser())).resolves.toEqual({ sent: 1, alreadyRegistered: 0, alreadyInvited: 0, noAddress: 2, errors: [] });
       expect(supabaseAdmin.inviteUser).toHaveBeenCalledTimes(1);
     });
 
@@ -905,6 +905,7 @@ describe('UsersService', () => {
       await expect(service.inviteMany(ids, testUser())).resolves.toEqual({
         sent: 2,
         alreadyRegistered: 1,
+        alreadyInvited: 0,
         noAddress: 0,
         errors: [],
       });
@@ -929,6 +930,140 @@ describe('UsersService', () => {
       expect(report.sent).toBe(2);
       expect(report.errors).toHaveLength(1);
       expect(report.errors[0]?.userId).toBe('id-2');
+    });
+
+    // Första veckan utan operatören: a mass invitation taken up again invites nobody twice.
+    describe('taken up again', () => {
+      const onePerson = () => arrangeUser({ id: USER_ID, email: 'anna@school.se', isActive: true });
+      const registerHas = (rows: Array<{ id: string; invitedAt: Date | null }>) => tx.user.findMany.mockResolvedValue(rows);
+
+      it('skips the people who were invited already, counts them, and invites the others: the register is the memory', async () => {
+        onePerson();
+        registerHas([
+          { id: 'id-1', invitedAt: new Date('2026-11-25T09:00:00.000Z') },
+          { id: 'id-2', invitedAt: null },
+          { id: 'id-3', invitedAt: new Date('2026-11-25T09:00:01.000Z') },
+        ]);
+
+        const report = await service.inviteMany(ids, testUser());
+
+        expect(report).toMatchObject({ sent: 1, alreadyInvited: 2, errors: [] });
+        expect(supabaseAdmin.inviteUser).toHaveBeenCalledTimes(1);
+        expect(tx.user.findMany).toHaveBeenCalledWith({ where: { id: { in: ids } }, select: { id: true, invitedAt: true } });
+      });
+
+      it('sends again to those who were invited when it is asked to, and then reads nobody first', async () => {
+        onePerson();
+        supabaseAdmin.inviteUser.mockResolvedValue({ authId: AUTH_ID, emailSent: true });
+
+        const report = await service.inviteMany(ids, testUser(), { resend: true });
+
+        expect(report).toMatchObject({ sent: 3, alreadyInvited: 0 });
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+      });
+
+      it('leaves a person it does not find to the invitation, which says so: a person who is gone is an error, not an invited one', async () => {
+        arrangeUser(null);
+        registerHas([]);
+
+        const report = await service.inviteMany(['id-1'], testUser());
+
+        expect(report).toMatchObject({ sent: 0, alreadyInvited: 0 });
+        expect(report.errors).toHaveLength(1);
+      });
+
+      it('does not invite a person another request of this process is inviting this moment: a part whose answer was lost, sent again', async () => {
+        onePerson();
+        registerHas([{ id: 'id-1', invitedAt: null }]);
+        let release!: (value: { authId: string; emailSent: boolean }) => void;
+        supabaseAdmin.inviteUser.mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+
+        const first = service.inviteMany(['id-1'], testUser());
+        await new Promise((resolve) => setImmediate(resolve));
+        const second = await service.inviteMany(['ID-1'], testUser());
+
+        expect(second).toMatchObject({ sent: 0, alreadyInvited: 1 });
+        release({ authId: AUTH_ID, emailSent: true });
+        await expect(first).resolves.toMatchObject({ sent: 1 });
+        expect(supabaseAdmin.inviteUser).toHaveBeenCalledTimes(1);
+        // And once the first is done the person is free to be asked about again: nothing is held for good.
+        registerHas([{ id: 'id-1', invitedAt: null }]);
+        supabaseAdmin.inviteUser.mockResolvedValueOnce({ authId: AUTH_ID, emailSent: true });
+        await expect(service.inviteMany(['id-1'], testUser())).resolves.toMatchObject({ sent: 1 });
+      });
+    });
+
+    describe('when the project\'s mail limit is spent', () => {
+      const spent = () => new InvitationRefused('Supabase invite failed: email rate limit exceeded', 'RATE_LIMITED', 429, 'over_email_send_rate_limit');
+
+      it('stops at the first refusal, says how many it did not try, and keeps what went out: the next person would be refused the same', async () => {
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        arrangeUser({ id: USER_ID, email: 'anna@school.se', isActive: true });
+        tx.user.findMany.mockResolvedValue([]);
+        supabaseAdmin.inviteUser
+          .mockResolvedValueOnce({ authId: AUTH_ID, emailSent: true })
+          .mockRejectedValueOnce(spent())
+          .mockResolvedValue({ authId: AUTH_ID, emailSent: true });
+
+        const report = await service.inviteMany(['id-1', 'id-2', 'id-3', 'id-4', 'id-5'], testUser());
+
+        expect(report).toMatchObject({ sent: 1, stopped: 'RATE_LIMITED', notTried: 4, errors: [] });
+        expect(supabaseAdmin.inviteUser).toHaveBeenCalledTimes(2);
+      });
+
+      it('counts the people it skipped before the refusal as handled, so that only the people not tried are left', async () => {
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        arrangeUser({ id: USER_ID, email: 'anna@school.se', isActive: true });
+        tx.user.findMany.mockResolvedValue([{ id: 'id-1', invitedAt: new Date() }]);
+        supabaseAdmin.inviteUser.mockRejectedValueOnce(spent());
+
+        const report = await service.inviteMany(['id-1', 'id-2', 'id-3'], testUser());
+
+        expect(report).toMatchObject({ sent: 0, alreadyInvited: 1, stopped: 'RATE_LIMITED', notTried: 2 });
+      });
+
+      it('is a 429 with a code for one invitation, and the person is not marked invited', async () => {
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        arrangeUser({ id: USER_ID, email: 'anna@school.se', isActive: true, authId: AUTH_ID, invitedAt: null, role: UserRole.STUDENT });
+        supabaseAdmin.inviteUser.mockRejectedValueOnce(spent());
+
+        const refusal = await service.invite(USER_ID, testUser()).catch((error: unknown) => error);
+
+        expect((refusal as { getStatus(): number }).getStatus()).toBe(429);
+        expect((refusal as { getResponse(): unknown }).getResponse()).toMatchObject({ code: 'INVITATION_RATE_LIMITED' });
+        expect(tx.user.update).not.toHaveBeenCalled();
+      });
+
+      it('is a 429 on creating a person and inviting them, and the row is taken back: both or neither', async () => {
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        tx.user.create.mockResolvedValue({ id: USER_ID, email: 'anna@school.se' });
+        supabaseAdmin.inviteUser.mockRejectedValueOnce(spent());
+
+        const refusal = await service.create(createDto({ sendInvitation: true }), testUser()).catch((error: unknown) => error);
+
+        expect((refusal as { getStatus(): number }).getStatus()).toBe(429);
+      });
+
+      it('is a 429 on sending an invitation again, as it is on a first one', async () => {
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        arrangeUser({ id: USER_ID, email: 'anna@school.se', isActive: true, authId: AUTH_ID, invitedAt: new Date('2026-09-01T08:00:00Z'), role: UserRole.STUDENT });
+        supabaseAdmin.changeUserEmail.mockResolvedValue({ outcome: 'unchanged', confirmed: false });
+        supabaseAdmin.resendInvitation.mockRejectedValueOnce(spent());
+
+        const refusal = await service.invite(USER_ID, testUser()).catch((error: unknown) => error);
+
+        expect((refusal as { getStatus(): number }).getStatus()).toBe(429);
+      });
+
+      it('is still a 503 for any other refusal of the provider', async () => {
+        jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        arrangeUser({ id: USER_ID, email: 'anna@school.se', isActive: true, authId: AUTH_ID, invitedAt: null, role: UserRole.STUDENT });
+        supabaseAdmin.inviteUser.mockRejectedValueOnce(new InvitationRefused('Supabase invite failed: Error sending invite email', 'REFUSED', 500));
+
+        const refusal = await service.invite(USER_ID, testUser()).catch((error: unknown) => error);
+
+        expect(refusal).toBeInstanceOf(ServiceUnavailableException);
+      });
     });
 
     it('reports a deactivated person as an error rather than skipping silently', async () => {

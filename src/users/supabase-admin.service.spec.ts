@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
-import { SEVERAL_SCHOOLS, SupabaseAdminService, UserLookupError } from './supabase-admin.service';
+import { InvitationRefused, SEVERAL_SCHOOLS, SupabaseAdminService, UserLookupError, isMailRateLimited } from './supabase-admin.service';
 
 const SUPABASE_URL = 'https://supabase.test';
 const SERVICE_KEY = 'service-role-key';
@@ -246,6 +246,34 @@ describe('SupabaseAdminService', () => {
       expect(call(0).url.searchParams.get('redirect_to')).toBeNull();
     });
 
+    // Första veckan utan operatören: the project's mail limit is spent. GoTrue MAKES the user and cannot send the mail (429), so the lookup
+    // below would find that user and answer "already registered, nothing needed": the person was marked invited, told nothing, and the
+    // administrator told they had an account. It is the refusal now, and the lookup is not made.
+    it('refuses with the mail limit as a refusal of its own, and does not look the address up: the user GoTrue made is no account the person has', async () => {
+      fetchMock
+        .mockResolvedValueOnce(refusal('over_email_send_rate_limit', 'email rate limit exceeded', 429))
+        // What a lookup would have found: the user the refused invitation created.
+        .mockResolvedValueOnce(jsonResponse({ users: [{ id: AUTH_ID, email: EMAIL }], aud: 'authenticated' }));
+
+      const error = await makeService().inviteUser(EMAIL, USER_ID).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(InvitationRefused);
+      expect(error).toMatchObject({ kind: 'RATE_LIMITED', status: 429, code: 'over_email_send_rate_limit' });
+      expect((error as Error).message).toBe('Supabase invite failed: email rate limit exceeded');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads a 429 without a code as the mail limit too, and any other refusal as a refusal that was looked into', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ msg: 'slow down' }, 429));
+      await expect(makeService().inviteUser(EMAIL, USER_ID)).rejects.toMatchObject({ kind: 'RATE_LIMITED' });
+
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ msg: 'Error sending invite email' }, 500))
+        .mockResolvedValueOnce(jsonResponse({ users: [], aud: 'authenticated' }));
+      await expect(makeService().inviteUser(EMAIL, USER_ID)).rejects.toMatchObject({ kind: 'REFUSED', status: 500 });
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
     it('falls back to a case-insensitive lookup when the email is already registered', async () => {
       fetchMock
         .mockResolvedValueOnce(
@@ -405,6 +433,14 @@ describe('SupabaseAdminService', () => {
         'Supabase invite failed: email rate limit exceeded',
       );
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('says a 429 is the mail limit, and any other refusal a refusal', async () => {
+      fetchMock.mockResolvedValueOnce(refusal('over_email_send_rate_limit', 'email rate limit exceeded', 429));
+      await expect(makeService().resendInvitation(EMAIL)).rejects.toMatchObject({ name: 'InvitationRefused', kind: 'RATE_LIMITED' });
+
+      fetchMock.mockResolvedValueOnce(refusal('unexpected_failure', 'Error sending invite email', 500));
+      await expect(makeService().resendInvitation(EMAIL)).rejects.toMatchObject({ kind: 'REFUSED', status: 500 });
     });
 
     it('refuses instead of calling out when unconfigured', async () => {
@@ -777,5 +813,14 @@ describe('SupabaseAdminService', () => {
       );
       expect(fetchMock).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('isMailRateLimited', () => {
+  it('is HTTP 429 or the code, either one, and nothing else', () => {
+    expect(isMailRateLimited({ status: 429 })).toBe(true);
+    expect(isMailRateLimited({ code: 'over_email_send_rate_limit' })).toBe(true);
+    expect(isMailRateLimited({ status: 422, code: 'email_exists' })).toBe(false);
+    expect(isMailRateLimited({})).toBe(false);
   });
 });

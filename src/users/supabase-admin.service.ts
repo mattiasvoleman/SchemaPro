@@ -56,6 +56,28 @@ export type OwnedUserDeletion = 'deleted' | 'missing' | 'foreign';
 export class UserLookupError extends Error {}
 
 /**
+ * The provider refused to send an invitation. `RATE_LIMITED` is the project's mail limit being spent (HTTP 429, over_email_send_rate_limit:
+ * Supabase's own sender lets two an hour through, and a project's own SMTP 30 until the limit under Authentication → Rate Limits is
+ * raised): the same refusal for the next person, and not a failure of this one. The message is what it always was.
+ */
+export class InvitationRefused extends Error {
+  constructor(
+    message: string,
+    readonly kind: 'RATE_LIMITED' | 'REFUSED',
+    readonly status?: number,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = 'InvitationRefused';
+  }
+}
+
+/** GoTrue answers 429 over_email_send_rate_limit when the project's mail limit is spent. */
+export function isMailRateLimited(error: { status?: number; code?: string }): boolean {
+  return error.status === 429 || error.code === 'over_email_send_rate_limit';
+}
+
+/**
  * Thin wrapper around the Supabase Admin (GoTrue) API.
  *
  * Uses the service-role key, which bypasses RLS — therefore this service is
@@ -133,10 +155,17 @@ export class SupabaseAdminService {
       data: { [INVITATION_NONCE]: nonce },
     });
     if (error || !data.user) {
+      // The project's mail limit is spent: GoTrue made the user and could not send the mail (429). Looking the address up would find
+      // that user and answer "already registered, no mail needed", and the person would be marked invited and told nothing. It is
+      // the refusal, said as one, and the person is not invited. (The user GoTrue made stays, unconfirmed: the next invitation of the
+      // address is the one GoTrue sends again.)
+      if (error && isMailRateLimited(error)) {
+        throw new InvitationRefused(`Supabase invite failed: ${error.message}`, 'RATE_LIMITED', error.status, error.code);
+      }
       // 422 "already registered" → look the auth user up instead of failing.
       const existing = await this.findUserIdByEmail(email);
       if (existing) return { authId: existing, emailSent: false };
-      throw new Error(`Supabase invite failed: ${error?.message ?? 'unknown error'}`);
+      throw new InvitationRefused(`Supabase invite failed: ${error?.message ?? 'unknown error'}`, 'REFUSED', error?.status, error?.code);
     }
     if (data.user.user_metadata?.[INVITATION_NONCE] === nonce) {
       await this.tagCreatedUser(data.user.id, userId);
@@ -162,7 +191,12 @@ export class SupabaseAdminService {
       this.inviteRedirectUrl ? { redirectTo: this.inviteRedirectUrl } : {},
     );
     if (error) {
-      throw new Error(`Supabase invite failed: ${error.message}`);
+      throw new InvitationRefused(
+        `Supabase invite failed: ${error.message}`,
+        isMailRateLimited(error) ? 'RATE_LIMITED' : 'REFUSED',
+        error.status,
+        error.code,
+      );
     }
   }
 
