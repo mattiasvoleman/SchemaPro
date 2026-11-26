@@ -421,6 +421,7 @@ export default function ScheduleExchangePage() {
             <Notice tone="success">
               <p>{t("import.savedStart", { name: saved.name, count: saved.lessonCount, read: saved.read })}</p>
               {saved.read - saved.lessonCount > 0 ? <p>{t("import.savedStartLeftOut", { count: saved.read - saved.lessonCount })}</p> : null}
+              {saved.unreadable > 0 ? <p>{t("import.savedStartUnreadable", { count: saved.unreadable })}</p> : null}
               <p>
                 <Link href={`/admin/generate?year=${yearId}`} className="font-medium underline underline-offset-4">
                   {t("import.savedStartLink")}

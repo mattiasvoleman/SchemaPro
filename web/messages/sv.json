@@ -9022,6 +9022,7 @@
       "saveStartHint": "Skriver inget i grundschemat och inga timplansposter: filens lektioner sparas som en version av läsåret som Generera kan utgå från (Generera › Utgå från ett schema › En sparad version). Rader som nämner en klass, ett ämne, en sal eller en lärare som läsåret inte har tas inte med; förhandsgranska filen för att se vilka.",
       "savedStart": "Sparade {count, plural, one {# lektion} other {# lektioner}} av filens {read, plural, one {# rad} other {# rader}} som versionen ”{name}”.",
       "savedStartLeftOut": "{count, plural, one {# rad} other {# rader}} nämner något som läsåret inte har och är inte med.",
+      "savedStartUnreadable": "{count, plural, one {# rad i filen gick inte att läsa som lektion och är inte med.} other {# rader i filen gick inte att läsa som lektioner och är inte med.}}",
       "savedStartLink": "Gå till Generera och välj versionen som start",
       "saveStartFailed": "Filen gick inte att spara som version.",
       "previewFailed": "Filen gick inte att förhandsgranska.",

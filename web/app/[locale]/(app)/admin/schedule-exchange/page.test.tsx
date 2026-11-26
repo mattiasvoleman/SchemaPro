@@ -303,6 +303,15 @@ describe("Schema som fil: sparat som ett schema att utgå från (Ett schema som 
     expect(screen.getByRole("link", { name: "import.savedStartLink" })).toHaveAttribute("href", "/admin/generate?year=y1");
   });
 
+  it("says how many lines of the file could not be read as lessons, which the save counts and the page used to leave out", async () => {
+    post.mockResolvedValue({ ...SAVED, lessonCount: 31, unreadable: 4, unresolved: {} });
+    renderPage();
+    await choose(csvFile());
+    await userEvent.setup().click(screen.getByRole("button", { name: "import.saveStart" }));
+
+    expect(await screen.findByText("import.savedStartUnreadable(4)")).toBeInTheDocument();
+  });
+
   it("says nothing of left-out rows when every row is in, and never applies a plan", async () => {
     post.mockResolvedValue({ ...SAVED, lessonCount: 31, unresolved: {} });
     renderPage();
