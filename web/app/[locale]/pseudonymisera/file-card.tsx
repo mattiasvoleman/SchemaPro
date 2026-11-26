@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import { DATE_SPAN_ASKED, headerLooksLikeData } from "@/lib/pseudonym-headers";
+import { headerLooksLikeData } from "@/lib/pseudonym-headers";
 import type { Treatment } from "@/lib/pseudonym-headers";
 import type { Say } from "@/lib/pseudonym-labels";
 import { resolveTreatments } from "@/lib/pseudonym-run";
@@ -15,7 +15,10 @@ const SHAPES = ["number", "time", "date", "code", "word", "text"] as const;
 function contents(column: ColumnPlan, say: Say): string {
   const { stats } = column;
   const parts: string[] = SHAPES.filter((shape) => stats.shapes[shape] > 0).map((shape) => say("col.shape", { shape: say(`shape.${shape}`), count: stats.shapes[shape] }));
-  if (stats.dateSpanDays !== null && stats.dateSpanDays > DATE_SPAN_ASKED) parts.push(say("col.dateSpan", { days: stats.dateSpanDays }));
+  // The same reason the proposal was withheld for (lib/pseudonym-headers.ts, datesAsked): the line says why a column of dates is asked about and not kept.
+  if (column.datesAsked === "span") parts.push(say("col.dateSpan", { days: stats.dateSpanDays ?? 0 }));
+  else if (column.datesAsked === "old") parts.push(say("col.dateOld"));
+  else if (column.datesAsked === "compact") parts.push(say("col.dateCompact", { count: stats.compactDates }));
   if (stats.withPersonalNumber > 0) parts.push(say("col.hasPnr", { count: stats.withPersonalNumber }));
   if (stats.withAddress > 0) parts.push(say("col.hasEmail", { count: stats.withAddress }));
   if (stats.withTelephone > 0) parts.push(say("col.hasTel", { count: stats.withTelephone }));

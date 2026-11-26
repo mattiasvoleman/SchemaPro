@@ -391,6 +391,23 @@ describe("the tool asks where it cannot tell", () => {
     expect(screen.getByRole("button", { name: sv["tool.run"] })).toBeDisabled();
   });
 
+  it("asks about a column of birth dates that all lie in one year, and says it is for how old they are (X1b: a class is born in one year, and it was kept as numbers)", async () => {
+    const user = setup();
+    await addFile(user, csv("elever.csv", "Klass;F-datum\n7A;2013-02-14\n7A;2013-05-03\n7B;2013-09-30\n7B;2013-11-11\n"));
+    const columns = await screen.findByRole("table", { name: sv["col.caption"].replace("{n}", "1") });
+    expect(within(columns).getByText(new RegExp(sv["col.dateOld"]))).toBeInTheDocument();
+    expect(within(columns).getByText(sv["proposal.none"])).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: sv["tool.run"] })).toBeDisabled();
+  });
+
+  it("asks about a column of dates written as six digits, which a spreadsheet keeps as numbers, and says how many (X1b)", async () => {
+    const user = setup();
+    await addFile(user, csv("elever.csv", "Klass;F\n7A;130214\n7A;130503\n7B;130930\n7B;131111\n"));
+    const columns = await screen.findByRole("table", { name: sv["col.caption"].replace("{n}", "1") });
+    expect(within(columns).getByText(/4 värden skrivna som datum utan tecken emellan \(ÅÅMMDD\): kan vara födelsedatum/)).toBeInTheDocument();
+    expect(within(columns).getByText(sv["proposal.none"])).toBeInTheDocument();
+  });
+
   it("says in the result that the check searches as the tool does, and lists the short names it does not look for", async () => {
     const user = setup();
     const result = await runFile(user);
