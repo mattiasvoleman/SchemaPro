@@ -5619,7 +5619,7 @@
     "previewNeedsInput": "Förhandsvisningen väntar: ge det nya läsåret ett namn i steg 1.",
     "createYear": "Skapa {name}",
     "created": "{name} skapades med {groups, plural, one {# grupp} other {# grupper}} och {requirements, plural, one {# timplanspost} other {# timplansposter}}.",
-    "createdOfferSchedule": "Lägg schemat från det här läsåret",
+    "createdOfferSchedule": "Lägg schemat för {to} från {from}",
     "createdWithStaffing": "{name} skapades med {groups, plural, one {# grupp} other {# grupper}}, {requirements, plural, one {# timplanspost} other {# timplansposter}}, {employments, plural, one {# tjänst} other {# tjänster}} och {duties, plural, one {# uppdrag} other {# uppdrag}}.",
     "problemsLabel": "Att åtgärda och att känna till",
     "blocking": "Måste åtgärdas",

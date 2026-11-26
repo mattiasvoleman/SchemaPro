@@ -28,7 +28,10 @@ describe("last year's schedule, as the rollover says it", () => {
   });
 
   it("has the label of the offer in both languages", () => {
-    expect((years(sv) as Record<string, string>).createdOfferSchedule).toBe("Lägg schemat från det här läsåret");
-    expect((years(en) as Record<string, string>).createdOfferSchedule).toBe("Lay the schedule from this year");
+    // The toast is about the year just created, so "this year" would be read as that one: the label names both.
+    const label = (messages: unknown, locale: string) =>
+      new IntlMessageFormat((years(messages) as Record<string, string>).createdOfferSchedule!, locale).format({ to: "2027/28", from: "2026/27" });
+    expect(label(sv, "sv")).toBe("Lägg schemat för 2027/28 från 2026/27");
+    expect(label(en, "en")).toBe("Lay the schedule for 2027/28 from 2026/27");
   });
 });

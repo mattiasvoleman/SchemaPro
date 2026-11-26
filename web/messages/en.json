@@ -5619,7 +5619,7 @@
     "previewNeedsInput": "The preview is waiting: give the new year a name in step 1.",
     "createYear": "Create {name}",
     "created": "{name} was created with {groups, plural, one {# group} other {# groups}} and {requirements, plural, one {# teaching requirement} other {# teaching requirements}}.",
-    "createdOfferSchedule": "Lay the schedule from this year",
+    "createdOfferSchedule": "Lay the schedule for {to} from {from}",
     "createdWithStaffing": "{name} was created with {groups, plural, one {# group} other {# groups}}, {requirements, plural, one {# teaching requirement} other {# teaching requirements}}, {employments, plural, one {# teaching post} other {# teaching posts}} and {duties, plural, one {# duty} other {# duties}}.",
     "problemsLabel": "To fix and to know",
     "blocking": "Must be fixed",
