@@ -7579,6 +7579,38 @@ node scripts/bench/solve-corpus-calibrate.mjs convert prod.json trajectory.json
 
 What the table says, and what it does not. Where the plain solve finds a timetable the one from a schedule is the same kind of timetable with 3 to 24 requirements moved instead of 107 or 137 (the plain solve has no reason to resemble anything), and on `n12-g5-m0-s2`, a week that is TIMEOUT today, one is laid that keeps five requirements in six where the schedule had them. `n9-g6-m0-s2` sits on the cliff of §35.7: it was TIMEOUT in two runs on the tree before the corpus' second version and FEASIBLE in this one, so the table does not show it as a week the road lays and the plain solve does not. **A FEASIBLE at the budget says that phase 2 ran on until it was stopped, and its seconds say nothing of when the first timetable came** (the same is true of the plain FEASIBLE rows); a run of `n9-g6-m0-s2` with the log on shows what the attempts are: the first was refused 1.6 s after the start (13 requirements clash with the week, 37 let go), the second after 4.2 s (67 let go), and the third held 41 and ran to the budget. The overrun past 60 s (up to 11 s) is phase 2's stop lag with the schedule as its disruption term, and the attempts share one deadline. **The schedule was laid by the engine or by a road of §35.7 on a week of the same school form; a schedule a school's own planner made, or one read in from another program, is not measured**, and neither is a week that resembles the schedule less than a sibling seed does (a school changing a year's groups between years). The weeks are the corpus's, one run each: it says that the road works on them and not how often.
 
+### 35.10 The pairs of groups as cliques in the full model (M8, PR 6)
+
+**What it is.** `groupConflicts` lists the pairs of groups that share a pupil, and the model posts one NoOverlap over the lessons of the two for each pair: a school whose pupils are cut into groups across its classes has 2 000 to 4 000 pairs, and the same lessons stand in hundreds of those rows. Three groups that pair two and two (A–B, B–C, A–C) say exactly what one NoOverlap over the lessons of all three says: a **clique** of the pair graph. `app/solver/cliques.py` covers the pairs by cliques (greedy and deterministic: the same pairs give the same rows in the same order on every machine), and `_add_group_no_overlap(by_cliques=True)` posts one row for each clique instead of one for each pair. **The same rule, in fewer rows**: a clique is a set of groups that ALL pair, and a path (A–B, B–C, A and C sharing no pupil) is two rows, since A and C may sit at once.
+
+**Where.** Only the **full model of a strict solve** (`_solve_strict`'s first build: phase 1b's clone and phase 2's search) and only while `SOLVER_GROUP_CLIQUES` is on (the default; `false` gives one row per pair everywhere again, at an engine restart and with no deploy of code). Phase 1a's satisfaction model, the years' steps (§35.9), the explanation's and the probe's builds and Bästa möjliga schema keep one row per pair: the nightly gate measures phase 1a, and `tests/test_group_cliques_model.py` holds that the build calls are exactly `(full: cliques, satisfaction: pairs)` with the setting on and `(pairs, pairs)` with it off. A request carries no new field, the response no new one, and `app.openapi()` is byte for byte what it was.
+
+**The proof that it is the same rule** (not a solve; the rows themselves): the model's own NoOverlap rows are read through a spy on the pupils' padded intervals, and the set of lesson pairs that share a row is **equal** for the cover and for the pairs on a small week of the corpus at three seeds (`test_the_rows_of_the_cover_forbid_exactly_the_pairs_of_lessons_the_rows_of_the_pairs_forbid`); on a path of three groups no lesson of A is held apart from one of C; and `tests/test_m8_paths_rows.py` holds that the rows the engine now posts are `m8_paths.py`'s `cliques` encoding row for row (the encoding the design note's measurement 4.2 was made with). A mutant that lets a clique take a group that does not pair with its second group falls on five tests.
+
+**What it does to the model** (`benchmarks/m8_cliques.py size`, rows of the pupils' families in the full model, build CPU seconds in Python, which are the same to within the cover's 0.05 s):
+
+| Week | Pairs of groups | Pupils' rows, pairs → cliques | Their intervals |
+|---|---|---|---|
+| `n12-g3-m0-s1` (gate) | 404 | 685 → 343 | 6 172 → 3 898 |
+| `n12-g4-m0-s2` (gate) | 620 | 937 → 387 | 7 304 → 4 262 |
+| `n9-g6-m0-s1` | 735 | 1 001 → 318 | 6 456 → 3 540 |
+| `n12-g5-m0-s1` | 886 | 1 248 → 438 | 8 613 → 4 646 |
+| `n9-g10-m0-s1-t5-h` | 2 326 | 3 099 → 748 | 13 642 → 7 274 |
+| `n12-g10-m0-s1` | 2 956 | 3 597 → 744 | 15 702 → 6 689 |
+| `n30-g10-m0-s1-t5-y0.0.0.3.10.10-h` (a whole school) | 4 154 | 5 512 → 1 431 | 29 242 → 16 507 |
+
+A week with no groups across the classes (`n18`, `n24`) has no pairs between groups to cover and is the same model.
+
+**What it does to the search, and what it does not say.** Count mode, one worker, a fixed seed (the same work on every machine), phase 1 as the gate runs it (the same search in both) and then phase 2 from its timetable (`m8_cliques.py quality`):
+
+- **The objective phase 2 reaches is a coin flip, and nothing here says the schedule is better.** After 4 deterministic seconds the 13 gate weeks at two seeds have the same objective with the pairs and with the cliques in all 26 rows. After 30, seed 1: `n12-g3-m0-s1` 10 575 with the pairs and **7 455** with the cliques (a better schedule), `n12-g4-m0-s2` **9 428** with the pairs and 11 904 with the cliques (a worse one), `n9-g4-m0-s1` 1 779 and 1 894 (worse), the term week the same 11 154. Lower is better.
+- **The same work is a little less wall time.** `n12-g4-m0-s2` and `n12-g3-m0-s1`, 8 deterministic seconds of phase 2 in the order pairs, cliques, cliques, pairs in one process (load 5 to 39 before the runs): 92 and 110 s against 78 and 88 s, and 97 and 69 s against 83 and 58 s, so **16 to 18 % less wall time** for the same deterministic work (and the same objective at that point).
+- **The presolve of the full model** (`stop_after_presolve`, one worker, ABBA, load 5 to 7): `n12-g10-m0-s1` 1.5 s with the pairs and 1.0 to 1.1 with the cliques; the whole school's week 15.9 and 16.2 s against 15.5 and 15.8 (2 %): the rows of the pupils are not what its presolve spends its time on.
+
+So what the clique rows buy is a smaller model and a search that does a little more in the same wall time. They do not make the schedule better, and the one week of the corpus with the school's form (`n30`) is not solved by either. No seconds on the production processor (§35.5).
+
+**Not done.** Bästa möjliga schema's model and the explanation's keep one row per pair. The cover is computed for each build of the full model (0.05 s on the densest week of the gate; the model's own build is seconds on a school's week).
+
 ## 36. What the school's base data holds, and what is missing ("Vad kom in", P1 Pilotkit, part 2)
 
 A page, `/admin/intake` (menu: Grunddata › Vad kom in), and one route behind it, `GET /api/v1/intake`. It counts the active läsår's base data (the year, subjects, rooms, frame times, rasts, classes, teaching groups, teachers and pupils, the lokal timplan, the posts, the staffing) against what Generera and the steps after it ask for, and names each gap at one of three levels (stops Generera, gives a worse timetable, only another step reads). The rules are `src/intake/intake.ts`; the page gives each gap its words and the page that owns it. It writes nothing and holds no migration.
