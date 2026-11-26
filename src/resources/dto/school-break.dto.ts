@@ -1,5 +1,9 @@
 import { BreakKind } from '@prisma/client';
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
   IsOptional,
@@ -9,6 +13,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { IsCalendarDate } from './is-calendar-date';
 
@@ -114,4 +119,68 @@ export class UpdateSchoolBreakDto {
   @Min(0)
   @Max(12)
   maxGradeLevel?: number | null;
+}
+
+/**
+ * One row of a calendar the school applies at once (Skolans kalender): a lov
+ * to make, or, with an `id`, a lov of the same läsår to move.
+ *
+ * The same fields and the same rules as CreateSchoolBreakDto; the row names
+ * its own year through the list it sits in, not through a field of its own, so
+ * a list cannot spread over two läsår.
+ */
+export class CalendarBreakDto {
+  /** A lov of this läsår to change to the dates and name here, instead of making another. */
+  @IsOptional()
+  @IsUUID('4')
+  id?: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  name!: string;
+
+  @IsOptional()
+  @IsEnum(BreakKind)
+  kind?: BreakKind;
+
+  @IsCalendarDate()
+  startDate!: string;
+
+  @IsCalendarDate()
+  endDate!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  minGradeLevel?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  maxGradeLevel?: number | null;
+}
+
+/**
+ * A calendar to apply, or, with `dryRun`, to count: how many lessons it would
+ * take out of the published calendar, with nothing written.
+ *
+ * At most 200 rows: a läsår's lov, its red days and a studiedag a month are a
+ * few dozen, and a file of a municipality's whole decade is not one call.
+ */
+export class ApplySchoolCalendarDto {
+  @IsUUID('4')
+  academicYearId!: string;
+
+  @IsArray()
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => CalendarBreakDto)
+  breaks!: CalendarBreakDto[];
+
+  @IsOptional()
+  @IsBoolean()
+  dryRun?: boolean;
 }
