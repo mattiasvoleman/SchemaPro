@@ -113,6 +113,26 @@ test.describe("a run, in a real browser", () => {
     expect(await readFile((await download.path())!, "utf8")).toBe("Id;Namn;Notis\r\nTF-0001;NAMN-0001;ok\r\nTF-0002;NAMN-0002;ok\r\nTF-0001;NAMN-0001;ok\r\n");
   });
 
+  test("takes out a personnummer written with an exponent, one cut by a line break of two characters in a quoted cell, and the same number as one marker (X1b; the id column is taken whole as personnummer, as two of its three cells are)", async ({ page }) => {
+    await page.goto(PATH);
+    // An id column that a spreadsheet has turned into numbers with an exponent (8.001011234E9, and Excel in Swedish settings' 7,00101E+09), and a quoted cell with the same number as the first, cut by a CRLF.
+    const file = 'Id;Klass;Notis\r\n8.001011234E9;7A;ok\r\n7,00101E+09;7B;ok\r\nx;7C;"Se 8001\r\n011234 igen"\r\n';
+    await chooseFile(page, "elever.csv", Buffer.from(file, "utf8"));
+    await page.getByLabel("Vad ska hända med kolumn 3?").selectOption("keep");
+    await page.getByRole("button", { name: "Ta bort personuppgifter" }).click();
+    await expect(page.getByRole("heading", { level: 2, name: "5. Resultat" })).toBeVisible();
+    await page.getByLabel("Jag har tittat igenom förhandsvisningen").check();
+    const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Hämta säker fil 1" }).click()]);
+    expect(await readFile((await download.path())!, "utf8")).toBe("Id;Klass;Notis\r\nPNR-0001;7A;ok\r\nPNR-0002;7B;ok\r\nPNR-0003;7C;Se PNR-0001 igen\r\n");
+  });
+
+  test("asks about a column of birth dates from one year, which it kept as numbers before (X1b), and says why", async ({ page }) => {
+    await page.goto(PATH);
+    await chooseFile(page, "elever.csv", Buffer.from("Klass;F-datum\r\n7A;2013-02-14\r\n7A;2013-05-03\r\n7B;2013-09-30\r\n", "utf8"));
+    await expect(page.getByText("ett datum som är äldre än tre år: kan vara födelsedatum")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Ta bort personuppgifter" })).toBeDisabled();
+  });
+
   test("writes a file saved in Windows-1252 back in Windows-1252, byte for byte where nothing was replaced", async ({ page }) => {
     await page.goto(PATH);
     // "Lärare;Klass\nÅke Öst;7A\n" with ä as E4, Å as C5 and Ö as D6.
@@ -156,7 +176,7 @@ test.describe("a run, in a real browser", () => {
 });
 
 test.describe("what the browser itself refuses", () => {
-  test("refuses a fetch, an XHR, a beacon, a websocket and a picture asked for: none reaches the network, and the browser says it was the policy", async ({ page }) => {
+  test("refuses a fetch, an XHR, a beacon, a websocket and a picture asked for: none reaches the network, and the browser says it was the policy", async ({ page, browserName }) => {
     const response = await page.goto(PATH);
     const policy = response!.headers()["content-security-policy"] ?? "";
     test.skip(!policy.includes("connect-src 'none'"), "the development server relaxes the policy for hot reload; CI runs a production build");
@@ -227,7 +247,8 @@ test.describe("what the browser itself refuses", () => {
     // Nothing that was asked for was answered, and no websocket was ever made.
     expect([...probes.values()].filter((probe) => probe.answered)).toEqual([]);
     // The ones Chromium issues at all (a fetch and a beacon are refused before a request exists) fail as the policy: Playwright says "csp", the protocol says net::ERR_BLOCKED_BY_CSP.
-    expect([...probes.values()].every((probe) => probe.failure === null || /^csp$|BLOCKED_BY_CSP/.test(probe.failure))).toBe(true);
+    // Firefox and WebKit word a refusal in their own way (and Playwright with it): there the proof is what is above, nothing answered, nothing opened, every probe refused in the page and the policy's own event.
+    if (browserName === "chromium") expect([...probes.values()].every((probe) => probe.failure === null || /^csp$|BLOCKED_BY_CSP/.test(probe.failure))).toBe(true);
     expect(sockets).toEqual([]);
   });
 });
