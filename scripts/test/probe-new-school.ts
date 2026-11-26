@@ -245,6 +245,9 @@ async function main(): Promise<void> {
       const outcome = await runNewSchool(args, deps(auth));
       assert.equal(outcome.exitCode, 1, outcome.lines.join('\n'));
       assert.match(outcome.lines.join('\n'), /another school/);
+      // The way out it names is one that exists: the other school's administrator cannot invite into a school that has none.
+      assert.doesNotMatch(outcome.lines.join('\n'), /invite the person from the other school/);
+      assert.match(outcome.lines.join('\n'), /Use another address for this administrator/);
       const school = await schoolOf(args.slug);
       made.push(school!.id);
       assert.equal(school!.users.length, 1);

@@ -56,6 +56,13 @@ describe('parseNewSchoolArgs', () => {
     expect(problemsOf([...BASE, '--password-env', 'a-b'])).toHaveLength(1);
   });
 
+  it('--password-env never names a variable the script reads for itself: that secret would become a login\'s password', () => {
+    for (const own of ['DIRECT_URL', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ACCESS_TOKEN', 'SUPABASE_PROJECT_REF']) {
+      expect(problemsOf([...BASE, '--password-env', own])).toEqual([expect.stringContaining('names a variable this script reads for something else')]);
+    }
+    expect(ok([...BASE, '--password-env', 'SUPABASE_ADMIN_PASSWORD']).login).toEqual({ mode: 'PASSWORD', passwordEnv: 'SUPABASE_ADMIN_PASSWORD' });
+  });
+
   it('--web-url becomes its origin, and only an http(s) address is one', () => {
     expect(ok([...BASE, '--web-url', 'https://app.ekeby.example/some/path?x=1']).webUrl).toBe('https://app.ekeby.example');
     expect(problemsOf([...BASE, '--web-url', 'javascript:alert(1)'])).toEqual([expect.stringContaining('--web-url')]);

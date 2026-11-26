@@ -69,6 +69,9 @@ function originOf(value: string): string | null {
 /** An environment variable's name, which is all `--password-env` may be: never the password itself. */
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
 
+/** The variables the script reads for its own purposes: never the password of a login (the database, the Auth project's keys). */
+const OWN_VARIABLES: ReadonlySet<string> = new Set(['DIRECT_URL', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ACCESS_TOKEN', 'SUPABASE_PROJECT_REF']);
+
 export function parseNewSchoolArgs(argv: readonly string[]): ParsedNewSchoolArgs {
   const problems: string[] = [];
   const values = new Map<string, string>();
@@ -137,6 +140,8 @@ export function parseNewSchoolArgs(argv: readonly string[]): ParsedNewSchoolArgs
   const passwordEnv = values.get('password-env')?.trim();
   if (passwordEnv !== undefined && !ENV_NAME.test(passwordEnv)) {
     problems.push('--password-env names an environment variable (for example ADMIN_PASSWORD), not the password itself.');
+  } else if (passwordEnv !== undefined && OWN_VARIABLES.has(passwordEnv)) {
+    problems.push(`--password-env ${passwordEnv} names a variable this script reads for something else: the administrator's password would be that secret. Use a variable of its own (for example ADMIN_PASSWORD).`);
   }
 
   const expectHost = values.get('expect-host')?.trim().toLowerCase();

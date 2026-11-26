@@ -213,7 +213,7 @@ export async function runNewSchool(args: NewSchoolArgs, deps: NewSchoolDeps): Pr
     say(
       '',
       `The login exists at Supabase, but the administrator's row could not take it: ${error instanceof Error ? error.message.split('\n').pop() : String(error)}`,
-      'That is what happens when the login is another school\'s too: a person joins a second school by that school\'s own invitation, not from here. Use another address for this administrator, or invite the person from the other school.',
+      'That is what happens when the login is another school\'s too: a person joins a second school by an invitation from an administrator of that school, and this school has none yet, so a person who already has a login at another school cannot be its first administrator from here. Use another address for this administrator: once the school has one, that administrator can invite the person.',
     );
     return { exitCode: 1, lines, state: 'MADE', login: login.how };
   }
