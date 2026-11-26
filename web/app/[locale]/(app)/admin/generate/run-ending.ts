@@ -11,6 +11,12 @@
  *   ENGINE_PATH_CLOSED   the road between the service and the engine closed the call: after how long, and what the road holds
  *   ENGINE_RUN_ABANDONED the process that held the run went away: how long it had gone on when last heard from
  *
+ * And the three refusals of a schedule to start from (Ett schema som start, M9), which the gateway answers at the click (a
+ * version that is not the year's, a year with none before it) or in the run, before the engine (a schedule with no lesson that
+ * belongs to a post of the week), each said as what the school can do next:
+ *
+ *   START_NO_PREVIOUS_YEAR, START_VERSION_NOT_FOUND, START_NOTHING_TO_START_FROM (one of three sentences, by what it says of why)
+ *
  * A run stored before the figures existed, and an engine older than the field, carry none of them: the sentence is
  * then the one each ending always had. A figure that is not a finite number of seconds is not said, and the figures
  * of a step are said together or not at all (a step with no seconds is not a sentence).
@@ -32,7 +38,12 @@ export type RunEndingKey =
   | "ENGINE_PATH_CLOSED"
   | "ENGINE_PATH_CLOSED_AFTER"
   | "ENGINE_RUN_ABANDONED"
-  | "ENGINE_RUN_ABANDONED_AFTER";
+  | "ENGINE_RUN_ABANDONED_AFTER"
+  | "START_NO_PREVIOUS_YEAR"
+  | "START_VERSION_NOT_FOUND"
+  | "START_NOTHING_EMPTY"
+  | "START_NOTHING_NO_SUCCESSOR"
+  | "START_NOTHING_USABLE";
 
 export interface RunEnding {
   key: RunEndingKey;
@@ -95,6 +106,18 @@ export function runEnding(code: string | null, params: Params): RunEnding | null
       return lastSeenSeconds === null
         ? { key: "ENGINE_RUN_ABANDONED" }
         : { key: "ENGINE_RUN_ABANDONED_AFTER", values: { lastSeenSeconds } };
+    }
+    case "START_NO_PREVIOUS_YEAR":
+    case "START_VERSION_NOT_FOUND":
+      return { key: code };
+    case "START_NOTHING_TO_START_FROM": {
+      // How many lessons the schedule held, and how many of them belonged to a class with no successor: none held is "nothing yet",
+      // all of them a class that left is that, and anything else is lessons that match no post of the week.
+      const offered = seconds(params, "offered");
+      if (offered === null || offered === 0) return { key: "START_NOTHING_EMPTY" };
+      return seconds(params, "noSuccessor") === offered
+        ? { key: "START_NOTHING_NO_SUCCESSOR" }
+        : { key: "START_NOTHING_USABLE", values: { offered } };
     }
     default:
       return null;

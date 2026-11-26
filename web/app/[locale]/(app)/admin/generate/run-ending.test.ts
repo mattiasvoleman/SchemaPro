@@ -195,3 +195,46 @@ describe("what a school reads when the road closed the call (ENGINE_PATH_CLOSED_
     }
   });
 });
+
+describe("a schedule to start from that cannot be one (Ett schema som start, M9)", () => {
+  it("says the two refusals of the click by their code alone", () => {
+    expect(runEnding("START_NO_PREVIOUS_YEAR", null)).toEqual({ key: "START_NO_PREVIOUS_YEAR" });
+    expect(runEnding("START_VERSION_NOT_FOUND", {})).toEqual({ key: "START_VERSION_NOT_FOUND" });
+  });
+
+  it("says a schedule with no lesson at all as 'nothing yet', with or without the figures", () => {
+    expect(runEnding("START_NOTHING_TO_START_FROM", { source: "CURRENT", offered: 0 })).toEqual({ key: "START_NOTHING_EMPTY" });
+    expect(runEnding("START_NOTHING_TO_START_FROM", null)).toEqual({ key: "START_NOTHING_EMPTY" });
+    expect(runEnding("START_NOTHING_TO_START_FROM", { offered: "many" })).toEqual({ key: "START_NOTHING_EMPTY" });
+  });
+
+  it("says last year's classes when every one of the lessons belonged to a class with no successor", () => {
+    expect(runEnding("START_NOTHING_TO_START_FROM", { source: "PREVIOUS_YEAR", offered: 60, noSuccessor: 60 })).toEqual({
+      key: "START_NOTHING_NO_SUCCESSOR",
+    });
+  });
+
+  it("says the number of lessons that match no post otherwise, and never claims a successor as the cause when it was only some", () => {
+    expect(runEnding("START_NOTHING_TO_START_FROM", { source: "PREVIOUS_YEAR", offered: 60, noSuccessor: 40, noPost: 20 })).toEqual({
+      key: "START_NOTHING_USABLE",
+      values: { offered: 60 },
+    });
+    expect(runEnding("START_NOTHING_TO_START_FROM", { source: "VERSION", offered: 12, noPost: 12 })).toEqual({
+      key: "START_NOTHING_USABLE",
+      values: { offered: 12 },
+    });
+  });
+
+  it.each(["START_NO_PREVIOUS_YEAR", "START_VERSION_NOT_FOUND", "START_NOTHING_EMPTY", "START_NOTHING_NO_SUCCESSOR", "START_NOTHING_USABLE"])(
+    "has a sentence for %s in both languages, and the figure it says fills",
+    (key) => {
+      for (const [messages, locale] of [[sv, "sv"], [en, "en"]] as const) {
+        const text = (messages as { scheduleCandidates: { jobErrors: Record<string, string> } }).scheduleCandidates.jobErrors[key];
+        expect(text, `${locale} ${key}`).toBeTruthy();
+        const said = new IntlMessageFormat(text!, locale).format({ offered: 12 }) as string;
+        expect(said).not.toMatch(/[{}]/);
+        if (key === "START_NOTHING_USABLE") expect(said).toContain("12");
+      }
+    },
+  );
+});
