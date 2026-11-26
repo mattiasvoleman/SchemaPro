@@ -5671,6 +5671,7 @@
     "previewNeedsInput": "The preview is waiting: give the new year a name in step 1.",
     "createYear": "Create {name}",
     "created": "{name} was created with {groups, plural, one {# group} other {# groups}} and {requirements, plural, one {# teaching requirement} other {# teaching requirements}}.",
+    "createdOfferSchedule": "Lay the schedule for {to} from {from}",
     "createdWithStaffing": "{name} was created with {groups, plural, one {# group} other {# groups}}, {requirements, plural, one {# teaching requirement} other {# teaching requirements}}, {employments, plural, one {# teaching post} other {# teaching posts}} and {duties, plural, one {# duty} other {# duties}}.",
     "problemsLabel": "To fix and to know",
     "blocking": "Must be fixed",
@@ -5823,7 +5824,7 @@
     "reviewStaffing": "Teaching posts and duties",
     "reviewLeftOut": "Not carried over",
     "skipped": {
-      "MasterLesson": "The base schedule ({count, plural, one {# lesson} other {# lessons}}) — next year’s schedule is generated for the new classes, and that can be done as soon as the year is created, before its activation.",
+      "MasterLesson": "The base schedule ({count, plural, one {# lesson} other {# lessons}}) is not copied as rows. Next year’s schedule is generated for the new classes, and that can be done as soon as the year is created, before its activation. Generate can start from this year’s schedule: each class’s lessons are then held under its successor (7A’s under 8A), and what clashes with next year is moved.",
       "LunchSitting": "The lunch sittings ({count}) — they are placed against the new schedule.",
       "TeacherEmployment": "The teaching posts ({count}) — turn on Teaching posts and duties are carried over in step 2, or bring them over later from the staffing page.",
       "TeacherEmploymentPeriod": "The posts' periods — no period is copied. When the posts are carried, the period in force on the last day of the year becomes the post's figures in the new year, and a period that ended before it is not carried.",

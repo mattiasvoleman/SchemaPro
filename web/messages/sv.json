@@ -5671,6 +5671,7 @@
     "previewNeedsInput": "Förhandsvisningen väntar: ge det nya läsåret ett namn i steg 1.",
     "createYear": "Skapa {name}",
     "created": "{name} skapades med {groups, plural, one {# grupp} other {# grupper}} och {requirements, plural, one {# timplanspost} other {# timplansposter}}.",
+    "createdOfferSchedule": "Lägg schemat för {to} från {from}",
     "createdWithStaffing": "{name} skapades med {groups, plural, one {# grupp} other {# grupper}}, {requirements, plural, one {# timplanspost} other {# timplansposter}}, {employments, plural, one {# tjänst} other {# tjänster}} och {duties, plural, one {# uppdrag} other {# uppdrag}}.",
     "problemsLabel": "Att åtgärda och att känna till",
     "blocking": "Måste åtgärdas",
@@ -5823,7 +5824,7 @@
     "reviewStaffing": "Tjänster och uppdrag",
     "reviewLeftOut": "Följer inte med",
     "skipped": {
-      "MasterLesson": "Grundschemat ({count, plural, one {# lektion} other {# lektioner}}) — nästa läsårs schema genereras för de nya klasserna, och det går direkt när läsåret är skapat, före aktiveringen.",
+      "MasterLesson": "Grundschemat ({count, plural, one {# lektion} other {# lektioner}}) följer inte med som rader. Nästa läsårs schema genereras för de nya klasserna, och det går direkt när läsåret är skapat, före aktiveringen. Generera kan utgå från det här läsårets schema: varje klass lektioner hålls då under dess efterträdare (7A:s under 8A), och det som krockar med nästa år flyttas.",
       "LunchSitting": "Lunchsittningarna ({count}) — de läggs mot det nya schemat.",
       "TeacherEmployment": "Tjänsterna ({count}) — slå på Tjänster och uppdrag följer med i steg 2, eller ta med dem senare från tjänstefördelningssidan.",
       "TeacherEmploymentPeriod": "Tjänsternas perioder — ingen period kopieras. När tjänsterna följer med blir perioden som gäller läsårets sista dag tjänstens siffror i det nya läsåret, och en period som slutade före den följer inte med.",

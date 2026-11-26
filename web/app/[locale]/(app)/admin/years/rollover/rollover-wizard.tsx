@@ -211,6 +211,19 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
               groups: result.counts.groups,
               requirements: result.counts.requirements,
             }),
+        // Ett schema som start (M9): the new year has no schedule yet, and this year's can be where Generera starts. Generera takes the
+        // choice from the link and shows it before anything is run. Offered only for the year after the ACTIVE one, the one year Generera
+        // plans (planningChoices): a year rolled from another has no page there, and the link would open the active year instead. And only
+        // from a year that has lessons: with none, Generera would refuse the start (START_NOTHING_TO_START_FROM) after the click.
+        source?.isActive && plan.skipped.find((entry) => entry.model === "MasterLesson")?.count !== 0
+          ? {
+              duration: 15_000,
+              action: {
+                label: t("createdOfferSchedule", { to: result.academicYear.name, from: source.name }),
+                onClick: () => router.push(`/admin/generate?year=${result.academicYear.id}&start=PREVIOUS_YEAR`),
+              },
+            }
+          : undefined,
       );
       router.push("/admin/years");
     } catch (error) {
