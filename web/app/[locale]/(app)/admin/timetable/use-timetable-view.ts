@@ -282,17 +282,22 @@ export function useTimetableView(inputs: Pick<TimetableReads, "lunchSittings" | 
         conflicted: conflictMap.has(lesson.id),
         conflictNote: conflictNotes?.get(lesson.id),
         // UNDANTAG MED FLIT: a lesson the school has given an exemption stands there on purpose, in a word on its card and in the
-        // words a screen reader is told after the lesson's name (the grid's slot for a mark). What it stands against NOW is said; an exemption
-        // nothing stands against (Generera laid the class's meal elsewhere) is still the lesson's, and the card says so.
-        ...((given) =>
-          given
-            ? {
-                mark: t("exemptMark"),
-                markLabel: t(exemptionStanding.has(lesson.id) ? "exemptMarkLabel" : "exemptMarkIdleLabel", {
-                  rules: given.map((rule) => t(`exemptRule${rule}`)).join(t("exemptAnd")),
-                }),
-              }
-            : {})(exemptionMap.get(lesson.id)),
+        // words a screen reader is told after the lesson's name (the grid's slot for a mark). What it stands against NOW is said, rule by rule
+        // (the list does the same): a lesson given both the ramtid and the class's meal, whose meal Generera has laid elsewhere, still stands
+        // against the ramtid and not against the meal. A rule nothing stands against is still the lesson's, and the card says so.
+        ...((given) => {
+          if (!given) return {};
+          const standing = exemptionStanding.get(lesson.id) ?? [];
+          const idle = given.filter((rule) => !standing.includes(rule));
+          const said = (key: "exemptMarkLabel" | "exemptMarkIdleLabel", rules: readonly string[]) =>
+            t(key, { rules: rules.map((rule) => t(`exemptRule${rule}`)).join(t("exemptAnd")) });
+          return {
+            mark: t("exemptMark"),
+            markLabel: [standing.length > 0 ? said("exemptMarkLabel", standing) : null, idle.length > 0 ? said("exemptMarkIdleLabel", idle) : null]
+              .filter(Boolean)
+              .join(" "),
+          };
+        })(exemptionMap.get(lesson.id)),
         // Hover text only — the rectangle keeps showing the teaching time. A
         // buffer the grid shows nowhere makes the refusal of the next slot look
         // like a bug in the grid.

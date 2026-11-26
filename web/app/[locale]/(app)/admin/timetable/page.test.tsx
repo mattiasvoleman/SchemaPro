@@ -1548,6 +1548,17 @@ describe("a lesson that stands outside the ramtid on purpose (Undantag med flit)
     expect(mark?.textContent).toContain("timetable.exemptMarkIdleLabel(timetable.exemptRuleFRAME)");
   });
 
+  it("names in its words the rules the lesson stands against now, and says of the rest that nothing stands against them: given the ramtid and the class's meal, with the meal laid elsewhere", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), { ...given("l-late", "s-sl", "g-51", "10:00"), exemptFrom: ["FRAME", "LUNCH"] }];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.exemptionCount/);
+    const words = container.querySelector("[data-lesson-mark]")?.textContent ?? "";
+    // It stands against the ramtid (10:00 is outside 07:00-09:00) and does not stand on any meal: the card says the first of the one and the second of the other.
+    expect(words).toContain("timetable.exemptMarkLabel(timetable.exemptRuleFRAME)");
+    expect(words).toContain("timetable.exemptMarkIdleLabel(timetable.exemptRuleLUNCH)");
+  });
+
   it("marks no card of a lesson without an exemption", async () => {
     state.frameTimes = [frame(0, 99)];
     state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), lesson("l-late", "s-sl", "g-51", "10:00")];
