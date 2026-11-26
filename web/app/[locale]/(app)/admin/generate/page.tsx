@@ -826,6 +826,15 @@ export default function GeneratePage() {
         </Notice>
       ) : null}
 
+      {/* Where the run starts, before the checklist whose foot holds the button that makes it. A chunk that does not arrive leaves the card out; the run is then what it always was. */}
+      {year ? (
+        <DialogLoadBoundary onError={() => undefined}>
+          <Suspense fallback={null}>
+            <StartFromCard year={year} value={startFrom} onChange={setStartFrom} disabled={generating} />
+          </Suspense>
+        </DialogLoadBoundary>
+      ) : null}
+
       {/*
         The run closes the checklist: the list says whether the week can be
         laid, and the button that lays it stands at its foot, with the reason
@@ -974,15 +983,6 @@ export default function GeneratePage() {
           </ul>
         )}
       </SectionCard>
-
-      {/* Where the run starts. A chunk that does not arrive leaves the card out; the run is then what it always was. */}
-      {year ? (
-        <DialogLoadBoundary onError={() => undefined}>
-          <Suspense fallback={null}>
-            <StartFromCard year={year} value={startFrom} onChange={setStartFrom} disabled={generating} />
-          </Suspense>
-        </DialogLoadBoundary>
-      ) : null}
 
       {/* items-start: Skolregler is three lines; stretched to the profile's
           height it was a card of empty space. */}

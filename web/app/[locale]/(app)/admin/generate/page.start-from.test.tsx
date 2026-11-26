@@ -123,6 +123,14 @@ describe("the choice of where a run starts", () => {
     expect(startMutation.mutateAsync.mock.calls[0]![0]).not.toHaveProperty("startFrom");
   });
 
+  it("stands before the button that runs it, so that the choice is read before the click that makes it", async () => {
+    render(<GeneratePage />);
+
+    await choice("generate.startNone");
+    const card = document.getElementById("start-from")!;
+    expect(runButton().compareDocumentPosition(card) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  });
+
   it("sends the grundschema as the start when it is chosen", async () => {
     render(<GeneratePage />);
     const user = userEvent.setup();
