@@ -1226,10 +1226,11 @@ Walk the full product loop once, in order:
   attendance after a period shorter than a limit's window (a 1-month period and a
   60-day window) is counted over what is left: the count cannot see what gallring
   took, and the finding still names the window.
-  **Known limit:** the e-mail and the push go to the delivery's in-memory queue
-  after the commit, as every other notice does, so a process that stops between
-  the commit and the send loses them for that period: the inbox notice is
-  written, and the digest's ledger row keeps it from being written again.
+  **Known limit, mended by §40:** the e-mail and the push used to go to the
+  delivery's in-memory queue after the commit, so a process that stopped between
+  the commit and the send lost them for that period. They now go to the database
+  (§40), and a deploy no longer loses them; what is left is the moment between
+  the commit and the queue's write (§40.8).
   **Clients from before the release:** the web and the app before it draw the
   digest notice with their fallback text ("Ny notis" / "Notis") and list it in
   Settings under its catalogue key, switchable. The digest's e-mail and push
@@ -1531,10 +1532,10 @@ Walk the full product loop once, in order:
   held; a year activated before the old year ends closes the class history that day, so
   the unregistered lessons of the weeks that are left drop out of the days; a teacher who
   is deactivated loses the stored days of the last 90 days at the next night while older
-  days stay; a register saved more than 90 days after its lesson does not move the stored day; the e-mail and the push go to the delivery's in-memory queue after the
-  commit, as every other notice does, so a process that stops between the commit and the
-  send loses them for that night, and the ledger keeps the reminder from being written
-  again.
+  days stay; a register saved more than 90 days after its lesson does not move the stored day; the e-mail and the push go to the delivery's queue after the
+  commit, as every other notice does (in the database since §40: a deploy no longer loses
+  them, only a process that dies between the commit and the queue's write does), and the
+  ledger keeps the reminder from being written again.
   **Clients from before the release:** the web and the app before it draw the two
   notices with their fallback text ("Ny notis" / "Notis") and list them in Settings under
   their catalogue keys, switchable.
@@ -2059,19 +2060,21 @@ Walk the full product loop once, in order:
   it never comes, the gateway calls the reminder `WRITTEN` and the staff's list says
   *Lagd i inkorgen* (the notices are in the inboxes, and nothing more is known)
   where it said *Skickad*; the detail page says what is and is not known. **Known
-  limit:** the e-mail and the push of a reminder go to the delivery's in-memory
-  queue after the commit, as every other notice does, so a process that stops
-  between the commit and the send loses them: the inbox notices are written, the
-  request reads *Lagd i inkorgen* for good, and nothing sends the reminder again.
-  A whole-school wave is some 41 s of mail and 8 s of push, so **do not release
-  while one is going** (`SELECT count(*), min("remindAt") FROM "AckRequests" WHERE
-  "remindAt" <= now() AND "reminderOutcome" IS NULL` is empty, and the last
-  `JobRuns` row of `ack-reminders` is a few minutes old at most, when the pass has
-  just finished), and read the requests that stayed `WRITTEN` afterwards (`SELECT
+  limit, as it was before §40:** the e-mail and the push of a reminder used to go to
+  the delivery's in-memory queue, so a process that stopped between the commit and
+  the send lost them, and the request read *Lagd i inkorgen* for good. They now go to
+  the database queue (§40), which a deploy does not empty, so **a release no longer has
+  to wait for a wave to end**. What stays: the word *Skickad* is said only by the
+  process that wrote the batch, when it has worked the batch through. A request whose
+  mail was delivered by another process, after a restart or in a deploy, still reads
+  `WRITTEN` though the mail went (the closure that would say it is gone with the
+  process; §40.8). Read the requests that stayed `WRITTEN` afterwards (`SELECT
   count(*) FROM "AckRequests" WHERE "reminderOutcome" = 'SENT' AND
   "reminderMirroredAt" IS NULL AND "reminderSentAt" < now() - interval '15
-  minutes'`). A refused batch (Resend or Expo answering with an error) leaves the
-  request `WRITTEN` the same way.
+  minutes'`) as "not known", not as "not sent". A batch the channel refused for good
+  (Resend answering 4xx, Expo refusing our credentials) leaves the request `WRITTEN`
+  the same way; a mail the provider asks to be asked about again later is asked about
+  again (§40.3), and says its word when it has gone.
   *(4) A sender cannot use up the school's day.* The school's 20 000 rows were
   shared by all senders: two mentor accounts, each writing the ten requests an hour
   for a class of 30 (66 rows each), reach 15 840 rows a day each. Each sender now has
@@ -7707,6 +7710,81 @@ The ordinance (SFS 2026:1487, in force 2027-07-01, grundskola only) gives a span
 
 - RLS sections 566 (the catalogue), 567 (what a decider writes and what the trigger and the checks do), 568 (who reads) and 569 (what a removal does), and a row in the matrix school's fixtures; 21 mutants of the table are each killed by them, and section 494 records the teacher's own arm as STAYS. The adapter probe (`scripts/test/prisma-adapter-probe.ts`) holds the statement budgets of the writes E asks about (`'give a timplanspost a teacher'` 29 statements, two more than before E) and reads the ordinance's wording on the real database, a läsår it does not reach included.
 - `src/staffing/assignment-scope.ts` is the one place the level is worked out (`scopeOfTeacher`); the write check, the import, Föreslå bemanning, the search and the report all go through it, and the figures a school sees are the same on every page. `teaching-weeks.contract.spec.ts` and the web's `teaching-hours.contract.test.ts` replay one fixture for the week arithmetic.
+
+
+## 40. Outgoing e-mail and push wait in the database ("Mejlen överlever en omstart", omgång 15, H3)
+
+The delivery (`src/notifications/notification-delivery.service.ts`) used to keep what a committed transaction wanted sent in an array in the process. The API is deployed at every merge, so a reminder to a whole school (some 82 mails and 4 000 pushes, a minute or so of queue) could be lost half-sent: the inbox rows were there, the mail and the push never came, and nothing tried again. The queue is now two tables, **`OutboundNotices`** and **`OutboundPace`** (migration `20270309090000`), and the process only works through it.
+
+### 40.1 What the migration is
+
+- **`OutboundNotices`**: one row per lane (alarm or ordinary) and school of one committed transaction's notices. It holds the notices' types and meta, the mail's subject and text (which for three letter types names a child, `docs/dataskydd-sakbeskrivning.md` 4.3), and the recipients' ids. **Never an address, a token or a push text**: those are read when a row is first taken and kept on the row, as its *plan*, until it is finished.
+- **`OutboundPace`**: up to two rows, `EMAIL` and `PUSH` (each is made when it is first used), with the time the next request may go. See §40.2.
+- **Row security is on and there is no arm and no grant**, for `anon`, `authenticated`, `service_role` and the API's own role alike (a check at the end of the migration, `OUTBOUND_REACH`, and RLS sections 590, 591 and 590o hold it). The gateway reaches the tables only through nine `SECURITY DEFINER` job doors, `app.outbound_enqueue`, `_claim`, `_plan`, `_advance`, `_finish`, `_release`, `_slot`, `_sweep` and `_addresses`. Each refuses (`OB403`) a session that carries any login, as the doors of `20270220090000` do, and only the API's role may run them.
+- **The keys.** The row has a foreign key to `Schools` (cascade), the only table of the school it names. It names people only by id in two arrays, so there is no key to `Users` to convert to a composite one; a person who is removed before the row is planned is not found (the address is read from `Users`, the token from `DevicePushTokens`) and gets nothing. A row that is planned already carries the address and the tokens in its plan, so that a retry sends the same packets, and a person removed or opted out after that is still mailed by the retry for as long as the row waits (20 hours at most; see §40.8).
+- **The registerutdrag** leaves the table out, with the reason (`src/school-export/person-tables.ts`, `WITHOUT_KEY` and `SUBJECT_ACCESS`): it holds what `notiser.csv` already shows and is emptied when the notice is sent or given up.
+- **Locks.** The migration creates tables and functions and takes one lock on a live table: `SHARE ROW EXCLUSIVE` on `Schools` for the foreign key, `NOWAIT` in a loop of 50 ms for 30 s with `lock_timeout` 5 s (nothing is held between tries; after 30 s it stops with nothing changed and can be run again). Reads of `Schools` are not blocked.
+
+### 40.2 How a notice goes through it
+
+1. **Written after the commit**, as before (`PrismaService.onCommit`), in one statement per lane and school (`app.outbound_enqueue`). Nothing in the caller's transaction changed, so the statement budgets of the hot paths are the same. A write that fails is tried twice more (after 200 ms and 1 s); a queue that holds 5 000 rows waiting refuses (`OB429`) and the delivery logs it and says `false` to a listener.
+2. **Taken with a lease** (`app.outbound_claim`): the oldest row of the lane that waits and is due, or whose lease has run out, `FOR UPDATE SKIP LOCKED`, with a claim (the process's name and a random number) that every later step has to show. Two API instances, or an old and a new one in a deploy, never hold the same row; a process that stood still past its lease is told no at its next step and lets go. The lease is **two minutes** and every step renews it. This is Generera's pattern (`20270222090000`), per row.
+3. **Planned once** (`app.outbound_plan`): the addresses of the people who are still active and have not opted out (`app.outbound_addresses`, `app.delivery_opt_outs`), in packets of 49 on BCC, and the devices (`app.push_targets`) with their text, in packets of 100. Frozen on the row, so that a retry sends the same packets.
+4. **Sent a packet at a time**, mail first and then push, and **counted**: a mail packet *after* Resend took it, a push packet *before* the request. Every mail goes under an `Idempotency-Key` of the row and the packet (`notice/<row>/mail/<n>`), so a packet that was on its way when a process died is sent again by the next under the same key and **Resend does not send it twice** (it answers a repeated key as it answered the first request, for 24 hours; a row gives up after 20). Expo has no such key, so a push packet that was on its way is **not sent again**: a push arrives at most once.
+5. **Paced for the whole fleet** (`app.outbound_slot`): one mail at most every 500 ms and one push request at most every 200 ms, whichever instance sends it, as the database hands out the slots from its own clock. This is the pace the delivery has always kept, now shared between the instances of a deploy. (Resend's own page says 10 requests a second for a team; the code keeps the two a second it has always kept. Where the database cannot give a slot, the process keeps the pace by its own clock.)
+6. **Finished** (`app.outbound_finish`): the row is emptied of the notices, the recipients and the plan (a `CHECK` makes a finished row unable to hold them) and is left as a few counts for **seven days** (`app.outbound_sweep`, every five minutes).
+
+The lanes are two serial consumers in each process, one for the alarm types (`CRISIS_ALARM`, `CRISIS_ENDED`) and one for the rest, which run beside each other, so an alarm does not wait behind a whole school's wave. A job in the runner (`notice-delivery`, every 10 s, counts in `JobRuns`: `claimed`, `done`, `released`, `lost`, `failed`, `gaveUp`, `deleted`) looks at the queue for what another process left or what was handed back for a retry; a process that has just written a notice takes it at once. A process that is stopped (`SIGTERM`) finishes the packet in hand and hands the row back, so the next one does not wait for the lease.
+
+### 40.3 What goes wrong, and what the queue does about it
+
+- **Resend does not answer, or answers 5xx, 408 or 429** (a rate limit or a quota): the row is handed back after the wait Resend names (`retry-after`, an hour at most) or, if it names none, half a minute doubling to a quarter of an hour; a quota (`daily_quota_exceeded`, `monthly_quota_exceeded`) is asked again after half an hour. **A mail that must wait never keeps the same row's push from going**: the push goes and the row is handed back for the mail alone.
+- **Resend refuses our key (401, 403)**: the row waits a quarter of an hour at a time. A key that is wrong is mended by a right one, and the mails of the last 20 hours are then sent; after that they give up.
+- **Resend will not take a packet at all** (400, 404, 422; one address that is not an address is enough): the packet is counted failed and is not sent again, and the rest of the row goes. The log names the status and Resend's error name, never an address.
+- **A row that has waited 20 hours, or been tried 30 times, gives up** (`GAVE_UP`, `STALE` or `ATTEMPTS`) and is emptied. 20 is less than the 24 hours a key lives, so a retry can never duplicate a mail.
+- **A process dies.** The row's lease runs out in at most two minutes, and the next process to ask (any instance; every 10 s) takes it up from the packet it was at. Every packet that had gone has gone once.
+- **A process has no channel** (no `RESEND_API_KEY`, `PUSH_NOTIFICATIONS` off): it takes no row at all. A row with mail in it that reaches a process with push alone is handed back at once (30 s) for one that has the key.
+
+#### What happens to e-mail when `RESEND_API_KEY` is missing (production today)
+
+- **Nothing is sent, and nothing is queued.** `NotificationDeliveryService.wants` is false for a notice whose only way out is a mail, `rowsOf` makes no row for it, no process starts a lane and the tables are never written. The `notice-delivery` job is registered all the same: with no channel its pass takes no row and only sweeps, so that rows left by a key that is gone are given up and emptied after 20 hours. The in-app inbox rows are written as always. `docs/dataskydd-sakbeskrivning.md` flow 9 says the same.
+- **Setting the key does not send what went unsent.** Nothing recorded the mails that were never made; notices from the moment the instances that have the key start are queued. Set `RESEND_API_KEY` (and `EMAIL_FROM`, §0) on every instance of the API in one change; a deploy that gives it to some first is safe (the instances that have it send, and a row that reaches one that has not is left for one that has).
+- **Taking the key away again** leaves the rows that wait where they are: a process with no key does not take them, and they give up after 20 hours.
+- **Push stays as it was**: `PUSH_NOTIFICATIONS=off` queues nothing for push either (§8.1 turns it on, §15.6 tries it first).
+
+### 40.4 Deploy order
+
+- **Run the migration before the API is merged, as every migration (§20.2)**, from a tree that has every migration applied. It adds two tables and nine functions and changes nothing that exists, so the API before it is unaffected; the API after it needs the tables, and an API deployed before the migration would have every write to the queue fail and log `Delivery enqueue failed`, with the inbox rows written and no mail.
+- **During the deploy both generations run for a minute.** The old instance still queues in memory and sends what it has; the new queues in the database. A notice is queued by the instance whose transaction wrote it, so none is sent twice. **An old instance that is stopped with a wave in its memory still loses it**; release when `SELECT count(*) FROM "AckRequests" WHERE "remindAt" <= now() AND "reminderOutcome" IS NULL` is empty, once, for this release. The release after it needs no such care.
+- **Nothing to set.** No variable is new.
+
+### 40.5 Rolling back
+
+- Roll the gateway back **only when the queue is empty**: `SELECT count(*) FROM "OutboundNotices" WHERE status IN ('PENDING', 'CLAIMED')` is 0 (the previous gateway does not read the table, and what waits there would wait for good). A queue that is not empty drains in minutes when the API is up, so wait for it.
+- Then, if the tables are to go: `DROP TABLE "OutboundNotices", "OutboundPace"; DROP FUNCTION app.outbound_enqueue(uuid, boolean, jsonb, uuid[], uuid[]), app.outbound_claim(text, boolean, interval), app.outbound_plan(uuid, text, jsonb, interval), app.outbound_advance(uuid, text, interval, integer, integer, integer, integer, integer, integer), app.outbound_finish(uuid, text, text, text), app.outbound_release(uuid, text, interval), app.outbound_slot(text, integer), app.outbound_sweep(), app.outbound_addresses(uuid, uuid[]);`. They can also stay: nothing reads them.
+
+### 40.6 Looking at it (read-only)
+
+- What waits and for how long: `SELECT urgent, status, count(*), min("createdAt") FROM "OutboundNotices" WHERE status IN ('PENDING', 'CLAIMED') GROUP BY 1, 2`. A healthy queue is empty or minutes old; a row older than an hour is a provider that is down or a key that is wrong (`SELECT attempts, "mailDone", "pushDone", "notBefore" FROM "OutboundNotices" WHERE status = 'PENDING' ORDER BY "createdAt" LIMIT 5`, and the log's `Email dispatch failed [status=…, will be tried again]`).
+- What went: `SELECT date("finishedAt"), status, count(*), sum("mailsSent") AS mails, sum("mailsFailed") AS mails_failed, sum("pushSent") AS pushes, sum("pushFailed") AS push_failed FROM "OutboundNotices" WHERE "finishedAt" IS NOT NULL GROUP BY 1, 2 ORDER BY 1 DESC` (seven days). `GAVE_UP` rows carry their reason (`STALE`, `ATTEMPTS`).
+- The job: `SELECT day, runs, failures, counts, "lastError" FROM "JobRuns" WHERE job = 'notice-delivery' ORDER BY day DESC LIMIT 3`.
+- The log lines: `Email dispatch failed [timeout 10000 ms, will be tried again]`, `[status=429, will be tried again]`, `[status=422, validation_error]`, `Notice delivery failed [<error name>, attempt=<n>]`, `Notice queue gave up rows that had waited too long [rows=<n>]`, `Delivery queue full`. Never an address, a token or a text.
+- To empty a row by hand, never `DELETE`: run `SELECT * FROM app.outbound_sweep()` as the owner after setting its `createdAt` back, or let it give up at 20 hours.
+
+### 40.7 The proofs
+
+- **The suite.** RLS sections 590, 591 and 592 (as the API's role: nobody who is signed in reaches the tables or the doors; the job takes a row through every door with no login) and 590o–594o (as the owner: the catalogue and the rights of four roles; what a row may carry and what a queue of 5 000 answers; the lease, the lanes and the old claim told no; the counters, the plan once, the release, the finish that leaves no person, the pace; the sweep, the addresses and the guard of every door), and section 520's guard text for the nine doors.
+- **`scripts/test/probe-utkorg.ts`** (CI's Database job): (a) a child process is killed with `SIGKILL` while a mail is on its way to a Resend of the probe's own; the next takes the queue up, and every mail reached Resend once (the one on its way was asked for twice under one key), every device got every notice once, the rows are finished and hold nothing about a person; (a2) the same for a push packet, which is not sent again; (b) two processes at once take one queue, no row twice, no mail asked for twice, no device twice, and the mails come a step apart whoever sent them; (c) twelve connections ask for five rows, ten rounds, five rows each taken by one.
+- **The unit specs** (`notification-delivery.service.spec.ts`, with the queue in memory, `test/utils/outbound-memory.ts`) hold the delivery's rules: what is planned, the keys, every answer of Resend and what the row then does, the lease, a stop, a death, two processes, what the listener is told.
+
+### 40.8 What is not done
+
+- **The moment between the commit and the queue's write** is a few milliseconds in the process: a process killed in it (an out-of-memory kill, a node that goes) still loses the notice, as it did before. A stop with `SIGTERM` waits for the writes in flight. Closing it would mean writing the row inside the caller's transaction, which changes every hot path's statements; it was left.
+- **A planned row is not planned again**: a person removed, deactivated or opted out after the plan was frozen is still mailed by a retry while the row waits (20 hours at most), and their address stays on the row until it is finished. Planning again would change the packet under its key (Resend answers 409 to a key that comes back with other content).
+- **A push that was on its way when its process died is lost, not sent again** (§40.2). A mail is never lost that way, as long as Resend is up within the 20 hours.
+- **Kvittens' word** (*Skickad*) is said by the process that wrote the batch and is gone with it (§ Kvittens, known limit above).
+- **`notifyUsers` still reads the recipients' addresses inside the caller's transaction** when a key is set, and the delivery now reads them again when it plans (from `Users`, so that an address changed or a person removed in between counts). The first read is no longer needed and can go in a change of `notifications.service.ts`, which this one did not touch.
+- **The kitchen's letter (`sendLetter`) is not queued**: it is one mail a day and its job keeps its own claim and asks again. It takes its place in the same pace and goes under a key that is the letter's own fingerprint, so asking again after an answer that never came does not send it twice within the day.
 
 ## 39. A lesson left over the ramtid or the class's lunch on purpose ("Undantag med flit", E1b)
 

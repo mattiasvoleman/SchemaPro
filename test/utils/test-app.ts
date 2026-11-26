@@ -32,7 +32,9 @@ import { WindowedThrottlerStorage } from '../../src/common/windowed-throttler-st
 import { RolesGuard } from '../../src/auth/roles.guard';
 import { HuvudmanGuard } from '../../src/auth/huvudman.guard';
 import { IS_PUBLIC_KEY } from '../../src/auth/decorators/public.decorator';
+import { OUTBOUND_STORE } from '../../src/notifications/notification-queue';
 import { NotificationsModule } from '../../src/notifications/notifications.module';
+import { MemoryOutbound } from './outbound-memory';
 import { AttendanceModule } from '../../src/attendance/attendance.module';
 import { ResourcesModule } from '../../src/resources/resources.module';
 import { RequirementPlacementsModule } from '../../src/requirement-placements/requirement-placements.module';
@@ -303,6 +305,11 @@ export interface TestHarness {
   prisma: ReturnType<typeof createPrismaMock>;
   http: HttpServiceMock;
   supabase: SupabaseAdminMock;
+  /**
+   * The outgoing queue (OutboundNotices), in memory: what the delivery writes after a commit and takes up again. A spec that wants a
+   * mail says who has an address (`outbound.directory.set(userId, address)`), as the database says it when a row is planned.
+   */
+  outbound: MemoryOutbound;
   close: () => Promise<void>;
 }
 
@@ -362,9 +369,12 @@ export async function createTestApp(
     markHuvudman: jest.fn(async () => undefined),
   };
 
+  const outbound = new MemoryOutbound();
   const builder: TestingModuleBuilder = Test.createTestingModule({
     imports: [options.throttle ? ThrottledTestAppModule : TestAppModule],
   })
+    .overrideProvider(OUTBOUND_STORE)
+    .useValue(outbound)
     .overrideProvider(PrismaService)
     .useValue(prismaMock)
     .overrideProvider(HttpService)
@@ -400,6 +410,7 @@ export async function createTestApp(
     prisma: prismaMock,
     http,
     supabase,
+    outbound,
     close: async () => {
       await app.close();
     },

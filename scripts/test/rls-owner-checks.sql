@@ -8362,3 +8362,329 @@ BEGIN
   END LOOP;
   RAISE NOTICE 'ut 564 (locks): % checks', current_setting('ut.checks');
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Den utgående kön (H3, 20270309090000), sektion 590o–594o: det bara ägaren kan fråga, eftersom ingen API-roll läser tabellerna.
+--
+--   590o  katalogen: tabellerna, deras nycklar och CHECKar, och att ingen roll har en rättighet, ett arm eller en funktion som inte ska finnas
+--   591o  inläggning: vad en rad får bära, vad en kö på 5 000 svarar och att en okänd skola nekas
+--   592o  leasen: ordning och körfält, en claim som inte tas två gånger, en utgången lease som tas upp, en gammal claim som får nej
+--   593o  stegen: planen en gång, räknarna framåt, en färdig rad som inte bär en person, en rad som lämnas tillbaka, takten
+--   594o  städningen, adresserna och dörrens vakt
+--
+-- Allt planteras och rullas tillbaka. Raderna läses med ägarens rättigheter; ingen annan roll kan det.
+-- ---------------------------------------------------------------------------
+
+-- En rad som en transaktions efterlevnad lägger in, n mottagare.
+CREATE FUNCTION pg_temp.h3_put(p_school uuid, p_urgent boolean, p_n integer) RETURNS uuid LANGUAGE sql AS $f$
+  SELECT app.outbound_enqueue(p_school, p_urgent,
+           jsonb_build_array(jsonb_build_object('type', 'LESSON_CANCELLED', 'meta', '{}'::jsonb, 'n', p_n, 'email', jsonb_build_object('subject', 'S', 'body', 'B'))),
+           ARRAY(SELECT gen_random_uuid() FROM generate_series(1, p_n)), ARRAY(SELECT gen_random_uuid() FROM generate_series(1, p_n)))
+$f$;
+CREATE FUNCTION pg_temp.h3_row(p_id uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT concat_ws('|', status, coalesce(attempts::text, '-'), "mailDone", "pushDone", "mailsSent", "mailsFailed", "pushSent", "pushFailed",
+                   CASE WHEN plan IS NULL THEN 'noplan' ELSE 'plan' END, cardinality("recipientIds"), jsonb_array_length(entries),
+                   CASE WHEN "claimedBy" IS NULL THEN 'free' ELSE 'held' END, coalesce(reason, '-'))
+    FROM "OutboundNotices" WHERE id = p_id
+$f$;
+
+-- 590o ----------------------------------------------------------------------
+BEGIN;
+DO $$
+DECLARE
+  t text;
+  r text;
+  fn text;
+  bad text;
+  priv text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['OutboundNotices', 'OutboundPace'] LOOP
+    PERFORM pg_temp.ut_expect('590o ' || t || ' has row-level security', (SELECT relrowsecurity::text FROM pg_class WHERE oid = format('public.%I', t)::regclass), 'true');
+    PERFORM pg_temp.ut_expect('590o ' || t || ' has no arm at all', (SELECT count(*)::text FROM pg_policies WHERE schemaname = 'public' AND tablename = t), '0');
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      -- Every privilege a table has, the one PostgreSQL 17 added (MAINTAIN) among them.
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] || CASE WHEN current_setting('server_version_num')::int >= 170000 THEN ARRAY['MAINTAIN'] ELSE ARRAY[]::text[] END LOOP
+        PERFORM pg_temp.ut_expect(format('590o %s has no %s on %s', r, priv, t), has_table_privilege(r, format('public.%I', t), priv)::text, 'false');
+      END LOOP;
+    END LOOP;
+    PERFORM pg_temp.ut_expect('590o ' || t || ' is a table for PUBLIC to leave alone', (SELECT count(*)::text FROM information_schema.role_table_grants WHERE table_schema = 'public' AND table_name = t AND grantee = 'PUBLIC'), '0');
+  END LOOP;
+
+  -- The nine doors: definer, a pinned search path, the API's role alone.
+  FOREACH fn IN ARRAY ARRAY[
+    'app.outbound_enqueue(uuid, boolean, jsonb, uuid[], uuid[])', 'app.outbound_claim(text, boolean, interval)', 'app.outbound_plan(uuid, text, jsonb, interval)',
+    'app.outbound_advance(uuid, text, interval, integer, integer, integer, integer, integer, integer)', 'app.outbound_finish(uuid, text, text, text)',
+    'app.outbound_release(uuid, text, interval)', 'app.outbound_slot(text, integer)', 'app.outbound_sweep()', 'app.outbound_addresses(uuid, uuid[])'] LOOP
+    PERFORM pg_temp.ut_expect('590o ' || fn || ' is a definer with a pinned search path',
+      (SELECT concat_ws('|', p.prosecdef, array_to_string(p.proconfig, ',')) FROM pg_proc p WHERE p.oid = fn::regprocedure), 't|search_path=public, pg_temp');
+    PERFORM pg_temp.ut_expect('590o ' || fn || ' is the API role''s alone',
+      concat_ws('/', has_function_privilege('app_authenticated', fn, 'EXECUTE')::text,
+                (SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN has_function_privilege('authenticated', fn, 'EXECUTE')::text ELSE 'false' END),
+                (SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN has_function_privilege('anon', fn, 'EXECUTE')::text ELSE 'false' END),
+                (SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN has_function_privilege('service_role', fn, 'EXECUTE')::text ELSE 'false' END),
+                (SELECT count(*)::text FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE p.oid = fn::regprocedure AND a.grantee = 0)),
+      'true/false/false/false/0');
+  END LOOP;
+
+  -- The school's key: a row goes with its school, and a school's id that changes is followed.
+  PERFORM pg_temp.ut_expect('590o the key to Schools', (SELECT regexp_replace(pg_get_constraintdef(oid), '\s+', ' ', 'g') FROM pg_constraint WHERE conname = 'OutboundNotices_schoolId_fkey'),
+    'FOREIGN KEY ("schoolId") REFERENCES "Schools"(id) ON UPDATE CASCADE ON DELETE CASCADE');
+  PERFORM pg_temp.ut_expect('590o the key has an index to answer a school''s removal with', (SELECT count(*)::text FROM pg_indexes WHERE tablename = 'OutboundNotices' AND indexname = 'OutboundNotices_schoolId_idx'), '1');
+  PERFORM pg_temp.ut_expect('590o the waiting index is partial', (SELECT (indpred IS NOT NULL)::text FROM pg_index WHERE indexrelid = '"OutboundNotices_waiting_idx"'::regclass), 'true');
+  RAISE NOTICE 'ut 590o: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- 591o ----------------------------------------------------------------------
+BEGIN;
+DO $$
+DECLARE
+  a uuid := (SELECT id FROM "Schools" ORDER BY id LIMIT 1);
+  made uuid;
+  stmt text;
+BEGIN
+  made := pg_temp.h3_put(a, false, 3);
+  PERFORM pg_temp.ut_expect('591o a row is put in waiting with what it was given', pg_temp.h3_row(made), 'PENDING|0|0|0|0|0|0|0|noplan|3|1|free|-');
+  PERFORM pg_temp.ut_expect('591o ... in its school, in the lane it was given, with the database''s clock',
+    (SELECT concat_ws('|', "schoolId" = a, urgent, "createdAt" <= clock_timestamp(), "notBefore" <= clock_timestamp()) FROM "OutboundNotices" WHERE id = made), 't|f|t|t');
+
+  -- What it may not carry: recipients that do not match, entries that are no list, nobody at all, too many.
+  FOREACH stmt IN ARRAY ARRAY[
+    format($q$SELECT app.outbound_enqueue(%L, false, '[{"n":2}]', ARRAY[gen_random_uuid(), gen_random_uuid()], ARRAY[gen_random_uuid()])$q$, a),
+    format($q$SELECT app.outbound_enqueue(%L, false, '{"n":1}', ARRAY[gen_random_uuid()], ARRAY[gen_random_uuid()])$q$, a),
+    format($q$SELECT app.outbound_enqueue(%L, false, '[]', ARRAY[gen_random_uuid()], ARRAY[gen_random_uuid()])$q$, a),
+    format($q$SELECT app.outbound_enqueue(%L, false, '[{"n":0}]', '{}', '{}')$q$, a),
+    format($q$SELECT app.outbound_enqueue(%L, false, '[{"n":20001}]', ARRAY(SELECT gen_random_uuid() FROM generate_series(1, 20001)), ARRAY(SELECT gen_random_uuid() FROM generate_series(1, 20001)))$q$, a)
+  ] LOOP
+    PERFORM pg_temp.ut_expect('591o refused: ' || left(stmt, 80), split_part(pg_temp.ut_try(stmt), ' ', 1), '23514');
+  END LOOP;
+  PERFORM pg_temp.ut_expect('591o a school that is not one is refused', split_part(pg_temp.ut_try(format($q$SELECT pg_temp.h3_put(%L, false, 1)$q$, gen_random_uuid())), ' ', 1), '23503');
+  PERFORM pg_temp.ut_expect('591o 20 000 recipients are not too many', pg_temp.ut_try(format($q$SELECT app.outbound_enqueue(%L, false, '[{"n":20000}]', ARRAY(SELECT gen_random_uuid() FROM generate_series(1, 20000)), ARRAY(SELECT gen_random_uuid() FROM generate_series(1, 20000)))$q$, a)), 'ok');
+  RAISE NOTICE 'ut 591o (what a row carries): % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+BEGIN;
+DO $$
+DECLARE
+  a uuid := (SELECT id FROM "Schools" ORDER BY id LIMIT 1);
+BEGIN
+  -- A queue of 5 000 waiting rows takes no more, and says so with its own code; one that is finished does not count.
+  INSERT INTO "OutboundNotices" ("schoolId", entries, "recipientIds", "notificationIds")
+  SELECT a, '[{"n":1}]'::jsonb, ARRAY[gen_random_uuid()], ARRAY[gen_random_uuid()] FROM generate_series(1, 4999);
+  PERFORM pg_temp.ut_expect('591o the 5 000th row is taken', pg_temp.ut_try(format($q$SELECT pg_temp.h3_put(%L, false, 1)$q$, a)), 'ok');
+  PERFORM pg_temp.ut_expect('591o the 5 001st is refused with the queue''s own code', pg_temp.ut_try(format($q$SELECT pg_temp.h3_put(%L, false, 1)$q$, a)), 'OB429');
+  PERFORM pg_temp.ut_expect('591o ... and an alarm is refused too: the queue is one', pg_temp.ut_try(format($q$SELECT pg_temp.h3_put(%L, true, 1)$q$, a)), 'OB429');
+  UPDATE "OutboundNotices" SET status = 'DONE', "finishedAt" = clock_timestamp(), entries = '[]', "recipientIds" = '{}', "notificationIds" = '{}'
+   WHERE id = (SELECT id FROM "OutboundNotices" LIMIT 1);
+  PERFORM pg_temp.ut_expect('591o a finished row makes room', pg_temp.ut_try(format($q$SELECT pg_temp.h3_put(%L, false, 1)$q$, a)), 'ok');
+  RAISE NOTICE 'ut 591o (the full queue): % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- 592o ----------------------------------------------------------------------
+BEGIN;
+DO $$
+DECLARE
+  a uuid := (SELECT id FROM "Schools" ORDER BY id LIMIT 1);
+  o1 uuid; o2 uuid; u1 uuid; later uuid;
+  c1 text; c2 text; cu text; stale text; renewed text; tries text; md text; pd text;
+BEGIN
+  o1 := pg_temp.h3_put(a, false, 1);
+  PERFORM pg_sleep(0.01);
+  o2 := pg_temp.h3_put(a, false, 1);
+  u1 := pg_temp.h3_put(a, true, 1);
+  later := pg_temp.h3_put(a, false, 1);
+  UPDATE "OutboundNotices" SET "notBefore" = clock_timestamp() + interval '10 minutes' WHERE id = later;
+
+  -- The oldest of the lane first, the alarm in its own lane, a row that waits for its time is not due.
+  SELECT notice_id::text, claim INTO STRICT c1, stale FROM app.outbound_claim('test-a', false, interval '2 minutes');
+  PERFORM pg_temp.ut_expect('592o the oldest row of the ordinary lane is taken first', c1, o1::text);
+  PERFORM pg_temp.ut_expect('592o ... held, tried once, with a lease two minutes long',
+    (SELECT concat_ws('|', status, attempts, "claimedBy" = stale, "leaseUntil" > clock_timestamp() + interval '119 seconds', "leaseUntil" <= clock_timestamp() + interval '121 seconds') FROM "OutboundNotices" WHERE id = o1), 'CLAIMED|1|t|t|t');
+  PERFORM pg_temp.ut_expect('592o the claim names its consumer', left(stale, 7), 'test-a/');
+  SELECT notice_id::text, claim INTO STRICT c2, renewed FROM app.outbound_claim('test-b', false, interval '2 minutes');
+  PERFORM pg_temp.ut_expect('592o a second consumer gets the next row, never the one that is held', c2, o2::text);
+  PERFORM pg_temp.ut_expect('592o a third finds nothing due (the last waits for its time)', (SELECT count(*)::text FROM app.outbound_claim('test-c', false, interval '2 minutes')), '0');
+  SELECT notice_id::text, claim INTO STRICT c2, cu FROM app.outbound_claim('test-u', true, interval '2 minutes');
+  PERFORM pg_temp.ut_expect('592o the alarm is the urgent lane''s', c2, u1::text);
+  PERFORM pg_temp.ut_expect('592o ... and the urgent lane has no other', (SELECT count(*)::text FROM app.outbound_claim('test-u', true, interval '2 minutes')), '0');
+  PERFORM pg_temp.ut_expect('592o a lease is held to what is sensible: ten seconds at least, a quarter of an hour at most',
+    (SELECT (extract(epoch FROM "leaseUntil" - clock_timestamp()) BETWEEN 100 AND 120)::text FROM "OutboundNotices" WHERE id = o1), 'true');
+
+  -- Its lease runs out: another takes the row up, with the plan and counters it had, and the first is told no from then on.
+  PERFORM pg_temp.ut_expect('592o the first holder plans', app.outbound_plan(o1, stale, '{"from":"x","mail":[],"push":[]}'::jsonb, interval '2 minutes')::text, 'true');
+  PERFORM pg_temp.ut_expect('592o ... and advances', app.outbound_advance(o1, stale, interval '2 minutes', 1, 2, 3, 0, 0, 0)::text, 'true');
+  UPDATE "OutboundNotices" SET "leaseUntil" = clock_timestamp() - interval '1 second' WHERE id = o1;
+  SELECT notice_id::text, claim, plan::text, mail_done::text, push_done::text, attempts::text INTO STRICT c1, renewed, c2, md, pd, tries
+    FROM app.outbound_claim('test-c', false, interval '2 minutes');
+  PERFORM pg_temp.ut_expect('592o the row whose lease ran out is taken up', c1, o1::text);
+  PERFORM pg_temp.ut_expect('592o ... with its plan, its counters and a second try', concat_ws('|', c2, md, pd, tries), '{"from": "x", "mail": [], "push": []}|1|2|2');
+  PERFORM pg_temp.ut_expect('592o ... under a new claim', (renewed <> stale)::text, 'true');
+  PERFORM pg_temp.ut_expect('592o the old holder is told no: advance', app.outbound_advance(o1, stale, interval '2 minutes', 9, 9, 9, 9, 9, 9)::text, 'false');
+  PERFORM pg_temp.ut_expect('592o ... plan', app.outbound_plan(o1, stale, '{}'::jsonb, interval '2 minutes')::text, 'false');
+  PERFORM pg_temp.ut_expect('592o ... release', app.outbound_release(o1, stale, interval '0 seconds')::text, 'false');
+  PERFORM pg_temp.ut_expect('592o ... finish', app.outbound_finish(o1, stale, 'DONE', NULL)::text, 'false');
+  PERFORM pg_temp.ut_expect('592o ... and nothing it tried changed the row', pg_temp.h3_row(o1), 'CLAIMED|2|1|2|3|0|0|0|plan|1|1|held|-');
+  PERFORM pg_temp.ut_expect('592o a claim of another row is no claim of this', app.outbound_advance(o1, cu, interval '2 minutes', 9, 9, 9, 9, 9, 9)::text, 'false');
+  RAISE NOTICE 'ut 592o: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- 593o ----------------------------------------------------------------------
+BEGIN;
+DO $$
+DECLARE
+  a uuid := (SELECT id FROM "Schools" ORDER BY id LIMIT 1);
+  r uuid; h text; second text;
+  s0 integer; s1 integer; s2 integer; p0 integer; big integer;
+BEGIN
+  r := pg_temp.h3_put(a, false, 2);
+  SELECT claim INTO STRICT h FROM app.outbound_claim('test', false, interval '2 minutes');
+
+  -- The plan once.
+  PERFORM pg_temp.ut_expect('593o the plan is stored once', app.outbound_plan(r, h, '{"from":"x","mail":[{"e":0,"bcc":["a@example.invalid"]}],"push":[]}'::jsonb, interval '2 minutes')::text, 'true');
+  PERFORM pg_temp.ut_expect('593o ... and not again', app.outbound_plan(r, h, '{"from":"y","mail":[],"push":[]}'::jsonb, interval '2 minutes')::text, 'false');
+  PERFORM pg_temp.ut_expect('593o ... the first one stays', (SELECT plan ->> 'from' FROM "OutboundNotices" WHERE id = r), 'x');
+
+  -- The counters go forward and never back; the counts add; a negative count adds nothing.
+  PERFORM pg_temp.ut_expect('593o advance', app.outbound_advance(r, h, interval '2 minutes', 3, 1, 49, 0, 5, 1)::text, 'true');
+  PERFORM pg_temp.ut_expect('593o ... moved', pg_temp.h3_row(r), 'CLAIMED|1|3|1|49|0|5|1|plan|2|1|held|-');
+  PERFORM app.outbound_advance(r, h, interval '2 minutes', 1, 0, 1, 2, -5, -7);
+  PERFORM pg_temp.ut_expect('593o a counter does not go back, a count only grows', pg_temp.h3_row(r), 'CLAIMED|1|3|1|50|2|5|1|plan|2|1|held|-');
+  UPDATE "OutboundNotices" SET "leaseUntil" = clock_timestamp() + interval '5 seconds' WHERE id = r;
+  PERFORM app.outbound_advance(r, h, interval '90 seconds', 0, 0, 0, 0, 0, 0);
+  PERFORM pg_temp.ut_expect('593o every step renews the lease', (SELECT ("leaseUntil" > clock_timestamp() + interval '80 seconds')::text FROM "OutboundNotices" WHERE id = r), 'true');
+
+  -- Handed back: waiting again after its wait, with the plan and the counters.
+  PERFORM pg_temp.ut_expect('593o release', app.outbound_release(r, h, interval '30 seconds')::text, 'true');
+  PERFORM pg_temp.ut_expect('593o ... the row waits, free, with its plan', pg_temp.h3_row(r), 'PENDING|1|3|1|50|2|5|1|plan|2|1|free|-');
+  PERFORM pg_temp.ut_expect('593o ... after its wait', (SELECT ("notBefore" > clock_timestamp() + interval '25 seconds' AND "notBefore" <= clock_timestamp() + interval '31 seconds')::text FROM "OutboundNotices" WHERE id = r), 'true');
+  PERFORM pg_temp.ut_expect('593o ... and is not due before it', (SELECT count(*)::text FROM app.outbound_claim('test', false, interval '2 minutes')), '0');
+  UPDATE "OutboundNotices" SET "notBefore" = clock_timestamp() WHERE id = r;
+  SELECT claim INTO STRICT second FROM app.outbound_claim('test', false, interval '2 minutes');
+  PERFORM pg_temp.ut_expect('593o ... due, it is taken again, a second time', pg_temp.h3_row(r), 'CLAIMED|2|3|1|50|2|5|1|plan|2|1|held|-');
+  PERFORM app.outbound_release(r, second, interval '5 hours');
+  PERFORM pg_temp.ut_expect('593o a wait is held to an hour', (SELECT ("notBefore" <= clock_timestamp() + interval '61 minutes')::text FROM "OutboundNotices" WHERE id = r), 'true');
+  UPDATE "OutboundNotices" SET "notBefore" = clock_timestamp() WHERE id = r;
+  SELECT claim INTO STRICT second FROM app.outbound_claim('test', false, interval '2 minutes');
+
+  -- Finished: nothing about a person is left, only the counts.
+  PERFORM pg_temp.ut_expect('593o finish', app.outbound_finish(r, second, 'DONE', NULL)::text, 'true');
+  PERFORM pg_temp.ut_expect('593o ... the row is a few numbers', pg_temp.h3_row(r), 'DONE|3|3|1|50|2|5|1|noplan|0|0|free|-');
+  PERFORM pg_temp.ut_expect('593o ... with a time it ended', (SELECT ("finishedAt" IS NOT NULL AND "leaseUntil" IS NULL AND "claimedBy" IS NULL)::text FROM "OutboundNotices" WHERE id = r), 'true');
+  PERFORM pg_temp.ut_expect('593o a finished row is taken by nobody', (SELECT count(*)::text FROM app.outbound_claim('test', false, interval '2 minutes')), '0');
+  PERFORM pg_temp.ut_expect('593o ... nor stepped, handed back or finished again',
+    concat_ws('/', app.outbound_advance(r, second, interval '2 minutes', 9, 9, 9, 9, 9, 9), app.outbound_release(r, second, interval '0 seconds'), app.outbound_finish(r, second, 'DONE', NULL)), 'f/f/f');
+  -- The database itself will not keep a person on a finished row, whatever writes to it.
+  PERFORM pg_temp.ut_expect('593o a row cannot be finished with its recipients left',
+    split_part(pg_temp.ut_try(format($q$UPDATE "OutboundNotices" SET "recipientIds" = ARRAY[gen_random_uuid()], "notificationIds" = ARRAY[gen_random_uuid()] WHERE id = %L$q$, r)), ' ', 1), '23514');
+  PERFORM pg_temp.ut_expect('593o ... or its notices', split_part(pg_temp.ut_try(format($q$UPDATE "OutboundNotices" SET entries = '[{"n":1}]' WHERE id = %L$q$, r)), ' ', 1), '23514');
+  PERFORM pg_temp.ut_expect('593o ... or its plan', split_part(pg_temp.ut_try(format($q$UPDATE "OutboundNotices" SET plan = '{}' WHERE id = %L$q$, r)), ' ', 1), '23514');
+  PERFORM pg_temp.ut_expect('593o a status that is not one is refused', split_part(pg_temp.ut_try(format($q$UPDATE "OutboundNotices" SET status = 'LOST' WHERE id = %L$q$, r)), ' ', 1), '23514');
+  PERFORM pg_temp.ut_expect('593o a row cannot be held with no lease', split_part(pg_temp.ut_try(format($q$UPDATE "OutboundNotices" SET "claimedBy" = 'x' WHERE id = %L$q$, pg_temp.h3_put(a, false, 1))), ' ', 1), '23514');
+  PERFORM pg_temp.ut_expect('593o a reason is for a row that gave up', split_part(pg_temp.ut_try(format($q$UPDATE "OutboundNotices" SET reason = 'STALE' WHERE id = %L$q$, r)), ' ', 1), '23514');
+  PERFORM pg_temp.ut_expect('593o a count is not negative', split_part(pg_temp.ut_try(format($q$UPDATE "OutboundNotices" SET "mailsSent" = -1 WHERE id = %L$q$, r)), ' ', 1), '23514');
+
+  -- The pace: the first right away, the next a step after it, one channel apart from the other.
+  s0 := app.outbound_slot('EMAIL', 500);
+  s1 := app.outbound_slot('EMAIL', 500);
+  s2 := app.outbound_slot('EMAIL', 500);
+  p0 := app.outbound_slot('PUSH', 200);
+  PERFORM pg_temp.ut_expect('593o the first mail goes at once', s0::text, '0');
+  PERFORM pg_temp.ut_expect('593o the next a step after it', (s1 BETWEEN 400 AND 500)::text, 'true');
+  PERFORM pg_temp.ut_expect('593o the one after that two steps after the first', (s2 BETWEEN 900 AND 1000)::text, 'true');
+  PERFORM pg_temp.ut_expect('593o a push asks for its own pace, and gets its first at once', p0::text, '0');
+  -- A volatile function twice in a BETWEEN is two slots: the answer is read once.
+  big := app.outbound_slot('PUSH', 2000000000);
+  PERFORM pg_temp.ut_expect('593o the next slot comes a step after the last, and a step is held to ten seconds', (big BETWEEN 150 AND 200)::text, 'true');
+  big := app.outbound_slot('PUSH', 0);
+  PERFORM pg_temp.ut_expect('593o ... the one after the long step waits ten seconds for it, and no more', (big BETWEEN 9900 AND 10200)::text, 'true');
+  big := app.outbound_slot('PUSH', 1);
+  PERFORM pg_temp.ut_expect('593o a step of nothing is a millisecond, so the slots still follow one another', (big BETWEEN 10000 AND 10201)::text, 'true');
+  PERFORM pg_temp.ut_expect('593o a channel that does not exist has no pace', split_part(pg_temp.ut_try($q$SELECT app.outbound_slot('SMS', 500)$q$), ' ', 1), '23514');
+  RAISE NOTICE 'ut 593o: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- 594o ----------------------------------------------------------------------
+BEGIN;
+DO $$
+DECLARE
+  a uuid := (SELECT id FROM "Schools" ORDER BY id LIMIT 1);
+  b uuid := (SELECT id FROM "Schools" ORDER BY id OFFSET 1 LIMIT 1);
+  fresh uuid; old uuid; worn uuid; held uuid; heldold uuid; done8 uuid; done6 uuid; gone text; edge19 uuid; edge29 uuid;
+  ua uuid; ub uuid; ui uuid; ue uuid; uo uuid;
+BEGIN
+  -- The sweep: what has waited 20 hours or been tried 30 times gives up, emptied; what is held by a live lease is not touched; finished rows
+  -- live a week.
+  fresh := pg_temp.h3_put(a, false, 1);
+  old := pg_temp.h3_put(a, false, 1);
+  worn := pg_temp.h3_put(a, false, 1);
+  held := pg_temp.h3_put(a, false, 1);
+  heldold := pg_temp.h3_put(a, false, 1);
+  edge19 := pg_temp.h3_put(a, false, 1);
+  edge29 := pg_temp.h3_put(a, false, 1);
+  UPDATE "OutboundNotices" SET "createdAt" = clock_timestamp() - interval '19 hours' WHERE id = edge19;
+  UPDATE "OutboundNotices" SET attempts = 29 WHERE id = edge29;
+  UPDATE "OutboundNotices" SET "createdAt" = clock_timestamp() - interval '21 hours' WHERE id = old;
+  UPDATE "OutboundNotices" SET attempts = 30 WHERE id = worn;
+  UPDATE "OutboundNotices" SET "createdAt" = clock_timestamp() - interval '21 hours', status = 'CLAIMED', "claimedBy" = 'live', "leaseUntil" = clock_timestamp() + interval '1 minute' WHERE id = held;
+  UPDATE "OutboundNotices" SET "createdAt" = clock_timestamp() - interval '21 hours', status = 'CLAIMED', "claimedBy" = 'dead', "leaseUntil" = clock_timestamp() - interval '1 minute' WHERE id = heldold;
+  INSERT INTO "OutboundNotices" ("schoolId", entries, "recipientIds", "notificationIds", status, "finishedAt") VALUES (a, '[]', '{}', '{}', 'DONE', clock_timestamp() - interval '8 days') RETURNING id INTO done8;
+  INSERT INTO "OutboundNotices" ("schoolId", entries, "recipientIds", "notificationIds", status, "finishedAt") VALUES (a, '[]', '{}', '{}', 'DONE', clock_timestamp() - interval '6 days') RETURNING id INTO done6;
+  PERFORM pg_temp.ut_expect('594o the sweep gave up three rows and removed one', (SELECT gave_up || '/' || deleted FROM app.outbound_sweep()), '3/1');
+  PERFORM pg_temp.ut_expect('594o a young row waits as it did', pg_temp.h3_row(fresh), 'PENDING|0|0|0|0|0|0|0|noplan|1|1|free|-');
+  PERFORM pg_temp.ut_expect('594o ... one of 19 hours, under the 20, waits too', pg_temp.h3_row(edge19), 'PENDING|0|0|0|0|0|0|0|noplan|1|1|free|-');
+  PERFORM pg_temp.ut_expect('594o ... and one tried 29 times, under the 30', pg_temp.h3_row(edge29), 'PENDING|29|0|0|0|0|0|0|noplan|1|1|free|-');
+  PERFORM pg_temp.ut_expect('594o one that waited 21 hours gave up, emptied, for its age', pg_temp.h3_row(old), 'GAVE_UP|0|0|0|0|0|0|0|noplan|0|0|free|STALE');
+  PERFORM pg_temp.ut_expect('594o one tried 30 times gave up, for its tries', pg_temp.h3_row(worn), 'GAVE_UP|30|0|0|0|0|0|0|noplan|0|0|free|ATTEMPTS');
+  PERFORM pg_temp.ut_expect('594o one held by a live lease is left alone, however old', pg_temp.h3_row(held), 'CLAIMED|0|0|0|0|0|0|0|noplan|1|1|held|-');
+  PERFORM pg_temp.ut_expect('594o one whose holder is gone gave up', pg_temp.h3_row(heldold), 'GAVE_UP|0|0|0|0|0|0|0|noplan|0|0|free|STALE');
+  PERFORM pg_temp.ut_expect('594o a finished row of eight days is gone', (SELECT count(*)::text FROM "OutboundNotices" WHERE id = done8), '0');
+  PERFORM pg_temp.ut_expect('594o ... one of six days is kept', (SELECT count(*)::text FROM "OutboundNotices" WHERE id = done6), '1');
+  PERFORM pg_temp.ut_expect('594o a second sweep has nothing to do', (SELECT gave_up || '/' || deleted FROM app.outbound_sweep()), '0/0');
+
+  -- The addresses: active people of the school with something in the box, nobody else's.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "updatedAt") VALUES (a, 'h3-a@example.invalid', 'H', 'A', 'GUARDIAN', gen_random_uuid(), now()) RETURNING id INTO ua;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "updatedAt") VALUES (b, 'h3-b@example.invalid', 'H', 'B', 'GUARDIAN', gen_random_uuid(), now()) RETURNING id INTO ub;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "isActive", "authId", "updatedAt") VALUES (a, 'h3-i@example.invalid', 'H', 'I', 'GUARDIAN', false, gen_random_uuid(), now()) RETURNING id INTO ui;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "updatedAt") VALUES (a, '  ', 'H', 'E', 'GUARDIAN', gen_random_uuid(), now()) RETURNING id INTO ue;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "updatedAt") VALUES (a, 'h3-o@example.invalid', 'H', 'O', 'GUARDIAN', gen_random_uuid(), now()) RETURNING id INTO uo;
+  PERFORM pg_temp.ut_expect('594o the address of an active person of the school, and of nobody else''s, inactive or without one',
+    (SELECT string_agg(email, ',' ORDER BY email) FROM app.outbound_addresses(a, ARRAY[ua, ub, ui, ue, uo, gen_random_uuid()])), 'h3-a@example.invalid,h3-o@example.invalid');
+  PERFORM pg_temp.ut_expect('594o ... a person who is gone has none', (SELECT count(*)::text FROM app.outbound_addresses(a, ARRAY[gen_random_uuid()])), '0');
+  PERFORM pg_temp.ut_expect('594o ... and the other school''s person is the other school''s', (SELECT string_agg(email, ',') FROM app.outbound_addresses(b, ARRAY[ua, ub])), 'h3-b@example.invalid');
+
+  -- The guard: any login at all is refused, by every door, and an empty one is not a login.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000001')::text, true);
+  FOREACH gone IN ARRAY ARRAY[
+    $q$SELECT app.outbound_enqueue(gen_random_uuid(), false, '[]', '{}', '{}')$q$, $q$SELECT * FROM app.outbound_claim('x', false, interval '1 minute')$q$,
+    $q$SELECT app.outbound_plan(gen_random_uuid(), 'x', '{}', interval '1 minute')$q$, $q$SELECT app.outbound_advance(gen_random_uuid(), 'x', interval '1 minute', 0, 0, 0, 0, 0, 0)$q$,
+    $q$SELECT app.outbound_finish(gen_random_uuid(), 'x', 'DONE', NULL)$q$, $q$SELECT app.outbound_release(gen_random_uuid(), 'x', interval '1 minute')$q$,
+    $q$SELECT app.outbound_slot('EMAIL', 500)$q$, $q$SELECT * FROM app.outbound_sweep()$q$] LOOP
+    PERFORM pg_temp.ut_expect('594o refused to a login: ' || left(gone, 40), pg_temp.ut_try(gone), 'OB403');
+  END LOOP;
+  PERFORM pg_temp.ut_expect('594o ... and the addresses are none to a login', (SELECT count(*)::text FROM app.outbound_addresses(a, ARRAY[ua, uo])), '0');
+  -- A subject alone, and claims that are an empty object, are logins too, for every door.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000001', true);
+  FOREACH gone IN ARRAY ARRAY[
+    $q$SELECT app.outbound_enqueue(gen_random_uuid(), false, '[]', '{}', '{}')$q$, $q$SELECT * FROM app.outbound_claim('x', false, interval '1 minute')$q$,
+    $q$SELECT app.outbound_plan(gen_random_uuid(), 'x', '{}', interval '1 minute')$q$, $q$SELECT app.outbound_advance(gen_random_uuid(), 'x', interval '1 minute', 0, 0, 0, 0, 0, 0)$q$,
+    $q$SELECT app.outbound_finish(gen_random_uuid(), 'x', 'DONE', NULL)$q$, $q$SELECT app.outbound_release(gen_random_uuid(), 'x', interval '1 minute')$q$,
+    $q$SELECT app.outbound_slot('EMAIL', 500)$q$, $q$SELECT * FROM app.outbound_sweep()$q$] LOOP
+    PERFORM pg_temp.ut_expect('594o a lone subject is a login too: ' || left(gone, 40), pg_temp.ut_try(gone), 'OB403');
+  END LOOP;
+  PERFORM pg_temp.ut_expect('594o ... and its addresses are none', (SELECT count(*)::text FROM app.outbound_addresses(a, ARRAY[ua, uo])), '0');
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  PERFORM set_config('request.jwt.claims', '{}', true);
+  FOREACH gone IN ARRAY ARRAY[$q$SELECT * FROM app.outbound_claim('x', false, interval '1 minute')$q$, $q$SELECT app.outbound_finish(gen_random_uuid(), 'x', 'DONE', NULL)$q$, $q$SELECT * FROM app.outbound_sweep()$q$] LOOP
+    PERFORM pg_temp.ut_expect('594o claims that are an empty object are a login too: ' || left(gone, 40), pg_temp.ut_try(gone), 'OB403');
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM pg_temp.ut_expect('594o the empty strings a pooled connection reads are none', pg_temp.ut_try($q$SELECT app.outbound_slot('EMAIL', 500)$q$), 'ok');
+  RAISE NOTICE 'ut 594o: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;

@@ -406,6 +406,17 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-demo-reset.ts
 
+      # Den utgående kön (H3, 20270309090000, omgång 15): mail and push wait in the database and survive a restart. A child process
+      # of the probe takes the queue up against a Resend and an Expo that are servers of the probe's own, and is killed with SIGKILL
+      # while a mail is on its way (and, apart, a push); the next takes it from there, and every mail reaches Resend once under its
+      # Idempotency-Key, every device every notice at most once. Two processes at once take one queue without a row, a mail or a
+      # device twice and at one pace, and twelve connections asking for five rows take five. It makes a school of its own and drops it.
+      - name: Outgoing queue probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-utkorg.ts
+
       # Byten och flyttar (round 9, G1): a small högstadium with parallel
       # blocks cut across its classes, laid by the fixture, asked for swaps and
       # chains as a scheduler under row security. Every proposal is checked by
