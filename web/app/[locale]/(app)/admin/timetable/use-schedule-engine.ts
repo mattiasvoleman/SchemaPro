@@ -332,6 +332,11 @@ export function useScheduleEngine(inputs: Pick<TimetableReads, "groups" | "shown
             subjectId: lesson.subjectId,
             extraGroupIds: lesson.extraGroupIds,
             studentIds: lesson.studentIds,
+            // Its weeks and its window of dates, as the gateway's judge holds them: left off, a lesson of the autumn was refused a time
+            // that a lesson of the spring holds, and one on odd weeks a time of the even weeks (found by the fall file's richer worlds).
+            recurrence: lesson.recurrence,
+            startDate: lesson.startDate,
+            endDate: lesson.endDate,
             // The dragged lesson's OWN ombyte and dusch. Left off, the
             // candidate would be checked without the minutes every other
             // placement on the grid is carrying: the drag would be let into a
