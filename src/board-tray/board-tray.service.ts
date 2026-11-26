@@ -27,6 +27,8 @@ export interface TrayBrick {
   subjectId: string;
   /** Whose lesson: the huvudlärare, or a share's teacher; null for a lesson nobody teaches. */
   teacherId: string | null;
+  /** The medlärare, who is in the room for every lesson of the post: a question about where the brick can stand (E3's brick) asks for it. */
+  coTeacherId: string | null;
   minutes: number;
   /** The weeks the post runs, which the lesson inherits. */
   recurrence: LessonRecurrence;
@@ -102,6 +104,7 @@ export class BoardTrayService {
               studentGroupId: view.studentGroupId,
               subjectId: view.subjectId,
               teacherId: part.teacherId,
+              coTeacherId: view.coTeacherId,
               minutes: part.minutes,
               recurrence: view.recurrence,
               startDate: view.startDate,
