@@ -1,7 +1,9 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useInvitationChannel } from "@/lib/queries";
+import { api } from "@/lib/api";
+import type { InvitationChannel } from "@/lib/queries";
 import { Notice } from "@/components/ui/notice";
 
 /**
@@ -14,7 +16,13 @@ import { Notice } from "@/components/ui/notice";
  */
 export function InvitationChannelCard() {
   const t = useTranslations("dashboard");
-  const data = useInvitationChannel().data;
+  // Its own query, with the key lib/queries.ts's useInvitationChannel has, and not that hook: queries.ts is the shared module of forty routes,
+  // and the start page, which does not otherwise carry it, would have carried all of it for one read (+5.4 KB measured, 2026-11-26).
+  const data = useQuery({
+    queryKey: ["dashboard", "invitationChannel"],
+    queryFn: () => api.get<InvitationChannel>("/api/v1/users/invitation-channel"),
+    staleTime: 5 * 60_000,
+  }).data;
   if (!data) return null;
 
   if (!data.configured) {
