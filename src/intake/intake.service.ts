@@ -90,7 +90,7 @@ export async function readFacts(tx: PrismaClient, schoolId: string): Promise<Int
   // Schemavisaren is on when any kind of schedule is shown in it (a mode other than OFF): the audience says who may look, and with every
   // kind off there is nothing to look at.
   const viewerOn =
-    publication !== null &&
+    publication != null &&
     [publication.viewerClassMode, publication.viewerGroupMode, publication.viewerTeacherMode, publication.viewerStudentMode, publication.viewerRoomMode].some(
       (mode) => mode !== 'OFF',
     );
