@@ -76,6 +76,15 @@ import {
   type SameTimesRow,
 } from './same-times';
 import { canonicalShape } from '../common/lesson-lengths';
+import {
+  startLessonsOf,
+  startOutcomeOf,
+  type StartedFrom,
+  type StartMapping,
+  type StartPost,
+  type StartRequest,
+} from './start-schedule';
+import { nothingToStartFrom, readStartSource } from './start-sources';
 import { canonicalShares, type LessonShare } from '../common/lesson-shares';
 import { effectiveDistribution, hasDistributionRule, type DistributionRule } from '../common/subject-distribution';
 import { minutesOf } from '../common/solver-grid';
@@ -103,6 +112,7 @@ import {
   type YearPeriods,
 } from './year-periods';
 import { datedMeals, MealPartsError, type DatedMeal } from './lunch-parts';
+import { exemptFromLunch } from '../calendar/lesson-exemption';
 import { computeScheduledCoverage, type ScheduledLessonInput } from '../common/timplan-scheduled';
 import type { PlannedGroup, PlannedRequirement, PlannedSubject } from '../common/timplan-planned';
 import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
@@ -505,6 +515,15 @@ interface PreservedLessonRow {
   startDate: Date | null;
   endDate: Date | null;
   extraGroups: { studentGroupId: string }[];
+}
+
+/**
+ * Generera's answer: the engine's, with what the gateway adds to it. `startedFrom` is present only when the run was asked
+ * to start from a schedule (Ett schema som start, M9), and it carries the name the school gave a saved version, which the
+ * payload types keep out of the engine's sight: nothing here is ever sent to it.
+ */
+export interface GeneratedSchedule extends AiEngineScheduleResponse {
+  startedFrom?: StartedFrom;
 }
 
 /** One of the draft's own (non-preserved) lessons: what "moved" and the draft's coverage read. */
@@ -1370,6 +1389,46 @@ function engineLacksPeriods(): HttpException {
 class EngineLacksPlacements extends Error {}
 
 /**
+ * The engine refused `startLessons` as a field it does not know: it is older than Ett schema som start (M9). Never a
+ * refusal the school sees as a failure: a schedule to start from is a way of laying the week, not part of what the week is,
+ * so callAiEngine sends the same request without it and the run says that it did (StartedFrom.engine 'OLDER'), where a
+ * school that asked to start from a schedule reads it.
+ */
+class EngineLacksStartLessons extends Error {}
+
+/**
+ * The engine refused `exemptFromLunch` on a lock as a field it does not know: it is older than Undantag med flit (E1b, the engine's
+ * second PR), which the gateway that sends the key must follow. The API and the engine deploy within minutes of each other and not
+ * atomically, so a school that has given an exemption meets it in that window (and whenever the engine alone is rolled back), and
+ * without this its Generera, whole, is refused as "validation failed". The key only releases a refusal (a meal the school placed on the
+ * lock, LUNCH_PLACEMENT_COLLIDES) and changes nothing else, so callAiEngine sends the same request without it: a week the exemption was
+ * never needed for is laid as it would have been, and one it was needed for is refused by the engine by name, as before the exemption.
+ */
+class EngineLacksLunchExemption extends Error {}
+
+/**
+ * The engine's refusal of `exemptFromLunch` as an unknown field of a lock:
+ * {type: 'extra_forbidden', loc: ['body', 'fixedLessons', <index>, 'exemptFromLunch']}.
+ */
+function refusesLunchExemption(body: { details?: { errors?: unknown } | null } | null): boolean {
+  const errors = body?.details?.errors;
+  return (
+    Array.isArray(errors) &&
+    errors.some((entry: unknown) => {
+      const { type, loc } = (entry ?? {}) as { type?: unknown; loc?: unknown };
+      return (
+        type === 'extra_forbidden' &&
+        Array.isArray(loc) &&
+        loc.length === 4 &&
+        loc[0] === 'body' &&
+        loc[1] === 'fixedLessons' &&
+        loc[3] === 'exemptFromLunch'
+      );
+    })
+  );
+}
+
+/**
  * The engine refused `deadlineSeconds` as a field it does not know. It said it
  * could take it when its times were read, so it was rolled back since: the
  * request is sent again without it, and the times are read again.
@@ -1560,7 +1619,8 @@ export class OptimizationProxyService {
     user: AuthenticatedUser,
     weights?: ObjectiveWeights | null,
     rules?: ScheduleRules | null,
-  ): Promise<AiEngineScheduleResponse> {
+    startFrom?: StartRequest | null,
+  ): Promise<GeneratedSchedule> {
     const requestId = randomUUID();
 
     this.logger.log(
@@ -1601,18 +1661,27 @@ export class OptimizationProxyService {
     // silently combining into a third nobody wrote is worse than either.
     const effectiveRules = rules ?? prepared.storedRules;
 
+    // Ett schema som start (M9): the schedule the school chose, read and given to the engine as where the week starts. A
+    // week with nothing to lay (every post locked) has nothing to start, and the engine is not asked for it either.
+    const start =
+      startFrom && prepared.payload.requirements.length > 0
+        ? await this.startPlanOf(academicYearId, user, prepared, startFrom, requestId)
+        : null;
+
     const payload: AiEngineScheduleRequest = {
       ...prepared.payload,
       ...(weights ? { weights } : {}),
       ...(effectiveRules ? { rules: effectiveRules } : {}),
+      ...(start?.mapping ? { startLessons: start.mapping.entries } : {}),
     };
 
     // Step 2: Call the AI engine with the stripped payload. When every
     // requirement is already covered by locked lessons there is nothing left
     // to solve — skip the engine and just clean up unlocked leftovers.
+    const fellBack: { startLessons?: boolean } = {};
     const response: AiEngineScheduleResponse =
       payload.requirements.length > 0
-        ? await this.callAiEngine<AiEngineScheduleResponse>('/v1/schedule', payload, anonMaps)
+        ? await this.callAiEngine<AiEngineScheduleResponse>('/v1/schedule', payload, anonMaps, { fellBack })
         : { requestId, status: 'FEASIBLE', lessons: [], conflicts: null };
 
     // The sittings, with real group ids, computed once: they are both written
@@ -1695,6 +1764,81 @@ export class OptimizationProxyService {
               ...unkeptFreeDayWishes(prepared.freeDayWishes, written),
               ...unkeptConsecutiveWishes(prepared.consecutiveWishes, written),
             ],
+      ...(start ? { startedFrom: this.startedFromOf(start, response, written !== null, fellBack.startLessons === true) } : {}),
+    };
+  }
+
+  /**
+   * The schedule a run was asked to start from, read and mapped to the posts of this week, or a plan that says the engine
+   * is too old to be given one. Throws, with the engine not woken and nothing written, when the schedule has no lesson that
+   * belongs to a post of the week: a week laid from nothing is not what the school asked for.
+   *
+   * An engine that SAID it cannot take the field (its capabilities, GET /api/v1/timing) is not sent it and the schedule is
+   * not read; one that said nothing is sent it, and answers with its own 422 if it is older (EngineLacksStartLessons).
+   */
+  private async startPlanOf(
+    academicYearId: string,
+    user: AuthenticatedUser,
+    prepared: PreparedSchedule,
+    request: StartRequest,
+    requestId: string,
+  ): Promise<{ request: StartRequest; mapping: StartMapping | null; versionName: string | null }> {
+    await this.timing?.ensure();
+    if (this.timing?.startLessonsCapability() === 'NO') {
+      this.logger.warn(
+        `AI engine at ${this.aiConfig.baseUrl} does not list startLessons; the week is laid without a start [requestId=${requestId}, academicYearId=${academicYearId}]`,
+      );
+      return { request, mapping: null, versionName: null };
+    }
+    const read = await this.prisma.withRls(user, (tx) =>
+      readStartSource(tx, academicYearId, request, prepared.draftLessons),
+    );
+    const posts: StartPost[] = prepared.requirementRows.map((row) => ({
+      id: row.id,
+      subjectId: row.subjectId,
+      studentGroupId: row.studentGroupId,
+      recurrence: row.recurrence,
+      startDate: dayOf(row.startDate),
+      endDate: dayOf(row.endDate),
+    }));
+    const mapping = startLessonsOf(
+      posts,
+      prepared.anonMaps.requirementAnonMap,
+      prepared.payload.requirements,
+      read.lessons,
+      read.already,
+    );
+    if (mapping.entries.length === 0) {
+      this.logger.warn(
+        `Optimization refused before the engine: the schedule to start from (${request.source}) has no lesson that belongs to a post of the week [requestId=${requestId}, academicYearId=${academicYearId}]`,
+      );
+      throw nothingToStartFrom(request.source, mapping);
+    }
+    return { request, mapping, versionName: read.versionName };
+  }
+
+  /** What the run stores and the page says of its start: the answer's lessons set against the entries. */
+  private startedFromOf(
+    start: { request: StartRequest; mapping: StartMapping | null; versionName: string | null },
+    response: AiEngineScheduleResponse,
+    written: boolean,
+    engineRefused: boolean,
+  ): StartedFrom {
+    const used = start.mapping?.entries.length ?? 0;
+    // Laid from nothing: the engine said it cannot take the field, or took it back with its 422.
+    const older = start.mapping === null || engineRefused;
+    const outcome =
+      !older && written && start.mapping !== null ? startOutcomeOf(start.mapping.entries, response.lessons) : null;
+    return {
+      source: start.request.source,
+      versionName: start.versionName,
+      engine: older ? 'OLDER' : 'USED',
+      offered: start.mapping?.offered ?? 0,
+      used: older ? 0 : used,
+      held: outcome?.held ?? null,
+      moved: outcome?.moved ?? null,
+      laid: outcome?.laid ?? null,
+      dropped: start.mapping?.dropped ?? {},
     };
   }
 
@@ -2997,6 +3141,8 @@ export class OptimizationProxyService {
         recurrence: true,
         startDate: true,
         endDate: true,
+        // Undantag med flit: a lock whose lesson stands over its class's meal on purpose is told to the engine (FixedLesson.exemptFromLunch).
+        exemptFrom: true,
         extraGroups: { select: { studentGroupId: true } },
         // The pupils a hand-placed lesson names one by one. Not forwarded —
         // the engine plans around the lesson's groups — but a pupil who is
@@ -3731,6 +3877,8 @@ export class OptimizationProxyService {
       // Sent only on such a lock. A dated lock's periods are added further
       // down, once the läsår is read (yearPeriodsOf).
       ...((weeks) => (weeks ? { recurrence: weeks } : {}))(alternatingWeeksOf(lesson)),
+      // Undantag med flit: sent only on a lock whose lesson an administrator let stand over the class's meal.
+      ...(exemptFromLunch(lesson) ? { exemptFromLunch: true as const } : {}),
     }));
 
     /*
@@ -4868,7 +5016,11 @@ export class OptimizationProxyService {
     path: string,
     payload: object,
     maps: AnonMaps,
-    options: { timeoutMs?: number } = {},
+    /**
+     * `fellBack` is filled in, for a caller that wants to say so, when the call had to be sent again without a field the
+     * engine is too old for and the answer is the same week laid without it (startLessons, M9).
+     */
+    options: { timeoutMs?: number; fellBack?: { startLessons?: boolean } } = {},
   ): Promise<TResponse> {
     const url = `${this.aiConfig.baseUrl}${path}`;
     // THE CALL'S WAIT, stated for the module's client AND for rxjs below, from one number: the caller's
@@ -4908,6 +5060,11 @@ export class OptimizationProxyService {
     const carriesSearch = (payload as { search?: unknown }).search !== undefined;
     const carriesRelaxation = (payload as { relaxation?: unknown }).relaxation !== undefined;
     const carriesPlacements = (payload as { placements?: unknown }).placements !== undefined;
+    const carriesStartLessons = (payload as { startLessons?: unknown }).startLessons !== undefined;
+    // Undantag med flit: a lock that carries the key. Sent only on a lock whose lesson stands over its class's meal on purpose.
+    const carriesLunchExemption = ((payload as { fixedLessons?: { exemptFromLunch?: unknown }[] }).fixedLessons ?? []).some(
+      (lock) => lock.exemptFromLunch !== undefined,
+    );
     // Fästa lektioner: a requirement that carries the key. The released forms under `placements` never do.
     const carriesPins = ((payload as { requirements?: { pinnedLessons?: unknown }[] }).requirements ?? []).some(
       (requirement) => requirement.pinnedLessons !== undefined,
@@ -5116,6 +5273,16 @@ export class OptimizationProxyService {
                 if (error.response.status === 422 && carriesPlacements && refusesField(body, 'placements')) {
                   throw new EngineLacksPlacements();
                 }
+                // And older than `startLessons` (Ett schema som start): sent again without it, below, and the run says so.
+                if (error.response.status === 422 && carriesStartLessons && refusesField(body, 'startLessons')) {
+                  throw new EngineLacksStartLessons();
+                }
+                // And older than `exemptFromLunch` on a lock: sent again without it, below. Each of the two sends the week again without what
+                // it names and nothing else, and each reads `carries…` off the payload it is sent, so an engine older than both is answered
+                // once for each and the third call carries neither: the two never send each other's field again.
+                if (error.response.status === 422 && carriesLunchExemption && refusesLunchExemption(body)) {
+                  throw new EngineLacksLunchExemption();
+                }
                 // The engine's own ceiling, from any of its four routes: said as what it is
                 // (ENGINE_TIMED_OUT). By the code, or by the sentence for an engine older than the code.
                 if (error.response.status === HttpStatus.SERVICE_UNAVAILABLE && isEngineCeilingBody(body)) {
@@ -5202,9 +5369,25 @@ export class OptimizationProxyService {
         const { deadlineSeconds: _deadline, ...without } = payload as { deadlineSeconds?: unknown };
         return this.callAiEngine<TResponse>(path, without, maps, options);
       }
+      if (error instanceof EngineLacksStartLessons) {
+        this.logger.warn(`AI engine at ${this.aiConfig.baseUrl} predates startLessons; sent again without it.`);
+        // It said it could take the field when its times were read, or it said nothing: either way what it said is
+        // no longer to be believed, and the next call reads it again.
+        this.timing?.forget();
+        void this.timing?.refresh();
+        if (options.fellBack) options.fellBack.startLessons = true;
+        const { startLessons: _startLessons, ...without } = payload as { startLessons?: unknown };
+        return this.callAiEngine<TResponse>(path, without, maps, options);
+      }
       if (error instanceof EngineLacksPlacements) {
         this.logger.warn(`AI engine at ${this.aiConfig.baseUrl} predates placements; sent again without them.`);
         const { placements: _placements, ...without } = payload as { placements?: unknown };
+        return this.callAiEngine<TResponse>(path, without, maps, options);
+      }
+      if (error instanceof EngineLacksLunchExemption) {
+        this.logger.warn(`AI engine at ${this.aiConfig.baseUrl} predates exemptFromLunch; sent again without it.`);
+        const { fixedLessons, ...rest } = payload as { fixedLessons?: Record<string, unknown>[] };
+        const without = { ...rest, fixedLessons: (fixedLessons ?? []).map(({ exemptFromLunch: _exempt, ...lock }) => lock) };
         return this.callAiEngine<TResponse>(path, without, maps, options);
       }
       if (error instanceof HttpException) throw error;

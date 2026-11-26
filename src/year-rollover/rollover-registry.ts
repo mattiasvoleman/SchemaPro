@@ -498,8 +498,10 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
   MasterLesson: {
     kind: 'SKIPPED',
     previewCount: true,
+    // M9 (Ett schema som start): the rows stay with the old year, and Generera can start from them (last year's lessons under each
+    // class's successor), which is what this used to say they were not a valid start for.
     reason:
-      'A weekly schedule is generated for the new year’s groups and rooms; last year’s placements, locked ones included, are not a valid start.',
+      'A weekly schedule is generated for the new year’s groups and rooms, so last year’s lessons are not copied as rows, locked ones included. Generera can start from them instead, held where they were under each class’s successor (Utgå från ett schema).',
   },
   MasterLessonGroup: {
     kind: 'FOLLOWS',

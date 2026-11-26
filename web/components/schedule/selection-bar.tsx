@@ -71,6 +71,8 @@ export function SelectionBar({
               id: lesson.id,
               isLocked: !isLocked,
               propagate: false,
+              // Undantag med flit rests on the lock: taking the lock off ended it (the gateway), and putting the lock back puts it back with it.
+              ...(!isLocked && lesson.exemptFrom && lesson.exemptFrom.length > 0 ? { exempt: lesson.exemptFrom } : {}),
             });
           }
         },

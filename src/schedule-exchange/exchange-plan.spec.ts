@@ -241,6 +241,35 @@ describe('frames, raster and lunch sittings', () => {
     expect(fitRefusals(resolved({ start: '10:00', end: '11:00' }, ctx), ctx).refusals).toEqual([]);
   });
 
+  describe('a file that names an exemption (Undantag med flit, the column Undantag)', () => {
+    const rast = { name: 'Rast', minGradeLevel: 7, maxGradeLevel: 9, dayOfWeek: null, startMin: 15 * 60 + 10, endMin: 15 * 60 + 30 };
+    const meal = { groupId: 'g-7a', day: 1, startMin: 14 * 60 + 45, endMin: 15 * 60 + 15 };
+
+    it('lets through the ramtid it names and says it is what the lesson breaks, and refuses the same lesson without the name', () => {
+      const ctx = context({ frames: [frame()] });
+      const out = fitRefusals(resolved({ start: '14:30', end: '15:30', exempt: ['FRAME'] }, ctx), ctx);
+      expect(out.refusals).toEqual([]);
+      expect(out.exempted).toEqual(['FRAME']);
+      expect(fitRefusals(resolved({ start: '14:30', end: '15:30' }, ctx), ctx).refusals.map((r) => r.code)).toEqual(['OUTSIDE_FRAME']);
+    });
+
+    it('lets through the meal it names and the ramtid beside it stays refused', () => {
+      const ctx = context({ frames: [frame()], sittings: [meal] });
+      const out = fitRefusals(resolved({ start: '14:30', end: '15:30', exempt: ['LUNCH'] }, ctx), ctx);
+      expect(out.refusals.map((r) => r.code)).toEqual(['OUTSIDE_FRAME']);
+      expect(out.exempted).toEqual(['LUNCH']);
+      expect(fitRefusals(resolved({ start: '14:30', end: '15:30', exempt: ['FRAME', 'LUNCH'] }, ctx), ctx)).toMatchObject({ refusals: [], exempted: ['FRAME', 'LUNCH'] });
+    });
+
+    it('saves nothing for a name the lesson does not break, and never lets a rast through', () => {
+      const ctx = context({ frames: [frame()], rasts: [rast] });
+      expect(fitRefusals(resolved({ start: '09:00', end: '10:00', exempt: ['FRAME', 'LUNCH'] }, ctx), ctx)).toMatchObject({ refusals: [], exempted: [] });
+      const over = fitRefusals(resolved({ start: '14:30', end: '15:30', exempt: ['FRAME', 'LUNCH'] }, ctx), ctx);
+      expect(over.refusals.map((r) => r.code)).toEqual(['IN_RAST']);
+      expect(over.exempted).toEqual(['FRAME']);
+    });
+  });
+
   describe('a class that eats at another time in another part of the läsår', () => {
     // Monday: 11:00–11:30 in the autumn (to Sunday 2026-12-20), 11:30–12:00 from the Monday 2027-01-11.
     const meals = [

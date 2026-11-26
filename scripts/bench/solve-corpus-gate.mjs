@@ -57,6 +57,12 @@ export const GEOMEAN_MAX = 1.25;
  * The deterministic budget is for ONE search, and the solve runs two satisfaction searches in
  * turn when the first finds nothing (phase 1a, then phase 1b), so the most work a week can
  * spend before it is a TIMEOUT is this many budgets.
+ *
+ * A week of two years or more has the years' road between the two (M8 PR 5, DEPLOYMENT §35.9): each
+ * of its steps is a search of the same budget, so a week the road lays can have spent more than this
+ * (the gate's two road weeks, `n9-g6-m0-s1` and `n12-g6-m0-s1-e1645`, 4.6 to 6.1 of 8). The ceiling is
+ * kept as it was: it only decides when ONE lost week is "clearly inside" (below), and the road's
+ * weeks are not, so they fail the gate together (two lost weeks fail whatever the floor was).
  */
 export const SEARCHES_PER_SOLVE = 2;
 /** A week the floor solves inside this share of the most work it can spend is not near the edge. */
@@ -215,6 +221,11 @@ export function gate(headRows, floorRows, { floorRef = null } = {}) {
     ? Math.exp(wall.reduce((sum, pair) => sum + Math.log(pair.head / pair.floor), 0) / wall.length)
     : null;
 
+  // A week both trees answer TIMEOUT is "same" and decides nothing, and it guards nothing: a change to what lays it cannot show.
+  // The runner is not the machine a week was chosen on (the gate's 13 weeks needed 0.75 to 2.1 times the work of a Mac's on the
+  // runner's nights of 2026-11-23 to 25, and the terms week is TIMEOUT there), so the verdict names such weeks every night.
+  const unguarded = weeks.filter((w) => w.kind === 'same' && w.note.startsWith('TIMEOUT')).map((w) => w.name);
+
   const lines = [
     `Solver corpus: ${headRows.length} weeks, count mode (one worker, fixed seed), budget ${budget} deterministic s${floorRef ? `, floor ${floorRef}` : ''}`,
     '',
@@ -226,6 +237,7 @@ export function gate(headRows, floorRows, { floorRef = null } = {}) {
     }),
     '',
     `weeks both solve: ${ratios.length} of ${weeks.length}, geometric mean of this/floor: ${fixed(geomean)} (limit ${GEOMEAN_MAX}); lost ${lost.length}, refused ${refused.length}, gained ${weeks.filter((w) => w.kind === 'gained').length}`,
+    ...(unguarded.length ? [`guarding nothing tonight (both trees answer TIMEOUT, so a change to what lays them cannot show): ${unguarded.join(', ')}`] : []),
     `printed, deciding nothing: wall-clock geometric mean this/floor ${fixed(wallGeomean)} over ${wall.length} weeks (one run each, the runner's load included)`,
     ...(reasons.length ? ['', ...reasons.map((r) => `FAIL: ${r}`)] : ['', 'PASS']),
   ];
@@ -234,7 +246,7 @@ export function gate(headRows, floorRows, { floorRef = null } = {}) {
     invalid: false,
     reasons,
     lines,
-    summary: { weeks: weeks.length, geomean, wallGeomean, lost: lost.length, refused: refused.length },
+    summary: { weeks: weeks.length, geomean, wallGeomean, lost: lost.length, refused: refused.length, unguarded },
   };
 }
 

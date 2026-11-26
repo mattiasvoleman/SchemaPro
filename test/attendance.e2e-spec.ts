@@ -118,6 +118,8 @@ describe('POST /api/v1/attendance/report (e2e)', () => {
       // Nobody reported: app.reported_absences answers no row.
       harness.tx['$queryRaw']!.mockResolvedValue([]);
       harness.tx['guardianStudent']!['findMany']!.mockResolvedValue([{ guardianId: '88888888-8888-4888-8888-888888888888' }]);
+      // The guardian's address, as the database says it when the delivery plans the mail.
+      harness.outbound.directory.set('88888888-8888-4888-8888-888888888888', 'vh@example.invalid');
 
       await request(harness.app.getHttpServer())
         .post('/api/v1/attendance/report')

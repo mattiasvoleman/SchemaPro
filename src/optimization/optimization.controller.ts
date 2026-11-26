@@ -82,7 +82,9 @@ export class OptimizationController {
     @Body() dto: TriggerOptimizationDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ jobId: string }> {
-    return this.jobsService.start(dto.academicYearId, user, dto.weights, dto.rules);
+    return dto.startFrom
+      ? this.jobsService.start(dto.academicYearId, user, dto.weights, dto.rules, dto.startFrom)
+      : this.jobsService.start(dto.academicYearId, user, dto.weights, dto.rules);
   }
 
   /** Latest optimization runs for an academic year (run history). */
@@ -124,7 +126,13 @@ export class OptimizationController {
     // reader: the hidden sentence without HR-läs, the post's days read back
     // with it (work-days.ts). Every other error goes on untouched.
     const result = await this.proxy
-      .triggerScheduling(dto.academicYearId, user, dto.weights ?? null, dto.rules ?? null)
+      .triggerScheduling(
+        dto.academicYearId,
+        user,
+        dto.weights ?? null,
+        dto.rules ?? null,
+        ...(dto.startFrom ? ([dto.startFrom] as const) : ([] as const)),
+      )
       .catch(async (error: unknown) => {
         throw await this.jobsService.refusalForReader(error, dto.academicYearId, user);
       });

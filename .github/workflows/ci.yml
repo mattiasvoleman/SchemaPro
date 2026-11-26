@@ -417,6 +417,28 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-personer-utan-adress.ts
 
+      # P3 Första veckan utan operatören: the operator script that makes a school and its first administrator
+      # (scripts/operator/new-school.ts, docs/DEPLOYMENT.md §7), run against the database with a stand-in for the
+      # Supabase Auth admin API. A dry run writes nothing; --apply makes the school and the administrator in one
+      # transaction and attaches the login last; a run that stopped before the login continues from it and makes one
+      # school, not two; a finished one does nothing; a slug that holds another school, the wrong host and a login
+      # another school holds are refused with the rows untouched. It makes schools of its own and drops them.
+      - name: New school probe
+        env:
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-new-school.ts
+
+      # Den utgående kön (H3, 20270309090000, omgång 15): mail and push wait in the database and survive a restart. A child process
+      # of the probe takes the queue up against a Resend and an Expo that are servers of the probe's own, and is killed with SIGKILL
+      # while a mail is on its way (and, apart, a push); the next takes it from there, and every mail reaches Resend once under its
+      # Idempotency-Key, every device every notice at most once. Two processes at once take one queue without a row, a mail or a
+      # device twice and at one pace, and twelve connections asking for five rows take five. It makes a school of its own and drops it.
+      - name: Outgoing queue probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-utkorg.ts
+
       # Byten och flyttar (round 9, G1): a small högstadium with parallel
       # blocks cut across its classes, laid by the fixture, asked for swaps and
       # chains as a scheduler under row security. Every proposal is checked by
@@ -441,6 +463,61 @@ jobs:
           DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-domaren.ts
+
+      # Att lägga (E4): the grundschema's tray counts as the week of förläggningar and Generera do; what stands answers a lesson, a lesson on the tray
+      # answers none, a förläggning is said apart. It drops its schools. (probe-att-lagga-motor.ts shows the same against a real engine, by hand.)
+      - name: Att lägga probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-att-lagga.ts
+
+      # Möjliga tider (E3): the query that says where a lesson can stand, held against the judge. Every lesson of the judge's
+      # fall file (src/calendar/__fixtures__/lesson-judge-cases.json), every fifteenth minute of the week, over real Postgres as the
+      # API role: a start the judge lets through is free, a start the query calls free the judge lets through, a closed stretch is
+      # refused by the very rule it names, a lesson said to be in the way is the one the judge names, and the best option is the best
+      # by the swap search's own measure. Then a högstadium with parallel blocks and teaching groups, a unit moved as one and asked
+      # of POST /judge. It drops its schools.
+      - name: Möjliga tider probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-mojliga-tider.ts
+
+      # Möjliga tider, the rules the fall file has no world for: a date window that meets another only in a jullov, a room several lessons may
+      # share, a room lent to another school or closed by a weekly row, a pupil named on a lesson, ombyte and dusch, a brick, a lesson on the
+      # tray, a lesson that stands against a rule on purpose. Every start of the week put to the judge; the query must say what it says. It
+      # drops its schools.
+      - name: Möjliga tider, reglerna probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-mojliga-tider-regler.ts
+
+      # Salväljaren och en sal som flera lektioner får dela: the prune does not count pupils there, the judge does, so the chooser asks the
+      # judge of such rooms. A room it calls free is never one the judge refuses for the room. It drops its school.
+      - name: Salväljaren, delade salar probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-salvaljare-delade-salar.ts
+
+      # Undantag med flit (E1b): the table and its trigger (an exemption ends with the time, the lock and the tray, and stays across a room), the
+      # PATCH over real Postgres (named, never otherwise; a clash is its own reason; another time asks again; the answer yes keeps it across the
+      # changed time), a version restored, a draft discarded, and the schedule file in and out. It drops its schools.
+      - name: Undantag probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-undantag.ts
+
+      # Brickorna och ägandet (E4): a lesson moved by hand is locked in sight and is then one of the lessons Generera keeps; a double-booked lesson
+      # can be locked and unlocked. It drops its schools.
+      - name: Brickor probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-brickor.ts
 
       # Anslutningarna (incident 2026-11-23): what a long fetch of a school's week does to the rest of the API. The real
       # school's first Generera answered every other request 500 "Unable to start a transaction in the given time" for 26 s

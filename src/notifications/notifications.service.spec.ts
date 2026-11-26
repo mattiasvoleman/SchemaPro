@@ -1,6 +1,7 @@
 import type { Logger } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
+import { MemoryOutbound } from '../../test/utils/outbound-memory';
 import type { PrismaService } from '../database/prisma.service';
 import { NotificationDeliveryService } from './notification-delivery.service';
 import { NotificationsService } from './notifications.service';
@@ -20,6 +21,7 @@ describe('NotificationsService', () => {
   let delivery: NotificationDeliveryService;
   let prisma: ReturnType<typeof createPrismaMock>;
   let tx: TxMock;
+  let store: MemoryOutbound;
   let fetchMock: jest.Mock;
 
   const globalWithFetch = globalThis as { fetch?: unknown };
@@ -32,7 +34,8 @@ describe('NotificationsService', () => {
   beforeEach(() => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
-    delivery = new NotificationDeliveryService(prisma as unknown as PrismaService);
+    store = new MemoryOutbound();
+    delivery = new NotificationDeliveryService(prisma as unknown as PrismaService, undefined, undefined, undefined, store);
     // No pause between mails here, but in the test of the pause itself.
     delivery.emailIntervalMs = 0;
     service = new NotificationsService(prisma as unknown as PrismaService, delivery);
@@ -65,6 +68,15 @@ describe('NotificationsService', () => {
 
   const loggerOf = (s: object): Logger => (s as unknown as { logger: Logger }).logger;
 
+  /**
+   * Who has an address in the database. notifyUsers reads them inside the transaction (tx.user.findMany) and the delivery
+   * reads them again when the row is planned (app.outbound_addresses), so a spec says them once for both.
+   */
+  const addressed = (rows: Array<{ id: string; email: string | null }>) => {
+    tx.user.findMany.mockResolvedValue(rows);
+    for (const row of rows) if (row.email) store.directory.set(row.id, row.email);
+  };
+
   describe('notifyUsers', () => {
     it('writes one row per recipient with an id it made, the caller schoolId, and returns the count', async () => {
       const meta = { reason: 'sick' };
@@ -90,7 +102,7 @@ describe('NotificationsService', () => {
 
     it('never reads the rows back: a teacher may insert a guardian’s notice but not select it', async () => {
       process.env.RESEND_API_KEY = 'resend-key';
-      tx.user.findMany.mockResolvedValue([{ id: 'user-1', email: 'anna@school.se' }]);
+      addressed([{ id: 'user-1', email: 'anna@school.se' }]);
       await inTransaction((c) =>
         service.notifyUsers(c, { schoolId: SCHOOL_ID, userIds: ['user-1'], type: 'ABSENCE_UNREPORTED', meta: {}, email: { subject: 'S', body: 'B' } }),
       );
@@ -143,6 +155,7 @@ describe('NotificationsService', () => {
       tx.user.findMany.mockImplementation(({ where }: { where: { id: { in: string[] } } }) =>
         Promise.resolve(where.id.in.map((id) => ({ id, email: `${id}@school.se` }))),
       );
+      for (const id of userIds) store.directory.set(id, `${id}@school.se`);
 
       await inTransaction((c) =>
         service.notifyUsers(c, {
@@ -172,6 +185,9 @@ describe('NotificationsService', () => {
       tx.user.findMany.mockImplementation(({ where }: { where: { id: { in: string[] } } }) =>
         Promise.resolve(where.id.in.map((id) => ({ id, email: `${id}@school.se` }))),
       );
+      for (let i = 0; i < 120; i++) store.directory.set(`user-${i}`, `user-${i}@school.se`);
+      // The database's pace: the first mail now, the others a pause after the one before.
+      store.slots = [0, 40, 40];
       const sentAt: number[] = [];
       fetchMock.mockImplementation(() => {
         sentAt.push(Date.now());
@@ -247,7 +263,7 @@ describe('NotificationsService', () => {
     it('mirrors to the people who have an address and to nobody else: a person with none (Personer utan e-postadress) gets the notice in the inbox', async () => {
       process.env.RESEND_API_KEY = 'resend-key';
       process.env.EMAIL_FROM = 'SchemaPro <noreply@schemapro.test>';
-      tx.user.findMany.mockResolvedValue([
+      addressed([
         { id: 'user-1', email: 'anna@school.se' },
         { id: 'user-2', email: null },
       ]);
@@ -274,7 +290,7 @@ describe('NotificationsService', () => {
       const warn = jest.spyOn(loggerOf(delivery), 'warn').mockImplementation(() => undefined);
       process.env.RESEND_API_KEY = 'resend-key';
       process.env.EMAIL_FROM = 'SchemaPro <noreply@schemapro.test>';
-      tx.user.findMany.mockResolvedValue([
+      addressed([
         { id: 'user-1', email: 'anna@school.se' },
         { id: 'user-2', email: '' }, // no address on file — must be filtered out
         { id: 'user-3', email: 'bjorn@school.se' },
@@ -328,7 +344,7 @@ describe('NotificationsService', () => {
 
     it('tells nobody when the transaction rolls back after the notice', async () => {
       process.env.RESEND_API_KEY = 'resend-key';
-      tx.user.findMany.mockResolvedValue([{ id: 'user-1', email: 'anna@school.se' }]);
+      addressed([{ id: 'user-1', email: 'anna@school.se' }]);
       await expect(
         inTransaction(async (c) => {
           await service.notifyUsers(c, { schoolId: SCHOOL_ID, userIds: ['user-1'], type: 'LEAVE_DECIDED', meta: {}, email: { subject: 'S', body: 'B' } });
@@ -341,7 +357,7 @@ describe('NotificationsService', () => {
 
     it('registers one hook per transaction, and mails once per notifyUsers call', async () => {
       process.env.RESEND_API_KEY = 'resend-key';
-      tx.user.findMany.mockResolvedValue([{ id: 'user-1', email: 'anna@school.se' }]);
+      addressed([{ id: 'user-1', email: 'anna@school.se' }]);
       await inTransaction(async (c) => {
         for (const subject of ['A', 'B', 'C']) {
           await service.notifyUsers(c, { schoolId: SCHOOL_ID, userIds: ['user-1'], type: 'LESSON_CANCELLED', meta: {}, email: { subject, body: 'x' } });
@@ -354,7 +370,7 @@ describe('NotificationsService', () => {
 
     it('delivers nothing, and says so, outside a withRls transaction', async () => {
       process.env.RESEND_API_KEY = 'resend-key';
-      tx.user.findMany.mockResolvedValue([{ id: 'user-1', email: 'anna@school.se' }]);
+      addressed([{ id: 'user-1', email: 'anna@school.se' }]);
       const warn = jest.spyOn(loggerOf(service), 'warn').mockImplementation(() => undefined);
       await expect(
         service.notifyUsers(client(), { schoolId: SCHOOL_ID, userIds: ['user-1'], type: 'LEAVE_DECIDED', meta: {}, email: { subject: 'S', body: 'B' } }),
@@ -368,7 +384,7 @@ describe('NotificationsService', () => {
 
     it('falls back to the default sender when EMAIL_FROM is unset', async () => {
       process.env.RESEND_API_KEY = 'resend-key';
-      tx.user.findMany.mockResolvedValue([{ id: 'user-1', email: 'anna@school.se' }]);
+      addressed([{ id: 'user-1', email: 'anna@school.se' }]);
 
       await inTransaction((c) =>
         service.notifyUsers(c, {
@@ -410,7 +426,7 @@ describe('NotificationsService', () => {
 
     it('never fails the mutation when the email API rejects (network)', async () => {
       process.env.RESEND_API_KEY = 'resend-key';
-      tx.user.findMany.mockResolvedValue([{ id: 'user-1', email: 'anna@school.se' }]);
+      addressed([{ id: 'user-1', email: 'anna@school.se' }]);
       fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
       const warn = jest.spyOn(loggerOf(delivery), 'warn').mockImplementation(() => undefined);
 
@@ -427,12 +443,12 @@ describe('NotificationsService', () => {
       ).resolves.toBe(1);
 
       await flushDelivery();
-      expect(warn).toHaveBeenCalledWith('Email dispatch failed [network]');
+      expect(warn).toHaveBeenCalledWith('Email dispatch failed [network, will be tried again]');
     });
 
-    it('logs a non-2xx dispatch without surfacing it', async () => {
+    it('logs a non-2xx dispatch without surfacing it, and tries the mail again later', async () => {
       process.env.RESEND_API_KEY = 'resend-key';
-      tx.user.findMany.mockResolvedValue([{ id: 'user-1', email: 'anna@school.se' }]);
+      addressed([{ id: 'user-1', email: 'anna@school.se' }]);
       fetchMock.mockResolvedValue({ ok: false, status: 429 });
       const warn = jest.spyOn(loggerOf(delivery), 'warn').mockImplementation(() => undefined);
 
@@ -449,7 +465,9 @@ describe('NotificationsService', () => {
       ).resolves.toBe(1);
 
       await flushDelivery();
-      expect(warn).toHaveBeenCalledWith('Email dispatch failed [status=429]');
+      expect(warn).toHaveBeenCalledWith('Email dispatch failed [status=429, will be tried again]');
+      // The notice is not lost: the row waits for its retry in the queue.
+      expect(store.count('PENDING')).toBe(1);
     });
   });
 
@@ -470,6 +488,7 @@ describe('NotificationsService', () => {
     });
 
     it('mails the notices another writer made, after the commit, and writes no row of its own', async () => {
+      store.directory.set('mentor-1', 'mentor-1@school.se');
       process.env.RESEND_API_KEY = 'resend-key';
       process.env.EMAIL_FROM = 'SchemaPro <noreply@schemapro.test>';
 
@@ -511,6 +530,7 @@ describe('NotificationsService', () => {
       // their transaction has no outbox, so the caller hands the notices over
       // once it has resolved.
       it('mails the notices of a committed transaction it is handed, as one batch, without any transaction', async () => {
+        store.directory.set('mentor-1', 'mentor-1@school.se');
         process.env.RESEND_API_KEY = 'resend-key';
         process.env.EMAIL_FROM = 'SchemaPro <noreply@schemapro.test>';
 
@@ -536,6 +556,7 @@ describe('NotificationsService', () => {
       // in the unit tests would notice: the pass's own spec hands it a mock.
       describe('the listener', () => {
         it('is told what the delivery said: true once the mail was taken, false when Resend refused it, and once each', async () => {
+          store.directory.set('mentor-1', 'mentor-1@school.se');
           process.env.RESEND_API_KEY = 'resend-key';
           jest.spyOn(loggerOf(delivery), 'warn').mockImplementation(() => undefined);
           const told: boolean[] = [];
@@ -545,7 +566,7 @@ describe('NotificationsService', () => {
           await flushDelivery();
           expect(told).toEqual([true]);
 
-          fetchMock.mockResolvedValueOnce({ ok: false, status: 429 });
+          fetchMock.mockResolvedValueOnce({ ok: false, status: 422 });
           service.deliverCommitted([entry()], (delivered) => told.push(delivered));
           await flushDelivery();
           expect(told).toEqual([true, false]);

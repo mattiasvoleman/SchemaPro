@@ -10,6 +10,7 @@ import {
   candidateTimesOf,
   parseEngineTiming,
   pathShortfall,
+  startLessonsCapability,
   supportsDeadline,
   unclampedWaitMsFor,
   waitMsFor,
@@ -77,6 +78,11 @@ export class EngineTimingService implements OnApplicationBootstrap, OnModuleDest
   /** Whether the engine said it can be sent `deadlineSeconds` in the request. */
   supportsDeadline(): boolean {
     return supportsDeadline(this.timing);
+  }
+
+  /** Whether the engine said it can be sent `startLessons` (Ett schema som start): see startLessonsCapability. */
+  startLessonsCapability(): 'YES' | 'NO' | 'UNKNOWN' {
+    return startLessonsCapability(this.timing);
   }
 
   /** The generator's probe and headroom, for a schemaförslag call's wait; undefined for an engine that said nothing. */

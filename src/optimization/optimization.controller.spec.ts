@@ -85,6 +85,15 @@ describe('OptimizationController', () => {
       );
     });
 
+    it('hands the schedule to start from to the job as the fifth argument (M9)', async () => {
+      jobs.start.mockResolvedValue({ jobId: JOB_ID });
+      const user = testUser();
+
+      await controller.startJob(dto({ startFrom: { source: 'PREVIOUS_YEAR' } }), user);
+
+      expect(jobs.start).toHaveBeenCalledWith(YEAR_ID, user, undefined, undefined, { source: 'PREVIOUS_YEAR' });
+    });
+
     it('passes undefined tuning through when the body omits it', async () => {
       jobs.start.mockResolvedValue({ jobId: JOB_ID });
       const user = testUser();
@@ -184,6 +193,18 @@ describe('OptimizationController', () => {
         { spread: 9 },
         { lunchMinutes: 45 },
       );
+    });
+
+    it('hands the schedule to start from to the solver as the fifth argument, on the synchronous route too (M9)', async () => {
+      proxy.triggerScheduling.mockResolvedValue(engineResponse());
+      const user = testUser();
+
+      await controller.trigger(dto({ startFrom: { source: 'VERSION', versionId: '66666666-6666-4666-8666-666666666666' } }), user);
+
+      expect(proxy.triggerScheduling).toHaveBeenCalledWith(YEAR_ID, user, null, null, {
+        source: 'VERSION',
+        versionId: '66666666-6666-4666-8666-666666666666',
+      });
     });
 
     it('normalises omitted tuning to null so the proxy falls back to stored rules', async () => {

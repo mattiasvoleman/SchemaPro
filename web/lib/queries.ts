@@ -13,6 +13,7 @@ import { sortByName, sortByPersonName } from "@/lib/sorting";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { GUARDIAN_KEYS } from "@/lib/guardian-keys";
 import type { Suggestions } from "@/lib/suggestion-types";
+import type { StartedFrom, StartFrom } from "@/lib/start-from";
 import type {
   SingleCancelCause,
   LessonRecurrence,
@@ -43,6 +44,7 @@ import type {
   TeacherQualificationKind,
   StaffingWarning,
 } from "@/lib/types";
+import type { ExemptRule } from "@/lib/exemptions";
 
 // ---------------------------------------------------------------------------
 // Reads — the school's own tables straight from Supabase under RLS; other
@@ -635,7 +637,7 @@ export function useMasterLessons(academicYearId: string | null) {
         supabase
           .from("MasterLessons")
           .select(
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, exemptFrom, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
           )
           .eq("academicYearId", academicYearId!)
           .order("dayOfWeek")
@@ -953,6 +955,11 @@ export interface OptimizationJob {
   waitSeconds?: number;
   conflicts: ConflictDetail[];
   /**
+   * The schedule the run was asked to start from and what became of its lessons (Ett schema som start): how many were held where they
+   * were, moved and laid new. Null for a run that started from nothing; absent from a gateway before M9.
+   */
+  startedFrom?: StartedFrom | null;
+  /**
    * What a FINISHED run could not keep of the soft wishes (Lärarens dag:
    * TEACHER_FREE_DAY_WISH_NOT_KEPT; Sammanhängande undervisning:
    * TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT), in the conflicts' shape so the
@@ -1025,6 +1032,8 @@ export function useStartOptimization() {
       academicYearId: string;
       weights?: ObjectiveWeights;
       rules?: ScheduleRules;
+      /** Ett schema som start: absent starts from nothing, as before. */
+      startFrom?: StartFrom;
     }) => api.post<{ jobId: string }>("/api/v1/optimization/jobs", body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });
@@ -1075,6 +1084,11 @@ export interface UpdateMasterLessonInput {
   roomId?: string | null;
   teacherId?: string | null;
   isLocked?: boolean;
+  /**
+   * Undantag med flit: the rules the administrator answered "Lägg ändå" to for THIS time (FRAME, LUNCH); the gateway lets through those the
+   * time breaks, saves their names on the lesson and locks it. `[]` takes an exemption back. Absent leaves what the lesson has.
+   */
+  exempt?: ExemptRule[];
   propagate?: boolean;
   extraGroupIds?: string[];
   studentIds?: string[];
@@ -1105,6 +1119,11 @@ export interface CreateMasterLessonInput {
   endDate?: string | null;
   extraGroupIds?: string[];
   studentIds?: string[];
+  /**
+   * Undantag med flit: the rules answered "Lägg ändå" to for this time (FRAME, LUNCH), as on an update. Said by the undo of a delete of a lesson
+   * that had an exemption, which would otherwise be refused as a new lesson on a time that breaks the rule.
+   */
+  exempt?: ExemptRule[];
 }
 
 export interface MasterLessonResponse {

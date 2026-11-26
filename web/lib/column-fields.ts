@@ -139,7 +139,7 @@ const TIMPLAN_ALIASES: Record<string, readonly string[]> = {
 
 /**
  * The flat timetable's fields (src/schedule-exchange/lesson-table.ts COLUMNS, copied for the ones a foreign table can fill:
- * not Rastra's own ids, nor the derived length, period and locked). Each: id, Swedish header, English header, other
+ * not Rastra's own ids, nor the derived length, period and locked, nor Undantag: an exemption is given in Rastra, and read back from its own export). Each: id, Swedish header, English header, other
  * spellings, and whether the reader needs it. web/lib/column-fields.test.ts holds them to the gateway's fixture.
  */
 const LESSON_ROWS: readonly (readonly [id: string, sv: string, en: string, aliases: readonly string[], required?: true, requiredUnless?: CombinedField])[] = [

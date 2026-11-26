@@ -600,6 +600,12 @@ export interface AnonymousFixedLesson {
    * some period leaves out (FixedLesson.periods).
    */
   periods?: boolean[];
+  /**
+   * Undantag med flit: the lesson stands over its class's meal on purpose (an administrator answered yes to "Lägg ändå"), so a meal the
+   * school placed by hand on it is not refused (FixedLesson.exempt_from_lunch). Sent only on such a lock; the ramtid needs no field, a lock
+   * may lie outside its class's frame.
+   */
+  exemptFromLunch?: true;
   roomId: string | null;
   dayOfWeek: DayOfWeek;
   /** HH:MM:SS */
@@ -625,6 +631,21 @@ export interface AnonymousPreviousLesson {
   dayOfWeek: DayOfWeek;
   /** HH:MM:SS */
   startTime: string;
+}
+
+/**
+ * One lesson of a schedule the week starts from (AiEngineScheduleRequest.startLessons): the requirement by its anonymous
+ * id, the weekday and the start AND the end. The end is the lesson's length: a post with lessons of several lengths
+ * takes each entry for the place of its own length, which a start alone could not say. No room: the engine hands rooms
+ * out as it always has.
+ */
+export interface AnonymousStartLesson {
+  requirementId: string;
+  dayOfWeek: DayOfWeek;
+  /** HH:MM:SS */
+  startTime: string;
+  /** HH:MM:SS */
+  endTime: string;
 }
 
 /** Per-request objective weights; unset fields fall back to engine defaults. */
@@ -767,6 +788,16 @@ export interface AiEngineScheduleRequest {
    * it always sent.
    */
   placements?: AnonymousPlacements;
+  /**
+   * Ett schema som start (M9): the lessons of a schedule the week is to START from, one entry per lesson. The engine
+   * holds them where they are, lets go of the ones that clash with THIS week and lays the rest (StartedLesson,
+   * optimization-engine/app/solver/staged.py). Not a lock, which is a fact about the school, and not `previousLessons`,
+   * which only says where the search starts looking. The KEY is sent only when the school asked to start from a
+   * schedule and the engine said it can take it (GET /api/v1/timing's `capabilities`), so every other run sends the
+   * payload it always sent; an engine that predates the field refuses it as an unknown one (422 extra_forbidden), which
+   * callAiEngine answers by sending the week again without it (EngineLacksStartLessons).
+   */
+  startLessons?: AnonymousStartLesson[];
   /**
    * Terminer: how many school weeks each period of the läsår is, in the masks'
    * order (AnonymousRequirement.periods). A week with no school day (a jullov

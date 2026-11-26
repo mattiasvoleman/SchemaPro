@@ -46,6 +46,7 @@ const state = vi.hoisted(() => ({
   requirements: [] as unknown[],
   /** The weekly rows that close an hour (resource availability), as useConstraints reads them. */
   constraints: [] as unknown[],
+  frameTimes: [] as unknown[],
   /** GROUPS and PEOPLE unless a row adds to them; null between tests. */
   groups: null as unknown[] | null,
   people: null as unknown[] | null,
@@ -160,7 +161,7 @@ vi.mock("@/lib/queries", () => ({
   },
   useConstraints: () => ({ data: state.constraints }),
   useGroupMemberships: () => ({ data: state.memberships }),
-  useFrameTimes: () => ({ data: [] }),
+  useFrameTimes: () => ({ data: state.frameTimes }),
   useLunchSettings: () => ({ data: state.lunchSettings }),
   useLunchSittings: (yearId: string | null) => {
     state.askedFor.sittings = yearId;
@@ -645,6 +646,7 @@ beforeEach(() => {
   state.yearsLoading = false;
   state.requirements = [];
   state.constraints = [];
+  state.frameTimes = [];
   state.groups = null;
   state.people = null;
   state.rooms = null;
@@ -1501,6 +1503,147 @@ describe("a refusal of the one judge, and the krocklista (E1)", () => {
     const list = await screen.findByRole("dialog");
     // The echo of the catalogue's sentence: reason, schools, resource.
     expect(within(list).getByText(/^common\.codes\.MASTER_LESSON_REFUSED\(AVAILABILITY\|\|TEACHER\|/)).toBeTruthy();
+  });
+});
+
+describe("a lesson that stands outside the ramtid on purpose (Undantag med flit)", () => {
+  // The day of the stage the lessons' classes belong to runs 07:00-09:00; the lesson is at 08:00-09:00 and the other at 10:00-11:00.
+  const frame = (minGradeLevel: number, maxGradeLevel: number) => ({ id: "f-1", minGradeLevel, maxGradeLevel, dayOfWeek: null, startTime: "07:00:00", endTime: "09:00:00" });
+  const given = (id: string, subjectId: string, groupId: string, startTime: string) => ({ ...lesson(id, subjectId, groupId, startTime), isLocked: true, exemptFrom: ["FRAME"] });
+
+  it("is no conflict: the header counts no conflict for it, says the exemption beside, and the list says it under its own heading", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), given("l-late", "s-sl", "g-51", "10:00")];
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    // The lesson at 10:00 is outside the ramtid and the one at 08:00 is not: no conflict is counted, one exemption is.
+    expect(await screen.findByText(/timetable\.exemptionCount/)).toBeTruthy();
+    expect(screen.queryByText(/timetable\.conflictCount/)).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "timetable.conflictListOpen" }));
+    const list = await screen.findByRole("dialog");
+    expect(within(list).getByRole("heading", { name: "timetable.conflictListExemptionsTitle" })).toBeTruthy();
+    expect(within(list).getByText("timetable.conflictExemptFRAME")).toBeTruthy();
+    expect(within(list).queryByText(/^common\.codes\.MASTER_LESSON_REFUSED/)).toBeNull();
+  });
+
+  it("is marked on its card, in a word and not only a colour, and the words a screen reader is told say what it stands against", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), given("l-late", "s-sl", "g-51", "10:00")];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.exemptionCount/);
+    const marks = container.querySelectorAll("[data-lesson-mark]");
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.textContent).toContain("timetable.exemptMark");
+    // The rule it stands against now, and the lesson's own name before it on the card (the grid reads the mark after the name).
+    expect(marks[0]!.textContent).toContain("timetable.exemptMarkLabel(timetable.exemptRuleFRAME)");
+  });
+
+  it("says in its words that nothing stands against the exemption when it does not, and is still marked: the lesson keeps it", async () => {
+    state.frameTimes = [{ ...frame(0, 99), endTime: "12:00:00" }];
+    state.lessons = [given("l-idle", "s-sl", "g-51", "10:00")];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.exemptionCount/);
+    const mark = container.querySelector("[data-lesson-mark]");
+    expect(mark?.textContent).toContain("timetable.exemptMarkIdleLabel(timetable.exemptRuleFRAME)");
+  });
+
+  it("names in its words the rules the lesson stands against now, and says of the rest that nothing stands against them: given the ramtid and the class's meal, with the meal laid elsewhere", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), { ...given("l-late", "s-sl", "g-51", "10:00"), exemptFrom: ["FRAME", "LUNCH"] }];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.exemptionCount/);
+    const words = container.querySelector("[data-lesson-mark]")?.textContent ?? "";
+    // It stands against the ramtid (10:00 is outside 07:00-09:00) and does not stand on any meal: the card says the first of the one and the second of the other.
+    expect(words).toContain("timetable.exemptMarkLabel(timetable.exemptRuleFRAME)");
+    expect(words).toContain("timetable.exemptMarkIdleLabel(timetable.exemptRuleLUNCH)");
+  });
+
+  it("marks no card of a lesson without an exemption", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), lesson("l-late", "s-sl", "g-51", "10:00")];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.conflictCount/);
+    expect(container.querySelector("[data-lesson-mark]")).toBeNull();
+  });
+
+  it("says both rules, joined, of a lesson that stands against both, and the word on the card is the word and not the sentence", async () => {
+    // At 10:00-11:00: outside the ramtid (07:00-09:00) and on the class's meal (10:00-10:30).
+    state.frameTimes = [frame(0, 99)];
+    state.sittings = [{ id: "s-g-51", studentGroupId: "g-51", dayOfWeek: 1, startTime: "10:00:00", endTime: "10:30:00", headcount: 24, isGenerated: false, startDate: null, endDate: null }];
+    state.lessons = [lesson("l-a", "s-ma", "g-ma1", "08:00"), { ...given("l-late", "s-sl", "g-51", "10:00"), exemptFrom: ["FRAME", "LUNCH"] }];
+    const { container } = render(<TimetablePage />);
+    await screen.findByText(/timetable\.exemptionCount/);
+    const mark = container.querySelector("[data-lesson-mark]")!;
+    expect(mark.firstChild?.textContent).toBe("timetable.exemptMark");
+    expect(mark.textContent).toContain("timetable.exemptMarkLabel(timetable.exemptRuleFRAMEtimetable.exemptAndtimetable.exemptRuleLUNCH)");
+  });
+
+  it("counts an exemption nothing stands against too, as the publication does, and opens the list for it", async () => {
+    // Given for the ramtid, with the ramtid wide enough now for the lesson at 10:00-11:00: nothing stands there, and the lesson still has it.
+    state.frameTimes = [{ ...frame(0, 99), endTime: "12:00:00" }];
+    state.lessons = [given("l-idle", "s-sl", "g-51", "10:00")];
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    expect(await screen.findByText(/timetable\.exemptionCount/)).toBeTruthy();
+    expect(screen.queryByText(/timetable\.conflictCount/)).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "timetable.conflictListOpen" }));
+    const list = await screen.findByRole("dialog");
+    expect(within(list).getByRole("heading", { name: "timetable.conflictListExemptionsTitle" })).toBeTruthy();
+    expect(within(list).getByText(/timetable\.conflictExemptIdle/)).toBeTruthy();
+  });
+
+  it("is a conflict as before for a lesson without the exemption, and the header says conflicts and no exemption", async () => {
+    state.frameTimes = [frame(0, 99)];
+    state.lessons = [lesson("l-late", "s-sl", "g-51", "10:00")];
+    render(<TimetablePage />);
+    expect(await screen.findByText(/timetable\.conflictCount/)).toBeTruthy();
+    expect(screen.queryByText(/timetable\.exemptionCount/)).toBeNull();
+  });
+});
+
+describe("Justera lektion for a lesson that has an exemption (Undantag med flit)", () => {
+  // The ramtid runs 07:00-09:00 and the lesson stands at 10:00-11:00 with an exemption for it.
+  const frame = { id: "f-1", minGradeLevel: 0, maxGradeLevel: 99, dayOfWeek: null, startTime: "07:00:00", endTime: "09:00:00" };
+  const openSlojd = async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+    return user;
+  };
+  afterEach(() => {
+    noMutation.mutateAsync.mockReset().mockResolvedValue({ id: "x" });
+  });
+
+  it("opens with the exemption said, and a save after Ta tillbaka Lägg ändå says exempt: [] so that the gateway takes it back, the lock as the lesson had it", async () => {
+    state.frameTimes = [frame];
+    state.lessons = [{ ...lesson("l-late", "s-sl", "g-51", "10:00"), isLocked: true, exemptFrom: ["FRAME"] }];
+    const user = await openSlojd();
+
+    expect(await screen.findByText(/timetable\.exemptHas/)).toBeTruthy();
+    await user.click(await screen.findByRole("button", { name: "timetable.exemptTakeBack" }));
+    await user.click(await screen.findByRole("button", { name: "common.save" }));
+
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-late", exempt: [], isLocked: true }));
+  });
+
+  it("says the exemption it has when a lesson is saved as it stands: the answer is kept", async () => {
+    state.frameTimes = [frame];
+    state.lessons = [{ ...lesson("l-late", "s-sl", "g-51", "10:00"), isLocked: true, exemptFrom: ["FRAME"] }];
+    const user = await openSlojd();
+    await user.click(await screen.findByRole("button", { name: "common.save" }));
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-late", exempt: ["FRAME"], isLocked: true }));
+  });
+
+  it("says no word of an exemption for a lesson that has none: the save is the request it always was", async () => {
+    state.lessons = [lesson("l-late", "s-sl", "g-51", "10:00")];
+    const user = await openSlojd();
+    await user.click(await screen.findByRole("button", { name: "common.save" }));
+    const sent = noMutation.mutateAsync.mock.calls[0]![0] as Record<string, unknown>;
+    expect(sent).toMatchObject({ id: "l-late" });
+    expect("exempt" in sent).toBe(false);
   });
 });
 

@@ -817,6 +817,13 @@ GATE_WEEKS: tuple[str, ...] = (
     "n18-g0-m0-s2",
     "n24-g0-m0-s1",
     "n24-g0-m0-s2",
+    # THE YEARS' ROAD (M8 PR 5, DEPLOYMENT §35.9): two weeks that neither of phase 1a's and 1b's searches lays in 4
+    # deterministic seconds each and that the road between them lays at every one of three seeds (work 4.6 to 6.1: phase 1a's
+    # 4.0 that gave up, the years' steps and phase 1b's finish from the hint). Before the road they were TIMEOUT, and a
+    # TIMEOUT is no row (above); they are here so that a change that breaks the road is a week lost on two weeks at once, which is
+    # what the verdict fails on (solve-corpus-gate.mjs: two lost weeks fail whatever the floor was). Terms are not in them.
+    "n9-g6-m0-s1",
+    "n12-g6-m0-s1-e1645",
 )
 
 
@@ -860,11 +867,15 @@ def cliff_shapes() -> list[SchoolShape]:
 
 
 def gate_shapes() -> list[SchoolShape]:
-    """The gate's weeks, in GATE_WEEKS' order. A name the sweep no longer has is an error, not a shorter gate."""
-    by_name = {shape.name(): shape for shape in sweep_shapes()}
+    """The gate's weeks, in GATE_WEEKS' order. A name neither the sweep nor the cliff weeks have is an error, not a shorter gate.
+
+    The sweep's weeks by their names, and the cliff weeks (CLIFF_WEEKS: a sweep week with its day ending where its witness
+    says, the end in its name) for the weeks the years' road lays."""
+    by_name = {shape.name(): shape for shape in cliff_shapes()}
+    by_name.update({shape.name(): shape for shape in sweep_shapes()})
     missing = [name for name in GATE_WEEKS if name not in by_name]
     if missing:
-        msg = f"the gate names weeks the sweep does not have: {', '.join(missing)}"
+        msg = f"the gate names weeks neither the sweep nor the cliff weeks have: {', '.join(missing)}"
         raise ValueError(msg)
     return [by_name[name] for name in GATE_WEEKS]
 

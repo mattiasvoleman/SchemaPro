@@ -44,6 +44,115 @@ a Sunday (`SCHOOL_DAY`, the förläggning's own first question, in its words).
   over real Postgres, with the cases in `src/calendar/__fixtures__/lesson-judge-cases.json` that the web's mirror is held to) and
   `src/calendar/lesson-judge.property.spec.ts` (the other schools' holds and the board's rules over random facts).
 
+## Att lägga: grundschemats bricklåda (E4)
+
+`GET /api/v1/board-tray?academicYearId=…[&groupId=…]` (`src/board-tray/`) svarar med en **bricka** för varje lektion en timplanspost har kvar, räknad som Generera räknar:
+samma funktion (`demandLeftOf`, `post-demand.ts`) genom samma läsning som Förlägg i veckan ritar sina poster med (`boardPostOf`), så att talet på brädet och talet Generera
+skickar är ett. En skillnad, och den är brädets: det som redan står på grundschemat svarar en lektion, också det Generera lagt och ingen låst (Generera raderar det fria före
+sin räkning, brädet visar det stående). En förläggning svarar en lektion och sägs för sig, en parkerad lektion svarar ingen, och en post i ett parallellt block läggs med
+blocket (`blockId`, `cannotPlace: 'BLOCK'`). Ingen person nämns, bara id.
+
+Svaret har `bricks` (den valda klassens, eller årets; längsta lektionerna först i fast ordning, `possibleTimes: null` tills E3:s fråga finns), huvudets tal (`tally`:
+lektioner, lagda, svarade av en förläggning, kvar) och `groups` (kvar per klass, för klassväljaren). En läsning varje administratör får göra.
+
+Hålls av `scripts/test/probe-att-lagga.ts` (mot riktig Postgres: samma tal som Förlägg i veckan, fria och parkerade lektioner, en förläggning, en annan skolas år) och, för hand mot
+en riktig motor, `scripts/test/probe-att-lagga-motor.ts`: brickorna per post är det motorn sedan lägger, och facket är tomt efteråt.
+
+## Possible times (Möjliga tider, E3)
+
+`POST /api/v1/master-lessons/possible-times` answers "where can this lesson stand, and which time is best?" without writing anything. It
+is the scheduler's door, as the judge is, and it names one subject: `lessonId` (a lesson that exists; a lesson on the tray is a brick) or
+`brick` (a lesson that does not exist yet: group, subject, minutes, and what is known of teacher, room, extra groups, pupils and weeks).
+Optional: `days` (Monday to Friday), `from` and `to` (the board's visible day, 07:00–18:00), `stepMinutes` (5) and `limit` (12, at most 40).
+
+- **Every start of the week gets one answer.** `STANDS` (where the lesson stands now), `CLOSED` (a rule shuts the stretch whatever else
+  is there: `FRAME`, `LUNCH`, `GRADE_RULE`, `OTHER_SCHOOL` with the schools' names, or `AVAILABILITY` with the resource it closes),
+  `FREE` and `CHANGE` (the judge lets it through, `CHANGE` when the room had to be another), `IN_THE_WAY` (exactly one lesson that is free
+  to move holds the stretch, named by class, subject, day and clock in `blockers`) and `CROWDED` (several, or a locked one, hold it; the run
+  says how many). Starts are returned as runs of one answer per day.
+- **The order is the written cost.** Each time the judge accepts is costed with the swap search's own soft measure (the pupils' and the
+  teachers' idle minutes, the subject's distribution, the teacher's day), plus the school's wishes (`PREFERRED_FREE` breaks, `PREFERRED_BUSY`
+  meets) and a small price for another room. `options` are the best `limit`, best first, with `rank`, the figures before and after, the
+  wishes and the room each lesson of the unit would stand in. A tie goes to the earlier time.
+- **The judge has the last word.** The query prunes in memory (the swap search's snapshot, one read of the year) and asks `judgeLessons`
+  about what survives, in the order of the cost, for 1.2 s at most; a time it had no time for is not painted (`stats.truncated`). A time is
+  never called free that the judge refuses, and the prune never loses one the judge lets through.
+- **A brick** stands nowhere: it is in its pupils' cohorts, its teacher's week and its post's distribution, but counts for nothing until a
+  time lays it, so the figures before are the school without it. A parallel block's brick is placed on its own.
+- **Never an undantag.** A time that needs one (E1b) is not offered; the query holds every rule.
+- **Held in place by** `src/calendar/possible-times.spec.ts` (the prune against a brute force, the order against a count by hand),
+  `possible-times.service.spec.ts` and `scripts/test/probe-mojliga-tider.ts` (every start of the week of every lesson of the judge's fall
+  file, over real Postgres: the judge and the query must agree).
+
+### What can lie here, and the room chooser (E3)
+
+Two more questions over the same machinery, both the scheduler's door, both writing nothing.
+
+- `POST /api/v1/master-lessons/what-fits-here` turns the question around: the schemaläggare picked an empty `dayOfWeek` and `startTime` on
+  the board, and `candidates` are the lessons that are waiting (up to 200, each `lessonId` or `brick`). A lesson on the tray is a brick
+  with its own id, so putting it out moves that lesson and creates no new one. The answer has one row per candidate in the order of the
+  request (`FREE`, `CHANGE`, `CLOSED` with the rule, `IN_THE_WAY` with the lesson named in `blockers`, `CROWDED`, `STANDS`, `PLACED` for a
+  förläggning's lesson, or `UNJUDGED` when the judge's time ran out) and `fits`, the indices of the ones that fit, best first by the
+  written cost, each with its `rank`, figures, wishes and the room it would stand in. A candidate fits only when the judge lets it through.
+- `POST /api/v1/master-lessons/room-choices` lists the school's rooms for a `lessonId` or `brick` laid at a day and clock: the free rooms
+  the generator would put the lesson in first, ranked (the lesson's own room, then its own kind of room, then the smallest that is big
+  enough, then its own building), then the free ones it would not (too small, another type, outside the group's years), then the busy
+  ones naming the lesson that stands in them (class, subject, day, clock), then the shut ones (a weekly row on the room, or another school's
+  hold, named). Each row has its seats against the pupils the lesson needs. The teacher and the class are not part of this question.
+- **Held in place by** `src/calendar/room-choices.spec.ts` (against a brute force on the hourly school), `what-fits.service.spec.ts`, and the
+  probe's (mt-f/g): every candidate and every room, over the judge's fall file, held against `POST /judge`.
+
+## Undantag med flit (E1b)
+
+Under a no for the stage's ramtid or the class's meal the administrator may answer **"Lägg ändå"**. It is a question that says what
+breaks, and only an administrator (the route's own role) can answer yes. Nothing else can be answered yes to: the teacher, the room,
+the class and its pupils, a closed hour, a rule on årskurser, another school's time and the school day are refused with the same code
+whatever the request names (decision 5: no forced clash).
+
+- **By name.** `exempt: ['FRAME' | 'LUNCH']` on the PATCH, the create and the läsande frågan (`moves[].exempt`). The judge answers
+  EVERY board rule a time breaks (`reasons: 'FRAME,LUNCH'`; `boardCodeOf` of a swap names the first only), so an exemption for the ramtid
+  does not hide the lunch: what is named is let through, what is not is still asked. `exempted` says what the answer yes would save,
+  `exemptable` whether the refusals are the ramtid and the meal and nothing else. A rule named that the time does not break is saved on nothing.
+- **Saved on the lesson.** `MasterLessons.exemptFrom text[]` (`FRAME`, `LUNCH`, a CHECK on the two names; the same column on
+  `PublishedLessons`), and the lesson is locked in the same breath (a request that names a rule and says `isLocked: false` is a 400). The
+  lesson says it only when it has one (`exemptFrom` in the result, a version's blob, a publication's snapshot): every other lesson is
+  the object it was.
+- **For the time it was given for.** The trigger `MasterLessons_exemption_ends` takes it away when the day, clock, dates, lock or tray
+  of the lesson change, for any writer that does not know the column (a swap's apply, an import, a restore): a writer that decides the
+  exemption itself says `app.keep_exemptions = on` for its transaction (the PATCH that answers yes again for another breaking time,
+  a discarded draft). The PATCH writes `exemptFrom` itself and answers `EXEMPTION_ENDED` (`params.rules`) when an edit ended one.
+  Another time that breaks the rule asks again.
+- **Generera and the engine.** An exempt lesson is locked, so Generera keeps it and plans around it. The engine needs nothing for the
+  ramtid (a lock may lie outside its class's frame); for the lunch the payload names the lock (`fixedLessons[].exemptFromLunch: true`,
+  sent only on a lock whose lesson has the exemption) and the engine no longer refuses a meal the school placed by hand on it
+  (`LUNCH_PLACEMENT_COLLIDES`, `FixedLesson.exempt_from_lunch`). A meal the engine lays itself is still laid clear of the lock, and a
+  reserved hour of the class is still a reservation. `scripts/test/probe-undantag-motor.ts` shows it against the real engine (by hand).
+- **No automat gives one or moves one.** Generera, the swaps and Optimera salar never write the column; a lesson with an exemption is
+  locked, so none of them moves it. A block card's members that move lose theirs (the card is judged against every rule and asked of no one's yes).
+- **The seams.** A version's blob and its restore, a publication's snapshot and a discarded draft (a changed exemption is a change of
+  the draft), the schedule file (the column `Undantag`: `Ramtid | Lunch`; read into another school the import lets through the rules the
+  file names and the lesson breaks, never the rast or a clash, and refuses a word that is none of the two) and the publication check
+  (`PUB_EXEMPTIONS`, information: the number of lessons and the rule each stands against).
+- **Held in place by** `scripts/test/probe-undantag.ts` (the table and its trigger, the PATCH over real Postgres, a version, a
+  discarded draft, the schedule file in and out), `src/calendar/lesson-judge.exempt.property.spec.ts` (the same drag with and without a
+  name gets the same verdict on every rule but the one named) and `src/calendar/master-lessons.judge.exempt.spec.ts`.
+
+## Brickorna och ägandet (E4)
+
+- **Ett lås vid en flytt.** En olåst lektion som flyttas för hand (en annan dag, ett annat klockslag, andra veckor, eller tillbaka från parkeringen) låses av
+  `PATCH /api/v1/master-lessons/:id`, och svaret säger det (`lockedByMove: true`): annars lägger nästa Generera om det handen just flyttat. Det gäller inte ett lås som
+  begäran själv satte eller tog bort (en låst lektion som flyttas med `isLocked: false` låses upp), inte en lektion som redan är låst, inte en ny sal eller lärare
+  (det flyttar ingenting av var lektionen står) och inte en lektion i ett parallellt block, vars lås är blockets (Lås blocket). Sidan säger "Flyttad och låst" och
+  ger Lås upp; ett ångrat flyttande tar låset med sig, eftersom ögonblicksbilden bär lektionens lås.
+- **Att låsa eller låsa upp frågar inte klashregeln** (granskaren g461, L-5). Ett PATCH som inte ändrar något domaren läser (dag, klockslag, veckor, lärare, sal,
+  klasser, elever) och inte namnger `exempt` flyttar ingenting och krockar inte med något nytt, så en lektion som redan är dubbelbokad kan låsas och låsas upp.
+  En ny sal, en flytt och en ny lärare frågas som förut.
+- **Ett undantag ges inte åt en lektion på parkeringen** (granskaren g467, L-3): `exempt` på en lektion som redan ligger på parkeringen är 400, och den läsande
+  frågan svarar inget undantag för en sådan. Det PATCH som parkerar lektionen får bära `exempt` (webbens Gör om skickar lektionens ögonblicksbild, undantaget med):
+  parkeringen frågas inget och tar undantaget, så inget sparas och inget nekas.
+- **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, och en dubbelbokad
+  lektion kan låsas) och `src/calendar/master-lessons.lock-at-move.spec.ts`.
+
 ## Tier 3
 
 - **Minimal-disruption re-optimization** — the gateway sends the current unlocked placements as `previousLessons`; the solver is rewarded (weight `disruption`) for keeping lessons on those slots and warm-started with them as hints. Mid-term re-runs now change as little as possible.
