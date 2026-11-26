@@ -3771,6 +3771,36 @@ describe("a parallel block (Block i schemat)", () => {
     );
   });
 
+  it("moves the card from its dialog to a time the gateway says the whole block can stand at, with no drag (E3)", async () => {
+    blockApi.patch.mockResolvedValue({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [] });
+    blockApi.post.mockResolvedValue({
+      academicYearId: "y-1",
+      subject: { lessonId: "l-sv1", className: "", subjectName: "Språkval", minutes: 60, lessonIds: ["l-sv1", "l-sv2"], isLocked: false, unplaced: false, current: null },
+      stepMinutes: 15,
+      options: [{ rank: 1, dayOfWeek: 3, startMinutes: 14 * 60, endMinutes: 15 * 60, lessons: [], roomChanged: false, costs: [], wishes: { met: 0, avoided: 0 }, score: 1 }],
+      days: [],
+      blockers: {},
+    });
+    const user = userEvent.setup();
+    showPage();
+    await user.click(await card());
+    const dialog = await screen.findByRole("dialog");
+    // Closed until opened, and nothing asked of the gateway before.
+    expect(blockApi.post).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByText("boardPossible.dialog.title"));
+    const option = await within(dialog).findByRole("button", { name: /boardPossible\.list\.option\(1\|/ });
+    expect(blockApi.post).toHaveBeenCalledWith("/api/v1/master-lessons/possible-times", expect.objectContaining({ lessonId: expect.stringMatching(/^l-sv/) }), expect.anything());
+    await user.click(option);
+
+    await confirmClasses();
+    await waitFor(() =>
+      expect(blockApi.patch).toHaveBeenCalledWith(
+        "/api/v1/master-lessons/block-card",
+        expect.objectContaining({ lessonIds: ["l-sv1", "l-sv2"], dayOfWeek: 3, startTime: "14:00", endTime: "15:00" }),
+      ),
+    );
+  });
+
   it("names the block under a member standing apart from it", async () => {
     // A second lesson each, at different hours: both stand apart.
     state.lessons = [
