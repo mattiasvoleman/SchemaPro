@@ -262,6 +262,15 @@ describe('DEPLOYMENT.md', () => {
     expect(section).toContain('**The engine before the API.**');
     expect(section).toContain('has `exemptFromLunch` under `FixedLesson`');
   });
+
+  it('35.2 and the measurement record say what production gave a run only on the days it was read (2026-11-18: 180 s, 2026-11-23: 540 s)', () => {
+    for (const text of [flat(deployment), flat(read('docs/solve-corpus-measurement.md'))]) {
+      expect(text).not.toContain('Production gave a run 180 s on every core it has when this was measured');
+      expect(text).not.toContain('Production gives a run 180 s');
+      expect(text).not.toContain('a budget of 180 s as in production');
+    }
+    expect(flat(deployment)).toContain("Production's budget was 180 s on 2026-11-18 and 540 s on 2026-11-23, and the day it changed is not read");
+  });
 });
 
 describe('README.md and the security audit do not say the schema has twelve tables', () => {
