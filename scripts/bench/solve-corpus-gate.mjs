@@ -57,6 +57,12 @@ export const GEOMEAN_MAX = 1.25;
  * The deterministic budget is for ONE search, and the solve runs two satisfaction searches in
  * turn when the first finds nothing (phase 1a, then phase 1b), so the most work a week can
  * spend before it is a TIMEOUT is this many budgets.
+ *
+ * A week of two years or more has the years' road between the two (M8 PR 5, DEPLOYMENT §35.9): each
+ * of its steps is a search of the same budget, so a week the road lays can have spent more than this
+ * (the gate's two road weeks, `n9-g6-m0-s1` and `n12-g6-m0-s1-e1645`, 4.6 to 6.1 of 8). The ceiling is
+ * kept as it was: it only decides when ONE lost week is "clearly inside" (below), and the road's
+ * weeks are not, so they fail the gate together (two lost weeks fail whatever the floor was).
  */
 export const SEARCHES_PER_SOLVE = 2;
 /** A week the floor solves inside this share of the most work it can spend is not near the edge. */

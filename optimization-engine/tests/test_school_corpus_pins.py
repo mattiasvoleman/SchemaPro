@@ -114,7 +114,11 @@ def test_version_two_moved_only_the_request_id_of_every_week_of_version_one() ->
     assert set(held) == set(shapes), "the sweep has other weeks than version 1 had: name the new ones in the cliff weeks, not here"
     moved = [name for name, digest in held.items() if _content_digest(corpus.build_week(shapes[name])) != digest]
     assert moved == [], f"these weeks build another week than they did in version 1: {moved}"
-    assert {shape.name() for shape in corpus.gate_shapes()} <= set(held)
+    gate = {shape.name() for shape in corpus.gate_shapes()}
+    cliff = {shape.name() for shape in corpus.cliff_shapes()}
+    # The gate's weeks are the sweep's (held) or a cliff week the years' road lays (M8 PR 7): none is another week.
+    assert gate <= set(held) | cliff
+    assert gate & set(held), "most of the gate is the sweep's own weeks, whose digests are held above"
 
 
 def test_a_day_that_ends_otherwise_than_at_sixteen_is_another_week_with_another_name() -> None:
