@@ -357,6 +357,26 @@ describe('NotificationDeliveryService (e-mail)', () => {
       expect(store.rows[0]!.plan).toBeNull();
       expect(fetchMock).not.toHaveBeenCalled();
     });
+
+    it('does not use a row’s thirty tries up in minutes by looking at it again and again with nothing to send it with', async () => {
+      await store.enqueue({ schoolId: SCHOOL, urgent: false, entries: [{ type: 'LESSON_CANCELLED', meta: {}, n: 1, email: { subject: 'S', body: 'B' } }], recipientIds: ['u1'], notificationIds: ['n1'] });
+      const config = { get: (key: string) => (key === 'push' ? { enabled: true } : undefined) };
+      delete process.env.RESEND_API_KEY;
+      const pushOnly = new NotificationDeliveryService(prisma as unknown as PrismaService, config as never, { send: jest.fn(async () => []) } as never, undefined, store);
+      pushOnly.kick();
+      await pushOnly.idle();
+      let waited = 0;
+      while (store.rows[0]!.attempts < 30) {
+        const wait = Math.max(0, store.rows[0]!.notBefore - store.now()) + 1;
+        store.forward(wait);
+        waited += wait;
+        pushOnly.kick();
+        await pushOnly.idle();
+      }
+      // The sweep gives a row up at its thirtieth try: a key that is missing for a few hours must not cost the mail, and the push with it.
+      expect(store.rows[0]!.status).toBe('PENDING');
+      expect(waited).toBeGreaterThanOrEqual(60 * 60_000);
+    });
   });
 
   describe('the mails of a row', () => {

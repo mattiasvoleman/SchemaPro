@@ -393,6 +393,15 @@ export class NotificationDeliveryService implements OnModuleInit, OnModuleDestro
     }
   }
 
+  /**
+   * How long a row this process cannot send waits before it is looked at again: half a minute, doubling at each claim like a
+   * failure does (retryDelayMs). Every look is a claim, and the sweep gives a row up at its thirtieth: at half a minute flat
+   * a row nobody with the key had come for would be given up, with its push, in a quarter of an hour.
+   */
+  private notHereWait(row: QueuedNotice): number {
+    return Math.max(NOT_HERE_MS, retryDelayMs(row.attempts));
+  }
+
   private async handBack(row: QueuedNotice, delayMs: number): Promise<void> {
     try {
       await this.store.release(row, delayMs);
@@ -408,7 +417,7 @@ export class NotificationDeliveryService implements OnModuleInit, OnModuleDestro
     // A row with mail in it that this process cannot send is left for one that can (a key that is set on some instances
     // only is a deploy in the middle of being made): never given up, never sent without its mail.
     if (!row.plan && !channels.mail && row.entries.some((entry) => entry.email)) {
-      await this.handBack(row, NOT_HERE_MS);
+      await this.handBack(row, this.notHereWait(row));
       return { kind: 'released' };
     }
 
@@ -433,7 +442,7 @@ export class NotificationDeliveryService implements OnModuleInit, OnModuleDestro
       const email = row.entries[packet.e]?.email;
       if (!apiKey || !email) {
         // Resend was set up when this was planned and is not now (or the entry has no mail: not made by this code).
-        mailWait = NOT_HERE_MS;
+        mailWait = this.notHereWait(row);
         break;
       }
       await this.pace('EMAIL', this.emailIntervalMs);
@@ -467,7 +476,7 @@ export class NotificationDeliveryService implements OnModuleInit, OnModuleDestro
       }
       if (!this.expo) {
         // Expo was set up when this was planned and is not here now.
-        pushWait = NOT_HERE_MS;
+        pushWait = this.notHereWait(row);
         break;
       }
       await this.pace('PUSH', this.pushIntervalMs);
