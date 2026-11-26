@@ -13,6 +13,7 @@ import {
   ScopeAssessmentsService,
   hideScopeAssessment,
   scopeAboveEdge,
+  scopeDayInFuture,
   scopeDayOutsideYear,
   toScopeAssessmentResponse,
 } from './scope-assessments.service';
@@ -96,6 +97,9 @@ describe('ScopeAssessmentsService', () => {
   let years: Record<string, unknown>[];
 
   beforeEach(() => {
+    // A day after the year's last: every day the tests below call a day of the year is behind us (the day of an own initiative is not
+    // registered before it has come), and the describe that is about that day sets its own.
+    jest.useFakeTimers().setSystemTime(new Date('2028-06-10T10:00:00.000Z'));
     tx = createTxMock();
     prisma = createPrismaMock(tx);
     service = new ScopeAssessmentsService(prisma as unknown as PrismaService);
@@ -114,6 +118,10 @@ describe('ScopeAssessmentsService', () => {
     tx.assignmentScopeAssessment.upsert.mockImplementation(({ create }: { create: Record<string, unknown> }) =>
       Promise.resolve(stored({ ...create, decidedAt: new Date('2027-03-05T08:00:00.000Z') })),
     );
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   describe('list', () => {
@@ -323,6 +331,8 @@ describe('ScopeAssessmentsService', () => {
       it('asks nothing of the day when there is none (a level alone, or an exception that is not the teacher\'s own initiative)', async () => {
         await expect(put({ teachingLevelHours: 600 })).resolves.toBeDefined();
         await expect(put({ exceptionKind: 'SMALL_GROUP' })).resolves.toBeDefined();
+        // ...and reads nothing of the school either: the zone is asked for a day and for nothing else.
+        expect(tx.school.findUnique).not.toHaveBeenCalled();
       });
 
       it('moves with the läsår it is written for and not with a constant', async () => {
@@ -330,6 +340,50 @@ describe('ScopeAssessmentsService', () => {
         await expect(initiative('2026-08-18')).resolves.toBeDefined();
         await expect(initiative('2026-08-17')).rejects.toThrow(new BadRequestException(scopeDayOutsideYear('2026-08-18', '2028-06-12')));
         await expect(initiative('2028-06-13')).rejects.toBeInstanceOf(BadRequestException);
+      });
+    });
+
+    describe('the day of an own initiative is not after the school\'s today (the review of #413, U-2)', () => {
+      const initiative = (ownInitiativeOn: string) => put({ exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn });
+
+      it('takes today and every day before it, and refuses tomorrow, in the sentence that names today', async () => {
+        jest.setSystemTime(new Date('2027-09-01T10:00:00.000Z'));
+        await expect(initiative('2027-09-01')).resolves.toMatchObject({ ownInitiativeOn: '2027-09-01' });
+        await expect(initiative('2027-08-31')).resolves.toBeDefined();
+        await expect(initiative('2027-09-02')).rejects.toThrow(new BadRequestException(scopeDayInFuture('2027-09-01')));
+        expect(tx.assignmentScopeAssessment.upsert).toHaveBeenCalledTimes(2);
+      });
+
+      it('says today in words the one who registers can read', async () => {
+        jest.setSystemTime(new Date('2027-09-01T10:00:00.000Z'));
+        await expect(initiative('2027-09-30')).rejects.toThrow(
+          'Dagen då läraren tog initiativet kan inte ligga efter i dag (2027-09-01): undantaget registreras när initiativet har tagits.',
+        );
+      });
+
+      it('is the school\'s day and not UTC\'s: at 00:30 on the 2nd in Stockholm, which is the 1st in UTC, the 2nd is today', async () => {
+        jest.setSystemTime(new Date('2027-09-01T22:30:00.000Z'));
+        tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+        await expect(initiative('2027-09-02')).resolves.toBeDefined();
+        await expect(initiative('2027-09-03')).rejects.toThrow(new BadRequestException(scopeDayInFuture('2027-09-02')));
+      });
+
+      it('goes by the zone the school has, not by Stockholm: the same instant is still the 1st in Honolulu', async () => {
+        jest.setSystemTime(new Date('2027-09-01T22:30:00.000Z'));
+        tx.school.findUnique.mockResolvedValue({ timezone: 'Pacific/Honolulu' });
+        await expect(initiative('2027-09-01')).resolves.toBeDefined();
+        await expect(initiative('2027-09-02')).rejects.toThrow(new BadRequestException(scopeDayInFuture('2027-09-01')));
+      });
+
+      it('reads the school of the session, once, by its own id', async () => {
+        await initiative('2028-01-10');
+        expect(tx.school.findUnique).toHaveBeenCalledTimes(1);
+        expect(tx.school.findUnique).toHaveBeenCalledWith({ where: { id: SCHOOL_ID }, select: { timezone: true } });
+      });
+
+      it('asks the year first: a day outside it is the year\'s sentence, not today\'s, whatever the clock says', async () => {
+        jest.setSystemTime(new Date('2027-09-01T10:00:00.000Z'));
+        await expect(initiative('2999-01-01')).rejects.toThrow(new BadRequestException(scopeDayOutsideYear('2026-08-16', '2028-06-09')));
       });
     });
 
