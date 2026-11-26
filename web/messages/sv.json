@@ -3904,6 +3904,8 @@
       "invite": "Bjud in valda ({count})",
       "invited": "{sent} inbjudningar skickades.",
       "chunked": "Inbjudningarna skickas {chunk} åt gången.",
+      "stoppedShort": "Supabase har nått sin gräns för mejl: {left, plural, one {# person} other {# personer}} har inte bjudits in.",
+      "stopped": "Supabase har nått sin gräns för mejl, så {left, plural, one {# person} other {# personer}} har inte bjudits in. Vänta en stund, eller höj gränsen under Authentication → Rate Limits i Supabase, och bjud in dem igen. De som redan fått en inbjudan får ingen ny.",
       "report": "{sent} skickade, {already} hade redan konto, {failed} misslyckades.",
       "loadFailed": "Listan över nya personer kunde inte hämtas"
     },

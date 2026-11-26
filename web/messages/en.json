@@ -3904,6 +3904,8 @@
       "invite": "Invite chosen ({count})",
       "invited": "{sent} invitations were sent.",
       "chunked": "Invitations are sent {chunk} at a time.",
+      "stoppedShort": "Supabase has reached its mail limit: {left, plural, one {# person has} other {# people have}} not been invited.",
+      "stopped": "Supabase has reached its mail limit, so {left, plural, one {# person has} other {# people have}} not been invited. Wait a while, or raise the limit under Authentication → Rate Limits in Supabase, and invite them again. Those who have an invitation already get no second one.",
       "report": "{sent} sent, {already} already had an account, {failed} failed.",
       "loadFailed": "The list of new people could not be loaded"
     },
