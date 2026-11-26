@@ -16,7 +16,9 @@ import {
   type ExchangeSummary,
   type ImportPlanDto,
   type ImportResultDto,
+  type SavedStartDto,
 } from "@/lib/schedule-exchange";
+import { Link } from "@/i18n/navigation";
 import { LazyColumnMappingDialog } from "@/components/import/lazy-column-mapping-dialog";
 import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { PasteTable } from "@/components/import/paste-table";
@@ -69,6 +71,8 @@ export default function ScheduleExchangePage() {
   const [periods, setPeriods] = useState("");
   const [plan, setPlan] = useState<ImportPlanDto | null>(null);
   const [result, setResult] = useState<ImportResultDto | null>(null);
+  // Ett schema som start: the file saved as a version, which Generera can start from; nothing of the school's is written.
+  const [saved, setSaved] = useState<SavedStartDto | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [exportNotes, setExportNotes] = useState<string[]>([]);
   // The table card (Kolumnmappning): a paste or a file, the dialog that maps it, and the note that it has been read.
@@ -115,10 +119,25 @@ export default function ScheduleExchangePage() {
     onMutate: () => {
       setPlan(null);
       setResult(null);
+      setSaved(null);
       setProblem(null);
     },
     onSuccess: setPlan,
     onError: (error) => setProblem(error instanceof ApiError ? apiErrorText(error, tCommon) : t("import.previewFailed")),
+  });
+
+  const saveStart = useMutation({
+    mutationFn: async () => api.post<SavedStartDto>("/api/v1/schedule-exchange/import/as-version", await bodyOf()),
+    onMutate: () => {
+      setSaved(null);
+      setProblem(null);
+    },
+    onSuccess: (done) => {
+      setSaved(done);
+      // The version list on Generera's page reads again; nothing else changed.
+      void queryClient.invalidateQueries({ queryKey: ["scheduleVersions"] });
+    },
+    onError: (error) => setProblem(error instanceof ApiError ? apiErrorText(error, tCommon) : t("import.saveStartFailed")),
   });
 
   const apply = useMutation({
@@ -167,6 +186,7 @@ export default function ScheduleExchangePage() {
     setFormat("TABLE_CSV");
     setPlan(null);
     setResult(null);
+    setSaved(null);
     setProblem(null);
     setMapped({ name: table.name, count: table.rows });
     if (fileInput.current) fileInput.current.value = "";
@@ -182,6 +202,7 @@ export default function ScheduleExchangePage() {
     setMapped(null);
     setPlan(null);
     setResult(null);
+    setSaved(null);
     setProblem(null);
     if (chosen.some((file) => file.size > MAX_UPLOAD_BYTES)) {
       setFiles([]);
@@ -366,7 +387,17 @@ export default function ScheduleExchangePage() {
               {preview.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
               {t("import.preview")}
             </Button>
+            <Button
+              variant="outline"
+              disabled={files.length === 0 || format === "" || saveStart.isPending}
+              onClick={() => saveStart.mutate()}
+              data-writes="SCHEMALAGGNING"
+            >
+              {saveStart.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+              {t("import.saveStart")}
+            </Button>
           </div>
+          <p className="max-w-prose text-sm text-muted-foreground">{t("import.saveStartHint")}</p>
           {format === "UNTIS_GPU" ? (
             <div>
               <label htmlFor="exchange-periods" className="mb-1 block text-sm font-medium">
@@ -386,6 +417,18 @@ export default function ScheduleExchangePage() {
           ) : null}
           {files.length > 0 && format === "" ? <Notice tone="warning">{t("import.unknownFormat")}</Notice> : null}
           {problem ? <Notice tone="destructive">{problem}</Notice> : null}
+          {saved ? (
+            <Notice tone="success">
+              <p>{t("import.savedStart", { name: saved.name, count: saved.lessonCount, read: saved.read })}</p>
+              {saved.read - saved.lessonCount > 0 ? <p>{t("import.savedStartLeftOut", { count: saved.read - saved.lessonCount })}</p> : null}
+              {saved.unreadable > 0 ? <p>{t("import.savedStartUnreadable", { count: saved.unreadable })}</p> : null}
+              <p>
+                <Link href={`/admin/generate?year=${yearId}`} className="font-medium underline underline-offset-4">
+                  {t("import.savedStartLink")}
+                </Link>
+              </p>
+            </Notice>
+          ) : null}
           {result ? (
             <Notice tone="success">
               {t("import.done", {
