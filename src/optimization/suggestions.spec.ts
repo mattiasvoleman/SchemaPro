@@ -1,16 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import type { AiEngineSuggestChangesResponse, AiEngineSuggestedChange } from './interfaces/suggest-changes.interface';
+import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
+import { GROUP_CONFLICTS_OVER_ENGINE_LIMIT } from './optimization-proxy.service';
+import { BLOCK_PARTLY_LOCKED_SUMMARY } from './parallel-blocks';
+import { PLACEMENTS_REFUSED_SUMMARY } from './placed-lessons';
 import {
   MAX_NAMED,
   MAX_NAME,
   MAX_STORED_BYTES,
   MAX_STORED_CHANGES,
+  PREFLIGHT_REFUSAL_CODES,
   STALE_AFTER_MS,
   failedSuggestions,
   isAbandoned,
+  keptOf,
   readAs,
+  refusedSuggestions,
   runningSuggestions,
+  settledAs,
   suggestionsFromEngine,
+  suggestionsMayBeAskedFor,
   suggestionsOf,
   teachersOfSuggestions,
   viewOf,
@@ -126,19 +135,38 @@ describe('the engine answer as the column keeps it', () => {
     expect(result.changes.map((change) => change.proof)).toEqual(['MAY_HELP', 'MAY_HELP']);
   });
 
-  it('stores a part-timer\'s days hidden for every reader: the rule, the price and the proof and nothing else', () => {
+  it('stores a part-timer\'s days hidden for every reader: the rule and the proof and nothing else, and no price (g385-L-8)', () => {
     const result = stored(answer([days()]));
     expect(result.changes).toEqual([{
-      rule: 'TEACHER_WORK_DAYS', proof: 'SOLVED_TOGETHER', cost: 1200, current: null, needed: null, weekdays: [],
+      rule: 'TEACHER_WORK_DAYS', proof: 'SOLVED_TOGETHER', cost: 0, current: null, needed: null, weekdays: [],
       requirementIds: [], requirementNames: [], roomIds: [], roomNames: [], resourceIds: [], teacherIds: [], hidden: true,
     }]);
   });
 
-  it('merges several part-timers\' days into one change whose price is the sum, and keeps the others apart', () => {
+  it('does not let the price of a part-timer\'s days say how many days a post goes over, in the column or in what is read', () => {
+    // 1 200 a day: three days over would have been 3 600, and a reader without HR-läs could count them from it.
+    const result = stored(answer([days({ cost: 3600 })]));
+    expect(JSON.stringify(result)).not.toContain('3600');
+    expect(result.changes[0]!.cost).toBe(0);
+    // A column written before that carried the price: it is read without it (and is still shown), never refused for it.
+    const old = { ...result, changes: [{ ...result.changes[0]!, cost: 3600 }] };
+    const read = suggestionsOf(old);
+    expect(read).not.toBeNull();
+    expect(read!.changes[0]!.cost).toBe(0);
+    expect(JSON.stringify(viewOf(read!, new Map()))).not.toContain('3600');
+  });
+
+  it('still ranks the part-timers\' days by their price, which is not kept (the order is made before the price is dropped)', () => {
+    const result = stored(answer([days({ cost: 3600 }), perDay({ cost: 2000 }), perDay({ cost: 20 })]));
+    expect(result.changes.map((change) => change.rule)).toEqual(['SUBJECT_PER_DAY', 'SUBJECT_PER_DAY', 'TEACHER_WORK_DAYS']);
+    expect(result.changes.map((change) => change.cost)).toEqual([20, 2000, 0]);
+  });
+
+  it('merges several part-timers\' days into one change (the prices added for the order, none kept), and keeps the others apart', () => {
     const result = stored(answer([days({ cost: 1200 }), perDay(), days({ cost: 2400 })]));
     expect(result.changes.map((change) => [change.rule, change.cost])).toEqual([
       ['SUBJECT_PER_DAY', 20],
-      ['TEACHER_WORK_DAYS', 3600],
+      ['TEACHER_WORK_DAYS', 0],
     ]);
     // The engine's list had three changes, and the proof is about all three: two part-timers' days are one entry but are still two changes.
     expect(result.total).toBe(3);
@@ -413,5 +441,102 @@ describe('an analysis whose process went away', () => {
     expect(isAbandoned(done, new Date(Date.parse(STARTED) + 10 * STALE_AFTER_MS))).toBe(false);
     const failed = failedSuggestions(STARTED, 'ENGINE_FAILED', NOW);
     expect(readAs(failed, new Date(Date.parse(STARTED) + 10 * STALE_AFTER_MS))).toBe(failed);
+  });
+});
+
+describe('an analysis asked over a finished one (g385-L-5)', () => {
+  const later = new Date(Date.parse(NOW.toISOString()) + 60_000);
+  const withList = () => stored(answer([cap()]));
+  const found = () => ({ ...withList(), verdict: 'NOT_FOUND' as const, changes: [], total: 0, verified: false });
+
+  it('keeps a finished analysis with something to say, and nothing else', () => {
+    expect(keptOf(withList(), later)).toMatchObject({ state: 'DONE', verdict: 'CHANGES' });
+    expect(keptOf({ ...withList(), verdict: 'SOLVABLE_AS_IS', changes: [], total: 0 }, later)).toMatchObject({ verdict: 'SOLVABLE_AS_IS' });
+    // Not an analysis that found nothing, one that refused the week, a failed one, nor no analysis.
+    expect(keptOf(found(), later)).toBeNull();
+    expect(keptOf(refusedSuggestions(STARTED, NOW), later)).toBeNull();
+    expect(keptOf(failedSuggestions(STARTED, 'ENGINE_FAILED', NOW), later)).toBeNull();
+    expect(keptOf(null, later)).toBeNull();
+  });
+
+  it('keeps it without a previous of its own, however many presses went over it', () => {
+    const asked = runningSuggestions(later, keptOf(withList(), later));
+    const again = keptOf({ ...failedSuggestions(asked.startedAt, 'ABANDONED', later), previous: null }, later);
+    expect(again).toBeNull();
+    expect(keptOf(asked, new Date(later.getTime() + STALE_AFTER_MS + 1))?.previous).toBeNull();
+  });
+
+  it('gives the finished analysis back when the new one ends without a list, and takes the new one when it has an answer', () => {
+    const before = withList();
+    const failed = failedSuggestions(STARTED, 'ENGINE_BUSY', later);
+    expect(settledAs(failed, before)).toBe(before);
+    expect(settledAs(found(), before)).toBe(before);
+    // An answer replaces it, a refusal by a rule that never gives way included (the week is not the one the list was made for).
+    const fresh = stored(answer([perDay()]));
+    expect(settledAs(fresh, before)).toBe(fresh);
+    const refused = refusedSuggestions(STARTED, later);
+    expect(settledAs(refused, before)).toBe(refused);
+    // Over nothing a failure is a failure, as it always was.
+    expect(settledAs(failed, null)).toBe(failed);
+  });
+
+  it('is read as the finished analysis when the run that was asked over it is abandoned, not as a failure', () => {
+    const before = withList();
+    const asked = runningSuggestions(new Date(STARTED), before);
+    const read = readAs(asked, new Date(Date.parse(STARTED) + STALE_AFTER_MS + 1));
+    expect(read).toBe(before);
+    // Nothing was asked over: the failure it always was.
+    expect(readAs(runningSuggestions(new Date(STARTED)), new Date(Date.parse(STARTED) + STALE_AFTER_MS + 1))).toMatchObject({
+      state: 'FAILED', failure: 'ABANDONED',
+    });
+  });
+
+  it('passes through the whitelist as one level of one DONE analysis, in a RUNNING one only', () => {
+    const asked = runningSuggestions(later, keptOf(withList(), later));
+    expect(suggestionsOf(JSON.parse(JSON.stringify(asked)))).toEqual(asked);
+    // Whatever else it is, it is not shown (nor is the analysis): a previous that is FAILED, one with another inside it, or on a DONE one.
+    expect(suggestionsOf({ ...asked, previous: failedSuggestions(STARTED, 'ENGINE_FAILED', NOW) })).toBeNull();
+    expect(suggestionsOf({ ...asked, previous: asked })).toBeNull();
+    expect(suggestionsOf({ ...withList(), previous: withList() })).toBeNull();
+    expect(suggestionsOf({ ...asked, previous: { ...withList(), changes: 'x' } })).toBeNull();
+    // A column from before the field has none.
+    const { previous: _previous, ...old } = withList();
+    expect(suggestionsOf(old)).toEqual(withList());
+  });
+
+  it('is never in what the page reads', () => {
+    const asked = runningSuggestions(later, keptOf(withList(), later));
+    expect(Object.keys(viewOf(asked, new Map()))).not.toContain('previous');
+    expect(JSON.stringify(viewOf(asked, new Map()))).not.toContain('SUBJECT_PER_DAY');
+  });
+
+  it('holds the whole under the column\'s limit with a list of the largest size inside a RUNNING one', () => {
+    const many = Array.from({ length: 9 }, (_, index) => perDay({ cost: 10 + index, requirementIds: [REQ_1, REQ_2, randomUUID()] }));
+    const big = stored(answer(many));
+    const asked = runningSuggestions(later, keptOf(big, later));
+    // The column's CHECK counts the text jsonb prints (a space after every colon and comma): a fifth to a quarter longer than the compact text.
+    const jsonbText = JSON.stringify(asked).replace(/([:,])/g, '$1 ');
+    expect(Buffer.byteLength(jsonbText)).toBeLessThan(8192);
+    expect(suggestionsOf(asked)).not.toBeNull();
+  });
+});
+
+describe('a run the gateway refused before the engine was asked (g393-L-4)', () => {
+  const refused = (code: string) => ({ status: 'SUCCEEDED', solverStatus: 'INFEASIBLE', errorCode: null, conflictSummaryCode: code });
+
+  it('is offered no analysis: the engine would answer a refusal after a minute of its cores', () => {
+    for (const code of PREFLIGHT_REFUSAL_CODES) expect(suggestionsMayBeAskedFor(refused(code))).toBe(false);
+  });
+
+  it('is the engine\'s own refusal when the summary code is one the engine gives, and then it is offered', () => {
+    expect(suggestionsMayBeAskedFor(refused('ROOM_SHORTAGE'))).toBe(true);
+    expect(suggestionsMayBeAskedFor({ status: 'SUCCEEDED', solverStatus: 'INFEASIBLE', errorCode: null })).toBe(true);
+    expect(suggestionsMayBeAskedFor({ status: 'SUCCEEDED', solverStatus: 'TIMEOUT', errorCode: null, conflictSummaryCode: null })).toBe(true);
+  });
+
+  it('names the gateway\'s refusals by the constants they are, so that a rename there fails here', () => {
+    expect([...PREFLIGHT_REFUSAL_CODES].sort()).toEqual(
+      [STAFF_UNSTAFFED_REQUIREMENTS, BLOCK_PARTLY_LOCKED_SUMMARY, PLACEMENTS_REFUSED_SUMMARY, GROUP_CONFLICTS_OVER_ENGINE_LIMIT].sort(),
+    );
   });
 });

@@ -514,6 +514,8 @@ export function jobView(
         status: abandoned ? 'FAILED' : job.status,
         solverStatus: job.solverStatus,
         errorCode: failure.code,
+        // A refusal the gateway made before the engine was asked is not one the analysis can say anything about.
+        conflictSummaryCode: job.conflictSummaryCode,
       }),
       supersededBy: null,
       startedFrom: startedFromOf(job.startedFrom),

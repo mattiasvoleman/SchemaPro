@@ -7329,7 +7329,7 @@ analysis of a run that ended without a timetable, the gateway asks the engine, a
   `suggestionsOffered` (whether the button may be shown).
 - **Asked for, never started by itself.** It costs the engine up to a minute and a half of its cores. It may be asked for a run that ended **INFEASIBLE** or **TIMEOUT**, with a 400 named by one of the five rules
   (`TEACHER_LESSON_LONGER_THAN_DAILY_CAP`, `TEACHER_DAILY_CAP_*`, `TEACHER_WORK_DAYS_*`, `SUBJECT_DISTRIBUTION_*`, `DISTRIBUTION_*`, `ROOM_LOCK_*`), or with the engine's own clock run out
-  (`ENGINE_TIMED_OUT`, `ENGINE_WAIT_EXPIRED`, `ENGINE_PATH_CLOSED`: the road to the engine closed the call). Not for a run with a timetable, one still going, one the engine never answered (`ENGINE_NOT_REACHED`, `ENGINE_RUN_ABANDONED`) or one a rule that never gives way refused.
+  (`ENGINE_TIMED_OUT`, `ENGINE_WAIT_EXPIRED`, `ENGINE_PATH_CLOSED`: the road to the engine closed the call). Not for a run with a timetable, one still going, one the engine never answered (`ENGINE_NOT_REACHED`, `ENGINE_RUN_ABANDONED`), one a rule that never gives way refused, or one the **gateway** refused before the engine was asked (G6b: its summary code is one of `PREFLIGHT_REFUSAL_CODES`: `STAFF_UNSTAFFED_REQUIREMENTS`, `BLOCK_PARTLY_LOCKED_SUMMARY`, `PLACEMENTS_REFUSED_SUMMARY`, `GROUP_CONFLICTS_OVER_ENGINE_LIMIT`; they travel as INFEASIBLE runs, and an analysis would answer a refusal after a minute of the engine's cores).
   A refused start is **409** with a code the page words: `SUGGESTIONS_NOT_FOR_THIS_RUN`, `SUGGESTIONS_RUN_IS_OLD` (the year has a newer run: a Generera that is going is the year's newest, so it is this one that a press meets), `SUGGESTIONS_YEAR_BUSY` (a schemaförslag run of the year is alive, or a Generera was started in the moment between the press reading its run as the newest and taking the year's start lock; the engine's cores are shared).
 - **One solve stream per year, in both directions (D2).** The analysis claim takes the year's solve-start lock (`lockYearForSolveStart`, the one Generera's start and a schemaförslag run's start take) before it counts the year's runs, and Generera's start and a schemaförslag run's start are refused
   **409 `SUGGESTIONS_RUNNING`** while an analysis of the year is `RUNNING` and began less than 240 s ago (`suggestions-running.ts`: it waits for the engine 200 s at most; an analysis whose process went away holds nobody off for longer than that, where a read gives it up only after six minutes).
@@ -7345,7 +7345,7 @@ analysis of a run that ended without a timetable, the gateway asks the engine, a
 - What the value holds (`suggestions.ts`): `state` (`RUNNING`, `DONE`, `FAILED`), the verdict and `verified` of the engine, `total` (how many changes the list had), at most six changes each of at most three named posts and rooms (names cut to 80 characters),
   and for a failure its code (`ENGINE_LACKS_SUGGESTIONS`, `ENGINE_BUSY`, `ENGINE_FAILED`, `NOTHING_TO_PLACE`, `ABANDONED`). The value is rebuilt through a whitelist on the way in and again on the way out; one that is not wholly well formed shows nothing.
 - **No person's name and no figure of a post.** A cap's teacher rides as the teacher's Users id, which no view carries on; the page reads the name as it does for a free-day note. A change to a part-timer's days is stored in its **hidden form for every reader**
-  (the rule, the price and the proof, and no post, no teacher, no number, no weekday; several are one): nothing HR is kept, and the post stays the one place the figure lives (`work-days.ts`).
+  (the rule and the proof, and **no price** (G6b: the price is a weight times the days a post goes over, so `3 600` said three days to a reader without HR-läs), no post, no teacher, no number, no weekday; several are one, ordered by their summed price before it is dropped): nothing HR is kept, and the post stays the one place the figure lives (`work-days.ts`).
 
 ### 34.3 What can go wrong, and what the page then says
 
@@ -7354,6 +7354,12 @@ analysis of a run that ended without a timetable, the gateway asks the engine, a
 - **An engine older than the route** answers 404: `ENGINE_LACKS_SUGGESTIONS`, said as "not just now"; the run reads as it did. **429** from the engine (one analysis at a time in its process): `ENGINE_BUSY`. A **400** is the engine's hard rules refusing the week: not a failure but the answer
   (`HARD_REFUSAL`, no change of the five can help). Every other error is `ENGINE_FAILED`, with nothing of its text kept.
 - **A change that was never checked** (`verified` false) is never above `MAY_HELP`, whatever the engine's changes say; the gateway lowers it. `SOLVABLE_AS_IS` is only to be said with `verified`.
+
+### 34.3a The edges (G6b)
+
+- **A press never replaces an analysis the school can use with a failure.** A press over a DONE analysis with a list (`CHANGES`, `SOLVABLE_AS_IS`) keeps it inside the RUNNING one (`previous`, one level, DONE only, never in what the page reads), and when the new analysis ends without a list (it failed, or it searched and found `NOT_FOUND`) the column holds the old one again (`settledAs`). A list or a refusal by a rule that never gives way replaces it: the week is not the one the list was made for. A RUNNING analysis that is read as abandoned gives back what it was asked over, and not `ABANDONED`. The column's 8 KiB check holds the two (5 500 bytes each at most; the column's text a fifth to a quarter longer than the compact JSON).
+- **The page is not offered what cannot come.** `suggestionsOffered` is false for a run the gateway refused before the engine was asked (above).
+- **The candidate runs' pool.** A schemaförslag run whose save found the pool full (`DATABASE_BUSY`, Prisma's P2028 that never started, pg's own wait) is stored with that code and the sentence of the 503, and not with the driver's English (g424-L-4).
 
 ### 34.4 Operations
 
