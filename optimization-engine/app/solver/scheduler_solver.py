@@ -12723,7 +12723,9 @@ class SchedulerSolver:
         if by_cliques:
             for clique in cliques.cover(list(group_conflicts or []), set(grouped)):
                 combined = [decision for group_id in clique for decision in grouped[group_id]]
-                for _, part in week_parts(combined, _parity):
+                # NEVER JOINED (capped=False): week_parts joins the parts of a LARGE row into unions, stricter than the rule,
+                # and a row over a clique holds the lessons of many pairs at once, so it can be large where no pair's row is.
+                for _, part in week_parts(combined, _parity, capped=False):
                     if len(part) > 1:
                         model.AddNoOverlap([pupil_padded_of(model, decision) for decision in part])
             return

@@ -179,6 +179,32 @@ def test_two_groups_that_share_no_pupil_may_sit_at_once_though_both_pair_with_a_
     )
 
 
+def test_a_row_over_a_clique_is_never_joined_by_weeks_which_the_row_of_a_pair_never_is(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`week_parts` joins the parts of a LARGE row (past PART_LIMIT parts and ROW_LIMIT members) into unions, which is stricter
+    than the rule. A row over a pair is small and never is; a row over a clique is the lessons of its pairs together, and with
+    the limits lowered here three groups that pair and run in three different periods are such a row: the same rule as the
+    pairs only if it is not joined, so that a lesson of the first period may sit beside one of the second."""
+    from app.solver import weeks as weeks_module
+
+    import test_ab_weeks as ab
+
+    a, b, c = (str(uuid.uuid4()) for _ in range(3))
+    requirements = [
+        ab._requirement(a, 1, periods=[True, False, False]),
+        ab._requirement(b, 1, periods=[False, True, False]),
+        ab._requirement(c, 1, periods=[False, False, True]),
+    ]
+    request = OptimizeScheduleRequest.model_validate(ab._payload(requirements, groupConflicts=[[a, b], [a, c], [b, c]]))
+    monkeypatch.setattr(weeks_module, "PART_LIMIT", 2)
+    monkeypatch.setattr(weeks_module, "ROW_LIMIT", 1)
+
+    by_pairs, _, pair_owner = _build(request, objective=True, by_cliques=False)
+    by_cover, _, cover_owner = _build(request, objective=True, by_cliques=True)
+
+    assert _forbidden(by_pairs, pair_owner) == set(), "three periods never meet: nothing is held apart"
+    assert _forbidden(by_cover, cover_owner) == set(), "a row that joins them holds apart what the school never said"
+
+
 @pytest.mark.parametrize("seed", [1, 2])
 def test_a_week_is_laid_either_way_and_the_answer_keeps_every_rule(seed: int) -> None:
     request = _week(seed)
