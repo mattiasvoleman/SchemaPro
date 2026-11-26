@@ -1020,7 +1020,8 @@
       "pausedErrorTitle": "It could not go on",
       "pausedError": "The call failed ({message}). It may have sent some invitations: Take up again reads the register anew and invites only those who still have none.",
       "stopped": "Stopped. {left, plural, one {# person} other {# people}} left, and Take up again continues where it stopped.",
-      "done": "{count, plural, one {# invitation sent.} other {# invitations sent.}} Everybody in the selection is invited."
+      "done": "{count, plural, one {# invitation sent.} other {# invitations sent.}} Everybody in the selection is invited.",
+      "doneWithFailures": "{count, plural, one {# invitation sent.} other {# invitations sent.}} {failed, plural, one {# person} other {# people}} could not be invited: press Take up again to try again."
     },
     "homeClassLabel": "Class",
     "teachingGroupsLabel": "Teaching groups",

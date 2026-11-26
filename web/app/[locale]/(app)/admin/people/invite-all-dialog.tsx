@@ -90,6 +90,9 @@ export function InviteAllDialog({
 
   const hours = hoursToInvite(count, perHour);
   const done = progress?.phase === "done";
+  // A run that went through every part is not a run that invited everybody: the people the gateway could not invite are still to do,
+  // and Ta om asks the register for them.
+  const complete = done && progress.failed.length === 0;
   const left = progress ? Math.max(progress.total - progress.handled, 0) : 0;
 
   return (
@@ -149,7 +152,10 @@ export function InviteAllDialog({
                 </Notice>
               ) : null}
               {progress.phase === "stopped" ? <Notice tone="neutral">{t("stopped", { left })}</Notice> : null}
-              {done ? <Notice tone="success">{t("done", { count: progress.sent })}</Notice> : null}
+              {complete ? <Notice tone="success">{t("done", { count: progress.sent })}</Notice> : null}
+              {done && !complete ? (
+                <Notice tone="warning">{t("doneWithFailures", { count: progress.sent, failed: progress.failed.length })}</Notice>
+              ) : null}
             </>
           ) : null}
         </div>
@@ -161,10 +167,10 @@ export function InviteAllDialog({
             </Button>
           ) : (
             <Button variant="outline" onClick={onClose}>
-              {done ? t("finish") : tCommon("cancel")}
+              {complete ? t("finish") : tCommon("cancel")}
             </Button>
           )}
-          {!done ? (
+          {!complete ? (
             <Button onClick={() => void start()} disabled={running || reading}>
               {progress ? t("resume") : t("start", { count })}
             </Button>
@@ -177,14 +183,17 @@ export function InviteAllDialog({
 
 /** A run taken up again, as one on the screen: what the earlier parts did, and this one's, and what is left of the whole. */
 function addTo(before: MassProgress, now: MassProgress): MassProgress {
+  // The people who failed were handled once already and are asked for again from the register: they are in `now`, not twice in the sums,
+  // and what they do this time is what is said of them.
+  const settled = before.handled - before.failed.length;
   return {
     ...now,
-    total: before.handled + now.total,
-    handled: before.handled + now.handled,
+    total: settled + now.total,
+    handled: settled + now.handled,
     sent: before.sent + now.sent,
     alreadyRegistered: before.alreadyRegistered + now.alreadyRegistered,
     alreadyInvited: before.alreadyInvited + now.alreadyInvited,
     noAddress: before.noAddress + now.noAddress,
-    failed: [...before.failed, ...now.failed],
+    failed: now.failed,
   };
 }

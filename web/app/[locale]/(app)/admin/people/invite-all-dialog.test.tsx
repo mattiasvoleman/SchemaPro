@@ -176,6 +176,41 @@ describe("InviteAllDialog", () => {
     expect(screen.getByRole("button", { name: "Bjud in 10 personer" })).toBeEnabled();
   });
 
+  it("does not say that everybody is invited when some could not be: it says how many, offers Ta om, and counts those people once when they go", async () => {
+    const user = userEvent.setup();
+    let calls = 0;
+    const { send, readPending } = setup({
+      count: 40,
+      // The second read, for Ta om: what the register says is still to do, the two who failed.
+      pending: [ids(40), ["id-3", "id-27"]],
+      send: async (part) => {
+        calls += 1;
+        // The first run: two of the forty are refused by the provider (a bad address, say).
+        if (calls <= 2) {
+          const bad = part.filter((id) => id === "id-3" || id === "id-27");
+          return { sent: part.length - bad.length, alreadyRegistered: 0, errors: bad.map((userId) => ({ userId, message: "Kunde inte skicka" })) };
+        }
+        return sentAll(part);
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Bjud in 40 personer" }));
+
+    expect(await screen.findByText(/2 personer kunde inte bjudas in: tryck Ta om/)).toBeInTheDocument();
+    expect(screen.queryByText(/Alla i urvalet är inbjudna/)).not.toBeInTheDocument();
+    expect(screen.getByText("38 inbjudningar skickade")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Ta om" }));
+
+    expect(await screen.findByText(/Alla i urvalet är inbjudna/)).toBeInTheDocument();
+    expect(readPending).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledTimes(3);
+    // Forty people, not forty-two: the two who failed were handled once, and are counted once when they went.
+    expect(screen.getByText("40 av 40")).toBeInTheDocument();
+    expect(screen.getByText("40 inbjudningar skickade")).toBeInTheDocument();
+    expect(screen.queryByText(/kunde inte skickas/)).not.toBeInTheDocument();
+  });
+
   it("cannot be closed while a part is on its way, and can before and after", async () => {
     const user = userEvent.setup();
     let release!: () => void;

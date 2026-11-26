@@ -1020,7 +1020,8 @@
       "pausedErrorTitle": "Det gick inte att fortsätta",
       "pausedError": "Anropet misslyckades ({message}). Det kan ha hunnit skicka några inbjudningar: Ta om läser registret på nytt och bjuder bara in dem som fortfarande saknar inbjudan.",
       "stopped": "Stoppad. {left, plural, one {# person} other {# personer}} återstår, och Ta om fortsätter där det slutade.",
-      "done": "{count, plural, one {# inbjudan skickad.} other {# inbjudningar skickade.}} Alla i urvalet är inbjudna."
+      "done": "{count, plural, one {# inbjudan skickad.} other {# inbjudningar skickade.}} Alla i urvalet är inbjudna.",
+      "doneWithFailures": "{count, plural, one {# inbjudan skickad.} other {# inbjudningar skickade.}} {failed, plural, one {# person kunde} other {# personer kunde}} inte bjudas in: tryck Ta om för att försöka igen."
     },
     "homeClassLabel": "Klass",
     "teachingGroupsLabel": "Undervisningsgrupper",
