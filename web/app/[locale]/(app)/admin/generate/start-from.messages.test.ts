@@ -58,6 +58,9 @@ describe("the catalogue of Utgå från ett schema", () => {
     }
     expect(say(sv, "sv", ["startNoteSourceNamed"], { name: "Före ändringen" })).toBe("den sparade versionen ”Före ändringen”");
     expect(say(sv, "sv", ["startNoteTitle"], { what: "årets grundschema" })).toBe("Utgick från årets grundschema.");
+    // An engine that could not start from the schedule asks, it does not claim: the line is not "Utgick från".
+    expect(say(sv, "sv", ["startNoteAsked"], { what: "årets grundschema" })).toBe("Du bad om att utgå från årets grundschema.");
+    expect(say(en, "en", ["startNoteAsked"], { what: "this year's grundschema" })).toBe("You asked to start from this year's grundschema.");
   });
 
   it("lists a saved version with its name, its date and its lessons", () => {

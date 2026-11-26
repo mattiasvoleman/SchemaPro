@@ -297,6 +297,9 @@ describe("what a finished run says of its start", () => {
     const note = await screen.findByTestId("generate-started-from");
     expect(note).toHaveTextContent("generate.startNoteOlder");
     expect(note).not.toHaveTextContent("startNoteCounts");
+    // The first line must not say that the week started from the schedule when the engine could not: it says what was asked for.
+    expect(note).not.toHaveTextContent("generate.startNoteTitle");
+    expect(note).toHaveTextContent("generate.startNoteAsked(generate.startNoteSource.PREVIOUS_YEAR)");
   });
 
   it("says nothing of lessons that could not be used when the engine that was older was given none of them, though the gateway counted why", async () => {

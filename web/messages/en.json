@@ -2015,6 +2015,7 @@
     "startVersionPick": "Version",
     "startVersionOption": "{name} · {date} · {count, plural, one {# lesson} other {# lessons}}",
     "startNoteTitle": "Started from {what}.",
+    "startNoteAsked": "You asked to start from {what}.",
     "startNoteSource": {
       "CURRENT": "this year's grundschema",
       "PREVIOUS_YEAR": "last year's schedule",

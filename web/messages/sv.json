@@ -2015,6 +2015,7 @@
     "startVersionPick": "Version",
     "startVersionOption": "{name} · {date} · {count, plural, one {# lektion} other {# lektioner}}",
     "startNoteTitle": "Utgick från {what}.",
+    "startNoteAsked": "Du bad om att utgå från {what}.",
     "startNoteSource": {
       "CURRENT": "årets grundschema",
       "PREVIOUS_YEAR": "förra läsårets schema",

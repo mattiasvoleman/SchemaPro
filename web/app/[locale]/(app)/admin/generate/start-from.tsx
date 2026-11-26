@@ -178,7 +178,8 @@ export function StartedFromNote({ startedFrom }: { startedFrom: StartedFrom }) {
   const total = (startedFrom.held ?? 0) + (startedFrom.moved ?? 0) + (startedFrom.laid ?? 0);
   return (
     <div className="max-w-prose space-y-1 text-sm" data-testid="generate-started-from">
-      <p className="font-medium">{t("startNoteTitle", { what })}</p>
+      {/* An engine that could not start from the schedule did not: the line says what was asked for, not that the week started from it. */}
+      <p className="font-medium">{t(startedFrom.engine === "OLDER" ? "startNoteAsked" : "startNoteTitle", { what })}</p>
       {startedFrom.engine === "OLDER" ? (
         <p className="text-foreground">{t("startNoteOlder")}</p>
       ) : startedFrom.held === null || startedFrom.moved === null || startedFrom.laid === null ? (
