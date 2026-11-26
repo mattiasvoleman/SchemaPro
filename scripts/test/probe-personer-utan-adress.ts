@@ -21,7 +21,9 @@
  *   (5) AN ADDRESS GIVEN LATER makes them an ordinary uninvited person, who is then invited like any other (the provider is asked once);
  *   (6) THE REGISTER EXTRACT (registerutdrag) of a person with no address is made, and says that there is none, where it used to
  *       throw on the address of every person the school has (the term index of the people it holds out);
- *   (7) THE REMOVAL of a person with no address deletes the row and asks the provider for nothing: there is no login to delete.
+ *   (7) THE REMOVAL of a person with no address deletes the row and asks the provider for nothing: there is no login to delete;
+ *   (8) AN ADDRESS CORRECTED WHILE THE INVITATION IS ON ITS WAY: the login minted for the old address is not put on the row (409), and
+ *       the invitation sent again goes to the new one.
  *
  * It makes a school of its own and drops it.
  */
@@ -78,11 +80,14 @@ async function main(): Promise<void> {
   const school = await owner.school.create({ data: { name: `Probe utan adress ${tag}`, slug, timezone: 'Europe/Stockholm' } });
 
   // The provider: counted, and never answers a login for anybody but the address it is asked about.
-  const provider = { invited: [] as string[], deleted: [] as string[] };
+  const provider = { invited: [] as string[], deleted: [] as string[], gate: undefined as Promise<void> | undefined, reached: undefined as (() => void) | undefined };
   const supabaseAdmin = {
     isConfigured: true,
     inviteUser: async (email: string) => {
       provider.invited.push(email);
+      // A test can hold the provider's answer, as a slow mail server does, to change the row while the invitation is on its way.
+      provider.reached?.();
+      await provider.gate;
       return { authId: randomUUID(), emailSent: true };
     },
     deleteUser: async (authId: string) => void provider.deleted.push(authId),
@@ -243,6 +248,32 @@ async function main(): Promise<void> {
       const dan = await owner.user.findFirstOrThrow({ where: { schoolId: school.id, firstName: 'Dan', email: null } });
       await users.remove(dan.id, admin);
       assert.equal(provider.deleted.length, deletedBefore, 'no login was deleted at the provider');
+    });
+
+    await check('(8) an address corrected while the invitation is on its way: the login for the old one is not put on the row', async () => {
+      const held = await users.create({ role: 'GUARDIAN', firstName: 'Vera', lastName: 'Rättad', email: email('vera-fel') }, admin);
+      let release!: () => void;
+      let reached!: () => void;
+      const inFlight = new Promise<void>((resolve) => (reached = resolve));
+      provider.gate = new Promise<void>((resolve) => (release = resolve));
+      provider.reached = reached;
+      const inviting = users.invite(held.id, admin);
+      await inFlight;
+      // The administrator corrects the address while the provider is answering.
+      await users.update(held.id, { email: email('vera-ratt') }, admin);
+      release();
+      const refusal = await rejection(() => inviting);
+      provider.gate = undefined;
+      provider.reached = undefined;
+      assert.equal(statusOf(refusal), 409);
+      assert.equal(codeOf(refusal), 'ADDRESS_CHANGED_WHILE_INVITING');
+      const row = await owner.user.findUniqueOrThrow({ where: { id: held.id } });
+      assert.equal(row.email, email('vera-ratt'));
+      assert.equal(row.invitedAt, null, 'no login was put on a row for an address it no longer has');
+
+      const again = await users.invite(held.id, admin);
+      assert.equal(again.emailSent, true);
+      assert.equal(provider.invited.at(-1), email('vera-ratt'), 'the retry went to the corrected address');
     });
   } finally {
     await owner.school.deleteMany({ where: { id: school.id } });
