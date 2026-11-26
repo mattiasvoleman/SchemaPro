@@ -439,57 +439,79 @@ no red messages mentioning CORS.
 ## Step 9 — Create the first school and administrator
 
 There is no sign-up button anywhere in Rastra — the first administrator has
-to be created by hand, and everyone after that is invited from inside the app.
+to be created by you, once per school, and everyone after that is invited from
+inside the app. A small script does it, from the same terminal you used for
+Step 5 (it needs `npm ci` to have been run there, as Step 5 did).
 
-1. In Supabase, go to **Authentication → Users → Add user**.
-   - Enter the administrator's real email address and a temporary password.
-   - Tick "Auto Confirm User" so they can sign in immediately.
-   - After it is created, click the user and **copy their UUID** — a long
-     string of letters, numbers and dashes.
-2. Go to the **SQL Editor** and run this, replacing the four marked values:
+You need four values you already have:
 
-```sql
-insert into "Schools" (name, slug, timezone, "updatedAt")
-values ('<SCHOOL NAME>', '<short-name-no-spaces>', 'Europe/Stockholm', now());
+- the **administrator** connection string from Step 5 (`DIRECT_URL`);
+- the project's **URL** (`https://<PROJECT_REF>.supabase.co`) and its
+  **service role key**, both under Settings → API in Supabase;
+- your `WEB_URL` from Step 7.
 
-insert into "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "invitedAt", "updatedAt")
-values (
-  (select id from "Schools" where slug = '<short-name-no-spaces>'),
-  '<THE UUID YOU COPIED>',
-  'SCHOOL_ADMIN',
-  '<FIRST NAME>', '<LAST NAME>', '<THE SAME EMAIL AS ABOVE>',
-  now(), now()
-);
+First run it as a rehearsal. This only **reads** — it writes nothing and sends
+no mail:
+
+```bash
+DIRECT_URL="postgresql://postgres:<DB_PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres?sslmode=require&uselibpqcompat=true" \
+SUPABASE_URL="https://<PROJECT_REF>.supabase.co" \
+SUPABASE_SERVICE_ROLE_KEY="<THE SERVICE ROLE KEY>" \
+npm run operator:new-school -- \
+  --name "<SCHOOL NAME>" --slug <short-name-no-spaces> \
+  --admin-email <THE ADMINISTRATOR'S EMAIL> --admin-first-name <FIRST NAME> --admin-last-name <LAST NAME> \
+  --web-url <WEB_URL>
 ```
 
-Replace every `<...>` placeholder, including the short name — leaving one in
-literally is a common slip and the error message does not make it obvious.
+Read what it prints. It names the database it would write in, and checks two
+things at Supabase that matter for the next hour of your day:
 
-Four things that will bite you if you retype this by hand:
+- **Public signups** should say *off*. If it says *ON*, go to Authentication →
+  Providers → Email in Supabase and turn off "Allow new users to sign up".
+- **Sender (SMTP)** is about the mail that carries every invitation. Supabase's
+  own sender lets **two mails an hour** through, so the administrator's
+  invitation may arrive and the next teacher's will not. Set your own SMTP
+  (Authentication → SMTP) before you invite anyone but the administrator. The
+  script can only tell you which it is if you also give it
+  `SUPABASE_ACCESS_TOKEN` (an access token from your Supabase account page) and
+  `SUPABASE_PROJECT_REF`; without them it says *not read*, and you look in the
+  dashboard yourself.
 
-- **`"invitedAt"` says the person has a login.** Without it the row reads as a
-  catalogue entry nobody invited: when the school's retention job later
-  pseudonymises the person it would leave their login behind (docs/DEPLOYMENT.md §7).
-- **`"updatedAt"` is required and has no database default.** It is maintained
-  by Prisma at the application level, so a hand-written `insert` has to supply
-  it. Omitting it fails with
-  `null value in column "updatedAt" ... violates not-null constraint`.
-  `"createdAt"` *does* default, which is why only one of them complains.
-- **Keep the double quotes on every camelCase column.** Unquoted, PostgreSQL
-  folds `updatedAt` to `updatedat` and you get
-  `column "updatedat" of relation "Users" does not exist`.
-- **Use the same short name in both statements**, or the sub-select finds no
-  school and the second insert fails on a null `"schoolId"`.
+Then run the **same command again with two more words at the end**, `--apply`
+and `--expect-host db.<PROJECT_REF>.supabase.co`. The second one is you telling
+the script which database you mean; it refuses to write if that is not the one
+in `DIRECT_URL`:
 
-The **UUID** is what links the login to the profile — `JwtStrategy` looks the
-account up by `authId` and nothing else. If it is wrong or mistyped, sign-in
-succeeds and the app then reports *"No active user profile is linked to this
-account."* The email is stored for display and notifications; a mismatch there
-is untidy but will not break sign-in.
+```bash
+... --web-url <WEB_URL> --apply --expect-host db.<PROJECT_REF>.supabase.co
+```
 
-**Check it worked**: go to your `WEB_URL`, sign in with that email and
-temporary password. You should land on the admin dashboard. **This is the
-moment the whole thing is working end to end.**
+It makes the school and the administrator, then asks Supabase to **send the
+administrator an invitation mail**. The administrator sets their own password
+from the link in it, so nobody ever has to be told a password. That mail
+arriving is also the proof that your sender works.
+
+If you would rather hand over a temporary password (for example because you
+have no sender yet), put one of at least 12 characters in an environment
+variable and add `--password-env THAT_VARIABLE_NAME`; the script then makes a
+confirmed login with it and sends nothing.
+
+Things worth knowing:
+
+- **It is safe to run again.** If something stops it halfway (Supabase refuses
+  to send, the connection drops), run the same command again and it continues
+  from where it stopped. It never makes the school twice.
+- **`"invitedAt"` and `"updatedAt"` are handled for you.** The row says the
+  person has a login (without it the retention job would later leave their login
+  behind), and the script fills in the columns Prisma normally fills in. You do
+  not retype SQL, so none of the slips of the old instructions (a missing
+  column, an unquoted name, a UUID pasted wrong) can happen.
+- **It reads no `.env` file.** Only the values you typed on that line decide
+  which database and which Supabase project it uses.
+
+**Check it worked**: open the invitation mail, follow the link, choose a
+password, and sign in at your `WEB_URL`. You should land on the admin
+dashboard. **This is the moment the whole thing is working end to end.**
 
 ---
 
