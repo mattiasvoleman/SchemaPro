@@ -2058,7 +2058,7 @@
     "timeoutAccount": {
       "title": "Så gick tiden",
       "whereTitle": "Var tiden gick",
-      "stage": "{stage, select, PRECHECKS {Kontroller före sökningen} BUILD {Förberedelser av sökningen} SITES {Sökning med restid mellan skolområden} SEARCH_CLEAN {Första sökningen} SEARCH_CLONE {Andra sökningen} PROBE {Förklaringen av varför inget schema hittades} other {Ett steg}}: {seconds, number} s",
+      "stage": "{stage, select, PRECHECKS {Kontroller före sökningen} START {Läsningen av schemat veckan utgår från} BUILD {Förberedelser av sökningen} SITES {Sökning med restid mellan skolområden} SEARCH_CLEAN {Första sökningen} YEARS {Sökningen årskurs för årskurs} SEARCH_CLONE {Andra sökningen} PROBE {Förklaringen av varför inget schema hittades} other {Ett steg}}: {seconds, number} s",
       "otherSteps": "Steg som den här sidan inte har ord för: {seconds, number} s",
       "total": "Lösarens arbete tog {seconds, number} s.",
       "searchTitle": "Hur långt sökningen kom",
@@ -2087,7 +2087,7 @@
         "PROBE_CHANGED_WEEK": "Läs raderna under Upptäckta konflikter: de säger vad provet ändrade i veckan. Det är ingen regel att lätta, utan en ändring av underlaget.",
         "TIGHT_WEEK": "Frigör tid i de årskurserna: egen lärare per parallell grupp och block, eller vidga ramtiderna. En körning till på samma underlag ger samma besked.",
         "SHORT_CLOCK": "Kör igen: den här körningen fick kortare tid än motorn brukar ha. Upprepas det, hör av dig till den som driver tjänsten.",
-        "SLOW_SETUP": "Har ni ett tidigare schema: höj Schemastabilitet, så utgår motorn från det. Annars kan Bästa möjliga schema ge ett schema med avsteg.",
+        "SLOW_SETUP": "Kör igen. Upprepas det, hör av dig till den som driver tjänsten.",
         "NOTHING_FOUND": "Kör igen. Kontrollera veckan säger om veckan redan är för full innan du kör."
       },
       "technicalTitle": "Tekniska uppgifter",
@@ -8449,7 +8449,7 @@
       "ENGINE_MEALS_INCONSISTENT": "Schemamotorn svarade med lunchtider som inte passar läsårets perioder, så ingenting skrevs. Försök igen, och hör av dig om det upprepas.",
       "ENGINE_TIMED_OUT": "Schemamotorn hann inte svara inom sin längsta väntetid, så inget schema sparades. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
       "ENGINE_TIMED_OUT_CEILING": "Schemamotorn hann inte svara inom sin längsta väntetid på {ceilingSeconds, number} s, så inget schema sparades. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
-      "ENGINE_TIMED_OUT_AT": "Schemamotorn hann inte svara inom sin längsta väntetid på {ceilingSeconds, number} s, så inget schema sparades. När tiden tog slut höll den på med {stage, select, PRECHECKS {kontrollerna före sökningen} BUILD {förberedelserna av sökningen} SITES {sökningen med restid mellan skolområden} SEARCH_CLEAN {den första sökningen efter ett schema} SEARCH_CLONE {den andra sökningen efter ett schema} PROBE {förklaringen av varför inget schema hittades} other {ett steg}}, som hade pågått i {stageSeconds, number} s av de {elapsedSeconds, number} s som körningen tagit. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
+      "ENGINE_TIMED_OUT_AT": "Schemamotorn hann inte svara inom sin längsta väntetid på {ceilingSeconds, number} s, så inget schema sparades. När tiden tog slut höll den på med {stage, select, PRECHECKS {kontrollerna före sökningen} START {läsningen av schemat veckan utgår från} BUILD {förberedelserna av sökningen} SITES {sökningen med restid mellan skolområden} SEARCH_CLEAN {den första sökningen efter ett schema} YEARS {sökningen årskurs för årskurs} SEARCH_CLONE {den andra sökningen efter ett schema} PROBE {förklaringen av varför inget schema hittades} other {ett steg}}, som hade pågått i {stageSeconds, number} s av de {elapsedSeconds, number} s som körningen tagit. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
       "ENGINE_WAIT_EXPIRED": "Tjänsten fick inget svar från schemamotorn inom sin väntetid, så inget schema sparades. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
       "ENGINE_WAIT_EXPIRED_AFTER": "Tjänsten väntade {waitSeconds, number} s på schemamotorn och fick inget svar, så inget schema sparades. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
       "ENGINE_WAIT_EXPIRED_SHORT": "Tjänsten väntade {waitSeconds, number} s på schemamotorn och fick inget svar, så inget schema sparades. Motorns egen gräns för en körning är {engineCeilingSeconds, number} s. Vad som hände syns inte härifrån: väntetiden kan vara för kort för en äldre motor, eller motorn eller nätet mellan tjänsten och motorn kan ha hängt sig. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen. Hör av dig till den som driver tjänsten.",
@@ -8518,6 +8518,7 @@
       "CANDIDATES_NONE_APPLICABLE": "Inget av förslagen gav ett schema som går att tillämpa.",
       "CANDIDATE_RUN_INTERRUPTED": "Tjänsten startades om medan förslagen togs fram. Ta fram dem igen.",
       "CANDIDATE_RUN_ABANDONED": "Förslagen slutade svara och har avbrutits. Ta fram dem igen.",
+      "DATABASE_BUSY": "Servern var upptagen när förslagen skulle sparas, så de blev inte klara. Ta fram dem igen om en stund.",
       "generic": "Förslagen kunde inte tas fram."
     },
     "refusal": {

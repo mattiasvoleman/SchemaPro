@@ -188,6 +188,23 @@ describe("the run a reload leaves behind, read through the real hooks", () => {
     expect(gw.calls).toContain("GET /api/v1/optimization/jobs/job-1");
   });
 
+  it("says on the card when the run was made, as the history list does (G6b, g393-L-2): a refusal from weeks ago is not mistaken for today's", async () => {
+    // D9 shows the year's newest refusal whatever its age. The title said "Senaste körning" and nothing of when.
+    const weeksAgo = "2026-10-29T09:15:00.000Z";
+    gw.history[Y1] = [run("job-1", { createdAt: weeksAgo })];
+    gw.jobs["job-1"] = run("job-1", { createdAt: weeksAgo });
+    const Page = await loadPage();
+    render(<Page />);
+    expect(await screen.findByText("Overlap in job-1.", undefined, SLOW)).toBeInTheDocument();
+
+    const stamp = lastRun()!.querySelector("time");
+    expect(stamp).not.toBeNull();
+    expect(stamp!.getAttribute("datetime")).toBe(weeksAgo);
+    expect(stamp!.textContent).toBe(new Intl.DateTimeFormat("sv-SE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(weeksAgo)));
+    // The card's title is where it stands: the date is not a line of its own below the answer.
+    expect(lastRun()!.querySelector("h2, h3")?.contains(stamp)).toBe(true);
+  });
+
   it("stops showing it when the history is read again and a run that laid a timetable is on top of it", async () => {
     gw.history[Y1] = [run("job-1")];
     gw.jobs["job-1"] = run("job-1");

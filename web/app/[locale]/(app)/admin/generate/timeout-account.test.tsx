@@ -324,6 +324,13 @@ describe("the texts a school reads", () => {
     expect(say(sv, "sv", ["stage"], { stage: "SOMETHING_NEW", seconds: 1 })).toBe("Ett steg: 1 s");
   });
 
+  it("has words for the step that reads the schedule a week starts from (START) and for the search year by year (YEARS), in both languages (G6b)", () => {
+    expect(say(sv, "sv", ["stage"], { stage: "START", seconds: 1.5 })).toBe("Läsningen av schemat veckan utgår från: 1,5 s");
+    expect(say(sv, "sv", ["stage"], { stage: "YEARS", seconds: 40 })).toBe("Sökningen årskurs för årskurs: 40 s");
+    expect(say(en, "en", ["stage"], { stage: "START", seconds: 1.5 })).toBe("Reading the schedule the week starts from: 1.5 s");
+    expect(say(en, "en", ["stage"], { stage: "YEARS", seconds: 40 })).toBe("The search year by year: 40 s");
+  });
+
   it("says how many searches and for how long, singular and plural", () => {
     expect(say(sv, "sv", ["searchNone"], { count: 1, seconds: 60 })).toBe("En sökning pågick i sammanlagt 60 s, och ingen hittade ett schema.");
     expect(say(sv, "sv", ["searchNone"], { count: 2, seconds: 100 })).toBe("2 sökningar pågick i sammanlagt 100 s, och ingen hittade ett schema.");
