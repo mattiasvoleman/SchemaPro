@@ -13,7 +13,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useTranslations } from "next-intl";
-import { Check, Lock, TriangleAlert, X } from "lucide-react";
+import { Asterisk, Check, Lock, TriangleAlert, X } from "lucide-react";
 import { layoutDay } from "@/lib/day-lanes";
 import { useLazyModule } from "@/lib/use-lazy-module";
 import type { LessonCommand } from "./board-keys";
@@ -407,6 +407,9 @@ interface LessonCardProps {
   onKeyDown: (event: React.KeyboardEvent, id: string) => void;
 }
 
+/** The most lanes a day can have for a card to carry the mark as its word: a card of more is too narrow for it (see the mark in LessonCard). */
+const MARK_WORD_LANES = 2;
+
 /**
  * Two cards are the same when every prop is and the lesson holds the same
  * facts. The lesson object itself is new at every layout (layoutDay spreads a
@@ -651,7 +654,16 @@ const LessonCard = memo(function LessonCard({
               {lesson.remoteEditor}
             </span>
           ) : null}
-          {lesson.mark ? (
+          {lesson.mark && lesson.laneCount > MARK_WORD_LANES ? (
+            // THREE LANES OR MORE: the word is 62-67 px with its border (measured, 9 px bold capitals), and a card of three lanes at 1280 px is
+            // 54 px wide, 38 of them inside its edge and padding. A shrink-0 word there takes the lesson's own name first and is cut by the card
+            // after ("UNDAN"): a sign, then, and the word and its sentence stay for the reader who is told and for the hover. A width that
+            // asks for it (1024-1279 px with the sidebar: two lanes already) is for a measure of the column and not a count of lanes.
+            <span data-lesson-mark title={lesson.markLabel} className="rounded border border-foreground/40 px-0.5 text-foreground">
+              <Asterisk className="size-3" />
+              <span className="sr-only">{`${lesson.mark}${lesson.markLabel ? ` ${lesson.markLabel}` : ""}`}</span>
+            </span>
+          ) : lesson.mark ? (
             <span
               data-lesson-mark
               title={lesson.markLabel}

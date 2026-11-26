@@ -528,6 +528,23 @@ describe("TimetableGrid overlap lanes", () => {
     expect(biologi.style.width).toBe(algebra.style.width);
   });
 
+  it("draws the mark as the word on a day of up to two lanes, and as a sign on a day of three or more, where the card is too narrow for the word and it would take the lesson's name", () => {
+    const marked = makeLesson({ id: "b", title: "Biologi", mark: "Undantag", markLabel: "ramtiden" });
+    const { rerender } = render(<TimetableGrid lessons={[makeLesson({ id: "a", title: "Algebra" }), marked]} />);
+    const word = screen.getByRole("button", { name: /Biologi/ }).querySelector("[data-lesson-mark]")!;
+    expect(word.querySelector("svg")).toBeNull();
+    expect(word.querySelector(":scope > .sr-only")?.textContent).not.toContain("Undantag");
+    expect(word.textContent).toBe("Undantag ramtiden");
+
+    rerender(<TimetableGrid lessons={[makeLesson({ id: "a", title: "Algebra" }), marked, makeLesson({ id: "c", title: "Kemi" })]} />);
+    const sign = screen.getByRole("button", { name: /Biologi/ }).querySelector("[data-lesson-mark]")!;
+    // A sign beside nothing drawn, and the same words for a screen reader and on the hover.
+    expect(sign.querySelector("svg")).not.toBeNull();
+    expect(sign.querySelector(":scope > .sr-only")?.textContent).toBe("Undantag ramtiden");
+    expect(sign.textContent).toBe("Undantag ramtiden");
+    expect(sign).toHaveAttribute("title", "ramtiden");
+  });
+
   it("tells a clash in words: the card's name says what it clashes with after what the lesson is, and its hover says it too", () => {
     render(
       <TimetableGrid
