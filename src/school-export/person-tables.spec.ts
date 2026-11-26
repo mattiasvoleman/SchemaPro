@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { STUDENT_BELOW, STUDENT_KEYS } from '../common/removal-inventory';
 import { ACCOUNT_KINDS, NOT_A_USER, SUBJECT_ACCESS, WITHOUT_KEY, WITHOUT_SCHOOL_COLUMN, cellOf, emptyPupilPart, excludedTables, inventoriedTables, narrowToPersons, readTable, tableFiles, type CellRules } from './person-tables';
 
@@ -263,7 +264,7 @@ describe('a cell of a dumped row', () => {
 });
 
 describe('the rows of a table that is about a pupil', () => {
-  const files = tableFiles().filter((file) => file.dump.pupil);
+  const files = tableFiles().filter((file) => file.dump.pupil && file.dump.pupil.column === 'studentId');
   const PUPIL = '11111111-1111-4111-8111-111111111111';
   const OTHER = '22222222-2222-4222-8222-222222222222';
   const TEACHER = '33333333-3333-4333-8333-333333333333';
@@ -337,5 +338,96 @@ describe('the rows of a table that is about a pupil', () => {
     const rows = [{ studentId: OTHER, x: 1 }];
     expect(emptyPupilPart(other, rows, new Set())).toBe(0);
     expect(rows[0]!.studentId).toBe(OTHER);
+  });
+});
+
+/**
+ * g409-L-5 and K7. A rektor who assessed twenty teachers is handed twenty colleagues' level, exception, day and note in their own
+ * extract, and an administrator who edited forty posts the whole post, before and after, of forty colleagues. The page shows those
+ * only to a reader with HR-läs, and GDPR art. 15.4 says the copy must not harm anyone else's rights. The act is the extract's; the
+ * colleague and what was decided about them are not.
+ */
+describe('the rows of a table that holds a decision about a colleague', () => {
+  const RECTOR = '33333333-3333-4333-8333-333333333333';
+  const TEACHER = '11111111-1111-4111-8111-111111111111';
+  const COLLEAGUE = '22222222-2222-4222-8222-222222222222';
+  const colleagueTables = tableFiles().filter((file) => file.dump.pupil && file.dump.pupil.column === 'userId');
+  const fileOf = (table: string) => colleagueTables.find((file) => file.table === table)!;
+  /** Every column of the table as the schema has it, by the table's own name. */
+  const columnsOf = (table: string): string[] => {
+    const model = Prisma.dmmf.datamodel.models.find((candidate) => candidate.dbName === table);
+    if (!model) throw new Error(`no model for ${table}`);
+    return model.fields.filter((field) => field.kind !== 'object').map((field) => field.name);
+  };
+
+  // The tables where one person decides and the row is a colleague's. A table added here is said to be about a colleague on purpose.
+  it("are the rektor's assessments of a teacher and the history of a post, and the colleague is the column the dump reads", () => {
+    expect(colleagueTables.map((file) => file.table).sort()).toEqual(['AssignmentScopeAssessments', 'TeacherEmploymentLogs']);
+    for (const file of colleagueTables) {
+      expect(file.dump.columns).toContain('userId');
+      expect(file.dump.kind).toBe('EMPLOYMENT');
+    }
+  });
+
+  // The test that matters most for the future: a column added to either table is neither the act nor hidden until somebody says
+  // which, and until then this fails. Written the other way round (a list of what to hide) a new column would be handed out.
+  it.each([
+    ['AssignmentScopeAssessments', ['id', 'schoolId', 'academicYearId', 'decidedById', 'decidedAt', 'createdAt', 'updatedAt']],
+    ['TeacherEmploymentLogs', ['id', 'schoolId', 'academicYearId', 'entity', 'action', 'actorId', 'createdAt']],
+  ])('%s: every column is the act, the colleague or what was decided about them, and no column is more than one', (table, act) => {
+    const about = fileOf(table).dump.pupil!;
+    const decided = [about.column, ...about.hides];
+    expect([...act, ...decided].sort()).toEqual(columnsOf(table).sort());
+    expect(act.filter((column) => decided.includes(column))).toEqual([]);
+    // The one who decided is always the act, in both tables: it is what the extract is about.
+    expect(fileOf(table).dump.columns.filter((column) => column !== about.column).every((column) => act.includes(column))).toBe(true);
+  });
+
+  it("empties the teacher, the level, the exception, the day and the note of an assessment in the rektor's extract, and keeps who decided and when", () => {
+    const rows = [
+      {
+        id: 'a1', schoolId: 's', userId: COLLEAGUE, academicYearId: 'y', teachingLevelHours: 600, exceptionKind: 'OWN_INITIATIVE',
+        ownInitiativeOn: '2027-09-01', note: 'Vill undervisa mer, efter sjukskrivningen', decidedById: RECTOR, decidedAt: '2027-03-10T09:00:00Z',
+        createdAt: '2027-03-10T09:00:00Z', updatedAt: '2027-03-10T09:00:00Z',
+      },
+    ];
+    expect(emptyPupilPart(fileOf('AssignmentScopeAssessments'), rows, new Set([RECTOR]))).toBe(5);
+    expect(rows[0]).toEqual({
+      id: 'a1', schoolId: 's', userId: null, academicYearId: 'y', teachingLevelHours: null, exceptionKind: null,
+      ownInitiativeOn: null, note: null, decidedById: RECTOR, decidedAt: '2027-03-10T09:00:00Z',
+      createdAt: '2027-03-10T09:00:00Z', updatedAt: '2027-03-10T09:00:00Z',
+    });
+  });
+
+  it("empties the colleague, the post and both versions of it in the extract of the administrator who changed it, and keeps the act", () => {
+    const rows = [
+      {
+        id: 'l1', schoolId: 's', userId: COLLEAGUE, academicYearId: 'y', version: 3, entity: 'EMPLOYMENT', entityId: 'e1', action: 'UPDATE',
+        before: { employmentPercent: 80, reductionPercent: 10 }, after: { employmentPercent: 60, reductionPercent: 0, note: 'föräldraledig' },
+        actorId: RECTOR, createdAt: '2027-03-10T09:00:00Z',
+      },
+    ];
+    expect(emptyPupilPart(fileOf('TeacherEmploymentLogs'), rows, new Set([RECTOR]))).toBe(5);
+    expect(rows[0]).toEqual({
+      id: 'l1', schoolId: 's', userId: null, academicYearId: 'y', version: null, entity: 'EMPLOYMENT', entityId: null, action: 'UPDATE',
+      before: null, after: null, actorId: RECTOR, createdAt: '2027-03-10T09:00:00Z',
+    });
+  });
+
+  it("keeps the whole row in the teacher's own extract, with the one who decided, and in the extract of a rektor who assessed themself", () => {
+    const assessment = () => ({ id: 'a1', userId: TEACHER, teachingLevelHours: 560, exceptionKind: null, ownInitiativeOn: null, note: 'Mentor för åk 9', decidedById: RECTOR });
+    const own = [assessment()];
+    expect(emptyPupilPart(fileOf('AssignmentScopeAssessments'), own, new Set([TEACHER]))).toBe(0);
+    expect(own[0]).toEqual(assessment());
+    const self = [{ ...assessment(), userId: RECTOR }];
+    expect(emptyPupilPart(fileOf('AssignmentScopeAssessments'), self, new Set([RECTOR]))).toBe(0);
+    expect(self[0]!.userId).toBe(RECTOR);
+    expect(self[0]!.teachingLevelHours).toBe(560);
+  });
+
+  it('counts the cells it empties, and only the ones that held something', () => {
+    const rows = [{ id: 'a2', userId: COLLEAGUE, teachingLevelHours: null, exceptionKind: 'SMALL_GROUP', ownInitiativeOn: null, note: null, decidedById: RECTOR }];
+    // The colleague and the exception: two cells that held something.
+    expect(emptyPupilPart(fileOf('AssignmentScopeAssessments'), rows, new Set([RECTOR]))).toBe(2);
   });
 });

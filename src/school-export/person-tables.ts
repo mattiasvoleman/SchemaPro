@@ -59,9 +59,11 @@ export interface PersonDump {
   /** Columns of json holding person ids: a row is the person's when the json names one asked for. */
   inside?: readonly string[];
   /**
-   * The rows are about a pupil (`column`) and a member of staff acts in them. When the pupil is not one of the persons asked
-   * for, the pupil's id and the columns in `hides` (the pupil's state) are empty, and only the act is the extract's: who did
-   * it and when. Without it a teacher's extract would carry the pupils the teacher marked found in a drill (M1 of the review).
+   * The rows are about somebody else (`column`: a pupil, or a colleague a decision was about) and a member of staff acts in
+   * them. When that person is not one of the persons asked for, their id and the columns in `hides` (their state) are empty,
+   * and only the act is the extract's: who did it and when. Without it a teacher's extract would carry the pupils the teacher
+   * marked found in a drill (M1 of the review), and a rektor's the level, the exception and the note of every teacher the
+   * rektor assessed (g409-L-5). The name is the first user's, the pupil; the mechanism is the same for a colleague.
    */
   pupil?: { column: string; hides: readonly string[] };
   /** Rows that belong to a person through a parent row: [column, parent table, parent's person column]. */
@@ -85,6 +87,16 @@ const dump = (
 /** The rows are about a pupil: see PersonDump.pupil. */
 const aboutPupil = (decision: PersonTableDecision, column: string, hides: readonly string[]): PersonTableDecision =>
   'dump' in decision ? { dump: { ...decision.dump, pupil: { column, hides } } } : decision;
+
+/**
+ * The rows are a decision or a change a member of staff made about a colleague (`column`: the colleague), and hold the colleague's
+ * HR data in `hides`: see PersonDump.pupil, the same mechanism. In the extract of the one who decided, the colleague and what
+ * was decided about them are not the extract's (GDPR art. 15.4: the copy must not harm anyone else's rights), only that the
+ * person decided, on which row and when. In the colleague's own extract, and in the extract of a person who decided about
+ * themself, everything stays.
+ */
+const aboutColleague = (decision: PersonTableDecision, column: string, hides: readonly string[]): PersonTableDecision =>
+  aboutPupil(decision, column, hides);
 
 /** The rows hold somebody else's data in these columns: see PersonDump.thirdParty. */
 const withThirdParty = (decision: PersonTableDecision, columns: readonly string[]): PersonTableDecision =>
@@ -144,9 +156,16 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
 
   // Staff: the post, the duties, the lessons and the cover.
   TeacherEmployments: staff(['userId']),
-  AssignmentScopeAssessments: staff(['userId', 'decidedById']),
+  // Rektorns bedömning av en lärares omfattning (20270306090000): the teacher's own level, exception, day and note are the
+  // teacher's (their extract has the row whole, the rektor's id in decidedById included). In the extract of the rektor who
+  // decided, the row is the act: that a decision was made, on which row and when. The teacher, the level, the exception, the day
+  // and the note are a colleague's HR data (the page shows them only to a reader with HR-läs) and are empty (g409-L-5, K7).
+  AssignmentScopeAssessments: aboutColleague(staff(['userId', 'decidedById']), 'userId', ['teachingLevelHours', 'exceptionKind', 'ownInitiativeOn', 'note']),
   TeacherEmploymentPeriods: staff(['userId']),
-  TeacherEmploymentLogs: staff(['userId', 'actorId']),
+  // A tjänst's history: the row before and after is the whole post (percentages, reduction, note, löne-id). In the extract of the
+  // administrator who wrote the change, the teacher, the post and the version are a colleague's and are empty; the act stays: which
+  // kind of row, whether it was made, changed or removed, and when.
+  TeacherEmploymentLogs: aboutColleague(staff(['userId', 'actorId']), 'userId', ['entityId', 'version', 'before', 'after']),
   TeacherDuties: staff(['userId']),
   TeacherDutySlots: staff([], [
     ['teacherDutyId', 'TeacherDuties', 'userId'],
@@ -442,7 +461,8 @@ function carries(value: string, rules: CellRules): boolean {
 
 /**
  * The pupil's part of the rows of a table that is about a pupil, emptied in place where the pupil is not one of `asked`
- * (PersonDump.pupil). Returns how many cells that held something were emptied.
+ * (PersonDump.pupil). The same for the colleague of a table about a colleague (aboutColleague). Returns how many cells that held
+ * something were emptied.
  */
 export function emptyPupilPart(file: TableFile, rows: Array<Record<string, unknown>>, asked: ReadonlySet<string>): number {
   const pupil = file.dump.pupil;
