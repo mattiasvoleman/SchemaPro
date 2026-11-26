@@ -27,7 +27,14 @@ import { createClient } from '@supabase/supabase-js';
 import { createPgAdapter } from '../../src/database/pool-config';
 import { checkAuthSettings, describeAuthSettings, type AuthSettingsReport } from '../../src/operator/auth-settings';
 import { makeFirstLogin, FirstLoginError, type AuthAdminClient, type FirstLoginResult } from '../../src/operator/first-login';
-import { describeDatabase, NEW_SCHOOL_USAGE, parseNewSchoolArgs, type NewSchoolArgs } from '../../src/operator/new-school-args';
+import {
+  describeAuthProject,
+  describeDatabase,
+  NEW_SCHOOL_USAGE,
+  parseNewSchoolArgs,
+  projectRefOfDatabase,
+  type NewSchoolArgs,
+} from '../../src/operator/new-school-args';
 
 /** What the database holds under the slug the operator named. People are counted, never named. */
 export type SchoolState =
@@ -93,8 +100,10 @@ export interface NewSchoolDeps {
   auth: AuthAdminClient | null;
   /** What `checkAuthSettings` read, or null when it was not asked. */
   settings: AuthSettingsReport | null;
-  /** What DIRECT_URL names, without its password. */
-  database: { host: string; port: string; database: string };
+  /** What DIRECT_URL names, without its password. `ref` is the Supabase project it belongs to, when it says so. */
+  database: { host: string; port: string; database: string; ref?: string | null };
+  /** What SUPABASE_URL names: the Auth project the login is made in. Absent when it was not given. */
+  authProject?: { host: string; ref: string | null };
   /** The password --password-env named, when it was set. */
   password?: string;
   now?: () => Date;
@@ -119,6 +128,17 @@ export async function runNewSchool(args: NewSchoolArgs, deps: NewSchoolDeps): Pr
   if (args.apply && args.expectHost !== host) {
     say(`DIRECT_URL names the host "${host}", and --expect-host says "${args.expectHost ?? ''}". Nothing is written. Say which database you mean.`);
     return { exitCode: 2, lines, state: 'REFUSED' };
+  }
+  // The login is made at the project SUPABASE_URL names and the row in the database DIRECT_URL names, and a stale variable in the shell can
+  // pick either: --expect-host holds the database, so the project is said, and refused when both say which Supabase project they are
+  // and it is not the same one (a school's row in one project's database with a login made, and a mail sent, from another's).
+  if (deps.authProject) {
+    say(`Auth project:     ${deps.authProject.host}`);
+    const databaseRef = deps.database.ref ?? null;
+    if (databaseRef !== null && deps.authProject.ref !== null && databaseRef !== deps.authProject.ref) {
+      say(`DIRECT_URL is the database of Supabase project ${databaseRef} and SUPABASE_URL is project ${deps.authProject.ref}. Nothing is written. Say which project you mean.`);
+      return { exitCode: 2, lines, state: 'REFUSED' };
+    }
   }
   say(`School:           ${args.name} (slug ${args.slug}, ${args.timezone})`);
   say(`Administrator:    ${args.admin.firstName} ${args.admin.lastName} <${args.admin.email}>`);
@@ -246,7 +266,15 @@ async function main(): Promise<number> {
   const password = args.login.mode === 'PASSWORD' ? env[args.login.passwordEnv] : undefined;
   const prisma = new PrismaClient({ adapter: createPgAdapter(databaseUrl) });
   try {
-    const outcome = await runNewSchool(args, { db: prisma, auth, settings, database, ...(password !== undefined ? { password } : {}) });
+    const authProject = supabaseUrl ? describeAuthProject(supabaseUrl) : null;
+    const outcome = await runNewSchool(args, {
+      db: prisma,
+      auth,
+      settings,
+      database: { ...database, ref: projectRefOfDatabase(databaseUrl) },
+      ...(authProject ? { authProject } : {}),
+      ...(password !== undefined ? { password } : {}),
+    });
     console.log(outcome.lines.join('\n'));
     return outcome.exitCode;
   } finally {

@@ -187,6 +187,36 @@ export function describeDatabase(databaseUrl: string): { host: string; port: str
   }
 }
 
+/** A Supabase project reference: what the dashboard's address and the project's hosts are built from. */
+const PROJECT_REF = /^[a-z0-9]{10,40}$/;
+
+/**
+ * The Supabase project a database address belongs to, when it says so: the direct host `db.<ref>.supabase.co`, or the pooler's user
+ * `postgres.<ref>`. Null for any other address (a local database, another host), which names no project to compare.
+ */
+export function projectRefOfDatabase(databaseUrl: string): string | null {
+  try {
+    const url = new URL(databaseUrl);
+    const direct = /^db\.([a-z0-9]+)\.supabase\.co$/.exec(url.hostname.toLowerCase());
+    if (direct && PROJECT_REF.test(direct[1]!)) return direct[1]!;
+    const pooled = /^postgres\.([a-z0-9]+)$/.exec(decodeURIComponent(url.username).toLowerCase());
+    return pooled && PROJECT_REF.test(pooled[1]!) ? pooled[1]! : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What SUPABASE_URL names: its host, and the project reference when it is `https://<ref>.supabase.co`. Null when it is no address. */
+export function describeAuthProject(supabaseUrl: string): { host: string; ref: string | null } | null {
+  try {
+    const host = new URL(supabaseUrl).hostname.toLowerCase();
+    const match = /^([a-z0-9]+)\.supabase\.co$/.exec(host);
+    return { host, ref: match && PROJECT_REF.test(match[1]!) ? match[1]! : null };
+  } catch {
+    return null;
+  }
+}
+
 export const NEW_SCHOOL_USAGE = `Make a new school and its first administrator (docs/DEPLOYMENT.md §7).
 
   DIRECT_URL=<owner connection> SUPABASE_URL=<project url> SUPABASE_SERVICE_ROLE_KEY=<key> \\

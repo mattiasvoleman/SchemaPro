@@ -18,6 +18,7 @@
  *   (4) run again after it is done, nothing is made and nothing is sent;
  *   (5) a slug that holds another school (other people, or another administrator) is REFUSED and its rows are the same after;
  *   (6) the wrong host is refused before anything is read or written, and so is --apply without --expect-host;
+ *   (6b) an Auth project that is not the database's project (a stale SUPABASE_URL) is said and refused before anything is written;
  *   (7) a login another school's person holds is NOT taken by this administrator: the row stays un-invited (the database's trigger,
  *       Users_a_login_joins_another_school_by_invitation), and the other school's row is the same after;
  *   (8) --require-smtp writes nothing unless the project's own SMTP was verified.
@@ -213,6 +214,25 @@ async function main(): Promise<void> {
       assert.equal(auth.invitations, 0);
       const noHost = parseNewSchoolArgs(['--name', 'X', '--slug', 'x', '--admin-email', 'a@b.example', '--admin-first-name', 'A', '--admin-last-name', 'B', '--apply']);
       assert.equal(noHost.ok, false);
+    });
+
+    await check('(6b) an Auth project that is not the database\'s is said, and refused before anything is written', async () => {
+      const auth = new FakeAuth();
+      const args = argsOf('stale', ['--apply']);
+      const mine = { host: 'localhost', port: '5432', database: 'schemapro', ref: 'aaaaaaaaaaaa' };
+      const refused = await runNewSchool(args, { ...deps(auth), database: mine, authProject: { host: 'bbbbbbbbbbbb.supabase.co', ref: 'bbbbbbbbbbbb' } });
+      assert.equal(refused.exitCode, 2, refused.lines.join('\n'));
+      assert.equal(refused.state, 'REFUSED');
+      assert.match(refused.lines.join('\n'), /project aaaaaaaaaaaa and SUPABASE_URL is project bbbbbbbbbbbb/);
+      assert.equal(await schoolOf(args.slug), null, 'nothing was written');
+      assert.equal(auth.invitations, 0, 'no mail went from the other project');
+      // The same project is said and goes on; an Auth url that names no project (a local GoTrue) is said and goes on.
+      const dry = argsOf('stale');
+      const same = await runNewSchool(dry, { ...deps(auth), database: mine, authProject: { host: 'aaaaaaaaaaaa.supabase.co', ref: 'aaaaaaaaaaaa' } });
+      assert.equal(same.exitCode, 0);
+      assert.match(same.lines.join('\n'), /Auth project:     aaaaaaaaaaaa\.supabase\.co/);
+      const local = await runNewSchool(dry, { ...deps(auth), database: mine, authProject: { host: '127.0.0.1', ref: null } });
+      assert.equal(local.exitCode, 0);
     });
 
     await check('(7) a login another school holds is not taken: the row stays un-invited, and the other school is untouched', async () => {

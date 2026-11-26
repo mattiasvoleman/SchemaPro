@@ -1,4 +1,4 @@
-import { describeDatabase, parseNewSchoolArgs, SLUG } from './new-school-args';
+import { describeAuthProject, describeDatabase, parseNewSchoolArgs, projectRefOfDatabase, SLUG } from './new-school-args';
 
 const BASE = [
   '--name', 'Ekeby skola',
@@ -132,5 +132,21 @@ describe('describeDatabase', () => {
   it('is null for anything that is not a Postgres address', () => {
     expect(describeDatabase('mysql://u:p@h/db')).toBeNull();
     expect(describeDatabase('not a url')).toBeNull();
+  });
+});
+
+describe('which Supabase project an address belongs to', () => {
+  it('reads the project from the direct host and from the pooler user, and from nothing else', () => {
+    expect(projectRefOfDatabase('postgresql://postgres:pw@db.abcdefghijklmnop.supabase.co:5432/postgres?sslmode=require')).toBe('abcdefghijklmnop');
+    expect(projectRefOfDatabase('postgresql://postgres.abcdefghijklmnop:pw@aws-0-eu-north-1.pooler.supabase.com:5432/postgres')).toBe('abcdefghijklmnop');
+    expect(projectRefOfDatabase('postgresql://postgres:pw@localhost:5432/schemapro')).toBeNull();
+    expect(projectRefOfDatabase('postgresql://postgres:pw@db.short.supabase.co/postgres')).toBeNull();
+    expect(projectRefOfDatabase('not an address')).toBeNull();
+  });
+
+  it('reads the project of the Auth url, and its host, and says nothing of an address that is not one', () => {
+    expect(describeAuthProject('https://abcdefghijklmnop.supabase.co')).toEqual({ host: 'abcdefghijklmnop.supabase.co', ref: 'abcdefghijklmnop' });
+    expect(describeAuthProject('http://127.0.0.1:8946')).toEqual({ host: '127.0.0.1', ref: null });
+    expect(describeAuthProject('auth.skolan.example')).toBeNull();
   });
 });
