@@ -2296,6 +2296,19 @@
     "limits": "Siffrorna är nedre gränser som motorn kan bevisa för årskursens trängsta del av läsåret. En vecka över ramtiden räknas bara till den första period motorn nekar, så den siffran kan vara lägre än den trängsta periodens och jämförs inte med andra. De säger inte att ett schema finns. Behörigheter räknas som de gäller i dag.",
     "notRun": "{count, plural, one {# ämne} other {# ämnen}} hann inte räknas om inom tiden."
   },
+  "boardPossible": {
+    "free": "Ledigt",
+    "change": "Ledigt, annan sal",
+    "closed": {
+      "FRAME": "Ramtid",
+      "LUNCH": "Lunch",
+      "GRADE_RULE": "Årskursregel",
+      "OTHER_SCHOOL": "Annan skola",
+      "AVAILABILITY": "Inte tillgänglig"
+    },
+    "inTheWay": "{subject} {className} i vägen",
+    "inTheWayUnnamed": "En lektion i vägen"
+  },
   "boardKeys": {
     "clash": "Krock",
     "blockDialog": "{lesson} är ett block: blockets egen ruta öppnas, där lås, parkera och ta bort gäller hela blocket.",
@@ -2304,6 +2317,11 @@
     "pickedUp": "Tog upp {lesson}, {day} {from}–{to}. Pilarna flyttar markören, Enter lägger, Esc släpper.",
     "markerFree": "{day} {from}–{to}: går att lägga. Enter lägger.",
     "markerTaken": "{day} {from}–{to}: går inte att lägga här. Enter visar de närmaste lediga tiderna.",
+    "markerRank": "{day} {from}–{to}: förslag {rank}. Enter lägger.",
+    "markerClosed": "{day} {from}–{to}: stängt av {code, select, FRAME {ramtiden} LUNCH {klassens lunch} GRADE_RULE {en regel för årskursen} OTHER_SCHOOL {en annan skolas tid} AVAILABILITY {en markering om att något inte är tillgängligt} other {en regel}}. Enter visar de närmaste lediga tiderna.",
+    "markerInTheWay": "{day} {from}–{to}: {subject} {className} ligger i vägen. Enter visar de närmaste lediga tiderna.",
+    "markerCrowded": "{day} {from}–{to}: {units, plural, =0 {något är i vägen} one {en lektion ligger i vägen} other {# lektioner ligger i vägen}}. Enter visar de närmaste lediga tiderna.",
+    "numberNone": "Det finns inget förslag {rank}.",
     "placed": "Flyttar {lesson} till {day} {from}–{to}.",
     "refused": "{lesson} går inte att lägga {day} {from}–{to}. De närmaste lediga tiderna visas.",
     "letGo": "Släppte {lesson}. Ingenting ändrades.",
@@ -2327,6 +2345,10 @@
       "marker": {
         "keys": "Pilar, med en lektion uppe",
         "does": "Flyttar markören ett kvarter upp eller ned (med Skift fem minuter) eller en dag åt sidan."
+      },
+      "numbers": {
+        "keys": "1 till 9, med en lektion uppe",
+        "does": "Flyttar markören till det bästa förslaget med det numret, där brädet har märkt ut de tider lektionen kan ligga."
       },
       "put": {
         "keys": "Enter eller mellanslag, med en lektion uppe",

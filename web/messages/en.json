@@ -2296,6 +2296,19 @@
     "limits": "The figures are lower bounds the engine can prove for the year's tightest part of the school year. A week over the frame time is counted only up to the first period the engine refuses, so that figure may be lower than the tightest period's and is not compared with others. They do not say a timetable exists. Qualifications count as they hold today.",
     "notRun": "{count, plural, one {# subject} other {# subjects}} could not be counted again in time."
   },
+  "boardPossible": {
+    "free": "Free",
+    "change": "Free, another room",
+    "closed": {
+      "FRAME": "School hours",
+      "LUNCH": "Lunch",
+      "GRADE_RULE": "Year rule",
+      "OTHER_SCHOOL": "Other school",
+      "AVAILABILITY": "Unavailable"
+    },
+    "inTheWay": "{subject} {className} in the way",
+    "inTheWayUnnamed": "A lesson in the way"
+  },
   "boardKeys": {
     "clash": "Clash",
     "blockDialog": "{lesson} is a block: its own dialog opens, where lock, park and remove apply to the whole block.",
@@ -2304,6 +2317,11 @@
     "pickedUp": "Picked up {lesson}, {day} {from}–{to}. The arrow keys move the marker, Enter puts it down, Esc lets go.",
     "markerFree": "{day} {from}–{to}: free. Enter puts it down.",
     "markerTaken": "{day} {from}–{to}: cannot go here. Enter shows the nearest free times.",
+    "markerRank": "{day} {from}–{to}: suggestion {rank}. Enter places it.",
+    "markerClosed": "{day} {from}–{to}: closed by {code, select, FRAME {the school day's frame} LUNCH {the class's lunch} GRADE_RULE {a rule for the year group} OTHER_SCHOOL {another school's time} AVAILABILITY {a mark that something is unavailable} other {a rule}}. Enter shows the nearest free times.",
+    "markerInTheWay": "{day} {from}–{to}: {subject} {className} is in the way. Enter shows the nearest free times.",
+    "markerCrowded": "{day} {from}–{to}: {units, plural, =0 {something is in the way} one {a lesson is in the way} other {# lessons are in the way}}. Enter shows the nearest free times.",
+    "numberNone": "There is no suggestion {rank}.",
     "placed": "Moving {lesson} to {day} {from}–{to}.",
     "refused": "{lesson} cannot go on {day} {from}–{to}. The nearest free times are shown.",
     "letGo": "Let go of {lesson}. Nothing changed.",
@@ -2327,6 +2345,10 @@
       "marker": {
         "keys": "Arrow keys, with a lesson picked up",
         "does": "Move the marker a quarter of an hour up or down (five minutes with Shift) or a day sideways."
+      },
+      "numbers": {
+        "keys": "1 to 9, with a lesson picked up",
+        "does": "Moves the marker to the best time with that number, where the board has marked the times the lesson can stand."
       },
       "put": {
         "keys": "Enter or Space, with a lesson picked up",

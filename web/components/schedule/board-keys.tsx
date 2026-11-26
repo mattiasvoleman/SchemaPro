@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { possibleOf } from "@/lib/possible-store";
+import { optionAt, optionNumbered, runAt } from "@/lib/possible-times";
 import {
   focusAfter,
   lengthened,
@@ -27,6 +29,7 @@ import {
  *   arrows, taken up     the marker moves a quarter of an hour, or with Shift five minutes, or a day
  *   Enter, taken up      puts it down; a square that is not free opens the page's list of the nearest that are
  *   Esc, taken up        lets go and changes nothing
+ *   1 to 9, taken up     the marker goes to the best time of that number (E3: the gateway's ranked possible times)
  *   Alt+Up, Alt+Down     the length, five minutes at a time
  *   L, P, Delete         lock or unlock, park, remove: the page's own writes, each one step of undo
  *   ?                    the list of keys
@@ -188,6 +191,36 @@ export function BoardKeys(props: BoardKeysProps) {
       if (!quietly && lesson) say("letGo", { lesson: nameOf(lesson) });
     };
 
+    /**
+     * What the gateway's possible times (lib/possible-times.ts) say of a square for the lesson in hand: a sentence of the line's own,
+     * or null when it has not answered (it is asked a moment after the lesson is taken up, and may not come), when it has no answer
+     * for the square, or when the square is the one the page's own check already says (a free square with no number to give).
+     */
+    const knownAbout = (id: string, square: Marker): { key: string; values: Record<string, string | number> } | null => {
+      const times = possibleOf(id);
+      if (!times) return null;
+      const run = runAt(times, square.dayOfWeek, square.startMinutes);
+      if (!run) return null;
+      const where = squareOf(square);
+      switch (run.kind) {
+        case "FREE":
+        case "CHANGE": {
+          const option = optionAt(times, square.dayOfWeek, square.startMinutes);
+          return option ? { key: "markerRank", values: { ...where, rank: option.rank } } : null;
+        }
+        case "CLOSED":
+          return { key: "markerClosed", values: { ...where, code: run.code ?? "AVAILABILITY" } };
+        case "IN_THE_WAY": {
+          const blocker = run.blockerId ? times.blockers[run.blockerId] : undefined;
+          return blocker ? { key: "markerInTheWay", values: { ...where, subject: blocker.subjectName, className: blocker.className } } : null;
+        }
+        case "CROWDED":
+          return { key: "markerCrowded", values: { ...where, units: run.units ?? 0 } };
+        default:
+          return null;
+      }
+    };
+
     /** Asks the page whether the lesson may stand on the square, and draws the marker green or red. */
     const verdict = (id: string, square: Marker): boolean => {
       const ok = live.current.props.validateChange ? live.current.props.validateChange(id, square) : true;
@@ -264,7 +297,27 @@ export function BoardKeys(props: BoardKeysProps) {
           if (p.shownDay !== null && next.dayOfWeek !== taken.at.dayOfWeek) return;
           taken.at = next;
           const ok = verdict(id, next);
-          say(ok ? "markerFree" : "markerTaken", squareOf(next));
+          // The gateway's word for the square when it has one (a rank, the rule that shuts it, the lesson in the way): it is the judge's.
+          // Else the page's own check, which is what there is until the gateway has answered.
+          const known = knownAbout(id, next);
+          if (known) say(known.key, known.values);
+          else say(ok ? "markerFree" : "markerTaken", squareOf(next));
+          return;
+        }
+        // 1 to 9: the marker goes to the best time of that number, where the gateway has said the lesson can stand.
+        if (/^[1-9]$/.test(key) && !event.altKey && !event.shiftKey) {
+          consume();
+          const times = possibleOf(id);
+          const option = times ? optionNumbered(times, Number(key)) : null;
+          const length = lesson.endMinutes - lesson.startMinutes;
+          // On a phone only the day the lesson is in is drawn, and the marker stays in it (as for the arrows).
+          if (!option || (p.shownDay !== null && option.dayOfWeek !== p.shownDay)) {
+            say("numberNone", { rank: Number(key) });
+            return;
+          }
+          taken.at = { dayOfWeek: option.dayOfWeek, startMinutes: option.startMinutes, endMinutes: option.startMinutes + length };
+          verdict(id, taken.at);
+          say("markerRank", { ...squareOf(taken.at), rank: option.rank });
           return;
         }
         if (key === "Enter" || (key === " " && !event.shiftKey)) {
@@ -393,7 +446,7 @@ export function BoardKeys(props: BoardKeysProps) {
       </p>
       {help ? (
         <dl aria-label={t("keysTitle")} className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-md border bg-card p-3 text-xs">
-          {(["arrows", "take", "marker", "put", "letGoKey", "length", "lock", "park", "remove", "open", "select", "undo"] as const).map((row) => (
+          {(["arrows", "take", "marker", "numbers", "put", "letGoKey", "length", "lock", "park", "remove", "open", "select", "undo"] as const).map((row) => (
             <div key={row} className="contents">
               <dt className="font-mono font-semibold">{t(`keys.${row}.keys`)}</dt>
               <dd className="text-muted-foreground">{t(`keys.${row}.does`)}</dd>
