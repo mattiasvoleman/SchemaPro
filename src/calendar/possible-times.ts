@@ -1,5 +1,5 @@
 import type { RoomNeeds } from '../optimization/room-eligibility';
-import type { Landing, SwapContext } from '../swaps/swap-context';
+import type { InTheWay, Landing, SwapContext } from '../swaps/swap-context';
 import type { SoftCost, SwapLesson, SwapMove, SwapSlot, SwapUnit } from '../swaps/swap-types';
 
 /*
@@ -231,13 +231,22 @@ export function probeAt(world: PossibleWorld, subject: PossibleSubject, prepared
           });
     if (alternative === undefined) {
       roomBlockers = new Map([...roomBlockers, ...way.lessons.map((other): [string, SwapLesson] => [other.id, other])]);
-      // A room held by a hold or a closure and by no lesson has no one to make room: nothing is painted.
-      return roomBlockers.size > 0 ? blockedBy(context, roomBlockers.values()) : { kind: 'CROWDED', units: 0, locked: false };
+      // A room held by a hold or a closure and by no lesson has no one to make room, and no other room fits: the stretch is shut, and by
+      // the rule the judge names (a room lent to another school, a weekly row on the room), not "crowded" by no one.
+      return roomBlockers.size > 0 ? blockedBy(context, roomBlockers.values()) : (closedByRoom(context, { way, landing }) ?? { kind: 'CROWDED', units: 0, locked: false });
     }
     rooms.set(landing.lesson.id, alternative.id);
     roomChanged = true;
   }
   return { kind: 'CANDIDATE', rooms, roomChanged };
+}
+
+/** The rule that shuts a stretch for a lesson whose room is held by no lesson and has no other room to turn to, as the judge names it. */
+function closedByRoom(context: SwapContext, { way, landing }: { way: InTheWay; landing: Landing }): Probe | null {
+  if (way.lessons.length > 0) return null;
+  if (way.closures.includes('ROOM')) return { kind: 'CLOSED', code: 'AVAILABILITY', params: { resource: 'ROOM' } };
+  if (context.boardRefusal(landing) === 'OTHER_SCHOOL') return { kind: 'CLOSED', code: 'OTHER_SCHOOL', params: { schools: context.holdSchoolsAt(landing).join(', ') } };
+  return null;
 }
 
 /** The lessons in the way: one unit that can be moved is "a lesson in the way", anything else is crowded. */

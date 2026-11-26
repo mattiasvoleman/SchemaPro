@@ -47,6 +47,11 @@ export interface RoomChoice {
   allowed: boolean;
   /** The lesson's room as it stands. */
   current: boolean;
+  /**
+   * The school lets this room hold several lessons at once while their pupils fit its seats: the prune does not call it taken, whoever
+   * stands in it, and the judge counts the pupils when the lesson is laid. A free room that is shared is free as far as a prune can say.
+   */
+  shared: boolean;
   /** 1 is the best of the free rooms that fit; null for every other room. */
   rank: number | null;
   /** BUSY: the first lesson that stands in it then, and how many do. */
@@ -89,6 +94,7 @@ export function roomChoicesOf(world: PossibleWorld, subject: PossibleSubject, da
       sameTypeAsOwn: own !== undefined && room.roomTypeId === own.roomTypeId,
       allowed: roomAllowed(room, needs),
       current: room.id === member.roomId,
+      shared: context.isSharedRoom(room.id),
       rank: null,
       occupant:
         state === 'BUSY' && first

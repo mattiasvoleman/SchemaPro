@@ -3,7 +3,6 @@ import type { LessonRecurrence } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
-import { SwapContext } from '../swaps/swap-context';
 import { SwapReads } from '../swaps/swap-reads';
 import { readSwapData } from '../swaps/swap-snapshot';
 import type { SoftCost, SwapLesson } from '../swaps/swap-types';
@@ -162,7 +161,7 @@ export class WhatFitsService {
 
       // 2. The school as it stands, with the lessons that stand nowhere known to it.
       const data = await readSwapData(tx, user, dto.academicYearId);
-      const context = new SwapContext(data, { unplaced: entries.filter((entry) => entry.unplaced).map((entry) => entry.lesson) });
+      const context = await this.possible.contextOf(tx, data, entries.filter((entry) => entry.unplaced).map((entry) => entry.lesson));
       const reads = new SwapReads(data.lessons);
       await reads.warm(tx, data);
       const world = await this.possible.worldOf(tx, data, context, entries.map((entry) => entry.lesson));
@@ -290,7 +289,7 @@ export class WhatFitsService {
       if (found.placed) return { ...base, immovable: 'PLACED' as const, rooms: [], stats: { rooms: 0, free: 0, elapsedMs: Date.now() - started } };
 
       const data = await readSwapData(tx, user, found.academicYearId);
-      const context = new SwapContext(data, { unplaced: found.lesson.unplaced ? [found.lesson.lesson] : [] });
+      const context = await this.possible.contextOf(tx, data, found.lesson.unplaced ? [found.lesson.lesson] : []);
       const unit = context.unitOf.get(found.lesson.lesson.id);
       if (!unit) throw new NotFoundException('The lesson is not in the year read.');
       const world = await this.possible.worldOf(tx, data, context, unit.members);
