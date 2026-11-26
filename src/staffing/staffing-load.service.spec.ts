@@ -1061,7 +1061,7 @@ describe('StaffingLoadService', () => {
         highestHours: 480,
         planningFloorHours: 473,
       });
-      expect(report.scope!.interpretations).toEqual([{ section: '4 § p. 1 och 5 § p. 1', note: 'Tolkning' }]);
+      expect(report.scope!.interpretations).toEqual([{ section: '4 § p. 1 och 5 § p. 1', note: 'Tolkning', grades: [{ from: 7, to: 9 }] }]);
     });
 
     it('leaves the counted minutes, the saldo and the status exactly as they were (the riktmärke is the school\'s, the ordinance the law\'s)', async () => {
@@ -1242,7 +1242,7 @@ describe('StaffingLoadService', () => {
         expect(scopeOf(report).overOnlyWithUnregulated).toBeUndefined();
         expect(cause(report)).toEqual([]);
         // What every card carries stays: the band's own note.
-        expect(report.scope!.interpretations).toEqual([{ section: '4 § p. 1 och 5 § p. 1', note: 'Tolkning' }]);
+        expect(report.scope!.interpretations).toEqual([{ section: '4 § p. 1 och 5 § p. 1', note: 'Tolkning', grades: [{ from: 7, to: 9 }] }]);
       });
 
       it('is in the answer of the teacher whose row has it', async () => {
