@@ -1,6 +1,6 @@
 import { Reply, route, type GatewayContext, type GatewayRoute } from "../gateway-routes";
 import { LUNCH_SITTINGS } from "./school-days";
-import { GROUP_LIST, MASTER_LESSONS, SUBJECTS } from "./world";
+import { GROUP_LIST, MASTER_LESSONS, ROOM_LIST, SUBJECTS } from "./world";
 
 /**
  * Where a lesson can stand, as the gateway answers it (src/calendar/possible-times.service.ts), for the browser suites of the board (E3):
@@ -128,4 +128,54 @@ function possibleTimes(context: GatewayContext): unknown {
   };
 }
 
-export const possibleTimesRoutes: GatewayRoute[] = [route("POST", "/api/v1/master-lessons/possible-times", possibleTimes)];
+/**
+ * The rooms for a lesson laid at a day and clock (POST /master-lessons/room-choices): every room of the fixture school, the free ones
+ * first with the lesson's own at the top, then the busy ones naming the lesson that stands in them. The pupils are twenty-five, so that a
+ * room with fewer seats is "too small" and the answer has every shape the dialog words.
+ */
+function roomChoices(context: GatewayContext): unknown {
+  if (!context.person) return new Reply(401, { message: "Unauthorized" });
+  const body = (context.body ?? {}) as { lessonId?: string; dayOfWeek?: number; startTime?: string };
+  const lesson = MASTER_LESSONS.find((candidate) => candidate.id === body.lessonId);
+  if (!lesson) return new Reply(404, { detail: "Master lesson not found." });
+  const day = body.dayOfWeek ?? lesson.dayOfWeek;
+  const start = minutes(body.startTime ?? lesson.startTime);
+  const end = start + (minutes(lesson.endTime) - minutes(lesson.startTime));
+  const needed = 25;
+  const rows = ROOM_LIST.map((room) => {
+    const standing = MASTER_LESSONS.filter((other) => other.id !== lesson.id && !other.isParked && other.roomId === room.id && other.dayOfWeek === day && overlaps(start, end, minutes(other.startTime), minutes(other.endTime)));
+    const first = standing[0];
+    const tooSmall = room.capacity !== null && room.capacity < needed;
+    return {
+      roomId: room.id,
+      name: room.name,
+      capacity: room.capacity,
+      needed,
+      state: first ? "BUSY" : "FREE",
+      tooSmall,
+      typeOk: true,
+      sameTypeAsOwn: true,
+      allowed: !tooSmall,
+      current: room.id === lesson.roomId,
+      shared: false,
+      rank: null as number | null,
+      occupant: first
+        ? { lessonId: first.id, className: className(first.studentGroupId), subjectName: subjectName(first.subjectId), dayOfWeek: first.dayOfWeek, startMinutes: minutes(first.startTime), endMinutes: minutes(first.endTime), isLocked: first.isLocked }
+        : null,
+      occupants: standing.length,
+      closedBy: null,
+      closedParams: {},
+    };
+  });
+  const fits = rows.filter((row) => row.state === "FREE" && row.allowed).sort((a, b) => Number(b.current) - Number(a.current) || a.name.localeCompare(b.name, "sv"));
+  fits.forEach((row, index) => {
+    row.rank = index + 1;
+  });
+  const rooms = [...fits, ...rows.filter((row) => row.state === "FREE" && !row.allowed), ...rows.filter((row) => row.state === "BUSY")];
+  return { academicYearId: lesson.academicYearId, lessonId: lesson.id, className: className(lesson.studentGroupId), subjectName: subjectName(lesson.subjectId), dayOfWeek: day, startMinutes: start, endMinutes: end, rooms };
+}
+
+export const possibleTimesRoutes: GatewayRoute[] = [
+  route("POST", "/api/v1/master-lessons/possible-times", possibleTimes),
+  route("POST", "/api/v1/master-lessons/room-choices", roomChoices),
+];

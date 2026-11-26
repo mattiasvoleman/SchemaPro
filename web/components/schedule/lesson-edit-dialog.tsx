@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import { type MoveRefusal, moveOf, useLessonJudgement } from "@/lib/lesson-judgement";
 import { problemSentence } from "@/lib/problem-codes";
 import { LessonPossibleTimes } from "@/components/schedule/lesson-possible-times";
+import { LessonRoomChoices } from "@/components/schedule/lesson-room-choices";
 import { RecurrenceFields } from "@/components/schedule/recurrence-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -248,6 +249,8 @@ export function LessonEditDialog({
               </SelectContent>
             </Select>
           </div>
+          {/* Which room, at this time (E3): ranked, with what stands in the busy ones. Closed until opened. */}
+          {lesson ? <LessonRoomChoices lesson={lesson} draft={draft} onDraftChange={onDraftChange} none={none} /> : null}
           <RecurrenceFields
             idPrefix="edit"
             value={{

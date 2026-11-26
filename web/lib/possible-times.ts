@@ -126,3 +126,53 @@ export function costWords(option: PossibleOption): string[] {
 
 /** 09:05 from minutes. */
 export const clockOf = (minutes: number): string => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+
+/** A lesson standing in a room, as a refusal names one: by class, subject, day and clock. */
+export interface RoomOccupant {
+  lessonId: string;
+  className: string;
+  subjectName: string;
+  dayOfWeek: number;
+  startMinutes: number;
+  endMinutes: number;
+  isLocked: boolean;
+}
+
+/** One room of the school for a lesson laid at a time (src/calendar/room-choices.ts), in the order it should be looked at. */
+export interface RoomChoice {
+  roomId: string;
+  name: string;
+  capacity: number | null;
+  needed: number;
+  state: "FREE" | "BUSY" | "CLOSED";
+  tooSmall: boolean;
+  typeOk: boolean;
+  sameTypeAsOwn: boolean;
+  allowed: boolean;
+  current: boolean;
+  shared: boolean;
+  /** 1 is the best of the free rooms that fit. */
+  rank: number | null;
+  occupant: RoomOccupant | null;
+  occupants: number;
+  closedBy: ClosedCode | null;
+  closedParams: Record<string, string | number>;
+}
+
+export interface RoomChoices {
+  academicYearId: string;
+  lessonId: string | null;
+  className: string;
+  subjectName: string;
+  dayOfWeek: number;
+  startMinutes: number;
+  endMinutes: number;
+  immovable?: "PLACED";
+  rooms: RoomChoice[];
+}
+
+/** Asks which rooms the lesson can have at a day and clock (POST /master-lessons/room-choices). */
+export function askRoomChoices(lessonId: string, dayOfWeek: number, startTime: string, signal?: AbortSignal): Promise<RoomChoices> {
+  return api.post<RoomChoices>("/api/v1/master-lessons/room-choices", { lessonId, dayOfWeek, startTime }, signal);
+}
+

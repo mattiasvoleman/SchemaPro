@@ -172,6 +172,16 @@ test("Grundschemat on a phone: Justera lektion lists the possible times, and a b
   await expect(dialog.getByLabel("Start")).toHaveValue(times[1]!);
   await expect(dialog.getByLabel("Slut")).toHaveValue(times[2]!);
   await expect(first).toHaveAttribute("aria-pressed", "true");
+  // The rooms for that time, ranked, and a button fills the Sal field.
+  await dialog.getByText("Salar för den här tiden", { exact: true }).click();
+  const rooms = dialog.getByRole("list").nth(1).getByRole("button");
+  await expect(rooms.first()).toBeVisible();
+  expect(await rooms.count()).toBeGreaterThan(2);
+  const second = rooms.nth(1);
+  await second.click();
+  await expect(second).toHaveAttribute("aria-pressed", "true");
+  const roomName = (await second.locator("span").first().textContent())!.replace(/\d+ platser.*$/, "").replace(/\d+ plats.*$/, "").trim();
+  await expect(dialog.getByRole("combobox", { name: "Sal" })).toContainText(roomName.split(" ")[0]!);
   // The button is a finger's size and the dialog does not scroll sideways under it.
   const box = (await first.boundingBox())!;
   expect(box.height).toBeGreaterThanOrEqual(44);
