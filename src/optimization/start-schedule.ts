@@ -277,6 +277,14 @@ export interface StartedFrom {
 /** The longest a version's name is kept: it is the school's own text, stored on a row the page reads. */
 export const START_VERSION_NAME_MAX = 120;
 
+/**
+ * A version's name cut to what is kept, by characters and not by UTF-16 units: a cut in the middle of an emoji leaves half of a pair, which
+ * JSON writes as a lone surrogate (\ud83d) and Postgres' jsonb refuses ("invalid input syntax for type json"), so the write of the run's
+ * `startedFrom` would fail after the week was laid. Reachable by a name of more than 120 characters, which a safety copy has ("Before
+ * restore of ...") and a file's name is cut short of.
+ */
+export const cutVersionName = (name: string): string => Array.from(name).slice(0, START_VERSION_NAME_MAX).join('');
+
 const COUNT_MAX = 1_000_000;
 
 const countOf = (value: unknown): number | null =>
@@ -305,7 +313,7 @@ export function startedFromOf(stored: unknown): StartedFrom | null {
   const name = row['versionName'];
   return {
     source,
-    versionName: typeof name === 'string' && name.length > 0 ? name.slice(0, START_VERSION_NAME_MAX) : null,
+    versionName: typeof name === 'string' && name.length > 0 ? cutVersionName(name) : null,
     engine,
     offered,
     used,

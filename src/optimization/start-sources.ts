@@ -4,7 +4,7 @@ import { dateShiftDays, mapPeriod } from '../common/year-rollover';
 import type { VersionLesson } from '../calendar/schedule-versions.service';
 import { clockOf, dayOf, type DraftContent } from './candidate-basis';
 import {
-  START_VERSION_NAME_MAX,
+  cutVersionName,
   type SourceLesson,
   type StartDropped,
   type StartMapping,
@@ -201,7 +201,7 @@ export async function readStartSource(
     return {
       lessons: versionLessonsOf(version.lessons),
       already: { offered: 0, dropped: {} },
-      versionName: version.name.slice(0, START_VERSION_NAME_MAX),
+      versionName: cutVersionName(version.name),
     };
   }
 

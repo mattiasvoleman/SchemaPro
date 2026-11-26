@@ -192,6 +192,16 @@ describe('readStartSource', () => {
     expect(read.lessons.map((lesson) => lesson.dayOfWeek)).toEqual([1]);
   });
 
+  it('VERSION names the version by characters: a name cut inside an emoji is not left with half of it', async () => {
+    const findFirst = jest.fn().mockResolvedValue({ name: `${'a'.repeat(119)}😀${'b'.repeat(20)}`, lessons: [] });
+    const tx = { scheduleVersion: { findFirst } };
+
+    const read = await readStartSource(tx as unknown as PrismaClient, 'y-1', { source: 'VERSION', versionId: 'v-9' }, []);
+
+    expect(Array.from(read.versionName!)).toHaveLength(120);
+    expect(JSON.stringify({ n: read.versionName })).not.toMatch(/\\ud[89ab][0-9a-f]{2}"/i);
+  });
+
   describe('PREVIOUS_YEAR', () => {
     // 2026/27 into 2027/28: the starts are 364 days apart, a whole number of weeks.
     const years = {

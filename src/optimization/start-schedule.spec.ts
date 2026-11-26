@@ -271,6 +271,16 @@ describe('startedFromOf', () => {
     expect(startedFromOf({ ...stored, versionName: 'v'.repeat(500) })!.versionName).toHaveLength(120);
   });
 
+  it('cuts a version name between characters, never in the middle of one that takes two UTF-16 units: the cut name is valid JSON for the database', () => {
+    const name = `${'a'.repeat(119)}😀${'b'.repeat(20)}`;
+
+    const cut = startedFromOf({ ...stored, versionName: name })!.versionName!;
+
+    expect(Array.from(cut)).toHaveLength(120);
+    expect(cut.endsWith('😀')).toBe(true);
+    expect(JSON.stringify({ versionName: cut })).not.toMatch(/\\ud[89ab][0-9a-f]{2}"/i);
+  });
+
   it('knows the seven reasons the page has a sentence for', () => {
     expect([...START_DROP_REASONS].sort()).toEqual(
       ['AMBIGUOUS', 'MORE_THAN_ASKED', 'NOT_IN_WEEK', 'NOT_STARTABLE', 'NO_POST', 'NO_SUCCESSOR', 'OTHER_WEEKS'].sort(),
