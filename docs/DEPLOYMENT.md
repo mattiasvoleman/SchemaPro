@@ -7816,6 +7816,20 @@ The ordinance (SFS 2026:1487, in force 2027-07-01, grundskola only) gives a span
 - `src/staffing/assignment-scope.ts` is the one place the level is worked out (`scopeOfTeacher`); the write check, the import, Föreslå bemanning, the search and the report all go through it, and the figures a school sees are the same on every page. `teaching-weeks.contract.spec.ts` and the web's `teaching-hours.contract.test.ts` replay one fixture for the week arithmetic.
 
 
+### 38.5 What R1b settled, and what it added to the report (omgång 15)
+
+R1 left seven choices open in its reviews. They are taken here, each with its reason, and the reviewer's id.
+
+- **Additive fields in the load report's `scope` block, no migration.** `interpretations[].grades` (the årskurs spans of the bands whose note it is), `teachers[].preschoolHours` (present exactly when `unregulatedHours` is above 0: the part that is årskurs 0 and nothing else) and `upcoming` (`{ sfs, validFrom }`, for a year that begins before every lydelse). The web may be ahead of or behind the gateway: without the fields the card shows every note on every card and calls every unregulated hour förskoleklass, as before. (#387 L-2, #397 L-4, #399 L-5, #387 L-8)
+- **A band's interpretation is the card of a teacher with hours in that band's stage.** The Swedish note is data and stays Swedish; a card in English shows an English text only for a note that is one of the two the gateway holds today, word for word (`src/staffing/scope-interpretations.contract.spec.ts` holds the web's copy to the migration and to T7's constant).
+- **A läsår the ordinance does not judge says why, once.** The staffing page and Min tjänst say it in one line (from which day the ordinance holds), instead of a card per teacher: a card on every teacher would say "not yet" all of 2026/27, and silence left a rektor to wonder whether the ordinance had been forgotten. (#387 L-8, #397 L-1)
+- **The day of an own initiative (11 § p. 1) is not after the school's today.** It is the day the initiative was taken; the bound was the läsår's last day. The gateway reads the school's own zone (a statement only when there is a day to ask of), and the form stops at the same day. A row stored with a later day (the bound was looser) is refused on its next write until the day is corrected. (#413 U-2)
+- **A level above the edge of the teacher's own stage is kept and said.** The gateway holds a level to the highest edge of any stage because it cannot know which stage a teacher will teach in; the report counts it as no higher than the teacher's own edge. The form says so before saving and the card says so after (`levelAboveEdge`). (#411 L-3)
+- **The timplan counts whole weeks, the omfattning counts school days, and school days are Monday to Friday.** Both are decisions and both are pinned (`src/staffing/teaching-weeks.school-days.spec.ts`). Changing the timplan to school days would move every school's guaranteed-time statement and its published copies for a fraction of a week; nothing in a school's data says which weekdays it teaches, and a requirement carries no weekday. The timplan page says it. (#400 L-2, L-3)
+- **The registerutdrag of a decider has the act and not the colleague** (`AssignmentScopeAssessments`, `TeacherEmploymentLogs`), and **the yes or no of the write check is measured** (`src/staffing/scope-verdict-oracle.spec.ts`): see the data-protection description, 6.3 and 10.1. (#409 L-5, K7)
+
+Deploy order: any. The gateway and the web are each additive to the other.
+
 ## 40. Outgoing e-mail and push wait in the database ("Mejlen överlever en omstart", omgång 15, H3)
 
 The delivery (`src/notifications/notification-delivery.service.ts`) used to keep what a committed transaction wanted sent in an array in the process. The API is deployed at every merge, so a reminder to a whole school (some 82 mails and 4 000 pushes, a minute or so of queue) could be lost half-sent: the inbox rows were there, the mail and the push never came, and nothing tried again. The queue is now two tables, **`OutboundNotices`** and **`OutboundPace`** (migration `20270309090000`), and the process only works through it.
