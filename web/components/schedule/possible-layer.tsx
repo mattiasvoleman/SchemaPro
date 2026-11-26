@@ -32,7 +32,10 @@ export function PossibleHold({ lessonId }: { lessonId: string }) {
       possibleStore.set({ lessonId, status: "loading" });
       askPossibleTimes(lessonId, asking.signal).then(
         (times) => {
-          if (!asking.signal.aborted) possibleStore.set({ lessonId, status: "done", times });
+          if (asking.signal.aborted) return;
+          // An answer that is not the gateway's shape (a proxy's page, an older gateway's body) is no answer: nothing is painted from it.
+          if (!times || !Array.isArray(times.days) || !Array.isArray(times.options)) possibleStore.set({ lessonId, status: "failed" });
+          else possibleStore.set({ lessonId, status: "done", times });
         },
         () => {
           if (!asking.signal.aborted) possibleStore.set({ lessonId, status: "failed" });

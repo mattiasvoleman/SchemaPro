@@ -132,6 +132,19 @@ describe("holding a lesson", () => {
     expect(possibleStore.get()).toBeNull();
   });
 
+  it("takes an answer that is not the gateway's shape for no answer, and paints nothing from it", async () => {
+    vi.useFakeTimers();
+    for (const odd of [undefined, null, {}, { days: [] }, "<html>"]) {
+      post.mockResolvedValue(odd);
+      const view = render(<PossibleHold lessonId="a" />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(HOLD_BEFORE_ASKING_MS);
+      });
+      expect(possibleStore.get(), String(odd)).toEqual({ lessonId: "a", status: "failed" });
+      view.unmount();
+    }
+  });
+
   it("says it has no answer when the gateway does not, and the store is the lesson's only while it is held", async () => {
     vi.useFakeTimers();
     post.mockRejectedValue(new Error("down"));

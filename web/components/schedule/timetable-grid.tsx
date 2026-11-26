@@ -127,6 +127,11 @@ export interface LessonChange {
   dayOfWeek: number;
   startMinutes: number;
   endMinutes: number;
+  /**
+   * The room the lesson goes to with the move, when it is not the one it has (a numbered time the gateway offered "in another room",
+   * board-keys.tsx). Absent: the lesson keeps its room, as every drag does.
+   */
+  roomId?: string | null;
 }
 
 interface TimetableGridProps {

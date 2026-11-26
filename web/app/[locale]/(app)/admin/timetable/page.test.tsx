@@ -68,10 +68,10 @@ vi.mock("@/utils/supabase/client", () => ({
     from: () => ({ select: () => ({ eq: () => ({ order: blockNames.read }) }) }),
   }),
 }));
-const blockApi = vi.hoisted(() => ({ patch: vi.fn() }));
+const blockApi = vi.hoisted(() => ({ patch: vi.fn(), post: vi.fn() }));
 vi.mock("@/lib/api", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/api")>();
-  return { ...real, api: { ...real.api, patch: blockApi.patch } };
+  return { ...real, api: { ...real.api, patch: blockApi.patch, post: blockApi.post } };
 });
 
 /**
@@ -622,6 +622,9 @@ const TRAY_RECT = {
 
 beforeEach(() => {
   cleanup();
+  // Where a lesson in hand can stand is asked of the gateway (possible-layer.tsx); a test that does not set an answer gets none.
+  blockApi.post.mockReset();
+  blockApi.post.mockRejectedValue(new Error("the gateway is not asked in this test"));
   noMutation.mutateAsync.mockClear();
   vi.mocked(buildIcs).mockClear();
   vi.mocked(exportTimetablePdf).mockClear();
@@ -4494,5 +4497,72 @@ describe("the board's keys that write, through the page (E2)", () => {
 
     fireEvent.keyDown(mine, { key: "l" });
     await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-ma2", isLocked: true })));
+  });
+});
+
+describe("a numbered time the gateway offers in another room (E3)", () => {
+  it("lays the lesson there with the room the gateway named, and the write says the room", async () => {
+    blockApi.post.mockResolvedValue({
+      academicYearId: "y-1",
+      subject: { lessonId: "l-slojd", className: "", subjectName: "", minutes: 60, lessonIds: ["l-slojd"], isLocked: false, unplaced: false, current: { dayOfWeek: 1, startMinutes: 480, endMinutes: 540 } },
+      stepMinutes: 15,
+      options: [
+        {
+          rank: 1,
+          dayOfWeek: 2,
+          startMinutes: 540,
+          endMinutes: 600,
+          lessons: [{ lessonId: "l-slojd", roomId: "r-sal", startMinutes: 540, endMinutes: 600 }],
+          roomChanged: true,
+          costs: [],
+          wishes: { met: 0, avoided: 0 },
+          score: 1,
+        },
+      ],
+      days: [{ dayOfWeek: 2, runs: [{ dayOfWeek: 2, fromMinutes: 540, toMinutes: 540, kind: "CHANGE" }] }],
+      blockers: {},
+    });
+    render(<TimetablePage />);
+    const drawn = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-lesson-id="l-slojd"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    drawn.focus();
+    await boardKeysCame();
+    fireEvent.keyDown(drawn, { key: " " });
+    await waitFor(() => expect(document.querySelector('[data-possible-rank="1"]')).not.toBeNull(), { timeout: 3000 });
+    expect(blockApi.post).toHaveBeenCalledWith("/api/v1/master-lessons/possible-times", expect.objectContaining({ lessonId: "l-slojd" }), expect.anything());
+
+    fireEvent.keyDown(drawn, { key: "1" });
+    fireEvent.keyDown(drawn, { key: "Enter" });
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-slojd", dayOfWeek: 2, startTime: "09:00", endTime: "10:00", roomId: "r-sal" })),
+    );
+  });
+
+  it("writes no room for a time the lesson keeps its room in", async () => {
+    blockApi.post.mockResolvedValue({
+      academicYearId: "y-1",
+      subject: { lessonId: "l-slojd", className: "", subjectName: "", minutes: 60, lessonIds: ["l-slojd"], isLocked: false, unplaced: false, current: null },
+      stepMinutes: 15,
+      options: [{ rank: 1, dayOfWeek: 2, startMinutes: 540, endMinutes: 600, lessons: [{ lessonId: "l-slojd", roomId: null, startMinutes: 540, endMinutes: 600 }], roomChanged: false, costs: [], wishes: { met: 0, avoided: 0 }, score: 1 }],
+      days: [{ dayOfWeek: 2, runs: [{ dayOfWeek: 2, fromMinutes: 540, toMinutes: 540, kind: "FREE" }] }],
+      blockers: {},
+    });
+    render(<TimetablePage />);
+    const drawn = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-lesson-id="l-slojd"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    drawn.focus();
+    await boardKeysCame();
+    fireEvent.keyDown(drawn, { key: " " });
+    await waitFor(() => expect(document.querySelector('[data-possible-rank="1"]')).not.toBeNull(), { timeout: 3000 });
+    fireEvent.keyDown(drawn, { key: "1" });
+    fireEvent.keyDown(drawn, { key: "Enter" });
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalled());
+    expect(noMutation.mutateAsync.mock.calls.at(-1)![0]).not.toHaveProperty("roomId");
   });
 });

@@ -154,6 +154,35 @@ describe("1 to 9: the marker goes to the best times", () => {
     expect(said()).toBe("Onsdag 10:00–11:00: förslag 3. Enter lägger.");
   });
 
+  it("takes the room with a time the gateway offered in another room, and does not ask the page's own check about it", async () => {
+    const onLessonChange = vi.fn();
+    // The page's check knows only the lesson's own room, and would refuse every square: the numbered time is the gateway's judgement.
+    const validateChange = vi.fn().mockReturnValue(false);
+    await board("sv", { onLessonChange, validateChange });
+    await takeUp();
+    key("a", { key: "3" });
+    expect(said()).toBe("Onsdag 10:00–11:00: förslag 3. Enter lägger.");
+    validateChange.mockClear();
+    key("a", { key: "Enter" });
+    expect(validateChange).not.toHaveBeenCalled();
+    expect(onLessonChange).toHaveBeenCalledWith("a", { dayOfWeek: 3, startMinutes: 600, endMinutes: 660, roomId: "r2" });
+  });
+
+  it("keeps the lesson's own room for a time in its own, and for a square that was reached by the arrows", async () => {
+    const onLessonChange = vi.fn();
+    await board("sv", { onLessonChange });
+    await takeUp();
+    key("a", { key: "1" });
+    key("a", { key: "Enter" });
+    expect(onLessonChange).toHaveBeenLastCalledWith("a", { dayOfWeek: 2, startMinutes: 480, endMinutes: 540, roomId: undefined });
+    // 3 (another room), then an arrow: the room is not the arrow's.
+    await takeUp();
+    key("a", { key: "3" });
+    key("a", { key: "ArrowDown" });
+    key("a", { key: "Enter" });
+    expect(onLessonChange).toHaveBeenLastCalledWith("a", { dayOfWeek: 3, startMinutes: 615, endMinutes: 675 });
+  });
+
   it("says there is no such suggestion, and leaves the marker where it is", async () => {
     const onLessonChange = vi.fn();
     await board("sv", { onLessonChange });
