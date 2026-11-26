@@ -9,7 +9,7 @@ import { SwapContext } from '../swaps/swap-context';
 import { dayLessonOf, SwapReads } from '../swaps/swap-reads';
 import { readSwapData, type SwapData } from '../swaps/swap-snapshot';
 import type { SoftCost, SwapLesson } from '../swaps/swap-types';
-import { judgeLessons, type JudgeItem, type JudgedCandidate } from './lesson-judge';
+import { judgeLessons, type JudgeItem, type JudgedCandidate, type LessonVerdict } from './lesson-judge';
 import {
   byScore,
   costOf,
@@ -47,7 +47,9 @@ const JUDGE_CHUNK = 24;
 const DEFAULT_LIMIT = 12;
 const DEFAULT_FROM = 7 * 60;
 const DEFAULT_TO = 18 * 60;
-const BRICK_ID = 'brick';
+/** A lesson that does not exist yet is called `brick`, or `brick#<n>` among several: no real id (a uuid) starts with it. */
+export const BRICK_ID = 'brick';
+export const isNewLesson = (id: string): boolean => id.startsWith(BRICK_ID);
 
 export interface PossibleOption {
   /** 1 is the best. */
@@ -118,11 +120,82 @@ export interface PossibleTimes {
   };
 }
 
-const clock = (value: string | null | undefined, fallback: number): number =>
+export const clock = (value: string | null | undefined, fallback: number): number =>
   value ? Number(value.slice(0, 2)) * 60 + Number(value.slice(3, 5)) : fallback;
 const minutesOf = (time: Date): number => time.getUTCHours() * 60 + time.getUTCMinutes();
 const dateOf = (value: string | null): Date | null => (value ? new Date(`${value}T00:00:00.000Z`) : null);
 const parseDate = (value: string | null | undefined): string | null => (value ? value.slice(0, 10) : null);
+
+/** What a stored lesson is read with: the lesson as the swap search holds it, and what the questions of the board ask of its state. */
+export const STORED_LESSON_SELECT = {
+  id: true,
+  academicYearId: true,
+  subjectId: true,
+  studentGroupId: true,
+  teacherId: true,
+  coTeacherId: true,
+  roomId: true,
+  dayOfWeek: true,
+  startTime: true,
+  endTime: true,
+  recurrence: true,
+  startDate: true,
+  endDate: true,
+  isLocked: true,
+  isParked: true,
+  isGenerated: true,
+  fromPlacement: true,
+  subject: { select: { name: true } },
+  studentGroup: { select: { name: true } },
+  extraGroups: { select: { studentGroupId: true } },
+  participants: { select: { studentId: true } },
+} as const;
+
+type StoredLesson = {
+  id: string;
+  subjectId: string;
+  studentGroupId: string;
+  teacherId: string | null;
+  coTeacherId: string | null;
+  roomId: string | null;
+  dayOfWeek: number;
+  startTime: Date;
+  endTime: Date;
+  recurrence: LessonRecurrence;
+  startDate: Date | null;
+  endDate: Date | null;
+  isLocked: boolean;
+  fromPlacement: boolean;
+  isGenerated: boolean;
+  subject: { name: string };
+  studentGroup: { name: string };
+  extraGroups: Array<{ studentGroupId: string }>;
+  participants: Array<{ studentId: string }>;
+};
+
+/** A stored lesson as the swap search holds it. A förläggning's lesson counts as locked: Generera writes it again where its förläggning stands. */
+export function swapLessonOfRow(row: StoredLesson): SwapLesson {
+  return {
+    id: row.id,
+    subjectId: row.subjectId,
+    subjectName: row.subject.name,
+    studentGroupId: row.studentGroupId,
+    groupName: row.studentGroup.name,
+    teacherId: row.teacherId,
+    coTeacherId: row.coTeacherId,
+    roomId: row.roomId,
+    dayOfWeek: row.dayOfWeek,
+    startMinutes: minutesOf(row.startTime),
+    endMinutes: minutesOf(row.endTime),
+    recurrence: row.recurrence,
+    startDate: parseDate(row.startDate?.toISOString()),
+    endDate: parseDate(row.endDate?.toISOString()),
+    isLocked: row.isLocked || row.fromPlacement,
+    isGenerated: row.isGenerated,
+    extraGroupIds: row.extraGroups.map((entry) => entry.studentGroupId).sort(),
+    studentIds: row.participants.map((entry) => entry.studentId).sort(),
+  };
+}
 
 @Injectable()
 export class PossibleTimesService {
@@ -167,19 +240,7 @@ export class PossibleTimesService {
       const data = await readSwapData(tx, user, academicYearId);
       const indexing = Date.now();
       const unplaced = found.lesson.unplaced ? [found.lesson.lesson] : [];
-      // A lesson of the autumn to the 10th of January and one of the spring from the 4th meet only in a jullov: no clash, as the judge says.
-      // A room the school lets several lessons share while their pupils fit is not taken by a lesson in it: the judge counts the pupils.
-      const sharedMode = await readSharedMode(tx, { academicYearId });
-      const sharedRooms =
-        sharedMode === 'OFF'
-          ? new Set<string>()
-          : new Set(
-              sharedSeatsByRoom(
-                sharedMode,
-                await tx.room.findMany({ where: { schoolId: data.schoolId, canBeShared: true, capacity: { not: null } }, select: { id: true, canBeShared: true, capacity: true } }),
-              ).keys(),
-            );
-      const context = new SwapContext(data, { unplaced, closedWeeks: await readClosedWeeks(tx, academicYearId), sharedRooms });
+      const context = await this.contextOf(tx, data, unplaced);
       const unit = context.unitOf.get(found.lesson.lesson.id);
       if (!unit) throw new NotFoundException('The lesson is not in the year read.');
       const subject: PossibleSubject = { unit, lesson: found.lesson.lesson, unplaced: found.lesson.unplaced };
@@ -243,13 +304,33 @@ export class PossibleTimesService {
     });
   }
 
+  /**
+   * The school as the judge sees it, for the prune: the snapshot of the year, the lessons that stand nowhere yet, the läsår's closed
+   * weeks (a lesson of the autumn to the 10th of January and one of the spring from the 4th meet only in a jullov: no clash, as the
+   * judge says) and the rooms the school lets several lessons share while their pupils fit (the judge counts the pupils, so a lesson
+   * in such a room is no obstacle to the prune).
+   */
+  async contextOf(tx: PrismaClient, data: SwapData, unplaced: readonly SwapLesson[]): Promise<SwapContext> {
+    const sharedMode = await readSharedMode(tx, { academicYearId: data.academicYearId });
+    const sharedRooms =
+      sharedMode === 'OFF'
+        ? new Set<string>()
+        : new Set(
+            sharedSeatsByRoom(
+              sharedMode,
+              await tx.room.findMany({ where: { schoolId: data.schoolId, canBeShared: true, capacity: { not: null } }, select: { id: true, canBeShared: true, capacity: true } }),
+            ).keys(),
+          );
+    return new SwapContext(data, { unplaced, closedWeeks: await readClosedWeeks(tx, data.academicYearId), sharedRooms });
+  }
+
   // ---------------------------------------------------------------------------
   // The subject: a lesson that exists, or a brick that does not yet.
   // ---------------------------------------------------------------------------
 
-  private async subjectOf(
+  async subjectOf(
     tx: PrismaClient,
-    dto: PossibleTimesDto,
+    dto: Pick<PossibleTimesDto, 'lessonId' | 'brick'>,
   ): Promise<{
     academicYearId: string;
     placed: boolean;
@@ -257,53 +338,9 @@ export class PossibleTimesService {
     view: PossibleTimes['subject'];
   }> {
     if (dto.lessonId !== undefined) {
-      const row = await tx.masterLesson.findUnique({
-        where: { id: dto.lessonId },
-        select: {
-          id: true,
-          academicYearId: true,
-          subjectId: true,
-          studentGroupId: true,
-          teacherId: true,
-          coTeacherId: true,
-          roomId: true,
-          dayOfWeek: true,
-          startTime: true,
-          endTime: true,
-          recurrence: true,
-          startDate: true,
-          endDate: true,
-          isLocked: true,
-          isParked: true,
-          isGenerated: true,
-          fromPlacement: true,
-          subject: { select: { name: true } },
-          studentGroup: { select: { name: true } },
-          extraGroups: { select: { studentGroupId: true } },
-          participants: { select: { studentId: true } },
-        },
-      });
+      const row = await tx.masterLesson.findUnique({ where: { id: dto.lessonId }, select: STORED_LESSON_SELECT });
       if (!row) throw new NotFoundException('Master lesson not found.');
-      const lesson: SwapLesson = {
-        id: row.id,
-        subjectId: row.subjectId,
-        subjectName: row.subject.name,
-        studentGroupId: row.studentGroupId,
-        groupName: row.studentGroup.name,
-        teacherId: row.teacherId,
-        coTeacherId: row.coTeacherId,
-        roomId: row.roomId,
-        dayOfWeek: row.dayOfWeek,
-        startMinutes: minutesOf(row.startTime),
-        endMinutes: minutesOf(row.endTime),
-        recurrence: row.recurrence as LessonRecurrence,
-        startDate: parseDate(row.startDate?.toISOString()),
-        endDate: parseDate(row.endDate?.toISOString()),
-        isLocked: row.isLocked || row.fromPlacement,
-        isGenerated: row.isGenerated,
-        extraGroupIds: row.extraGroups.map((entry) => entry.studentGroupId).sort(),
-        studentIds: row.participants.map((entry) => entry.studentId).sort(),
-      };
+      const lesson = swapLessonOfRow(row);
       const unplaced = row.isParked;
       return {
         academicYearId: row.academicYearId,
@@ -372,7 +409,7 @@ export class PossibleTimesService {
   // The facts beside the snapshot: the rooms, what a lesson needs of one, the school's wishes.
   // ---------------------------------------------------------------------------
 
-  private async worldOf(tx: PrismaClient, data: SwapData, context: SwapContext, members: readonly SwapLesson[]): Promise<PossibleWorld> {
+  async worldOf(tx: PrismaClient, data: SwapData, context: SwapContext, members: readonly SwapLesson[]): Promise<PossibleWorld> {
     const subjectIds = [...new Set(members.map((member) => member.subjectId))];
     const [roomRows, subjectRows, wishRows] = await Promise.all([
       tx.room.findMany({
@@ -503,7 +540,7 @@ export class PossibleTimesService {
         startMinutes: candidate.startMinutes,
         endMinutes: candidate.endMinutes,
         lessons: subject.unit.members.map((member) => ({
-          lessonId: member.id === BRICK_ID ? '' : member.id,
+          lessonId: isNewLesson(member.id) ? '' : member.id,
           roomId: candidate.rooms.get(member.id) ?? null,
           startMinutes: candidate.startMinutes,
           endMinutes: candidate.startMinutes + (member.endMinutes - member.startMinutes),
@@ -522,18 +559,36 @@ export class PossibleTimesService {
     };
   }
 
-  /** The judge's verdict on each candidate, the unit's lessons judged as one move (the card's way, as the swap search). */
-  private async judgeChunk(
+  /** The judge's verdict on each candidate of one subject, the unit's lessons judged as one move (the card's way, as the swap search). */
+  private judgeChunk(tx: PrismaClient, data: SwapData, subject: PossibleSubject, chunk: readonly CostedStart[], reads: SwapReads): Promise<boolean[]> {
+    return this.judgePairs(tx, data, chunk.map((candidate) => ({ subject, candidate })), reads);
+  }
+
+  /**
+   * The judge's verdict on each (subject, candidate) pair: every lesson of the subject's unit laid at the candidate's start and
+   * judged beside the others as one move. The same call serves one subject at many starts (possible times) and many subjects at
+   * one start (what fits here).
+   */
+  async judgePairs(
     tx: PrismaClient,
     data: SwapData,
-    subject: PossibleSubject,
-    chunk: readonly CostedStart[],
+    pairs: ReadonlyArray<{ subject: PossibleSubject; candidate: CostedStart }>,
     reads: SwapReads,
   ): Promise<boolean[]> {
-    const members = subject.unit.members;
-    const memberIds = members.map((member) => member.id);
+    return (await this.judgeVerdicts(tx, data, pairs, reads)).map((members) => members.every((verdict) => verdict.ok));
+  }
+
+  /** The judge's whole verdict on each member of each pair's unit, in the unit's order: what judgePairs reads `ok` from, and the room chooser reads the reasons of. */
+  async judgeVerdicts(
+    tx: PrismaClient,
+    data: SwapData,
+    pairs: ReadonlyArray<{ subject: PossibleSubject; candidate: Pick<CostedStart, 'dayOfWeek' | 'startMinutes' | 'rooms'> }>,
+    reads: SwapReads,
+  ): Promise<LessonVerdict[][]> {
     const items: JudgeItem[] = [];
-    for (const candidate of chunk) {
+    for (const { subject, candidate } of pairs) {
+      const members = subject.unit.members;
+      const memberIds = members.map((member) => member.id);
       const landings = members.map((member) => ({
         member,
         room: candidate.rooms.get(member.id) ?? null,
@@ -554,7 +609,7 @@ export class PossibleTimesService {
           endDate: dateOf(member.endDate),
         };
         items.push({
-          lesson: { id: member.id === BRICK_ID ? null : member.id, studentGroupId: member.studentGroupId, subjectId: member.subjectId },
+          lesson: { id: isNewLesson(member.id) ? null : member.id, studentGroupId: member.studentGroupId, subjectId: member.subjectId },
           candidate: judged,
           // A lesson on the tray, or one that does not exist yet, stands nowhere: every rule is asked.
           stands: subject.unplaced
@@ -571,7 +626,7 @@ export class PossibleTimesService {
                 startDate: dateOf(member.startDate),
                 endDate: dateOf(member.endDate),
               },
-          excludeIds: memberIds.filter((id) => id !== BRICK_ID),
+          excludeIds: memberIds.filter((id) => !isNewLesson(id)),
           alongside: landings
             .filter((other) => other.member.id !== member.id && other.at.dayOfWeek === at.dayOfWeek)
             .map((other) => dayLessonOf({ ...other.member, roomId: other.room }, other.at)),
@@ -585,15 +640,10 @@ export class PossibleTimesService {
       items,
       { reads },
     );
-    const out: boolean[] = [];
+    const out: LessonVerdict[][] = [];
     let at = 0;
-    for (let index = 0; index < chunk.length; index += 1) {
-      let ok = true;
-      for (let member = 0; member < members.length; member += 1) {
-        if (!verdicts[at]!.ok) ok = false;
-        at += 1;
-      }
-      out.push(ok);
+    for (const { subject } of pairs) {
+      out.push(subject.unit.members.map(() => verdicts[at++]!));
     }
     return out;
   }

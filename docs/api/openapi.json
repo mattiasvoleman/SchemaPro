@@ -14608,6 +14608,118 @@
         }
       }
     },
+    "/api/v1/master-lessons/room-choices": {
+      "post": {
+        "tags": [
+          "MasterLessons"
+        ],
+        "operationId": "MasterLessonsController_roomChoices",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoomChoicesDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/master-lessons/what-fits-here": {
+      "post": {
+        "tags": [
+          "MasterLessons"
+        ],
+        "operationId": "MasterLessonsController_whatFits",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WhatFitsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
     "/api/v1/master-lessons/{id}": {
       "delete": {
         "tags": [
@@ -32030,6 +32142,18 @@
           "endTime"
         ]
       },
+      "FitCandidateDto": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "brick": {
+            "$ref": "#/components/schemas/PossibleBrickDto"
+          }
+        }
+      },
       "GenerateLanguageGroupDto": {
         "type": "object",
         "properties": {
@@ -34678,6 +34802,30 @@
           "lessonId",
           "fromRoomId",
           "toRoomId"
+        ]
+      },
+      "RoomChoicesDto": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "brick": {
+            "$ref": "#/components/schemas/PossibleBrickDto"
+          },
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "startTime": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dayOfWeek",
+          "startTime"
         ]
       },
       "RoomLoanWindowDto": {
@@ -37652,6 +37800,37 @@
         },
         "required": [
           "academicYearId"
+        ]
+      },
+      "WhatFitsDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "startTime": {
+            "type": "string"
+          },
+          "candidates": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/FitCandidateDto"
+            }
+          }
+        },
+        "required": [
+          "academicYearId",
+          "dayOfWeek",
+          "startTime",
+          "candidates"
         ]
       },
       "WithdrawAbsenceDto": {

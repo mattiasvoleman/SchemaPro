@@ -120,3 +120,59 @@ export class PossibleTimesDto {
   @Max(40)
   limit?: number;
 }
+
+/** One lesson of the question "what can lie here?": a lesson that exists (a lesson on the tray is a brick of its own id), or a brick. */
+export class FitCandidateDto {
+  @IsOptional()
+  @IsUUID('4')
+  lessonId?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PossibleBrickDto)
+  brick?: PossibleBrickDto;
+}
+
+/**
+ * E3, "vad kan ligga här?": which of these lessons can stand at this day and clock, best first. The schemaläggare picked an empty
+ * time on the board; the candidates are the bricks of Att lägga, or any lessons of the year. Nothing is written.
+ */
+export class WhatFitsDto {
+  @IsUUID('4')
+  academicYearId!: string;
+
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  dayOfWeek!: number;
+
+  @Matches(TIME, { message: 'startTime must be HH:MM, 00:00–23:59.' })
+  startTime!: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => FitCandidateDto)
+  candidates!: FitCandidateDto[];
+}
+
+/** E3, salväljaren: the rooms of the school for a lesson (or brick) laid at a day and clock, in the order they should be looked at. */
+export class RoomChoicesDto {
+  @IsOptional()
+  @IsUUID('4')
+  lessonId?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PossibleBrickDto)
+  brick?: PossibleBrickDto;
+
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  dayOfWeek!: number;
+
+  @Matches(TIME, { message: 'startTime must be HH:MM, 00:00–23:59.' })
+  startTime!: string;
+}

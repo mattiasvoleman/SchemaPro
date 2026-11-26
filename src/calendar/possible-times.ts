@@ -153,93 +153,92 @@ function landingsAt(context: SwapContext, unit: SwapUnit, dayOfWeek: number, sta
 
 /** The prune, for every start of the window. See the file's first paragraphs for what each answer means. */
 export function probeStarts(world: PossibleWorld, subject: PossibleSubject, window: PossibleWindow): ProbedStart[] {
+  const { unit } = subject;
+  const longest = Math.max(...unit.members.map(lengthOf));
+  const prepared = prepare(world, subject);
+  return startsOf(window, longest).map(({ dayOfWeek, startMinutes }) => ({ dayOfWeek, startMinutes, probe: probeAt(world, subject, prepared, dayOfWeek, startMinutes) }));
+}
+
+/** What the prune of one subject needs once, however many starts are asked. */
+export interface Prepared {
+  vacating: ReadonlySet<string>;
+  rooms: ReadonlyMap<string, RoomFact>;
+  /** One lesson only: another room is offered to a single lesson, never to a block's members. */
+  single: boolean;
+}
+
+export function prepare(world: PossibleWorld, subject: PossibleSubject): Prepared {
+  return {
+    vacating: new Set(subject.unit.members.map((member) => member.id)),
+    rooms: new Map(world.rooms.map((room) => [room.id, room])),
+    single: subject.unit.members.length === 1,
+  };
+}
+
+/** The prune's answer for one start. See the file's first paragraphs for what each answer means. */
+export function probeAt(world: PossibleWorld, subject: PossibleSubject, prepared: Prepared, dayOfWeek: number, startMinutes: number): Probe {
   const { context } = world;
   const { unit } = subject;
-  const vacating = new Set(unit.members.map((member) => member.id));
-  const longest = Math.max(...unit.members.map(lengthOf));
-  const own = new Map(world.rooms.map((room) => [room.id, room]));
-  const single = unit.members.length === 1;
+  const { vacating, single } = prepared;
+  const own = prepared.rooms;
+  if (!subject.unplaced && unit.slot.dayOfWeek === dayOfWeek && unit.slot.startMinutes === startMinutes) return { kind: 'STANDS' };
+  const landings = landingsAt(context, unit, dayOfWeek, startMinutes);
 
-  const probes: ProbedStart[] = [];
-  for (const { dayOfWeek, startMinutes } of startsOf(window, longest)) {
-    const put = (probe: Probe) => probes.push({ dayOfWeek, startMinutes, probe });
-    if (!subject.unplaced && unit.slot.dayOfWeek === dayOfWeek && unit.slot.startMinutes === startMinutes) {
-      put({ kind: 'STANDS' });
+  // The room is a question of its own: closed or held by the rules that do not name it first, then lessons, then the room.
+  let closed: Probe | null = null;
+  const blockers = new Map<string, SwapLesson>();
+  for (const landing of landings) {
+    const roomless: Landing = { lesson: { ...landing.lesson, roomId: null }, to: landing.to };
+    const board = context.boardRefusal(roomless);
+    if (board !== null) {
+      closed = { kind: 'CLOSED', code: board, params: board === 'OTHER_SCHOOL' ? { schools: context.holdSchoolsAt(roomless).join(', ') } : {} };
+      break;
+    }
+    const way = context.inTheWay(roomless, vacating);
+    if (way.closures.length > 0) {
+      closed = { kind: 'CLOSED', code: 'AVAILABILITY', params: { resource: way.closures[0]! } };
+      break;
+    }
+    for (const other of way.lessons) blockers.set(other.id, other);
+  }
+  if (closed !== null) return closed;
+  if (blockers.size > 0) return blockedBy(context, blockers.values());
+
+  // The teacher and the class are free. The room: keep it if it is free, else the best free one that fits.
+  const rooms = new Map<string, string | null>();
+  let roomChanged = false;
+  let roomBlockers = new Map<string, SwapLesson>();
+  for (const landing of landings) {
+    const room = landing.lesson.roomId;
+    if (room === null) {
+      rooms.set(landing.lesson.id, null);
       continue;
     }
-    const landings = landingsAt(context, unit, dayOfWeek, startMinutes);
-
-    // The room is a question of its own: closed or held by the rules that do not name it first, then lessons, then the room.
-    let closed: Probe | null = null;
-    const blockers = new Map<string, SwapLesson>();
-    for (const landing of landings) {
-      const roomless: Landing = { lesson: { ...landing.lesson, roomId: null }, to: landing.to };
-      const board = context.boardRefusal(roomless);
-      if (board !== null) {
-        closed = { kind: 'CLOSED', code: board, params: board === 'OTHER_SCHOOL' ? { schools: context.holdSchoolsAt(roomless).join(', ') } : {} };
-        break;
-      }
-      const way = context.inTheWay(roomless, vacating);
-      if (way.closures.length > 0) {
-        closed = { kind: 'CLOSED', code: 'AVAILABILITY', params: { resource: way.closures[0]! } };
-        break;
-      }
-      for (const other of way.lessons) blockers.set(other.id, other);
-    }
-    if (closed !== null) {
-      put(closed);
+    const way = context.inTheWay(landing, vacating);
+    if (way.lessons.length === 0 && way.closures.length === 0 && context.boardRefusal(landing) === null) {
+      rooms.set(landing.lesson.id, room);
       continue;
     }
-    if (blockers.size > 0) {
-      put(blockedBy(context, blockers.values()));
-      continue;
-    }
-
-    // The teacher and the class are free. The room: keep it if it is free, else the best free one that fits.
-    const rooms = new Map<string, string | null>();
-    let roomChanged = false;
-    let roomBlockers = new Map<string, SwapLesson>();
-    let stuck = false;
-    let stuckAt: { way: InTheWay; landing: Landing } | null = null;
-    for (const landing of landings) {
-      const room = landing.lesson.roomId;
-      if (room === null) {
-        rooms.set(landing.lesson.id, null);
-        continue;
-      }
-      const way = context.inTheWay(landing, vacating);
-      if (way.lessons.length === 0 && way.closures.length === 0 && context.boardRefusal(landing) === null) {
-        rooms.set(landing.lesson.id, room);
-        continue;
-      }
-      const needs = single ? world.needsOf(landing.lesson) : null;
-      const alternative =
-        needs === null
-          ? undefined
-          : roomsByFit(world.rooms, needs, own.get(room)).find((candidate) => {
-              if (candidate.id === room) return false;
-              const moved: Landing = { lesson: { ...landing.lesson, roomId: candidate.id }, to: landing.to };
-              const there = context.inTheWay(moved, vacating);
-              return there.lessons.length === 0 && there.closures.length === 0 && context.boardRefusal(moved) === null;
-            });
-      if (alternative === undefined) {
-        stuck = true;
-        stuckAt = { way, landing };
-        roomBlockers = new Map([...roomBlockers, ...way.lessons.map((other): [string, SwapLesson] => [other.id, other])]);
-        break;
-      }
-      rooms.set(landing.lesson.id, alternative.id);
-      roomChanged = true;
-    }
-    if (stuck) {
+    const needs = single ? world.needsOf(landing.lesson) : null;
+    const alternative =
+      needs === null
+        ? undefined
+        : roomsByFit(world.rooms, needs, own.get(room)).find((candidate) => {
+            if (candidate.id === room) return false;
+            const moved: Landing = { lesson: { ...landing.lesson, roomId: candidate.id }, to: landing.to };
+            const there = context.inTheWay(moved, vacating);
+            return there.lessons.length === 0 && there.closures.length === 0 && context.boardRefusal(moved) === null;
+          });
+    if (alternative === undefined) {
+      roomBlockers = new Map([...roomBlockers, ...way.lessons.map((other): [string, SwapLesson] => [other.id, other])]);
       // A room held by a hold or a closure and by no lesson has no one to make room, and no other room fits: the stretch is shut, and by
       // the rule the judge names (a room lent to another school, a weekly row on the room), not "crowded" by no one.
-      put(roomBlockers.size > 0 ? blockedBy(context, roomBlockers.values()) : (closedByRoom(context, stuckAt!) ?? { kind: 'CROWDED', units: 0, locked: false }));
-      continue;
+      return roomBlockers.size > 0 ? blockedBy(context, roomBlockers.values()) : (closedByRoom(context, { way, landing }) ?? { kind: 'CROWDED', units: 0, locked: false });
     }
-    put({ kind: 'CANDIDATE', rooms, roomChanged });
+    rooms.set(landing.lesson.id, alternative.id);
+    roomChanged = true;
   }
-  return probes;
+  return { kind: 'CANDIDATE', rooms, roomChanged };
 }
 
 /** The rule that shuts a stretch for a lesson whose room is held by no lesson and has no other room to turn to, as the judge names it. */

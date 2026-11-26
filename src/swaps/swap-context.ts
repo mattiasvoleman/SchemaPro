@@ -407,6 +407,11 @@ export class SwapContext {
     );
   }
 
+  /** A room the school lets several lessons share while their pupils fit: the prune does not hold a lesson in it, the judge counts. */
+  isSharedRoom(roomId: string): boolean {
+    return this.sharedRooms.has(roomId);
+  }
+
   /** The other schools, by name, whose hold on a lesson's teachers or room a landing sits inside (E3 names the closed stretch with them). */
   holdSchoolsAt({ lesson, to }: Landing): string[] {
     const schools = new Set<string>();
