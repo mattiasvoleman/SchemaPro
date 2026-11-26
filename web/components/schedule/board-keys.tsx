@@ -43,6 +43,8 @@ export interface BoardLesson extends KeyLesson {
   subtitle?: string;
   locked?: boolean;
   duty?: boolean;
+  /** The card of a whole block (Block i schemat): not a lesson, so its keys are its dialog's. */
+  blockCard?: boolean;
 }
 
 interface Cell {
@@ -78,6 +80,9 @@ const ARROWS: ReadonlySet<string> = new Set(["ArrowUp", "ArrowDown", "ArrowLeft"
 const OWNED_BY_THE_BOARD: ReadonlySet<string> = new Set([" ", "m", "l", "p", "delete", "backspace", "enter", "escape"]);
 
 const DAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
+
+/** The keys that write to a lesson (lower and upper case, and the two that remove). */
+const COMMAND_OF_KEY: Readonly<Record<string, LessonCommand>> = { l: "lock", L: "lock", p: "park", P: "park", Delete: "remove", Backspace: "remove" };
 
 /**
  * The header of the board on a phone: a button for each day, the one that is drawn pressed, and how many lessons each has (in its
@@ -162,7 +167,12 @@ export function BoardKeys(props: BoardKeysProps) {
       const { t: translate } = live.current;
       setSaid(translate(key, values));
     };
-    const nameOf = (lesson: BoardLesson) => [lesson.title, lesson.subtitle].filter(Boolean).join(" ");
+    // "Matematik 7A": the subject and the class, which is what a person calls a lesson. The card's own text goes on to the teacher and
+    // "Förlagd" ("7A · B. Ek · Förlagd"), and a line that is read aloud after every key does not need them.
+    // A block's card is called by the block: its subtitle goes on from the first member's class to every member's teacher, and its first
+    // class alone would name one of the classes the block is for.
+    const nameOf = (lesson: BoardLesson) =>
+      [lesson.title, lesson.blockCard ? undefined : lesson.subtitle?.split(" · ")[0]].filter(Boolean).join(" ");
     const squareOf = (square: Marker) => ({
       day: live.current.tDays(String(square.dayOfWeek)),
       from: clock(square.startMinutes),
@@ -317,6 +327,19 @@ export function BoardKeys(props: BoardKeysProps) {
         say("length", { lesson: nameOf(lesson), minutes, to: clock(next.endMinutes) });
         p.onLessonChange?.(id, next);
         return;
+      }
+
+      // A block's card is the block and not a lesson: its lock, parking and removal are its dialog's, for every lesson of it, and the
+      // page opens that dialog. The line says that, and not what the key would have done to a lesson (nothing is locked, parked or
+      // removed by it, and a line that said so would be a promise nothing keeps).
+      if (lesson.blockCard && !event.altKey && !event.shiftKey && p.onLessonCommand) {
+        const command = COMMAND_OF_KEY[key];
+        if (command) {
+          consume();
+          say("blockDialog", { lesson: nameOf(lesson) });
+          p.onLessonCommand(id, command);
+          return;
+        }
       }
 
       if (!event.altKey && !event.shiftKey && p.onLessonCommand) {

@@ -9,6 +9,7 @@ import { enterGrundschemaWrite, publishModeOf, type PublishMode } from '../publi
 import { lockYearForRegeneration } from '../optimization/regeneration-lock';
 import { MasterLessonsService, type DayLesson } from '../calendar/master-lessons.service';
 import { ConflictReads } from '../calendar/conflict-reads';
+import { exemptionsOf } from '../calendar/lesson-exemption';
 import { loadRosters, gradeSpanOf } from '../optimization/room-eligibility';
 import { rostersOfYear, type RosterBasis } from '../year-rollover/projected-rosters';
 import { toNioarigSpan } from '../common/grade-numbering';
@@ -369,6 +370,8 @@ export class ScheduleExchangeService {
       seen.set(duplicateKey(r), lesson.ref);
 
       const fit = fitRefusals(r, ctx);
+      // What the file named that the lesson really breaks: the rules it is given an exemption for, and nothing it only said.
+      r.exempt = fit.exempted;
       row.refusals.push(...fit.refusals);
       warnings.push(...fit.warnings.map((w) => ({ ...w, params: { ...w.params, ref: lesson.ref } })));
       if (row.refusals.length > 0) continue;
@@ -605,6 +608,7 @@ export class ScheduleExchangeService {
             // Locked, and handmade: regeneration keeps what was imported.
             isLocked: true,
             isGenerated: false,
+            ...(l.exempt.length > 0 ? { exemptFrom: l.exempt } : {}),
             recurrence: RECURRENCE_OF[l.weeks],
             startDate: l.from ? new Date(`${l.from}T00:00:00.000Z`) : null,
             endDate: l.to ? new Date(`${l.to}T00:00:00.000Z`) : null,
@@ -636,6 +640,7 @@ export class ScheduleExchangeService {
               coTeacherId: l.teacherIds[1] ?? null,
               roomId: l.roomId,
               isLocked: true,
+              ...(l.exempt.length > 0 ? { exemptFrom: l.exempt } : {}),
               recurrence: RECURRENCE_OF[l.weeks],
               startDate: l.from,
               endDate: l.to,
@@ -723,6 +728,7 @@ export class ScheduleExchangeService {
             endDate: true,
             isLocked: true,
             isGenerated: true,
+            exemptFrom: true,
             extraGroups: { select: { studentGroupId: true } },
             participants: { select: { studentId: true } },
           },
@@ -797,6 +803,7 @@ export class ScheduleExchangeService {
         extraGroupIds: l.extraGroups.map((e) => e.studentGroupId),
         isLocked: l.isLocked,
         isGenerated: l.isGenerated,
+        ...(exemptionsOf(l.exemptFrom).length > 0 ? { exempt: exemptionsOf(l.exemptFrom) } : {}),
       })),
       frames: frames.map((f) => ({ minGradeLevel: f.minGradeLevel, maxGradeLevel: f.maxGradeLevel, dayOfWeek: f.dayOfWeek, startMin: minutes(f.startTime), endMin: minutes(f.endTime) })),
       rasts: rasts.map((r) => ({ name: r.name, minGradeLevel: r.minGradeLevel, maxGradeLevel: r.maxGradeLevel, dayOfWeek: r.dayOfWeek, startMin: minutes(r.startTime), endMin: minutes(r.endTime) })),
@@ -960,6 +967,7 @@ export function documentOf(schoolName: string, ctx: PlanContext, blocks: Readonl
       from: e.from,
       to: e.to,
       block: blockNameOf(ctx, blocks, e.groupId, e.subjectId),
+      ...(e.exempt && e.exempt.length > 0 ? { exempt: e.exempt } : {}),
       ids: {
         lesson: e.id,
         group: group.id,

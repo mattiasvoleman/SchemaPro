@@ -63,6 +63,15 @@ const draw = (overrides: Partial<React.ComponentProps<typeof ConflictList>> = {}
 };
 
 describe("the krocklista", () => {
+  it("draws no empty point for a reason it has no sentence for", () => {
+    // Anna's clash with Kemi 8B, in a school whose class names are not read yet: the sentence needs the other lesson's class.
+    draw({ group: () => "" });
+    const dialog = screen.getByRole("dialog");
+    const points = [...dialog.querySelectorAll("ul ul li")];
+    expect(points.length).toBeGreaterThan(0);
+    for (const point of points) expect(point.textContent?.trim()).not.toBe("");
+  });
+
   it("says each lesson that clashes, and what it clashes with by class, subject, day and time", () => {
     draw();
     const dialog = screen.getByRole("dialog");
@@ -105,5 +114,61 @@ describe("the krocklista", () => {
   it("draws no dialog when it is not open", () => {
     draw({ open: false });
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("the krocklista says an exemption apart (Undantag med flit)", () => {
+  const given = lesson("g", { subjectId: "Ke", studentGroupId: "8B", startTime: "14:30:00", endTime: "15:30:00", isLocked: true, exemptFrom: ["FRAME"] });
+  const both = new Map([...lessonById, ["g", given]]);
+
+  it("puts the lessons that stand outside the ramtid or over the lunch on purpose under their own heading, in the words of the rule, and not as conflicts", () => {
+    draw({ lessonById: both, exemptions: new Map([["g", ["FRAME", "LUNCH"] as const]]) });
+    const dialog = screen.getByRole("dialog");
+    const heading = within(dialog).getByRole("heading", { name: "Undantag" });
+    const section = heading.closest("section")!;
+    expect(within(section).getByText(/Kemi med 8B, måndag 14:30–15:30/)).toBeTruthy();
+    expect(within(section).getByText("Står utanför ramtiden med flit.")).toBeTruthy();
+    expect(within(section).getByText("Står över klassens lunch med flit.")).toBeTruthy();
+    // Not as a conflict: not red, and not in the list above it.
+    expect(section.querySelector(".text-destructive")).toBeNull();
+    const conflicts = within(dialog).getByText("Konflikter i schemat").closest("div")!;
+    expect(within(dialog).getAllByText(/Kemi med 8B, måndag 14:30–15:30/)).toHaveLength(1);
+    expect(conflicts).toBeTruthy();
+  });
+
+  it("opens the lesson from the exemption's row too", () => {
+    const { onGo } = draw({ lessonById: both, exemptions: new Map([["g", ["FRAME"] as const]]) });
+    const section = screen.getByRole("heading", { name: "Undantag" }).closest("section")!;
+    fireEvent.click(within(section).getByRole("button", { name: "Öppna" }));
+    expect(onGo).toHaveBeenCalledWith("g");
+  });
+
+  it("says no heading when no lesson has one, and \"inga konflikter\" is still said of a schedule with only exemptions in it", () => {
+    draw();
+    expect(screen.queryByRole("heading", { name: "Undantag" })).toBeNull();
+    draw({ conflictMap: new Map(), lessonById: both, exemptions: new Map([["g", ["FRAME"] as const]]) });
+    expect(screen.getAllByText("Inga konflikter i schemat.").length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("heading", { name: "Undantag" })).toHaveLength(1);
+  });
+
+  it("lists an exemption nothing stands against at the moment, in words that say so, so that the header's number and the publication's can be found in it", () => {
+    // Given for the ramtid and the lunch; Generera has since laid the class's meal elsewhere, so only the ramtid is still broken.
+    draw({
+      lessonById: both,
+      exemptions: new Map([["g", ["FRAME", "LUNCH"] as const]]),
+      exemptionStanding: new Map([["g", ["FRAME"] as const]]),
+    });
+    const section = screen.getByRole("heading", { name: "Undantag" }).closest("section")!;
+    expect(within(section).getByText("Står utanför ramtiden med flit.")).toBeTruthy();
+    expect(within(section).getByText(/Undantaget för klassens lunch behövs inte just nu/)).toBeTruthy();
+    expect(within(section).queryByText("Står över klassens lunch med flit.")).toBeNull();
+  });
+
+  it("lists an exemption none of whose rules is broken any more, where it can be opened and taken back", () => {
+    const { onGo } = draw({ lessonById: both, exemptions: new Map([["g", ["LUNCH"] as const]]), exemptionStanding: new Map() });
+    const section = screen.getByRole("heading", { name: "Undantag" }).closest("section")!;
+    expect(within(section).getByText(/Undantaget för klassens lunch behövs inte just nu/)).toBeTruthy();
+    fireEvent.click(within(section).getByRole("button", { name: "Öppna" }));
+    expect(onGo).toHaveBeenCalledWith("g");
   });
 });

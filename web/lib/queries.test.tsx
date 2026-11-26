@@ -595,6 +595,16 @@ describe("useMasterLessons", () => {
     expect(columns.split(", ")).toContain("fromPlacement");
   });
 
+  it("asks for the column that says a lesson stands against a rule on purpose (Undantag med flit): the märke, the list, the header's count and the way back read nothing else", async () => {
+    stubTable("MasterLessons", ok([]));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useMasterLessons("y-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const [[columns]] = argsFor("MasterLessons", "select") as [[string]];
+    expect(columns.split(", ")).toContain("exemptFrom");
+  });
+
   it("does not query until an academic year is selected", () => {
     const { wrapper } = createHarness();
     const { result } = renderHook(() => useMasterLessons(null), { wrapper });

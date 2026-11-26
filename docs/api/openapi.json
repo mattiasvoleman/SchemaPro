@@ -30360,6 +30360,16 @@
             "type": "string",
             "nullable": true
           },
+          "exempt": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FRAME",
+                "LUNCH"
+              ]
+            }
+          },
           "extraGroupIds": {
             "type": "array",
             "maxItems": 20,
@@ -33045,6 +33055,16 @@
           "endDate": {
             "type": "string",
             "nullable": true
+          },
+          "exempt": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FRAME",
+                "LUNCH"
+              ]
+            }
           },
           "extraGroupIds": {
             "type": "array",
@@ -35815,6 +35835,16 @@
           },
           "propagate": {
             "type": "boolean"
+          },
+          "exempt": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FRAME",
+                "LUNCH"
+              ]
+            }
           },
           "extraGroupIds": {
             "type": "array",

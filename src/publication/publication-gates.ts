@@ -26,6 +26,7 @@ export const GATE_CODES = [
   'PUB_STAFFING_REFUSE',
   'PUB_TIMPLAN',
   'PUB_BLOCK_SPLIT',
+  'PUB_EXEMPTIONS',
   'PUB_EMPTY_HALF',
   'PUB_DEVIATIONS',
   'PUB_RANGE_OVERLAP',
@@ -105,6 +106,9 @@ export const GATE_COLUMN: Record<GateCode, keyof GatePolicy | null> = {
   // A parallel block the school split by hand (Block i schemat): named, never
   // asked about — the board warned when it was split.
   PUB_BLOCK_SPLIT: null,
+  // Undantag med flit: lessons an administrator let stand outside the ramtid or over the class's meal, by name. Said with their number, never asked about:
+  // the question was put to the administrator when each was given.
+  PUB_EXEMPTIONS: null,
   // A half of a class with lessons and no pupils (Halvklasser): its lessons
   // would reach nobody's week.
   PUB_EMPTY_HALF: 'gateEmptyHalf',

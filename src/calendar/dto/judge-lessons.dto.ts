@@ -7,6 +7,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsUUID,
@@ -15,6 +16,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { EXEMPTABLE_RULES, type ExemptableRule } from '../lesson-exemption';
 
 /**
  * A clock the way a swap's moves say it (swaps.dto.ts): "34:00" is no clock, and parseTimeString would wrap it to 10:00,
@@ -72,6 +74,18 @@ export class JudgeMoveDto {
   @IsOptional()
   @IsDateString({ strict: true })
   endDate?: string | null;
+
+  /**
+   * UNDANTAG MED FLIT: the rules of the board the administrator answers yes to ("Lägg ändå") for THIS time, by name: `FRAME` (the stage's
+   * ramtid) and `LUNCH` (the class's meal). Only these two can be named; a teacher, a room, a class or its pupils, a closed hour, a rule on
+   * årskurser, another school's time and the school day cannot. A rule named that the time does not break is saved on nothing. A saved
+   * exemption locks the lesson and is for the time it was given for. `[]` takes back what the lesson had.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(EXEMPTABLE_RULES.length)
+  @IsIn(EXEMPTABLE_RULES, { each: true })
+  exempt?: ExemptableRule[];
 
   @IsOptional()
   @IsArray()

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { EXEMPT_RULES, type ExemptRule } from "@/lib/exemptions";
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 
 /*
@@ -28,6 +29,12 @@ export interface MoveJudgement {
   /** The lesson is a förläggning's: it is changed on the timplan, and no drag of it stands. */
   placed?: true;
   refusals: MoveRefusal[];
+  /**
+   * Undantag med flit: what the answer yes to the move's `exempt` would save (the rules named that the time really breaks), and whether the
+   * refusals are the ramtid and the class's meal and nothing else, so that the question "Lägg ändå" can be put. Absent from an older gateway.
+   */
+  exempted?: ExemptRule[];
+  exemptable?: boolean;
 }
 
 export interface LessonJudgement {
@@ -46,6 +53,8 @@ export interface JudgeMove {
   recurrence?: LessonRecurrence;
   startDate?: string | null;
   endDate?: string | null;
+  /** The rules the reader answered "Lägg ändå" to for this time. Only when there are some. */
+  exempt?: ExemptRule[];
 }
 
 /** The dialog's fields, as it holds them (components/schedule/lesson-edit-dialog.tsx LessonEditDraft). */
@@ -58,6 +67,8 @@ export interface JudgedDraft {
   recurrence: LessonRecurrence;
   startDate: string;
   endDate: string;
+  /** The rules answered "Lägg ändå": absent is none. */
+  exempt?: ExemptRule[];
 }
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -83,6 +94,16 @@ export function moveOf(lesson: MasterLesson, draft: JudgedDraft, none: string): 
   set("recurrence", draft.recurrence, lesson.recurrence);
   set("startDate", draft.startDate === "" ? null : draft.startDate, lesson.startDate);
   set("endDate", draft.endDate === "" ? null : draft.endDate, lesson.endDate);
+  // The answer yes is a question of its own when it is new, and rides on a question that is asked anyway: a lesson left as it stands with the
+  // exemption it has asks nothing. Said in the gateway's order, whatever order the reader pressed them in.
+  const exempt = EXEMPT_RULES.filter((rule) => draft.exempt?.includes(rule));
+  if (exempt.length > 0) {
+    const had = EXEMPT_RULES.filter((rule) => lesson.exemptFrom?.includes(rule));
+    if (moved || exempt.join() !== had.join()) {
+      move.exempt = exempt;
+      moved = true;
+    }
+  }
   return moved ? move : null;
 }
 

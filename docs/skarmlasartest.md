@@ -80,15 +80,23 @@ Skriv också upp sådant som manuset inte frågar efter: ett fokus som hoppar ti
 
 **1.3 Grundschema: flytta en lektion med tangentbordet.**
 
+Pilarna flyttar fokus och flyttar ingenting. En lektion tas först upp (Mellanslag), flyttas med markören (pilarna) och läggs (Retur). Raden under veckan läses upp efter varje tangent och är den som säger vad som hände.
+
 | Steg | Gör | Ska höra |
 | :-- | :-- | :-- |
-| 1.3.1 | Öppna Grundschema | Rubrik nivå 1 "Grundschema", och raden som förklarar hur schemat redigeras. Den säger att piltangenterna flyttar en lektion och att Retur öppnar den. |
-| 1.3.2 | Tabba till första lektionen | Knapp med dag, tid och lektion, till exempel "Måndag 08:10–09:10, Svenska 7A · A. Lind Sal 101" |
-| 1.3.3 | Tryck pil höger | "Lektionen uppdaterad …" sägs (ett meddelande, utan att fokus flyttas). Fokus står kvar på samma lektion, som nu heter "Tisdag 08:10–09:10, …". |
-| 1.3.4 | Tryck pil ned | Lektionen flyttas 15 minuter, och tiden i namnet följer med |
-| 1.3.5 | Gå till knappen "Ångra" och välj den | Lektionen går tillbaka |
-| 1.3.6 | Tryck Retur på en lektion | En dialog "Justera lektion" öppnas, och fokus står i dialogen. Escape stänger den, och fokus går tillbaka till lektionen. |
-| 1.3.7 | Gå till Parkering | Rubrik nivå 2 "Parkering" och en lista där varje parkerad lektion har en knapp "Sätt tillbaka" |
+| 1.3.1 | Öppna Grundschema | Rubrik nivå 1 "Grundschema", och raden som förklarar hur schemat redigeras. Den säger att pilarna flyttar fokus mellan lektionerna, att Retur öppnar en lektion, att Mellanslag tar upp en lektion, att pilarna då flyttar den och att Retur lägger den, och att ? på en lektion visar alla tangenter. |
+| 1.3.2 | Tabba till första lektionen | Knapp med dag, tid och lektion, till exempel "Måndag 08:10–09:10, Svenska 7A · A. Lind Sal 101". Bara en lektion är tabbstopp: nästa Tabb lämnar veckan. |
+| 1.3.3 | Tryck pil ned och pil höger | Fokus flyttar till nästa lektion i dagen och sedan till närmaste dag med lektioner, och knappens namn läses. Ingenting flyttas och inget meddelande om en uppdaterad lektion sägs. |
+| 1.3.4 | Tryck Mellanslag | Raden: "Tog upp Matematik 7A, Måndag 09:25–10:25. Pilarna flyttar markören, Enter lägger, Esc släpper." |
+| 1.3.5 | Tryck pil ned | Raden: "Måndag 09:40–10:40: går att lägga. Enter lägger." Eller, där det inte går: "… går inte att lägga här. Enter visar de närmaste lediga tiderna." |
+| 1.3.6 | Tryck Retur | Raden: "Flyttar Matematik 7A till Måndag 09:40–10:40.", och sedan sidans meddelande om att lektionen är uppdaterad. Fokus står kvar på lektionen, som nu heter "Måndag 09:40–10:40, …". |
+| 1.3.7 | Tryck Ctrl+Z (Cmd+Z på Mac) | Meddelandet "Ändringen ångrades", och lektionen går tillbaka: tiden i namnet följer med |
+| 1.3.8 | Tryck L på en lektion, sedan L igen | Raden säger att lektionen låses, och sedan att den låses upp |
+| 1.3.9 | Tryck Mellanslag och sedan Esc | Raden: "Släppte … Ingenting ändrades." |
+| 1.3.10 | Tryck Retur på en lektion | En dialog "Justera lektion" öppnas, och fokus står i dialogen. Escape stänger den, och fokus går tillbaka till lektionen. |
+| 1.3.11 | Gå till en lektion som krockar | Namnet slutar med "Krock:" och skälet i ord, till exempel "Läraren har redan Matematik med 7B, måndag 09:25–10:25." |
+| 1.3.12 | Gå till Parkering | Rubrik nivå 2 "Parkering" och en lista där varje parkerad lektion har en knapp "Sätt tillbaka" |
+| 1.3.13 | Gör fönstret smalare än 768 px (eller använd en telefon) och gå till dagknapparna | Knappar som "Måndag: 4 lektioner", med nedtryckt eller inte nedtryckt. Bara den valda dagens lektioner finns att gå till. |
 
 **1.4 Ledighetsansökningar: bevilja en ansökan.**
 

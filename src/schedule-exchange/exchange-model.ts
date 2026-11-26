@@ -32,6 +32,8 @@
  */
 
 /** Which weeks a lesson runs; the same three values as LessonRecurrence. */
+import type { ExemptableRule } from '../calendar/lesson-exemption';
+
 export type WeekPattern = 'ALL' | 'ODD' | 'EVEN';
 
 /** A at odd ISO weeks, B at even; the letter formats write and read. */
@@ -95,6 +97,11 @@ export interface ExchangeLesson {
   /** The parallel block (TeachingBlock.name) the lesson's post runs in, when the file says. */
   block: string | null;
   ids: ExchangeIds;
+  /**
+   * The rules of the board the lesson stands against on purpose (Undantag med flit), by name. Only the flat table carries it, and only a lesson that
+   * has one says so: the other formats have no word for it, and a lesson without one is the object it was.
+   */
+  exempt?: ExemptableRule[];
 }
 
 /** A group of the year, for the formats that list entities besides the lessons. */

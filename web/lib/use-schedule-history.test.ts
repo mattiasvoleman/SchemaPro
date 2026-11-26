@@ -124,6 +124,46 @@ describe("useScheduleHistory", () => {
     expect(result.current.canRedo).toBe(false);
   });
 
+  it("a REFUSED undo is skipped: the step stays as it is and the next undo takes the step before it", async () => {
+    // The gateway's judge refuses to put a lesson back on a time that breaks a rule (E1). The refusal is final for that step, and left on
+    // top it would shut every older step behind it (E1b: the follow-up the E1 review asked for).
+    const { result } = renderHook(() => useScheduleHistory());
+    const older = makeEntry("older");
+    const refused = makeEntry("refused", {
+      undo: vi.fn(() => Promise.reject(new Error("refused by the judge"))),
+      refusedUndo: (error: unknown) => error instanceof Error && error.message === "refused by the judge",
+    });
+
+    act(() => result.current.push(older));
+    act(() => result.current.push(refused));
+    await act(async () => {
+      await expect(result.current.undo()).rejects.toThrow("refused by the judge");
+    });
+
+    // The refused step is gone from both stacks: it was not undone, so it cannot be redone either.
+    expect(result.current.canRedo).toBe(false);
+    expect(result.current.canUndo).toBe(true);
+    const undone = await run(() => result.current.undo());
+    expect(undone?.label).toBe("older");
+    expect(older.undo).toHaveBeenCalledTimes(1);
+    expect(refused.undo).toHaveBeenCalledTimes(1);
+  });
+
+  it("any other failed undo, the network or a 5xx, still keeps the step on top for a retry", async () => {
+    const { result } = renderHook(() => useScheduleHistory());
+    const flaky = makeEntry("move", {
+      undo: vi.fn(() => Promise.reject(new Error("network"))),
+      refusedUndo: (error: unknown) => error instanceof Error && error.message === "refused by the judge",
+    });
+
+    act(() => result.current.push(flaky));
+    await act(async () => {
+      await expect(result.current.undo()).rejects.toThrow("network");
+    });
+
+    expect(result.current.canUndo).toBe(true);
+  });
+
   it("a failed redo keeps the entry redoable", async () => {
     const { result } = renderHook(() => useScheduleHistory());
     const flaky = makeEntry("move", {
