@@ -1,6 +1,7 @@
 // Domain types mirrored from the Prisma schema (subset used by the web UI).
 import type { AdminProfile } from "@/lib/admin-areas";
 import type { GradeNumbering } from "@/lib/grade-numbering";
+import type { ExemptRule } from "@/lib/exemptions";
 
 export type UserRole = "STUDENT" | "TEACHER" | "SCHOOL_ADMIN" | "GUARDIAN";
 export type AbsenceReportType = "SICK" | "APPOINTMENT" | "OTHER";
@@ -693,6 +694,11 @@ export interface MasterLesson {
   isParked: boolean;
   /** Written by Generera from a förläggning: changed in Förlägg i veckan and never here. Absent reads as false. */
   fromPlacement?: boolean;
+  /**
+   * Undantag med flit: the rules of the board the lesson stands against on purpose, by name, for the time it was given for. An administrator
+   * gave it by answering "Lägg ändå"; it locks the lesson and ends when the lesson's time, lock or place changes. Absent or empty is none.
+   */
+  exemptFrom?: ExemptRule[];
   /** Which weeks the lesson runs; ISO week parity, not a count from the start. */
   recurrence: LessonRecurrence;
   /** YYYY-MM-DD, or null for the academic year's own boundary. */

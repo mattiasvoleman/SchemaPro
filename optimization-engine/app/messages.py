@@ -1041,6 +1041,17 @@ MESSAGES: dict[str, str] = {
         "hand. Unless every lesson of the block is locked, the next generation refuses the block "
         "as partly locked. Move it back with the block, or lock all of the block's lessons."
     ),
+    # Sent by the GATEWAY beside a hand edit that ended an exemption the lesson
+    # carried (Undantag med flit, master-lessons.service.ts): the lesson was given
+    # "Lägg ändå" for the stage's ramtid or the class's meal at the time it stood
+    # at, and the edit moved it, took off its lock or put it on the tray. A
+    # warning, never a refusal; `rules` is FRAME, LUNCH or FRAME,LUNCH.
+    "EXEMPTION_ENDED": (
+        "The lesson no longer stands against {rules, select, FRAME {the stage's time frame} LUNCH "
+        "{the class's lunch} other {the stage's time frame and the class's lunch}} on purpose: the "
+        "exemption was for the time it had, and ended when the time, the lock or the tray changed. "
+        "Answer Add anyway again if it should stand there."
+    ),
     # Sent by the GATEWAY beside a hand edit that leaves a teacher, or the pupils
     # of a lesson, less time between two lessons at different skolområden than
     # the walk between them (master-lessons.service.ts, travel-warnings.ts): a

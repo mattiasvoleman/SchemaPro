@@ -1,7 +1,20 @@
-# SchemaPro → Skola24 parity roadmap
+# Rastra → Skola24 parity roadmap
 
-Date: 2026-07-13 · Basis: current SchemaPro codebase vs the Skola24 platform
-(Schema, Frånvaro, Lokal, Förskola, Omdöme modules; skola24.com, July 2026).
+Date: 2026-07-13 · Basis: the codebase of that day (then called SchemaPro) vs
+the Skola24 platform (Schema, Frånvaro, Lokal, Förskola, Omdöme modules;
+skola24.com, July 2026).
+
+> **Status 2026-11-25.** This is a July plan. Each item says what shipped,
+> and four were read against the code again on 2026-11-25: P0.3 (SS12000),
+> P0.4 (procurement), P1.5 (mobile) and P2.9 (the viewer). The rest of the
+> text, the Skola24 descriptions and the efforts included, is July's and has
+> not been re-read. The product has been called Rastra since 2026-10-17; the
+> repository keeps the old name. The "2027-02" of the K-items' status lines is
+> the stamp of their migrations, not a day work was done. The stance in
+> *Positioning while building* is retired: PRODUCT.md decided on 2026-10-11
+> that Rastra replaces Skola24 end to end, and is not a scheduling engine that
+> feeds someone else's platform. Where this file and PRODUCT.md disagree,
+> PRODUCT.md wins.
 
 ## Starting position
 
@@ -73,9 +86,17 @@ when the school opts in) and `POST /import/persons` (update-only roster sync:
 names, class membership with auto-created classes, guardian links; unknown
 emails returned as `needsProvisioning`). Tenant isolation enforced per key in
 code; rate-limited. Docs: `docs/integration-api.md`. Migration:
-`20260713210000_integration_api_keys`. Remaining for full SS12000
-certification: subscription/webhook deliveries and the complete resource set
-(placements, syllabuses) — add when a municipal procurement requires them.
+`20260713210000_integration_api_keys`.
+*Update 2026-11-25:* what was "remaining" is built. `/ss12000/v2.0` is SS12000
+2.1 in the standard's own shape: organisations, persons, groups, duties,
+activities, calendarEvents, rooms, syllabuses, attendances, absences and
+deletedEntities, and subscriptions with signed webhooks, behind 14 key scopes
+(`src/integration/ss12000-v2/`). `Placement` is left out on purpose: S1 uses it
+for förskola and fritids only (`docs/integration-api.md`, *Left out, with
+reasons*). Rastra also pulls a roster from a school's student register (the
+consumer, `src/integration/ss12000-sync/`): built and reviewed, and no school
+has a source set up. **No certification is held or claimed**; PRODUCT.md lists
+certifications among what must never be fabricated.
 
 **3 (original scope).** The Swedish school-IT interoperability
 standard. Without it, municipalities cannot connect their student registry
@@ -92,6 +113,17 @@ standard. Without it, municipalities cannot connect their student registry
 data residency statement (Supabase EU region), backup/restore and uptime SLA,
 pen-test of the RLS surface, offboarding/export commitments.
 - Effort: ~2 weeks of focused work + ongoing.
+- *Update 2026-11-25:* **one part is written.** `docs/dataskydd-sakbeskrivning.md`
+  (2026-11-23) says what the system does with personal data, belagt in the code,
+  for a school's dataskyddsombud. It is not a DPA, a registerförteckning or an
+  SLA, and none of those exists. Offboarding and export exist as features
+  (the whole-school export, the register extract and gallring: sections 8 and 10 of the sakbeskrivning).
+  **Open, and not the code's to answer** (its section 13): the Supabase and
+  Vercel regions, whether backups (PITR) are on, which sender and SMTP
+  Supabase Auth uses, and whether running without e-mail is intended; and the
+  DPA, SLA and registerförteckning themselves. The RLS surface has a policy
+  suite that runs on every change, and no external pen-test:
+  `docs/SECURITY_AUDIT.md` is the project's own review of 2026-07-11.
 
 ## P1 — Expected by every evaluator (parity table stakes)
 
@@ -107,6 +139,14 @@ the RLS policies from P0.1/P0.2, matching the app's offline-capable
 architecture. Still open for full parity: push notifications (Expo push +
 device token registry), timed (partial-day) absence reporting on mobile, and
 Swedish localization of the app (currently English, like the rest of the app).
+*Update 2026-11-25:* the app is in Swedish and English (`mobile/locales/`).
+Push is **built and off**: registration, receipts and a minimised text exist,
+`PUSH_NOTIFICATIONS` defaults to `off`, push has never reached a real phone,
+and turning it on needs Expo's biträdesavtal first (DEPLOYMENT §8.1, §15.6).
+A guardian still reports whole days in the app (a timed report made on the web
+shows in it; the app's form asks for no hours). The app is now two apps, Rastra
+and Rastra vårdnadshavare, and neither is distributed: there is no EAS project
+and no store listing (PRODUCT.md, DEPLOYMENT §15).
 - Remaining effort: ~1–2 weeks. Depends on: nothing.
 
 **6. Minute-accurate absence statistics — ✅ SHIPPED v1 (2026-07-13)**
@@ -198,15 +238,22 @@ entity that coexists with lessons in conflict checking, approval option for
 special rooms, cross-school sharing later.
 - Effort: ~2–3 weeks.
 
-**9. Timetable viewer/publication portal** — public read-only schedule links
-per class/teacher/room (Skola24's viewer is how most users consume it),
-embeddable in school websites, with the existing iCal feeds per viewer.
+**9. Timetable viewer/publication portal — ✅ SHIPPED (Schemavisaren)** — public
+read-only schedule links per class/teacher/room (Skola24's viewer is how most
+users consume it), embeddable in school websites, with the existing iCal feeds
+per viewer.
+*Update 2026-11-25:* the viewer is `/v/<token>` (and `/v/<token>/embed`), set up
+under `/admin/schemavisaren`: per kind of schedule (class, teaching group,
+teacher, pupil, room) the school chooses off, a list or Fritext-ID, and a
+pupil's schedule is only ever behind a code (PRODUCT.md, the user manual). Its name is also the name of Skola24's viewer, an open
+question in PRODUCT.md.
 - Effort: ~1–2 weeks.
 
 **10. Preschool/fritids module** — check-in/check-out times, vistelsetid
 (guardian-submitted care schedules), staff planning against child attendance
 curves. Separate product surface; only needed for F-6 municipal deals.
 - Effort: ~4+ weeks. Defer until pulled by a customer.
+- *Update 2026-11-25:* förskola and fritids are out of scope in PRODUCT.md.
 
 ## P3 — Later / optional
 
@@ -237,7 +284,11 @@ remaining module gaps.
 
 ## Positioning while building
 
-Sell the wedge, not the platform: "AI-generated, minimally-disruptive
-timetabling that coexists with Skola24" — the P0.3 lesson-export API lets
-SchemaPro *feed* schedules into an existing Skola24/Vklass installation, so
-schools can adopt the superior scheduler first and migrate attendance later.
+*Retired (decided 2026-10-11, PRODUCT.md).* The July text said: sell the wedge,
+not the platform: "AI-generated, minimally-disruptive timetabling that
+coexists with Skola24" — the P0.3 lesson-export API lets SchemaPro *feed*
+schedules into an existing Skola24/Vklass installation, so schools can adopt
+the superior scheduler first and migrate attendance later. The stance now is
+that Rastra replaces Skola24 end to end, and the engine is not called AI
+(PRODUCT.md, *Positioning*). The lesson export is still there, and a school
+that keeps another system for a while can still read from it.

@@ -18,8 +18,8 @@ teacher/student schedule views and offline-first attendance tracking.
 ┌──────────────┐   reads (RLS)    ┌────────────────────┐
 │  Next.js web │─────────────────▶│                    │
 │  (sv/en)     │   mutations      │  Supabase Postgres │
-└──────┬───────┘        │         │  (RLS on all       │
-       │                ▼         │   12 tables)       │
+└──────┬───────┘        │         │  (RLS on every     │
+       │                ▼         │   table)           │
 ┌──────────────┐   ┌─────────┐    │                    │
 │ Expo mobile  │──▶│ NestJS  │───▶└────────────────────┘
 │ (attendance) │   │ gateway │ Prisma withRls()
@@ -46,8 +46,9 @@ teacher/student schedule views and offline-first attendance tracking.
   guardians. Supabase sign-in, tokens in `expo-secure-store`, offline
   attendance queue in local SQLite with exponential-backoff sync, read-only
   schedule tab.
-- **Database** (`prisma/`): 12-table multi-tenant schema; RLS enabled on every
-  table (see “Security model” below).
+- **Database** (`prisma/`): multi-tenant schema (`prisma/schema.prisma`, 184
+  models on 2026-11-25); RLS enabled on every table (see “Security model”
+  below).
 
 ## The core workflow
 
@@ -177,7 +178,10 @@ Follows the non-negotiable constraints in `.cursorrules`:
 - **Privacy by design.** All keys are anonymized UUIDv4. PII lives exclusively
   on `Users` and is stripped at the gateway — the AI engine and any external
   service only ever see fresh, per-request anonymous ids.
-- **RLS everywhere.** All 12 tables have row-level security: students see
+- **RLS everywhere.** Every table in the schema has row-level security (section
+  12 of the RLS suite, `scripts/test/rls-policies.sql`, fails the build for a
+  table that has it off, and for a table with it on and no policy unless the
+  table is reached only through functions): students see
   their own data and their group's schedule; teachers see their school and may
   write attendance only for lessons they are assigned to; admins are scoped to
   their school. Clients read directly from Supabase under RLS; mutations go
