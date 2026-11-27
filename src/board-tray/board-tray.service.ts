@@ -36,7 +36,7 @@ export interface TrayBrick {
   nth: number;
   /**
    * The picture this brick's part (the post's lessons of this teacher and length) was read in: the same on every brick of the part, another
-   * the moment a lesson of the part is laid, changed, put on the tray or taken away. A write that lays a brick names it and is refused (409)
+   * the moment a lesson of the part is laid, put on the tray or taken away, or the post asks another number of lessons (a lesson moved in time does not change it). A write that lays a brick names it and is refused (409)
    * when it is not the part's now, so that two administrators who read the same picture do not both lay its last brick. The key to keep
    * a brick by on the page is `partKey` and `nth` together: two lengths of one post have the same `nth`.
    */
