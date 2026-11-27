@@ -12341,7 +12341,8 @@
       "choiceLabel": "Vad ska hända med kolumn {n}?",
       "dateSpan": "datum över {days, plural, one {# dag} other {# dagar}}: kan vara födelsedatum",
       "dateOld": "ett datum som är äldre än tre år: kan vara födelsedatum",
-      "dateCompact": "{count, plural, one {# värde} other {# värden}} skrivna som datum utan tecken emellan (ÅÅMMDD): kan vara födelsedatum"
+      "dateCompact": "{count, plural, one {# värde} other {# värden}} skrivna som datum utan tecken emellan (ÅÅMMDD): kan vara födelsedatum",
+      "dateUnread": "{count, plural, one {# värde} other {# värden}} skrivna som datum som verktyget inte kan läsa (till exempel med årtalet på två siffror): kan vara födelsedatum"
     },
     "shape": {
       "number": "tal",

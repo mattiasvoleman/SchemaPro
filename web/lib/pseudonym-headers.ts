@@ -162,6 +162,8 @@ export interface ColumnStats {
   lastDay: number | null;
   /** Cells that are a date written without separators and nothing else: YYMMDD or YYYYMMDD, with a month of 01-12 and a day of 01-31 (and 19 or 20 for a century). */
   compactDates: number;
+  /** Cells that are shaped like a date but whose day cannot be read: a year of two digits (14.02.13, 13-02-14, 2/14/13), or a month after the day when the day is past twelve (2/14/2013). Such a column was kept without a question. */
+  unreadDates: number;
   /** Cells that hold a personnummer or samordningsnummer, an address, a telephone number. */
   withPersonalNumber: number;
   withAddress: number;
@@ -184,6 +186,7 @@ export function columnStats(cells: readonly string[]): ColumnStats {
     firstDay: null,
     lastDay: null,
     compactDates: 0,
+    unreadDates: 0,
     withPersonalNumber: 0,
     withAddress: 0,
     withTelephone: 0,
@@ -207,6 +210,7 @@ export function columnStats(cells: readonly string[]): ColumnStats {
       if (day > last) last = day;
     }
     if (shape === "number" && isCompactDate(cell)) stats.compactDates += 1;
+    if (shape === "date" && day === null) stats.unreadDates += 1;
     const found = findPersonalData(cell);
     // A TF number counts as one: a column of Skola24's ID numbers under the header Id or Kod is a column of personnummer, and is proposed as one.
     if (found.some((f) => f.kind === "pnr" || f.kind === "sam" || f.kind === "tf")) stats.withPersonalNumber += 1;
@@ -259,7 +263,7 @@ export const DATE_SPAN_ASKED = 366;
 export const DATE_OLD_DAYS = 3 * 366;
 
 /** Why a column of dates is asked about and not kept: it spans more than a year, a date in it is older than three years, or most of its cells are a date written as six or eight digits. */
-export type DatesAsked = "span" | "old" | "compact";
+export type DatesAsked = "span" | "old" | "compact" | "unread";
 
 /** At least this share of a column's filled cells (four in five) must read as a date for a column of numbers to be taken for one: a code that happens to read as YYMMDD is about one in thirty. */
 const COMPACT_SHARE = 0.8;
@@ -269,6 +273,8 @@ export function datesAsked(stats: ColumnStats, today: number): DatesAsked | null
   if (stats.compactDates > 0 && stats.compactDates >= stats.filled * COMPACT_SHARE) return "compact";
   if (stats.dateSpanDays !== null && stats.dateSpanDays > DATE_SPAN_ASKED) return "span";
   if (stats.firstDay !== null && today - stats.firstDay > DATE_OLD_DAYS * 86_400_000) return "old";
+  // A date the tool cannot read is not one it can tell the age of: 14.02.13 and 13-02-14 are birth dates as often as lesson dates, and a column of them was kept whole (the review of #496).
+  if (stats.unreadDates > 0) return "unread";
   return null;
 }
 

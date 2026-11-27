@@ -19,6 +19,7 @@ function contents(column: ColumnPlan, say: Say): string {
   if (column.datesAsked === "span") parts.push(say("col.dateSpan", { days: stats.dateSpanDays ?? 0 }));
   else if (column.datesAsked === "old") parts.push(say("col.dateOld"));
   else if (column.datesAsked === "compact") parts.push(say("col.dateCompact", { count: stats.compactDates }));
+  else if (column.datesAsked === "unread") parts.push(say("col.dateUnread", { count: stats.unreadDates }));
   if (stats.withPersonalNumber > 0) parts.push(say("col.hasPnr", { count: stats.withPersonalNumber }));
   if (stats.withAddress > 0) parts.push(say("col.hasEmail", { count: stats.withAddress }));
   if (stats.withTelephone > 0) parts.push(say("col.hasTel", { count: stats.withTelephone }));

@@ -12341,7 +12341,8 @@
       "choiceLabel": "What should happen to column {n}?",
       "dateSpan": "dates over {days, plural, one {# day} other {# days}}: may be birth dates",
       "dateOld": "a date older than three years: may be a birth date",
-      "dateCompact": "{count, plural, one {# value} other {# values}} written as a date with nothing between (YYMMDD): may be birth dates"
+      "dateCompact": "{count, plural, one {# value} other {# values}} written as a date with nothing between (YYMMDD): may be birth dates",
+      "dateUnread": "{count, plural, one {# value} other {# values}} written as a date the tool cannot read (for example with a two-digit year): may be birth dates"
     },
     "shape": {
       "number": "numbers",
