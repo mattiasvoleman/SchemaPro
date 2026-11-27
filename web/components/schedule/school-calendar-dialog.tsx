@@ -60,10 +60,20 @@ export interface SchoolCalendarDialogProps {
   onSaved: (result: SchoolCalendarResult) => void;
 }
 
-/** A file's bytes as text: an ICS is UTF-8 by RFC 5545, a CSV is read by its encoding like every other import. */
+/**
+ * A file's bytes as text: an ICS is UTF-8 by RFC 5545, a CSV is read by its encoding like every other import. An ICS
+ * that is not valid UTF-8 (an old export in Windows-1252, where å is the byte E5) is read the way a CSV is, and not
+ * decoded with a replacement character for every å, ä and ö that would be saved as the name of a lov.
+ */
 async function readFileText(file: File): Promise<string | { problem: string }> {
   const bytes = new Uint8Array(await file.arrayBuffer());
-  if (/\.ics$/i.test(file.name) || file.type === "text/calendar") return new TextDecoder("utf-8").decode(bytes);
+  if (/\.ics$/i.test(file.name) || file.type === "text/calendar") {
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      // Not UTF-8: fall through to the reading that tells Windows-1252 from Mac Roman.
+    }
+  }
   const decoded = decodeCsvBytes(bytes);
   return decoded.problem === null ? decoded.text : { problem: decoded.problem };
 }

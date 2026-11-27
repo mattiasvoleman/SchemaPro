@@ -190,6 +190,19 @@ describe("the school calendar dialog", () => {
       expect(lastBody().breaks).toEqual([expect.objectContaining({ name: "Höstlov", id: "b-Höstlov" }), expect.not.objectContaining({ id: expect.anything() })]);
     });
 
+    it("reads an ICS file saved in Windows-1252 with its å, ä and ö, not as replacement characters", async () => {
+      const user = userEvent.setup();
+      open([]);
+      await user.click(screen.getByLabelText(/^holidays/));
+      await user.click(screen.getByLabelText(/^proposals/));
+      const text = ["BEGIN:VCALENDAR", "BEGIN:VEVENT", "DTSTART;VALUE=DATE:20261102", "DTEND;VALUE=DATE:20261107", "SUMMARY:Höstlov åk 1–9", "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+      // Windows-1252: ö is F6, å is E5, and the en dash is 96.
+      const bytes = Uint8Array.from(Array.from(text, (char) => ({ ö: 0xf6, å: 0xe5, "–": 0x96 })[char as "ö"] ?? char.charCodeAt(0)));
+      await user.upload(screen.getByLabelText("chooseFile") as HTMLInputElement, new File([bytes], "kommunen.ics", { type: "text/calendar" }));
+      await waitFor(() => expect(screen.getByText("Höstlov åk 1–9")).toBeInTheDocument());
+      expect(lastBody().breaks.map((row) => row.name)).toEqual(["Höstlov åk 1–9"]);
+    });
+
     it("leaves a row that reads as a term date unticked, and sends it only once it is ticked", async () => {
       const user = userEvent.setup();
       open([]);
