@@ -2,7 +2,7 @@ import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock 
 import type { PrismaService } from '../database/prisma.service';
 import { OptimizationJobsService, jobView } from './optimization-jobs.service';
 import type { OptimizationProxyService } from './optimization-proxy.service';
-import { failedSuggestions, runningSuggestions, suggestionsFromEngine, type Realiser } from './suggestions';
+import { PREFLIGHT_REFUSAL_CODES, failedSuggestions, runningSuggestions, suggestionsFromEngine, type Realiser } from './suggestions';
 import type { AiEngineSuggestChangesResponse } from './interfaces/suggest-changes.interface';
 
 /*
@@ -66,6 +66,14 @@ describe('a run read with its analysis', () => {
       ['the road to the engine closing the call', { status: 'FAILED', solverStatus: null, errorCode: 'ENGINE_PATH_CLOSED' }, true],
     ])('offers the button for %s: %s', (_name, over, offered) => {
       expect(jobView(row(over), null, new Map(), NOW).view.suggestionsOffered).toBe(offered);
+    });
+
+    it.each(PREFLIGHT_REFUSAL_CODES)('does not offer it for a run the gateway refused before the engine was asked (%s): the page reads the offer here (G6b)', (code) => {
+      expect(jobView(row({ conflictSummaryCode: code }), null, new Map(), NOW).view.suggestionsOffered).toBe(false);
+    });
+
+    it('still offers it for a refusal with another summary code: the engine\'s own', () => {
+      expect(jobView(row({ conflictSummaryCode: 'TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK' }), null, new Map(), NOW).view.suggestionsOffered).toBe(true);
     });
 
     it('does not offer it for a run whose lease has run out: it is read as the abandonment it will become', () => {
