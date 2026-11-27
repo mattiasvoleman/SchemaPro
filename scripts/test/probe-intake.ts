@@ -486,7 +486,9 @@ async function main(): Promise<void> {
       assert.deepEqual([await switchesOn(), (await off()).length], [0, 4], 'a row that says off is off, as no row is');
       await owner.absenceWatchSetting.update({ where: { schoolId }, data: { enabled: true } });
       assert.deepEqual([await switchesOn(), (await off()).sort()], [1, ['ACK_OFF', 'SICK_REPORT_OFF', 'VIEWER_OFF']]);
+      // One at a time: two read from each other's row would still agree once both were on.
       await owner.ackSetting.update({ where: { schoolId }, data: { enabled: true } });
+      assert.deepEqual([await switchesOn(), (await off()).sort()], [2, ['SICK_REPORT_OFF', 'VIEWER_OFF']]);
       await owner.coverSettings.update({ where: { schoolId }, data: { teacherSelfReport: true } });
       assert.deepEqual([await switchesOn(), await off()], [3, ['VIEWER_OFF']]);
       // The audience alone shows nothing: it says who may look, and nothing is shown while every kind of schedule is off.

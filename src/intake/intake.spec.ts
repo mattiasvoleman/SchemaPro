@@ -308,6 +308,16 @@ describe('what the school has not set up or turned on (P5, Förvalen en ny skola
     expect(view).toMatchObject({ hard: 0, soft: 0, info: 1 });
   });
 
+  // The boundary is one: a school with a single room type, a single lov or a single pass has set the thing up.
+  it.each([
+    ['NO_ROOM_TYPES', { roomTypes: 1 }],
+    ['NO_BREAKS', { breaks: 1 }],
+    ['NO_SUPERVISION', { supervisionShifts: 1 }],
+  ] as Array<[IntakeGapCode, Partial<IntakeFacts>]>)('is not %s with exactly one row', (code, overrides) => {
+    expect(gapOf(assess(healthy(overrides)), code).count).toBe(0);
+    expect(there(assess(healthy(overrides)))).toEqual([]);
+  });
+
   it('is none of them when the school has set everything up', () => {
     expect(there(assess(healthy()))).toEqual([]);
   });

@@ -222,6 +222,20 @@ describe('IntakeService.read', () => {
       },
     );
 
+    // Each setting is read from its own row: turning one on alone takes only its own gap away. A flag read from the neighbour's row (the
+    // kvittens' from bevakning's, the sjukanmälan's from kvittens') passes every test that turns them on together.
+    it.each([
+      ['LUNCH_OFF', { lunch: { lunchEnabled: true } }],
+      ['ABSENCE_WATCH_OFF', { watch: ON }],
+      ['ACK_OFF', { ack: ON }],
+      ['SICK_REPORT_OFF', { cover: { teacherSelfReport: true } }],
+      ['VIEWER_OFF', { publication: { ...VIEWER_ALL_OFF, viewerGroupMode: 'LIST' } }],
+    ])('says only %s is gone when only its own row is turned on', async (code, stand) => {
+      const switches = ['LUNCH_OFF', 'ABSENCE_WATCH_OFF', 'ACK_OFF', 'VIEWER_OFF', 'SICK_REPORT_OFF'];
+      const { there } = await gaps(stand);
+      expect(there.filter((entry) => switches.includes(entry)).sort()).toEqual(switches.filter((entry) => entry !== code).sort());
+    });
+
     it('reads only the one flag of each setting, never the rest of its row', async () => {
       const { tx } = await gaps();
       expect(tx['lunchSetting']!['findUnique']!.mock.calls[0]![0]).toEqual({ where: { schoolId: 'school-1' }, select: { lunchEnabled: true } });
