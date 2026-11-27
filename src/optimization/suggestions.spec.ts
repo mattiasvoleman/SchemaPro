@@ -156,13 +156,20 @@ describe('the engine answer as the column keeps it', () => {
     expect(JSON.stringify(viewOf(read!, new Map()))).not.toContain('3600');
   });
 
-  it('still ranks the part-timers\' days by their price, which is not kept (the order is made before the price is dropped)', () => {
+  it('places the part-timers\' days after the other changes of their proof, whatever they would have cost: the place says nothing of the days', () => {
+    // Ranked by the price it would have had, the entry stood between two changes whose prices a reader can read: [20, hidden, 2000] was
+    // one day (1 200), [20, 2000, hidden] was two or more, and the order said what the dropped price did not.
+    const order = (cost: number, others: number[]) =>
+      stored(answer([days({ cost }), ...others.map((other) => perDay({ cost: other }))])).changes.map((change) => change.rule);
+    for (const cost of [1200, 2400, 3600, 6000]) {
+      expect(order(cost, [2000, 20])).toEqual(['SUBJECT_PER_DAY', 'SUBJECT_PER_DAY', 'TEACHER_WORK_DAYS']);
+    }
+    // Those that are ranked are still ranked by their price, among themselves.
     const result = stored(answer([days({ cost: 3600 }), perDay({ cost: 2000 }), perDay({ cost: 20 })]));
-    expect(result.changes.map((change) => change.rule)).toEqual(['SUBJECT_PER_DAY', 'SUBJECT_PER_DAY', 'TEACHER_WORK_DAYS']);
     expect(result.changes.map((change) => change.cost)).toEqual([20, 2000, 0]);
   });
 
-  it('merges several part-timers\' days into one change (the prices added for the order, none kept), and keeps the others apart', () => {
+  it('merges several part-timers\' days into one change (no price, and no place that follows from one), and keeps the others apart', () => {
     const result = stored(answer([days({ cost: 1200 }), perDay(), days({ cost: 2400 })]));
     expect(result.changes.map((change) => [change.rule, change.cost])).toEqual([
       ['SUBJECT_PER_DAY', 20],

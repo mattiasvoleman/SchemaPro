@@ -389,7 +389,7 @@ function realisedChange(change: AiEngineSuggestedChange, realiser: Realiser): St
   if (change.rule === 'TEACHER_WORK_DAYS') {
     // A part-timer's days: no post, no teacher, no figure, no weekday (work-days.ts).
     return {
-      rule: change.rule, proof, cost: price, current: null, needed: null, weekdays: [], requirementIds: [], requirementNames: [],
+      rule: change.rule, proof, cost: 0, current: null, needed: null, weekdays: [], requirementIds: [], requirementNames: [],
       roomIds: [], roomNames: [], resourceIds: [], teacherIds: [], hidden: true,
     };
   }
@@ -449,20 +449,19 @@ export function suggestionsFromEngine(
     const stored = realisedChange(change, realiser);
     return checked ? stored : { ...stored, proof: 'MAY_HELP' as const };
   });
-  // Two part-timers' days say nothing the first did not: one change, the prices added FOR THE ORDER, and not kept (g385-L-8): the price of
-  // a part-timer's days is a weight times the days a post goes over, and a reader who may not read HR would be told how many.
+  // Two part-timers' days say nothing the first did not: one change, and no price (g385-L-8): the price of a part-timer's days is a weight
+  // times the days a post goes over, and a reader who may not read HR would be told how many. NOR DOES ITS PLACE IN THE LIST SAY IT: ranked by
+  // the price it would have had, it stands between two changes whose prices the reader can read, which brackets the days. It stands after
+  // the others of its proof, whatever it would have cost.
   const days = mapped.filter((change) => change.hidden);
-  const merged: StoredChange[] = [
-    ...mapped.filter((change) => !change.hidden),
-    ...(days.length > 0 ? [{ ...days[0]!, cost: days.reduce((sum, change) => sum + change.cost, 0) }] : []),
-  ];
+  const merged: StoredChange[] = [...mapped.filter((change) => !change.hidden), ...(days.length > 0 ? [days[0]!] : [])];
   merged.sort(
     (a, b) =>
       SUGGESTION_PROOFS.indexOf(a.proof) - SUGGESTION_PROOFS.indexOf(b.proof) ||
+      Number(a.hidden) - Number(b.hidden) ||
       a.cost - b.cost ||
       (RULE_ORDER.get(a.rule) ?? 0) - (RULE_ORDER.get(b.rule) ?? 0),
   );
-  for (const change of merged) if (change.hidden) change.cost = 0;
   // The proof is the engine's, per change, and merging does not raise it: a list of two part-timers' days that the engine checked
   // together is one change here and is still SOLVED_TOGETHER, because it is two posts.
   let kept = merged.slice(0, MAX_STORED_CHANGES);

@@ -7345,7 +7345,7 @@ analysis of a run that ended without a timetable, the gateway asks the engine, a
 - What the value holds (`suggestions.ts`): `state` (`RUNNING`, `DONE`, `FAILED`), the verdict and `verified` of the engine, `total` (how many changes the list had), at most six changes each of at most three named posts and rooms (names cut to 80 characters),
   and for a failure its code (`ENGINE_LACKS_SUGGESTIONS`, `ENGINE_BUSY`, `ENGINE_FAILED`, `NOTHING_TO_PLACE`, `ABANDONED`). The value is rebuilt through a whitelist on the way in and again on the way out; one that is not wholly well formed shows nothing.
 - **No person's name and no figure of a post.** A cap's teacher rides as the teacher's Users id, which no view carries on; the page reads the name as it does for a free-day note. A change to a part-timer's days is stored in its **hidden form for every reader**
-  (the rule and the proof, and **no price** (G6b: the price is a weight times the days a post goes over, so `3 600` said three days to a reader without HR-läs), no post, no teacher, no number, no weekday; several are one, ordered by their summed price before it is dropped): nothing HR is kept, and the post stays the one place the figure lives (`work-days.ts`).
+  (the rule and the proof, and **no price** (G6b: the price is a weight times the days a post goes over, so `3 600` said three days to a reader without HR-läs), no post, no teacher, no number, no weekday; several are one, and it stands after the others of its proof, so that its place says no more than its price would): nothing HR is kept, and the post stays the one place the figure lives (`work-days.ts`).
 
 ### 34.3 What can go wrong, and what the page then says
 
