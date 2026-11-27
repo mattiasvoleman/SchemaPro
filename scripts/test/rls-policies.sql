@@ -70402,3 +70402,188 @@ BEGIN
 END $$;
 RESET ROLE;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- g6b 1: städningen av analysen (20270313090000), med klockan stilla.
+--
+-- app.optimization_jobs_sweep() städar nu också en analys av en vägrad körning ("suggestions"): RUNNING och förbi sin lease (leaseUntil),
+-- eller, utan lease, mer än sex minuter från sin start, skrivs som FAILED ABANDONED, avslutad när leasen tog slut (utan lease: nu), eller
+-- som den färdiga analys den frågades över när den hade en (g385-L-5). Städningen av Generera är som den var (section 533) och räknar
+-- som förut: den returnerade siffran är Generera-körningarnas ensam.
+--
+-- now() är transaktionens, så en lease planterad som "nu plus en sekund" möter samma klocka som städningen. Tiderna jämförs som den text
+-- de lagras som och kastas aldrig: ett värde som ingen skrev genom tjänsten stoppar inte funktionen, som också är Genereras städning.
+-- Varje scenario planteras som schemaläggaren (hennes arm skriver raden), städas utan inloggning och läses tillbaka som hon.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  sc record;
+  rid uuid;
+  planted jsonb;
+  after jsonb;
+  want jsonb;
+  swept integer;
+  fmt constant text := 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"';
+  admin_claims constant text := json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text;
+  now_text text := to_char(now() AT TIME ZONE 'UTC', fmt);
+  asked_over jsonb := jsonb_build_object('version', 1, 'state', 'DONE', 'startedAt', '2027-03-01T08:00:00.000Z', 'finishedAt', '2027-03-01T08:01:30.000Z',
+                        'verdict', 'SOLVABLE_AS_IS', 'verified', true, 'total', 0, 'searchSeconds', 60, 'verifySeconds', 2.5,
+                        'changes', '[]'::jsonb, 'failure', NULL, 'leaseUntil', NULL, 'previous', NULL);
+  tested integer := 0;
+BEGIN
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  SELECT count(*) INTO swept FROM "OptimizationJobs" WHERE "suggestions"->>'state' = 'RUNNING';
+  IF swept <> 0 THEN RAISE EXCEPTION 'g6b 1: % RUNNING analysis(es) are left from the fixtures', swept; END IF;
+
+  FOR sc IN SELECT * FROM (VALUES
+      -- label, state, started_ago, lease text (a time offset from now, 'none', or the text itself after '=' ), previous?, what the sweep does
+      ('a lease that ran out a second ago',               'RUNNING', interval '3 minutes',  '-1 second',   'none', 'failed'),
+      ('a lease that ran out a millisecond ago',          'RUNNING', interval '3 minutes',  '-1 millisecond', 'none', 'failed'),
+      ('a lease that ends this very instant',             'RUNNING', interval '3 minutes',  '0 seconds',   'none', 'untouched'),
+      ('a lease that ends in a second',                   'RUNNING', interval '3 minutes',  '1 second',    'none', 'untouched'),
+      ('a renewed lease on an analysis older than six minutes', 'RUNNING', interval '20 minutes', '2 minutes', 'none', 'untouched'),
+      ('a lease past, asked over a finished analysis',    'RUNNING', interval '3 minutes',  '-1 second',   'DONE', 'previous'),
+      -- (The service never writes a previous that is not DONE; one that was is no list to give back: the analysis is written as what it is.)
+      ('a lease past, asked over what is not a finished analysis', 'RUNNING', interval '3 minutes', '-1 second', 'FAILED', 'failed'),
+      ('no lease, six minutes and a second old',          'RUNNING', interval '6 minutes 1 second', 'none', 'none', 'failed-now'),
+      ('no lease, one second short of six minutes',       'RUNNING', interval '5 minutes 59 seconds', 'none', 'none', 'untouched'),
+      ('no lease, old, asked over a finished analysis',   'RUNNING', interval '20 minutes', 'none',        'DONE', 'previous'),
+      ('a lease that is no time, the analysis old',       'RUNNING', interval '7 minutes',  '=soon',       'none', 'failed-now'),
+      ('a lease that is no time, the analysis young',     'RUNNING', interval '1 minute',   '=soon',       'none', 'untouched'),
+      ('a lease with no millisecond, the analysis old',   'RUNNING', interval '7 minutes',  '=2027-03-13T09:00:00Z', 'none', 'failed-now'),
+      ('an analysis that ended, its old lease left over', 'FAILED',  interval '2 hours',    '-1 hour',     'none', 'untouched'),
+      ('a finished analysis',                             'DONE',    interval '2 hours',    'none',        'none', 'untouched')
+    ) AS t(label, state, started_ago, lease, has_previous, outcome) LOOP
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    planted := jsonb_build_object(
+      'version', 1, 'state', sc.state,
+      'startedAt', to_char((now() - sc.started_ago) AT TIME ZONE 'UTC', fmt),
+      'finishedAt', CASE WHEN sc.state = 'RUNNING' THEN NULL ELSE now_text END,
+      'verdict', NULL, 'verified', false, 'total', 0, 'searchSeconds', NULL, 'verifySeconds', NULL,
+      'changes', '[]'::jsonb,
+      'failure', CASE WHEN sc.state = 'FAILED' THEN 'ENGINE_FAILED' END,
+      'leaseUntil', CASE WHEN sc.lease = 'none' THEN NULL
+                         WHEN left(sc.lease, 1) = '=' THEN substr(sc.lease, 2)
+                         ELSE to_char((now() + sc.lease::interval) AT TIME ZONE 'UTC', fmt) END,
+      'previous', CASE WHEN sc.has_previous <> 'none' THEN jsonb_set(asked_over, '{state}', to_jsonb(sc.has_previous)) END);
+    -- (A key that is not there is a lease that was never written: an API from before the lease.)
+    IF sc.lease = 'none' THEN planted := planted - 'leaseUntil'; END IF;
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt", "suggestions")
+    VALUES (school, yr, app.current_user_id(), 'SUCCEEDED', 'INFEASIBLE', now(), planted)
+    RETURNING id INTO rid;
+
+    PERFORM set_config('request.jwt.claims', '', true);
+    swept := app.optimization_jobs_sweep();
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    IF swept <> 0 THEN RAISE EXCEPTION 'g6b 1: %: the sweep reported % run(s): an analysis is not a run it counts', sc.label, swept; END IF;
+    SELECT "suggestions" INTO after FROM "OptimizationJobs" WHERE id = rid;
+
+    want := CASE sc.outcome
+      WHEN 'untouched' THEN planted
+      WHEN 'previous' THEN asked_over
+      ELSE jsonb_build_object(
+             'version', 1, 'state', 'FAILED', 'startedAt', planted->'startedAt',
+             'finishedAt', CASE sc.outcome WHEN 'failed' THEN planted->'leaseUntil' ELSE to_jsonb(now_text) END,
+             'verdict', NULL, 'verified', false, 'total', 0, 'searchSeconds', NULL, 'verifySeconds', NULL,
+             'changes', '[]'::jsonb, 'failure', 'ABANDONED', 'leaseUntil', NULL, 'previous', NULL)
+    END;
+    IF after IS DISTINCT FROM want THEN
+      RAISE EXCEPTION 'g6b 1: %: swept to %, expected %', sc.label, after, want;
+    END IF;
+    -- The row is the run's own otherwise: nothing but the column was touched.
+    IF NOT EXISTS (SELECT 1 FROM "OptimizationJobs" WHERE id = rid AND status = 'SUCCEEDED' AND "solverStatus" = 'INFEASIBLE' AND "errorCode" IS NULL) THEN
+      RAISE EXCEPTION 'g6b 1: %: the run itself was touched', sc.label;
+    END IF;
+    -- En andra gång städar ingenting till.
+    PERFORM set_config('request.jwt.claims', '', true);
+    PERFORM app.optimization_jobs_sweep();
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    IF (SELECT "suggestions" FROM "OptimizationJobs" WHERE id = rid) IS DISTINCT FROM want THEN
+      RAISE EXCEPTION 'g6b 1: %: a second sweep changed the column', sc.label;
+    END IF;
+    DELETE FROM "OptimizationJobs" WHERE id = rid;
+    tested := tested + 1;
+  END LOOP;
+  IF tested <> 15 THEN RAISE EXCEPTION 'g6b 1: % scenarios ran, expected 15', tested; END IF;
+  RAISE NOTICE 'g6b 1: an analysis past its lease (or, with none, six minutes) is written as abandoned or as the analysis it was asked over, at the edges, and none else is touched';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- g6b 2: Genereras städning är som den var, och en analys i samma anrop ändrar inte vad den räknar.
+--
+-- Ett anrop som städar en Generera-körning och en analys räknar körningen ensam (1), och körningen blir som section 533 säger. Värden
+-- som ingen skrev genom tjänsten (en startedAt som inte är en tid, en tom sträng, ett tal) kastar inget: funktionen är också Genereras.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  gen uuid;
+  other_yr uuid;
+  ana uuid;
+  swept integer;
+  got record;
+  admin_claims constant text := json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text;
+  fmt constant text := 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"';
+  bad text;
+  bads text[] := ARRAY['{"state":"RUNNING"}', '{"state":"RUNNING","startedAt":"yesterday"}', '{"state":"RUNNING","startedAt":""}',
+                       '{"state":"RUNNING","startedAt":7}', '{"state":"RUNNING","startedAt":null,"leaseUntil":null}',
+                       '{"state":"RUNNING","startedAt":"2027-02-31T25:61:61.000Z"}', '{"state":"RUNNING","leaseUntil":"2027-02-31T25:61:61.000Z"}',
+                       '{"state":"RUNNING","leaseUntil":{"a":1}}', '{"state":["RUNNING"]}', '{"state":"RUNNING","previous":"x"}'];
+BEGIN
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "createdAt", "heartbeatAt", "leaseUntil")
+  VALUES (school, yr, 'RUNNING', now() - interval '6 minutes', now() - interval '5 minutes', now() - interval '1 second') RETURNING id INTO gen;
+  -- An analysis of an earlier run of the same year, lapsed, in the same sweep.
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt", "createdAt", "suggestions")
+  VALUES (school, yr, app.current_user_id(), 'SUCCEEDED', 'INFEASIBLE', now() - interval '1 hour', now() - interval '2 hours',
+          jsonb_build_object('version', 1, 'state', 'RUNNING', 'startedAt', to_char((now() - interval '10 minutes') AT TIME ZONE 'UTC', fmt),
+                             'finishedAt', NULL, 'verdict', NULL, 'verified', false, 'total', 0, 'searchSeconds', NULL, 'verifySeconds', NULL,
+                             'changes', '[]'::jsonb, 'failure', NULL,
+                             'leaseUntil', to_char((now() - interval '1 minute') AT TIME ZONE 'UTC', fmt), 'previous', NULL))
+  RETURNING id INTO ana;
+
+  PERFORM set_config('request.jwt.claims', '', true);
+  swept := app.optimization_jobs_sweep();
+  PERFORM set_config('request.jwt.claims', admin_claims, true);
+  IF swept <> 1 THEN RAISE EXCEPTION 'g6b 2: the sweep reported % run(s), expected the Generera run alone', swept; END IF;
+  SELECT status::text AS status, "errorCode", "errorParams", "finishedAt", "leaseUntil" INTO got FROM "OptimizationJobs" WHERE id = gen;
+  IF got.status <> 'FAILED' OR got."errorCode" <> 'ENGINE_RUN_ABANDONED' OR got."errorParams" IS NOT NULL
+     OR got."finishedAt" IS DISTINCT FROM got."leaseUntil" THEN
+    RAISE EXCEPTION 'g6b 2: the Generera run was swept to %', row_to_json(got);
+  END IF;
+  IF (SELECT "suggestions"->>'state' || ' ' || ("suggestions"->>'failure') FROM "OptimizationJobs" WHERE id = ana) IS DISTINCT FROM 'FAILED ABANDONED' THEN
+    RAISE EXCEPTION 'g6b 2: the analysis of the same sweep was not written as abandoned';
+  END IF;
+  DELETE FROM "OptimizationJobs" WHERE id IN (gen, ana);
+
+  -- Values nobody wrote through the service: the sweep neither stops nor changes what it does to Generera.
+  FOREACH bad IN ARRAY bads LOOP
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt", "suggestions")
+    VALUES (school, yr, app.current_user_id(), 'SUCCEEDED', 'INFEASIBLE', now(), bad::jsonb) RETURNING id INTO ana;
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "createdAt", "heartbeatAt", "leaseUntil")
+    VALUES (school, yr, 'RUNNING', now() - interval '6 minutes', now() - interval '5 minutes', now() - interval '1 second') RETURNING id INTO gen;
+    PERFORM set_config('request.jwt.claims', '', true);
+    BEGIN
+      swept := app.optimization_jobs_sweep();
+    EXCEPTION WHEN OTHERS THEN
+      RAISE EXCEPTION 'g6b 2: the sweep stopped on the value % with %', bad, SQLERRM;
+    END;
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    IF swept <> 1 OR (SELECT status::text FROM "OptimizationJobs" WHERE id = gen) <> 'FAILED' THEN
+      RAISE EXCEPTION 'g6b 2: with the value % the sweep reported % and Generera''s run is %', bad, swept, (SELECT status FROM "OptimizationJobs" WHERE id = gen);
+    END IF;
+    DELETE FROM "OptimizationJobs" WHERE id IN (gen, ana);
+  END LOOP;
+  RAISE NOTICE 'g6b 2: Generera''s sweep counts and writes what it did, an analysis beside it changes neither, and no value in the column stops it';
+END $$;
+ROLLBACK;

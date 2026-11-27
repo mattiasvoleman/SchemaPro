@@ -5,6 +5,7 @@ import { GROUP_CONFLICTS_OVER_ENGINE_LIMIT } from './optimization-proxy.service'
 import { BLOCK_PARTLY_LOCKED_SUMMARY } from './parallel-blocks';
 import { PLACEMENTS_REFUSED_SUMMARY } from './placed-lessons';
 import {
+  ANALYSIS_LEASE_SECONDS,
   MAX_NAMED,
   MAX_NAME,
   MAX_STORED_BYTES,
@@ -429,18 +430,64 @@ describe('the page\'s view', () => {
 });
 
 describe('an analysis whose process went away', () => {
-  it('is abandoned once it has been RUNNING for longer than any analysis lasts, and not before', () => {
+  const start = Date.parse(STARTED);
+  const lease = ANALYSIS_LEASE_SECONDS * 1000;
+
+  it('holds its place for the lease from its start, and is abandoned once the lease has run out, and not before', () => {
     const running = runningSuggestions(new Date(STARTED));
-    const start = Date.parse(STARTED);
-    expect(isAbandoned(running, new Date(start + STALE_AFTER_MS))).toBe(false);
-    expect(isAbandoned(running, new Date(start + STALE_AFTER_MS + 1))).toBe(true);
-    expect(readAs(running, new Date(start + STALE_AFTER_MS + 1))).toMatchObject({ state: 'FAILED', failure: 'ABANDONED', startedAt: STARTED });
+    expect(running.leaseUntil).toBe(new Date(start + lease).toISOString());
+    expect(isAbandoned(running, new Date(start + lease))).toBe(false);
+    expect(isAbandoned(running, new Date(start + lease + 1))).toBe(true);
+    expect(readAs(running, new Date(start + lease + 1))).toMatchObject({ state: 'FAILED', failure: 'ABANDONED', startedAt: STARTED });
     expect(readAs(running, new Date(start + 1000))).toBe(running);
-    // An abandoned analysis ended once: every poll says the same time, not the time of the poll.
-    const first = readAs(running, new Date(start + STALE_AFTER_MS + 1));
-    const later = readAs(running, new Date(start + STALE_AFTER_MS + 90_000));
+    // An abandoned analysis ended once, when its lease ran out: every poll says the same time, not the time of the poll.
+    const first = readAs(running, new Date(start + lease + 1));
+    const later = readAs(running, new Date(start + lease + 90_000));
     expect(later.finishedAt).toBe(first.finishedAt);
-    expect(first.finishedAt).toBe(new Date(start + STALE_AFTER_MS).toISOString());
+    expect(first.finishedAt).toBe(new Date(start + lease).toISOString());
+  });
+
+  it('is held by a renewed lease for as long as it is renewed: the start no longer decides', () => {
+    // A heartbeat at +150 s pushed the lease to +330 s; at +7 minutes from the start it is still alive, and was never judged by its age.
+    const renewed = { ...runningSuggestions(new Date(STARTED)), leaseUntil: new Date(start + 7 * 60_000).toISOString() };
+    expect(isAbandoned(renewed, new Date(start + STALE_AFTER_MS + 1))).toBe(false);
+    expect(isAbandoned(renewed, new Date(start + 7 * 60_000 + 1))).toBe(true);
+  });
+
+  it('is judged by the old rule when it carries no lease: an analysis an API from before the lease started', () => {
+    const legacy = { ...runningSuggestions(new Date(STARTED)), leaseUntil: null };
+    expect(isAbandoned(legacy, new Date(start + STALE_AFTER_MS))).toBe(false);
+    expect(isAbandoned(legacy, new Date(start + STALE_AFTER_MS + 1))).toBe(true);
+    expect(readAs(legacy, new Date(start + STALE_AFTER_MS + 1)).finishedAt).toBe(new Date(start + STALE_AFTER_MS).toISOString());
+  });
+
+  it('keeps the lease of a RUNNING analysis through the whitelist and drops it from one that has ended', () => {
+    const running = runningSuggestions(new Date(STARTED));
+    expect(suggestionsOf(JSON.parse(JSON.stringify(running)))?.leaseUntil).toBe(running.leaseUntil);
+    const ended = { ...JSON.parse(JSON.stringify(failedSuggestions(STARTED, 'ENGINE_FAILED', NOW))), leaseUntil: running.leaseUntil };
+    expect(suggestionsOf(ended)?.leaseUntil).toBeNull();
+    // A value that is no time is no lease: the old rule judges it, and the analysis is still read.
+    expect(suggestionsOf({ ...JSON.parse(JSON.stringify(running)), leaseUntil: 'soon' })).toMatchObject({ state: 'RUNNING', leaseUntil: null });
+    // ... and so is a time the service never writes, whatever Date.parse makes of it: the sweep and the claim match the shape as text (the
+    // sweep's section g6b 1 has the same value), so a lease here that SQL does not see would judge one analysis by two rules.
+    for (const written of ['2027-03-13T09:00:00Z', '2027-03-13T09:00:00.000+01:00', '2027-03-13', '2027-03-13T09:00:00.0000Z', 1_800_000_000_000]) {
+      expect(suggestionsOf({ ...JSON.parse(JSON.stringify(running)), leaseUntil: written })).toMatchObject({ state: 'RUNNING', leaseUntil: null });
+    }
+    // An analysis written before the field has none.
+    const { leaseUntil: _gone, ...older } = JSON.parse(JSON.stringify(running));
+    expect(suggestionsOf(older)).toMatchObject({ state: 'RUNNING', leaseUntil: null });
+  });
+
+  it('is never shown with its lease: the page is told RUNNING, not for how long', () => {
+    const view = viewOf(runningSuggestions(new Date(STARTED)), new Map());
+    expect(view).not.toHaveProperty('leaseUntil');
+    expect(view).not.toHaveProperty('previous');
+  });
+
+  it('has no lease once it has ended, whichever way', () => {
+    expect(failedSuggestions(STARTED, 'ABANDONED', NOW).leaseUntil).toBeNull();
+    expect(refusedSuggestions(STARTED, NOW).leaseUntil).toBeNull();
+    expect(stored(answer([cap()])).leaseUntil).toBeNull();
   });
 
   it('is never abandoned once it has ended', () => {

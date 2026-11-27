@@ -8,6 +8,8 @@ import type { PrismaService } from '../database/prisma.service';
 import type { AiEngineSuggestChangesResponse } from './interfaces/suggest-changes.interface';
 import type { OptimizationProxyService, PrepareResult } from './optimization-proxy.service';
 import {
+  ANALYSIS_HEARTBEAT_MS,
+  ANALYSIS_LEASE_SECONDS,
   PREFLIGHT_REFUSAL_CODES,
   failedSuggestions,
   runningSuggestions,
@@ -439,6 +441,150 @@ describe('SuggestionsService', () => {
       const abandoned = { ...runningSuggestions(new Date(Date.now() - 20 * 60 * 1000), listed) };
       const { claimed } = await pressOver(abandoned, async () => answer());
       expect(claimed.previous).toMatchObject({ state: 'DONE', verdict: 'CHANGES' });
+    });
+  });
+
+  describe('its lease (g385-L-4)', () => {
+    const sqlOf = (call: unknown[]): string => ((call[0] as Prisma.Sql).sql ?? '').replace(/\s+/g, ' ');
+    /** The statements that renew the lease: they set it with jsonb_set over the column and write nothing else. */
+    const renewals = (): unknown[][] => columnCalls().filter((call) => sqlOf(call).startsWith('UPDATE "OptimizationJobs" SET "suggestions" = jsonb_set("suggestions"'));
+    /** An engine call that answers when the test says so. */
+    function engineHeldOpen() {
+      let release!: (value: AiEngineSuggestChangesResponse) => void;
+      proxy.callAiEngine.mockImplementation(() => new Promise<AiEngineSuggestChangesResponse>((resolve) => (release = resolve)));
+      return { release: (value: AiEngineSuggestChangesResponse = answer()) => release(value) };
+    }
+
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it('takes the place with a lease from the database\'s clock, and only where the place is free', async () => {
+      await service.start(JOB_ID, user);
+      await service.settled();
+      const claim = columnCalls()[0]!;
+      const text = sqlOf(claim);
+      expect(text).toContain(`jsonb_set(`);
+      expect(text).toContain(`'{leaseUntil}'`);
+      expect(text).toContain(`to_char((now() + make_interval(secs =>`);
+      expect((claim[0] as Prisma.Sql).values).toContain(ANALYSIS_LEASE_SECONDS);
+      // Free: no analysis, one that ended, or one that holds no longer. Held is judged by the lease, or by the start for one with none.
+      expect(text).toContain(`"suggestions" IS NULL OR "suggestions"->>'state' <> 'RUNNING' OR NOT (CASE WHEN "suggestions"->>'leaseUntil' ~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$'`);
+      expect(text).toContain(`("suggestions"->>'leaseUntil') COLLATE "C" >= to_char(now() AT TIME ZONE 'UTC'`);
+      expect(text).not.toContain('::timestamptz');
+    });
+
+    it('renews it every half minute while the engine works, over its own analysis, and stops when it has an answer', async () => {
+      const engine = engineHeldOpen();
+      await service.start(JOB_ID, user);
+      const startedAt = writtenBy(columnCalls()[0]!).startedAt;
+      expect(renewals()).toHaveLength(0);
+
+      await jest.advanceTimersByTimeAsync(ANALYSIS_HEARTBEAT_MS * 2);
+      expect(renewals()).toHaveLength(2);
+      const renewal = renewals()[0]![0] as Prisma.Sql;
+      expect(sqlOf(renewals()[0]!)).toContain(`"suggestions"->>'state' = 'RUNNING' AND "suggestions"->>'startedAt' =`);
+      expect(renewal.values).toEqual(expect.arrayContaining([JOB_ID, startedAt, ANALYSIS_LEASE_SECONDS]));
+      expect(prisma.withRls).toHaveBeenLastCalledWith(user, expect.any(Function));
+
+      engine.release();
+      await service.settled();
+      const writes = columnCalls().length;
+      await jest.advanceTimersByTimeAsync(ANALYSIS_HEARTBEAT_MS * 4);
+      expect(columnCalls()).toHaveLength(writes);
+      expect(writtenBy(columnCalls()[columnCalls().length - 1]!)).toMatchObject({ state: 'DONE', startedAt });
+    });
+
+    it('renews at least three times within one lease, so that one renewal that fails (a full pool) is not an abandonment', async () => {
+      // The comment on ANALYSIS_LEASE_SECONDS promises it, and nothing else holds the two numbers together: a beat as long as the lease
+      // abandons an analysis that is alive, the first time its engine call takes longer than the beat.
+      const engine = engineHeldOpen();
+      await service.start(JOB_ID, user);
+      await jest.advanceTimersByTimeAsync(ANALYSIS_LEASE_SECONDS * 1000 - 1);
+      expect(renewals().length).toBeGreaterThanOrEqual(3);
+      engine.release();
+      await service.settled();
+    });
+
+    it('lets a renewal that fails cost nothing: the analysis goes on, and the failure is said', async () => {
+      const engine = engineHeldOpen();
+      tx.$executeRaw.mockImplementation(async (statement: unknown) => {
+        if (sqlOf([statement]).startsWith('UPDATE "OptimizationJobs" SET "suggestions" = jsonb_set("suggestions"')) throw new Error('pool is full');
+        return 1;
+      });
+      await service.start(JOB_ID, user);
+      await jest.advanceTimersByTimeAsync(ANALYSIS_HEARTBEAT_MS);
+      expect(Logger.prototype.warn).toHaveBeenCalledWith(expect.stringContaining('lease not renewed'));
+      engine.release();
+      await expect(service.settled()).resolves.toBeUndefined();
+      expect(writtenBy(columnCalls()[columnCalls().length - 1]!)).toMatchObject({ state: 'DONE' });
+    });
+
+    it('does not start a renewal while the last one is still being written: a full pool is not given more to wait for', async () => {
+      const engine = engineHeldOpen();
+      let stuck = 0;
+      tx.$executeRaw.mockImplementation(async (statement: unknown) => {
+        if (sqlOf([statement]).startsWith('UPDATE "OptimizationJobs" SET "suggestions" = jsonb_set("suggestions"')) {
+          stuck += 1;
+          return new Promise<number>(() => undefined);
+        }
+        return 1;
+      });
+      await service.start(JOB_ID, user);
+      await jest.advanceTimersByTimeAsync(ANALYSIS_HEARTBEAT_MS * 5);
+      expect(stuck).toBe(1);
+      engine.release();
+      await service.settled();
+    });
+
+    it('ends its analyses at once when the service is asked to stop, under the administrator who asked, and renews nothing after', async () => {
+      const engine = engineHeldOpen();
+      await service.start(JOB_ID, user);
+      const startedAt = writtenBy(columnCalls()[0]!).startedAt;
+      prisma.withRls.mockClear();
+
+      await service.onModuleDestroy();
+
+      expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+      const ended = writtenBy(columnCalls()[columnCalls().length - 1]!);
+      expect(ended).toMatchObject({ state: 'FAILED', failure: 'ABANDONED', startedAt, leaseUntil: null });
+      const statements = columnCalls().length;
+      await jest.advanceTimersByTimeAsync(ANALYSIS_HEARTBEAT_MS * 3);
+      expect(columnCalls()).toHaveLength(statements);
+      // The engine's late answer still goes through the write, which is only over a RUNNING analysis with this start (the column's own test).
+      engine.release();
+      await service.settled();
+    });
+
+    it('has nothing to end when nothing is running', async () => {
+      await expect(service.onModuleDestroy()).resolves.toBeUndefined();
+      expect(columnCalls()).toHaveLength(0);
+    });
+
+    it('lets a restart end an analysis that had been asked over a finished one, and gives that one back', async () => {
+      const listed = suggestionsFromEngine(answer(), realiser, '2027-03-05T10:00:00.000Z', new Date('2027-03-05T10:01:30.000Z'));
+      tx.optimizationJob!.findUnique!.mockImplementation(async () => ({
+        ...refused,
+        suggestions: columnCalls().length === 0 ? listed : writtenBy(columnCalls()[0]!),
+      }));
+      engineHeldOpen();
+      await service.start(JOB_ID, user);
+      await service.onModuleDestroy();
+      expect(writtenBy(columnCalls()[columnCalls().length - 1]!)).toEqual(listed);
+    });
+
+    it('answers a second press with the analysis that holds its place, and takes the place of one whose lease has run out', async () => {
+      const held = runningSuggestions(new Date());
+      tx.optimizationJob!.findUnique!.mockResolvedValue({ ...refused, suggestions: held });
+      const same = await service.start(JOB_ID, user);
+      expect(same.state).toBe('RUNNING');
+      expect(columnCalls()).toHaveLength(0);
+      expect(proxy.prepareSchedule).not.toHaveBeenCalled();
+
+      jest.setSystemTime(Date.now() + ANALYSIS_LEASE_SECONDS * 1000 + 1);
+      await service.start(JOB_ID, user);
+      await service.settled();
+      expect(columnCalls().length).toBeGreaterThan(0);
+      expect(proxy.prepareSchedule).toHaveBeenCalledTimes(1);
     });
   });
 
