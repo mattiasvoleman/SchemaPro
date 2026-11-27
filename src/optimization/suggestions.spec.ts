@@ -680,6 +680,20 @@ describe('where the search\'s time went (report)', () => {
     expect(JSON.stringify(result)).not.toMatch(/Matematik|requirementName|teacherIds/);
   });
 
+  it('keeps the steps of a start from an earlier timetable (START) and of a search year by year (YEARS), which the page has words for since #497', () => {
+    const stages = [
+      { stage: 'PRECHECKS', seconds: 0.2 },
+      { stage: 'START', seconds: 4.1 },
+      { stage: 'BUILD', seconds: 6 },
+      { stage: 'YEARS', seconds: 40 },
+      { stage: 'SEARCH_CLEAN', seconds: 9.7 },
+    ];
+    const result = stored(notFound({ report: { ...REPORT(), stages } }));
+    expect(result.report!.stages).toEqual(stages);
+    expect(result.report!.otherSeconds).toBeUndefined();
+    expect(suggestionsOf(result)).toEqual(result);
+  });
+
   it('skips a step the gateway has no name for and carries its seconds, as it does for a Generera', () => {
     const report = { ...REPORT(), stages: [...(REPORT().stages as unknown[]), { stage: 'WARMUP_STEP', seconds: 3 }] };
     const result = stored(notFound({ report }));

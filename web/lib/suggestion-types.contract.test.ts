@@ -163,7 +163,8 @@ describe("the report of a NOT_FOUND (where the analysis' time went)", () => {
   };
   const stagesOf = (text: string, name: string): string[] => {
     const body = new RegExp(`export interface ${name} \\{\\n([\\s\\S]*?)\\n\\}`).exec(text)?.[1] ?? "";
-    const line = /^ {2}stages: \{ stage: ([^;]+); seconds: number \}\[\];/m.exec(body)?.[1] ?? "";
+    // One line in this file's type, several in queries.ts (prettier-free, but written out over lines since #497): both are read.
+    const line = /^ {2}stages: \{\s*stage: ([^;]+);\s*seconds: number;?\s*\}\[\];/m.exec(body)?.[1] ?? "";
     return [...line.matchAll(/"([A-Z_]+)"/g)].map((found) => found[1]!);
   };
 

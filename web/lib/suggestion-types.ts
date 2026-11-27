@@ -33,7 +33,7 @@ export interface SuggestionReport {
   configuredBudgetSeconds: number;
   /** How long the caller said it waits; null when it did not say. */
   callerWaitSeconds: number | null;
-  stages: { stage: "PRECHECKS" | "BUILD" | "SITES" | "SEARCH_CLEAN" | "SEARCH_CLONE" | "PROBE"; seconds: number }[];
+  stages: { stage: "PRECHECKS" | "START" | "BUILD" | "SITES" | "SEARCH_CLEAN" | "YEARS" | "SEARCH_CLONE" | "PROBE"; seconds: number }[];
   /** The seconds of steps the gateway has no name for and left out of `stages`. Absent when there were none. */
   otherSeconds?: number;
   search: {

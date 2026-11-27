@@ -145,6 +145,14 @@ describe("the card says where a search's time went", () => {
     expect(screen.getByText(`${TA}.budget(60)`)).toBeInTheDocument();
   });
 
+  it("names the steps of a start from an earlier timetable (START) and of a search year by year (YEARS), and counts YEARS as a search but START as none", () => {
+    const stages = [{ stage: "PRECHECKS", seconds: 0.2 }, { stage: "START", seconds: 4.1 }, { stage: "BUILD", seconds: 6 }, { stage: "YEARS", seconds: 40 }, { stage: "SEARCH_CLEAN", seconds: 9.7 }] as TimeoutReport["stages"];
+    render(notFound({ report: report({ stages, totalSeconds: 60 }) }));
+    expect(screen.getByText(`${TA}.stage(START|4.1)`)).toBeInTheDocument();
+    expect(screen.getByText(`${TA}.stage(YEARS|40)`)).toBeInTheDocument();
+    expect(screen.getByText(`${TA}.searchNone(2|49.7)`)).toBeInTheDocument();
+  });
+
   it("says nothing of where the time went when the engine sent no report (an engine from before it, an analysis made before)", () => {
     render(notFound({ report: null }));
     expect(screen.getByText(`${NS}.verdict.NOT_FOUND(60)`)).toBeInTheDocument();
