@@ -5114,7 +5114,7 @@
       "interpretationTranslated": "{text} ({section})",
       "knownInterpretation": {
         "band7to9": "Interpretation: § 5 says \"in addition to the time stated in § 4\", but § 4 does not list years 7-9. Read as 100 % (§ 4) and at least a further 10 % (§ 5), which is the inquiry's own summary (prop. 2025/26:196 appendix 1 p. 125).",
-        "unregulated": "Interpretation (T7): hours in the preschool class and in groups with no grade are outside the ordinance's stages (§ 3 names years 1-6 and 7-9, and the proposition says the preschool class is not covered) but are teaching time under § 2. Counted, the teaching time is over the highest level; not counted, it is not. Rastra Schema says over the highest level only when the hours in the stages alone go over, and shows this reason otherwise."
+        "unregulated": "Interpretation (T7): hours in the preschool class and in groups with no grade are outside the ordinance's stages (§ 3 names years 1-6 and 7-9, and the proposition says the preschool class is not covered) but are teaching time under § 2. Counted, the teaching time is over the highest level; not counted, it is not. Rastra timetable says over the highest level only when the hours in the stages alone go over, and shows this reason otherwise."
       },
       "notAnnual": "May differ from the row for teaching per school year under Annual working time, which applies percentage and factor. This figure is the lessons' own time, unweighted. Both count school days.",
       "caption": "Computed from the teaching posts: the lessons' own time over the weeks they run, unweighted and without duties. Not the target, which is the school's own measure. Source: {sfs}, in force from {from}.",
