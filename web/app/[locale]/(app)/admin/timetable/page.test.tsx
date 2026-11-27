@@ -2054,6 +2054,45 @@ describe("the dialogs the page lifts out", () => {
       expect(after.length).toBeGreaterThan(0);
       expect(after).not.toContain(before[0]);
     });
+
+    it("does not offer a time the gateway shuts to the lesson as another school's hour: the page's own check holds no lent room (E3, g503 #503 L-3)", async () => {
+      const before = await dragSlojdOntoMondayEight();
+      expect(before.length).toBeGreaterThan(0);
+      // The first offer is the nearest free time; the gateway says the lesson's room is lent out then, on every day.
+      const [from] = before[0]!.match(/\d{2}:\d{2}/g)!;
+      const shut = Number(from!.slice(0, 2)) * 60 + Number(from!.slice(3, 5));
+      cleanup();
+      toasts.error.mockClear();
+      blockApi.post.mockImplementation(async (path: string) => {
+        if (!path.endsWith("/master-lessons/possible-times")) throw new Error("the gateway is not asked in this test");
+        return {
+          academicYearId: "y-1",
+          subject: { lessonId: "l-slojd", className: "5.1", subjectName: "Slöjd", minutes: 60, lessonIds: ["l-slojd"], isLocked: false, unplaced: false, current: null },
+          stepMinutes: 5,
+          options: [],
+          blockers: {},
+          days: [1, 2, 3, 4, 5].map((dayOfWeek) => ({
+            dayOfWeek,
+            runs: [
+              { dayOfWeek, fromMinutes: 420, toMinutes: shut - 5, kind: "FREE" },
+              { dayOfWeek, fromMinutes: shut, toMinutes: shut, kind: "CLOSED", code: "OTHER_SCHOOL", params: { schools: "Norra skolan" } },
+              { dayOfWeek, fromMinutes: shut + 5, toMinutes: 1080, kind: "FREE" },
+            ],
+          })),
+        };
+      });
+
+      const after = await dragSlojdOntoMondayEight();
+
+      expect(after.length).toBeGreaterThan(0);
+      expect(after.some((text) => text.includes(from!))).toBe(false);
+    });
+
+    it("offers what the page's own check lets through when the gateway cannot be asked", async () => {
+      // beforeEach: the gateway is not asked in this test (it rejects). The dialog opens as it did, with the nearest times.
+      const offered = await dragSlojdOntoMondayEight();
+      expect(offered.length).toBeGreaterThan(0);
+    });
   });
 
   it("searches the week for a free time from Lägg till", async () => {

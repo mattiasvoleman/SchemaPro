@@ -643,12 +643,14 @@ export default function TimetablePage() {
       const hasWeekend = (lessons ?? []).some((l) => l.dayOfWeek > 5);
       // The search lives in the lesson dialogs' chunk, fetched when the page
       // mounted, so this await is normally a resolved promise.
-      loadLessonDialogs().then(({ suggestPlacements }) => {
+      loadLessonDialogs().then(async ({ suggestPlacements, startsTheGatewayLets }) => {
+        // Asked of the gateway as well: the page's check holds no room lent to another school, nor a teacher's lessons there (OTHER_SCHOOL).
+        const lets = await startsTheGatewayLets(id);
         const options = suggestPlacements(candidate, placements, constraints ?? [], {
           days: hasWeekend ? [1, 2, 3, 4, 5, 6, 7] : [1, 2, 3, 4, 5],
           studentGroupOf,
-          // The drag's own judge, so that no time is offered that the drag then refuses (post mr-3).
-          allows: (attempt) => validateChange(id, attempt),
+          // The drag's own judge, so that no time is offered that the drag then refuses (post mr-3), and what the gateway lets through.
+          allows: (attempt) => validateChange(id, attempt) && lets(attempt.dayOfWeek, attempt.startMinutes),
         });
         setSuggesting({ lesson, options });
       }, showError);

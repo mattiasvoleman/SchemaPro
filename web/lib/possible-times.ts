@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { possibleOf } from "@/lib/possible-store";
 
 /*
  * MÖJLIGA TIDER, AS THE BOARD READS THEM (E3).
@@ -94,6 +95,49 @@ export function askPossibleTimes(lessonId: string, signal?: AbortSignal): Promis
 export function runAt(times: PossibleTimes, dayOfWeek: number, startMinutes: number): PossibleRun | null {
   const day = times.days.find((entry) => entry.dayOfWeek === dayOfWeek);
   return day?.runs.find((run) => run.fromMinutes <= startMinutes && startMinutes <= run.toMinutes) ?? null;
+}
+
+/*
+ * WHAT THE DIALOG OF OTHER TIMES MAY OFFER (E3, granskaren g503 #503 L-3).
+ *
+ * After a drop the page refuses it offers the nearest times its own check lets through (handleInvalidDrop, page.tsx). The page's check
+ * holds no lesson of another school and no room lent to one: it let through an hour the lesson's own room is lent out (80 of 4 945
+ * offers in the fall file's worlds with a loan), and the save said no. The gateway's judge holds both, so what it paints "free" is asked
+ * of it here and a start it does not call free is not offered. Nothing is offered that the page itself refuses: this narrows, never widens.
+ */
+
+/** How long the dialog waits for the gateway before it offers what the page's own check lets through, as it did before. */
+export const OFFER_WAIT_MS = 2500;
+
+/** Whether the lesson may start at a time: the gateway's answer for it, read as the dialog needs it (see above). */
+export function letsStartAt(times: PossibleTimes): (dayOfWeek: number, startMinutes: number) => boolean {
+  // The answer for a unit of several lessons (a block) is for the unit, and the dialog moves one lesson of it: nothing is judged here.
+  if (times.subject.lessonIds.length > 1) return () => true;
+  return (dayOfWeek, startMinutes) => {
+    const run = runAt(times, dayOfWeek, startMinutes);
+    // The square the lesson stands on is its own. A start the answer has no run for is one it did not judge. Everything else the judge
+    // refuses (CLOSED, IN_THE_WAY, CROWDED), or lets through only in another room (CHANGE: the dialog moves the lesson in its own).
+    return run === null || run.kind === "FREE" || run.kind === "STANDS";
+  };
+}
+
+/**
+ * The starts the gateway lets the lesson have: from the answer the board already holds for it (a lesson dragged was asked about), else
+ * asked. With no answer in time, or an answer that is not the gateway's shape, every start: the save still says what it says.
+ */
+export async function startsTheGatewayLets(lessonId: string, waitMs = OFFER_WAIT_MS): Promise<(dayOfWeek: number, startMinutes: number) => boolean> {
+  const held = possibleOf(lessonId);
+  if (held) return letsStartAt(held);
+  const asking = new AbortController();
+  const timer = setTimeout(() => asking.abort(), waitMs);
+  try {
+    const times = await Promise.resolve().then(() => askPossibleTimes(lessonId, asking.signal));
+    return times && Array.isArray(times.days) && Array.isArray(times.options) && times.subject ? letsStartAt(times) : () => true;
+  } catch {
+    return () => true;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** The numbered time at a start, when it is one of the best. */
