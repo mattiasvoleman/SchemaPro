@@ -6740,7 +6740,7 @@
       Efter en vägran, och efter en timeout, står under <span class="ui">Senaste
       körning</span> kortet <span class="ui">Vad kan jag ändra?</span> med knappen
       <span class="ui">Räkna fram förslag</span>. Knappen startar en andra körning
-      i motorn, ungefär en och en halv minut, där fem av skolans egna regler får
+      i motorn, cirka två minuter, där fem av skolans egna regler får
       ge vika: lärarens dagstak, en deltidstjänsts dagar, ämnets högsta antal
       lektioner per dag, dagar emellan och en låst sal. Körningen lägger inget
       schema och ändrar ingenting. Svaret är upp till tre ändringar, billigast
@@ -6772,6 +6772,14 @@
         räcka utan de andra.</li>
       <li><strong>Kan hjälpa (inte kontrollerat).</strong> Motorn lade en vecka där
         reglerna fick ge vika men hann inte kontrollera att ändringarna räcker.</li>
+      <li><strong>Mindre räcker inte.</strong> Står under en ändring med en siffra
+        (ett dagstak, antal lektioner per dag, dagar emellan) när motorn har
+        <em>bevisat</em> att ett steg lägre inte går, med de andra ändringarna i
+        listan som de är. Står det i stället att motorn prövade ett steg lägre
+        men inte hann avgöra, är siffran den lägsta motorn hittade en vecka för,
+        inte säkert den lägsta som går. Står det ingenting prövade motorn inte.
+        En deltidstjänsts dagar har ingen siffra på kortet, och därmed ingen
+        sådan rad.</li>
       <li><strong>Minst</strong> och <strong>Mätt i ett prov</strong>, under
         <span class="ui">Det som redan är känt</span>, står innan du har bett om
         något: ett dagstak som måste vara <em>minst</em> så här stort (ett minimum,
@@ -6784,7 +6792,9 @@
       timeout kan komma igen. Ändringarna är de motorn hittade, och det är inte
       säkert att de är de billigaste. Och en timeout har inget bevis i sig: hittar
       motorn inget schema inom sin tid står det exakt det, och att det inte är
-      något bevis för att veckan är omöjlig. En deltidstjänsts dagar visas inte
+      något bevis för att veckan är omöjlig. Då säger kortet också var analysens tid
+      gick: förberedelserna, sökningarna och, om sökningen fick kortare tid än
+      motorn brukar ge den, varför. En deltidstjänsts dagar visas inte
       på kortet, för någon: varken vilken tjänst eller vilken siffra. Rektor, en
       administratör med full behörighet och den med HR-läs ser dem under
       <span class="ui">Tjänstefördelning</span>. Förslagen räknas på veckan som
