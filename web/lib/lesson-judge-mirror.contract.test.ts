@@ -119,6 +119,36 @@ describe("the cases", () => {
     expect(rich.flatMap((world) => world.lessons.filter((lesson) => (world.groups ?? []).some((group) => group.key === lesson.class))).length, "lessons of a teaching group").toBeGreaterThan(10);
     expect(rich.flatMap((world) => world.meals).filter((meal) => meal.startDate).length, "meals in a window").toBeGreaterThan(5);
     expect(rich.flatMap((world) => world.loans ?? []).length, "lent rooms").toBeGreaterThan(10);
+    // The possible-times probe holds its prune exact (it lets nothing through that the judge refuses) only in a world where no lesson names a
+    // pupil, which it cannot see: the file keeps worlds with the richer rules and none of that, or the exactness would be held for them nowhere.
+    expect(rich.filter((world) => !world.lessons.some((lesson) => (lesson.participants ?? []).length > 0)).length, "richer worlds with no pupil named on a lesson").toBeGreaterThanOrEqual(4);
+    // The edge worlds (probe-domaren.ts generateEdgeWorlds): a comparison is proved by the case on each side of its turn, and a random world
+    // seldom lands on it. Each of these is a turn the other worlds do not reach, and a case on both sides of it.
+    const allLessons = worlds.flatMap((world) => world.lessons.map((lesson) => ({ world, lesson })));
+    const sameDay = (a: string | undefined, b: string | undefined) => a !== undefined && a === b;
+    expect(
+      worlds.some((world) => world.lessons.some((a) => world.lessons.some((b) => a !== b && sameDay(a.endDate, b.startDate)))),
+      "two windows that meet on one day",
+    ).toBe(true);
+    expect(
+      allLessons.some(({ world, lesson }) => world.meals.some((meal) => meal.class === lesson.class && (sameDay(lesson.startDate, meal.endDate) || sameDay(lesson.endDate, meal.startDate)))),
+      "a lesson window that touches the first or last day of a meal's",
+    ).toBe(true);
+    expect(
+      worlds.some((world) => world.lessons.some((a) => world.lessons.some((b) => a !== b && (a.participants ?? []).some((pupil) => (b.participants ?? []).includes(pupil))))),
+      "a pupil named on two lessons",
+    ).toBe(true);
+    expect(
+      allLessons.some(({ world, lesson }) => {
+        const frameOf = (key: string) => world.frames.find((frame) => { const grade = world.classes.find((entry) => entry.key === key)?.grade; return grade !== undefined && frame.grades[0] <= grade && grade <= frame.grades[1]; });
+        return (lesson.extra ?? []).some((key) => frameOf(key)?.end !== frameOf(lesson.class)?.end);
+      }),
+      "an extra class of another stage, whose ramtid is not the class's own",
+    ).toBe(true);
+    expect(
+      rich.some((world) => (world.groups ?? []).some((group) => world.frames.length > 0 && group.members.every((pupil) => (world.pupils ?? []).find((entry) => entry.key === pupil)!.class !== "7A") && world.frames.every((frame) => frame.grades[1] < 8))),
+      "a teaching group none of whose pupils the ramtid reaches",
+    ).toBe(true);
     // A reason the file carries that this test has no kind for would be compared with nothing.
     for (const entry of cases) for (const reason of entry.verdict.reasons) expect(KIND, `${entry.name}: ${reason}`).toHaveProperty(reason);
     // A refusal says at least one reason, and a case that holds says none.

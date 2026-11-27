@@ -64,6 +64,8 @@ const SEED = 20261125;
 /** How many of the richer worlds the file holds, and how many drags each (generateRichWorlds). */
 const RICH_WORLDS = 14;
 const RICH_DRAGS = 20;
+/** How many richer worlds with no pupil named on a lesson follow them (generateRichWorlds, `named: false`). */
+const UNNAMED_WORLDS = 4;
 
 type Recurrence = 'ALL_WEEKS' | 'ODD_WEEKS' | 'EVEN_WEEKS';
 export interface World {
@@ -252,8 +254,12 @@ const YEAR_TO = '2027-06-11';
 const windowsOverlap = (a: { startDate?: string; endDate?: string }, b: { startDate?: string; endDate?: string }): boolean =>
   !(a.endDate && b.startDate && a.endDate < b.startDate) && !(b.endDate && a.startDate && b.endDate < a.startDate);
 
-export function generateRichWorlds(count: number, perWorld: number): { worlds: World[]; drags: Drag[][] } {
-  const next = random(RICH_SEED);
+export function generateRichWorlds(count: number, perWorld: number, options: { seed?: number; named?: boolean } = {}): { worlds: World[]; drags: Drag[][] } {
+  // `named: false` leaves out the pupils a lesson names (MasterLessonStudents): the possible-times probe (probe-mojliga-tider.ts) cannot see
+  // such a pupil in its prune and so drops "the prune lets nothing through that the judge refuses" in a world that has one, and these worlds are
+  // where that exactness is held for the richer rules (extra classes, teaching groups, windows, a lent room).
+  const named = options.named ?? true;
+  const next = random(options.seed ?? RICH_SEED);
   const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)]!;
   const between = (low: number, high: number): number => low + Math.floor(next() * (high - low + 1));
   const sample = <T>(items: readonly T[], size: number): T[] => {
@@ -333,7 +339,7 @@ export function generateRichWorlds(count: number, perWorld: number): { worlds: W
         minutes: pick([40, 45, 50, 60]),
         ...(next() < 0.15 ? { recurrence: pick(['ODD_WEEKS', 'EVEN_WEEKS'] as const) } : {}),
         ...(next() < 0.2 ? { extra: [pick(holders.filter((key) => key !== klass))] } : {}),
-        ...(next() < 0.12 ? { participants: sample(pupils, between(1, 2)).map((pupil) => pupil.key).sort() } : {}),
+        ...(next() < 0.12 && named ? { participants: sample(pupils, between(1, 2)).map((pupil) => pupil.key).sort() } : {}),
         ...(next() < 0.3 ? (([from, to]) => ({ startDate: from, endDate: to }))(pick(WINDOWS)) : {}),
       };
       if (lesson.coTeacher === lesson.teacher) delete lesson.coTeacher;
@@ -374,6 +380,181 @@ export function generateRichWorlds(count: number, perWorld: number): { worlds: W
       }),
     );
   }
+  return { worlds, drags };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The edge worlds (granskaren g503): where a rule's comparison turns, asked on both sides of the turn.
+//
+// The richer worlds are random, and what a random world lacks is the exact turn of a comparison: a pupil named on TWO lessons (the pupil is
+// in neither lesson's class), a window of dates that begins on the day another ends (the days are inclusive), a lesson's window that touches a
+// meal's first or last day, a stage whose ramtid is not the class's own (an extra class from the younger stage), a teaching group whose pupils
+// are all of years the ramtid does not reach, and an hour lent to another school that a lesson touches without covering. Written by hand,
+// each with the drags on both sides of its turn; after the richer worlds in the file, so that every earlier case stays where it was.
+// ---------------------------------------------------------------------------------------------------------------------
+
+export function generateEdgeWorlds(): { worlds: World[]; drags: Drag[][] } {
+  const plain = (over: Partial<World> & Pick<World, 'lessons'>): World => ({
+    classes: [
+      { key: '7A', grade: 7 },
+      { key: '8B', grade: 8 },
+      { key: '9C', grade: 9 },
+    ],
+    teachers: ['T1', 'T2', 'T3'],
+    rooms: ['R1', 'R2', 'R3'],
+    subjects: ['Ma', 'Sv'],
+    unavailable: [],
+    frames: [],
+    meals: [],
+    ...over,
+  });
+  const pupilsOf = (...classes: string[]): { key: string; class: string }[] => classes.flatMap((key) => [1, 2].map((n) => ({ key: `${key}:${n}`, class: key })));
+  const lesson = (key: string, klass: string, subject: string, teacher: string, day: number, start: string, extra: Partial<World['lessons'][number]> = {}): World['lessons'][number] => ({ key, class: klass, subject, teacher, day, start, minutes: 60, ...extra });
+  const to = (name: string, day: number, start: string): Drag => ({ lesson: name, day, start });
+
+  const worlds: World[] = [];
+  const drags: Drag[][] = [];
+  const add = (world: World, asked: Drag[]): void => {
+    worlds.push(world);
+    drags.push(asked);
+  };
+
+  // 1. A pupil named on two lessons, in neither lesson's class: the pupil is busy by the naming alone.
+  add(
+    plain({
+      pupils: pupilsOf('7A', '8B', '9C'),
+      lessons: [
+        lesson('N1', '9C', 'Ma', 'T1', 1, '09:00', { room: 'R1', minutes: 45, participants: ['8B:1'] }),
+        lesson('N2', '7A', 'Sv', 'T2', 2, '10:00', { room: 'R2', minutes: 45, participants: ['8B:1'] }),
+        lesson('N3', '8B', 'Ma', 'T3', 3, '09:00', { room: 'R3', minutes: 45 }),
+        lesson('N4', '7A', 'Ma', 'T2', 4, '09:00', { minutes: 45, participants: ['9C:2'] }),
+      ],
+    }),
+    [
+      to('N2', 1, '09:00'), // the pupil is named on both: PUPILS
+      to('N2', 1, '09:40'), // 9:40 to 10:25 meets 9:00 to 9:45 by five minutes
+      to('N2', 1, '09:45'), // begins where N1 ends: free
+      to('N2', 1, '08:20'), // ends five minutes into N1
+      to('N2', 1, '08:15'), // ends where N1 begins: free
+      to('N1', 2, '10:00'), // and the other way
+      to('N3', 1, '09:00'), // the other lesson names a pupil of this class (8B:1): PUPILS
+      to('N4', 3, '09:00'), // 9C:2 is named on N4 and no lesson of the hour has 9C or the pupil: free
+      to('N4', 1, '09:00'), // N1 is 9C's lesson: the named pupil (9C:2) is of its class
+    ],
+  );
+
+  // 2. Windows of dates that meet on one day (inclusive), and windows that do not.
+  add(
+    plain({
+      lessons: [
+        lesson('A1', '7A', 'Ma', 'T1', 1, '09:00', { room: 'R1', startDate: '2026-08-31', endDate: '2026-10-02' }),
+        lesson('A2', '8B', 'Sv', 'T1', 2, '10:00', { room: 'R2', startDate: '2026-10-02', endDate: '2026-12-18' }),
+        lesson('A3', '7A', 'Sv', 'T2', 3, '09:00', { room: 'R3', startDate: '2026-08-31', endDate: '2026-10-01' }),
+        lesson('A4', '8B', 'Ma', 'T2', 4, '10:00', { startDate: '2026-10-02', endDate: '2026-12-18' }),
+      ],
+    }),
+    [
+      to('A2', 1, '09:00'), // A1 ends the day A2 begins: they meet on that day, and share a teacher
+      to('A2', 1, '09:30'),
+      to('A2', 1, '10:00'), // begins where A1 ends: free
+      to('A1', 2, '10:00'), // and the other way
+      to('A4', 3, '09:00'), // A3 ends the day before A4 begins: they never meet
+      to('A4', 3, '09:30'),
+      to('A3', 4, '10:00'),
+    ],
+  );
+
+  // 3. A lesson's window against a class's meals, that has another meal in each part of the läsår: the meal's first and last day are the meal's.
+  add(
+    plain({
+      meals: [
+        { class: '7A', day: 1, start: '11:00', end: '11:45', startDate: '2026-08-17', endDate: '2026-12-20' },
+        { class: '7A', day: 1, start: '11:30', end: '12:15', startDate: '2027-01-11', endDate: '2027-06-06' },
+      ],
+      lessons: [
+        lesson('B1', '7A', 'Ma', 'T1', 2, '09:00', { startDate: '2026-12-20', endDate: '2027-01-03' }),
+        lesson('B2', '7A', 'Ma', 'T2', 3, '09:00', { startDate: '2026-12-21', endDate: '2027-01-10' }),
+        lesson('B3', '7A', 'Ma', 'T1', 4, '09:00', { startDate: '2026-12-28', endDate: '2027-01-11' }),
+        lesson('B4', '7A', 'Ma', 'T2', 5, '09:00'),
+      ],
+    }),
+    [
+      to('B1', 1, '11:15'), // begins on the autumn meal's last day: LUNCH
+      to('B2', 1, '11:15'), // between the two meals, which it meets on no day: free
+      to('B2', 1, '11:30'),
+      to('B3', 1, '11:30'), // ends on the spring meal's first day: LUNCH
+      to('B3', 1, '11:00'), // the autumn meal's hour, and its window has ended: 11:00 to 12:00 meets the spring meal (11:30), so LUNCH too
+      to('B3', 1, '12:15'), // after both meals: free
+      to('B4', 1, '11:15'), // no window: every meal
+      to('B4', 1, '12:20'),
+    ],
+  );
+
+  // 4. The ramtid of each stage, and a lesson of the older stage with a class of the younger as an extra class.
+  add(
+    plain({
+      frames: [
+        { grades: [7, 7], start: '08:00', end: '14:30' },
+        { grades: [8, 9], start: '08:00', end: '16:00' },
+      ],
+      lessons: [
+        lesson('F1', '8B', 'Ma', 'T1', 1, '09:00', { room: 'R1', extra: ['7A'] }),
+        lesson('F2', '7A', 'Sv', 'T2', 2, '09:00', { room: 'R2' }),
+        lesson('F3', '8B', 'Sv', 'T3', 3, '09:00', { room: 'R3' }),
+        lesson('F4', '9C', 'Ma', 'T2', 4, '09:00', { extra: ['8B'] }),
+      ],
+    }),
+    [
+      to('F1', 1, '14:00'), // the extra class (7A) has closed at 14:30: FRAME
+      to('F1', 1, '13:30'), // ends at 14:30 on the minute: free
+      to('F1', 1, '13:35'), // five minutes over: FRAME
+      to('F2', 2, '14:00'),
+      to('F3', 3, '14:30'), // 8B alone: its stage is open to 16:00
+      to('F4', 4, '15:00'), // 9C and 8B: both open
+      to('F4', 4, '15:05'), // ends 16:05: FRAME
+    ],
+  );
+
+  // 5. A teaching group whose pupils are all of years the ramtid does not reach, and one with a pupil it does.
+  add(
+    plain({
+      pupils: pupilsOf('7A', '8B'),
+      groups: [
+        { key: 'G1', members: ['8B:1', '8B:2'] },
+        { key: 'G2', members: ['7A:1', '8B:1'] },
+      ],
+      frames: [{ grades: [7, 7], start: '08:00', end: '14:30' }],
+      lessons: [lesson('G1L', 'G1', 'Ma', 'T1', 1, '09:00'), lesson('G2L', 'G2', 'Sv', 'T2', 2, '09:00'), lesson('C7', '7A', 'Ma', 'T3', 3, '09:00')],
+    }),
+    [
+      to('G1L', 1, '14:00'), // only 8B's pupils: the stage's ramtid is not theirs
+      to('G2L', 2, '14:00'), // 7A:1 is in it: FRAME
+      to('G2L', 2, '13:30'),
+      to('C7', 3, '14:00'),
+    ],
+  );
+
+  // 6. An hour lent to another school, touched and covered: the borrowed hour is the room's from its first minute to its last.
+  add(
+    plain({
+      loans: [{ room: 'R1', day: 1, start: '09:00', end: '10:00' }],
+      lessons: [
+        lesson('S1', '7A', 'Ma', 'T1', 1, '12:00', { room: 'R2' }),
+        lesson('S2', '8B', 'Ma', 'T2', 2, '08:00', { room: 'R2' }),
+        lesson('S3', '9C', 'Ma', 'T3', 3, '08:00', { room: 'R1' }),
+      ],
+    }),
+    [
+      to('S3', 1, '08:00'), // ends where the loan begins: free
+      to('S3', 1, '08:05'), // five minutes into the loan: OTHER_SCHOOL
+      to('S3', 1, '09:00'),
+      to('S3', 1, '09:55'), // the loan's last five minutes: OTHER_SCHOOL
+      to('S3', 1, '10:00'), // begins where the loan ends: free
+      to('S3', 2, '09:00'), // the loan is a Monday's: free on a Tuesday
+      to('S2', 1, '09:00'), // another room: free
+    ],
+  );
+
   return { worlds, drags };
 }
 
@@ -548,6 +729,23 @@ export async function domarenChecks(owner: Client, api: PrismaService, check: (l
     fixture.cases.push(
       ...rich.worlds.flatMap((_world, index) =>
         rich.drags[index]!.map((drag, at) => ({ name: `r${index}-d${at}: ${drag.lesson} to day ${drag.day} at ${drag.start}`, world: FIRST_RICH_WORLD + index, drag, verdict: { ok: true, reasons: [] } })),
+      ),
+    );
+    // After those: richer worlds again, from a seed of their own and with no pupil named on a lesson, so that the possible-times probe holds the
+    // prune exact in them for the extra classes, the teaching groups, the windows and the lent rooms (`named: false`), and the edge worlds.
+    assert.equal(fixture.worlds.length, FIRST_RICH_WORLD + RICH_WORLDS, 'the richer worlds are the fourteen');
+    const unnamed = generateRichWorlds(UNNAMED_WORLDS, RICH_DRAGS, { seed: RICH_SEED + 1, named: false });
+    fixture.worlds.push(...unnamed.worlds);
+    fixture.cases.push(
+      ...unnamed.worlds.flatMap((_world, index) =>
+        unnamed.drags[index]!.map((drag, at) => ({ name: `u${index}-d${at}: ${drag.lesson} to day ${drag.day} at ${drag.start}`, world: FIRST_RICH_WORLD + RICH_WORLDS + index, drag, verdict: { ok: true, reasons: [] } })),
+      ),
+    );
+    const edge = generateEdgeWorlds();
+    fixture.worlds.push(...edge.worlds);
+    fixture.cases.push(
+      ...edge.worlds.flatMap((_world, index) =>
+        edge.drags[index]!.map((drag, at) => ({ name: `e${index}-d${at}: ${drag.lesson} to day ${drag.day} at ${drag.start}`, world: FIRST_RICH_WORLD + RICH_WORLDS + UNNAMED_WORLDS + index, drag, verdict: { ok: true, reasons: [] } })),
       ),
     );
   }
