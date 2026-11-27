@@ -263,6 +263,36 @@ describe('planWriteIn', () => {
     });
   });
 
+  describe('what answers a row that is left (granskaren g505, L-1: the key\'s length and window, and the count of posts)', () => {
+    // The post is written by its first row; its second row is left, and the lesson that answers the second is the one at ITS slot, its length and its weeks.
+    const plan = (existing: ExistingPlacedLesson[], post_ = post()) =>
+      planWriteIn(
+        input({
+          rows: [row({ id: 'writes', dayOfWeek: 2 }), row({ id: 'left', roomId: null })],
+          verdicts: [ok(0), ok(1)],
+          posts: posts(post_),
+          existing,
+        }),
+      );
+
+    it('keeps the lesson of the slot the left row stands at, and replaces another length starting at the same time', () => {
+      const answers = lesson({ id: 'answers' });
+      const otherLength = lesson({ id: 'other-length', endTime: time('09:40') });
+      expect(plan([answers]).deleteIds).toEqual([]);
+      expect(plan([otherLength]).deleteIds).toEqual(['other-length']);
+    });
+
+    it('does not take a lesson of another window for the left row\'s: the post\'s dates moved since it was written', () => {
+      const otherWindow = lesson({ id: 'other-window', startDate: new Date('2027-01-11T00:00:00.000Z') });
+      expect(plan([otherWindow]).deleteIds).toEqual(['other-window']);
+    });
+
+    it('counts a post once however many lessons its rows write', () => {
+      const two = planWriteIn(input({ rows: [row({ id: 'r1' }), row({ id: 'r2', dayOfWeek: 3 })], verdicts: [ok(0), ok(1)] }));
+      expect([two.creates.length, two.postsWritten]).toEqual([2, 1]);
+    });
+  });
+
   it('writes nothing and replaces nothing for a year with no förläggning', () => {
     const plan = planWriteIn(input({ rows: [], verdicts: [] }));
     expect(plan).toEqual({ creates: [], deleteIds: [], notWritten: [], postsWritten: 0 });
