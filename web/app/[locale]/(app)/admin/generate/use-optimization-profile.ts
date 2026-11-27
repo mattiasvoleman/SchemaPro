@@ -39,7 +39,8 @@ interface ProfileView {
   updatedAt: string | null;
 }
 
-export type ProfileStatus = "loading" | "idle" | "saving" | "saved" | "failed";
+/** "unreadable": the school's profile could not be read, so nothing may be saved over it. "failed": a save did not go through. */
+export type ProfileStatus = "loading" | "idle" | "saving" | "saved" | "failed" | "unreadable";
 
 /** What the browser held, if it is a profile: five whole weights 0..1000 and nothing else, else null. */
 export function browserProfile(raw: string | null): ProfileWeights | null {
@@ -61,40 +62,71 @@ export function browserProfile(raw: string | null): ProfileWeights | null {
   }
 }
 
+const readProfile = () => api.get<ProfileView>("/api/v1/optimization/profile");
+
 export function useOptimizationProfile(): {
   weights: ProfileWeights;
   setWeight: (key: keyof ProfileWeights, value: number) => void;
-  /** Whether the sliders may be moved: the signed-in administrator writes Schemaläggning. */
+  /**
+   * Whether the sliders may be moved: the signed-in administrator writes Schemaläggning AND the school's profile has been read. A move made
+   * before it is read (or when it cannot be) would be saved as the defaults with that one weight changed, over the school's own four.
+   */
   canSave: boolean;
   status: ProfileStatus;
 } {
   const t = useTranslations("common");
   const queryClient = useQueryClient();
   const { profile } = useProfile();
-  const canSave = profileWrites(profile.adminProfile, "SCHEMALAGGNING");
+  const mayWrite = profileWrites(profile.adminProfile, "SCHEMALAGGNING");
   const [weights, setWeights] = useState<ProfileWeights>(DEFAULT_WEIGHTS);
   const [status, setStatus] = useState<ProfileStatus>("loading");
-  // The latest weights the page holds, for the save that fires later, and whether the reader has moved a slider before the school's profile came.
+  // The latest weights the page holds, for the save that fires later.
   const latest = useRef(weights);
-  const touched = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The weights this reader has moved since the last save that went through: the only ones a save may put over what the school holds.
+  const moved = useRef(new Set<keyof ProfileWeights>());
 
   const query = useQuery({
     queryKey: PROFILE_KEY,
     retry: false,
     staleTime: Number.POSITIVE_INFINITY,
-    queryFn: () => api.get<ProfileView>("/api/v1/optimization/profile"),
+    // Not kept when the page is left: a page opened again (even within the cache's five minutes) reads what the school holds now.
+    gcTime: 0,
+    queryFn: readProfile,
   });
+  const loaded = query.isSuccess;
   const save = useMutation({
     mutationFn: (next: ProfileWeights) => api.put<ProfileView>("/api/v1/optimization/profile", next),
     onSuccess: (view) => queryClient.setQueryData(PROFILE_KEY, view),
   });
 
+  /**
+   * Saves `next` for the school. With `keys` (a reader's moves) the school's profile is read again first and only those weights are put over
+   * it: a save replaces all five, and a colleague may have saved since this page read, so the four a reader did not touch are the school's
+   * now and not this page's. Without them (what the browser held, for a school with none) `next` is saved as it stands.
+   */
   const saveNow = useCallback(
-    async (next: ProfileWeights): Promise<boolean> => {
+    async (next: ProfileWeights, keys?: readonly (keyof ProfileWeights)[]): Promise<boolean> => {
       setStatus("saving");
       try {
-        await save.mutateAsync(next);
+        let sent = next;
+        if (keys) {
+          const fresh = await queryClient.fetchQuery({ queryKey: PROFILE_KEY, queryFn: readProfile, staleTime: 0 });
+          if (fresh.stored) {
+            sent = { ...fresh.weights };
+            for (const key of keys) sent[key] = next[key];
+          }
+        }
+        const view = await save.mutateAsync(sent);
+        if (keys) {
+          // What went through is no longer "moved", unless the slider moved again meanwhile; with nothing more on its way the sliders show what
+          // the school holds, a colleague's weights included.
+          for (const key of keys) if (latest.current[key] === next[key]) moved.current.delete(key);
+          if (moved.current.size === 0 && !timer.current) {
+            latest.current = view.weights;
+            setWeights(view.weights);
+          }
+        }
         setStatus("saved");
         return true;
       } catch (error) {
@@ -103,10 +135,10 @@ export function useOptimizationProfile(): {
         return false;
       }
     },
-    [save, t],
+    [save, queryClient, t],
   );
 
-  // The school's profile, once read: the sliders take it, unless the reader moved one first. A school with none takes the browser's, once.
+  // The school's profile, once read: the sliders take it (they cannot be moved before). A school with none takes the browser's, once.
   const adopted = useRef(false);
   useEffect(() => {
     const view = query.data;
@@ -119,11 +151,9 @@ export function useOptimizationProfile(): {
       local = null;
     }
     const fromBrowser = view.stored ? null : browserProfile(local);
-    if (view.stored || !canSave) {
-      if (!touched.current) {
-        latest.current = view.weights;
-        setWeights(view.weights);
-      }
+    if (view.stored || !mayWrite) {
+      latest.current = view.weights;
+      setWeights(view.weights);
       if (view.stored && local !== null) {
         try {
           window.localStorage.removeItem(LOCAL_KEY);
@@ -134,7 +164,7 @@ export function useOptimizationProfile(): {
       setStatus("idle");
       return;
     }
-    if (fromBrowser && !touched.current) {
+    if (fromBrowser) {
       latest.current = fromBrowser;
       setWeights(fromBrowser);
       void saveNow(fromBrowser).then((saved) => {
@@ -147,39 +177,43 @@ export function useOptimizationProfile(): {
       });
       return;
     }
-    if (!touched.current) {
-      latest.current = view.weights;
-      setWeights(view.weights);
-    }
+    latest.current = view.weights;
+    setWeights(view.weights);
     setStatus("idle");
-  }, [query.data, canSave, saveNow]);
+  }, [query.data, mayWrite, saveNow]);
 
+  // A move made in the last half second before the page is left is saved then and there, not dropped with the timer: the browser kept every
+  // move as it was made, and the school's profile should not lose the last one to a click on another page.
+  const saveLatest = useRef<() => void>(() => undefined);
   useEffect(() => {
-    if (query.isError) setStatus("failed");
-  }, [query.isError]);
-
+    saveLatest.current = () => void saveNow(latest.current, [...moved.current]);
+  });
   useEffect(
     () => () => {
-      if (timer.current) clearTimeout(timer.current);
+      if (!timer.current) return;
+      clearTimeout(timer.current);
+      timer.current = null;
+      saveLatest.current();
     },
     [],
   );
 
   const setWeight = useCallback(
     (key: keyof ProfileWeights, value: number) => {
-      touched.current = true;
+      // Nothing is moved before the school's profile is read: `latest` is still the defaults, and a save of it would replace the school's own.
+      if (!mayWrite || !loaded) return;
       const next = { ...latest.current, [key]: value };
       latest.current = next;
+      moved.current.add(key);
       setWeights(next);
-      if (!canSave) return;
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
         timer.current = null;
-        void saveNow(latest.current);
+        void saveNow(latest.current, [...moved.current]);
       }, SAVE_AFTER_MS);
     },
-    [canSave, saveNow],
+    [mayWrite, loaded, saveNow],
   );
 
-  return { weights, setWeight, canSave, status: query.isLoading ? "loading" : status };
+  return { weights, setWeight, canSave: mayWrite && loaded, status: query.isLoading ? "loading" : query.isError ? "unreadable" : status };
 }

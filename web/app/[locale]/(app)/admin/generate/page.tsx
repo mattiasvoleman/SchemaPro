@@ -1018,7 +1018,7 @@ export default function GeneratePage() {
           </div>
           {/* What became of the last move: saved for the school, or why not. A polite live region without the status role, which the run's own notice holds on this page. */}
           <p className="mt-3 text-xs text-muted-foreground" aria-live="polite" data-testid="profile-status">
-            {!canSaveProfile ? t("profileReadOnly") : profileStatus === "saving" ? t("profileSaving") : profileStatus === "saved" ? t("profileSaved") : profileStatus === "failed" ? t("profileSaveFailed") : ""}
+            {profileStatus === "unreadable" ? t("profileUnreadable") : profileStatus === "loading" ? "" : !canSaveProfile ? t("profileReadOnly") : profileStatus === "saving" ? t("profileSaving") : profileStatus === "saved" ? t("profileSaved") : profileStatus === "failed" ? t("profileSaveFailed") : ""}
           </p>
         </SectionCard>
 

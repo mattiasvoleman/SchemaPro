@@ -2190,6 +2190,7 @@
     "profileSaved": "Profilen är sparad för skolan.",
     "profileSaveFailed": "Profilen kunde inte sparas för skolan. Reglagen står kvar som du ställde dem.",
     "profileReadOnly": "Du kan se skolans profil men inte ändra den: den ändras av den som schemalägger.",
+    "profileUnreadable": "Skolans profil kunde inte läsas, så reglagen är låsta: en sparning nu skulle skriva förvalen över den. Ladda om sidan. Körningen går med de värden som står.",
     "weightDisruption": "Schemastabilitet (behåll nuvarande placeringar)",
     "weightSpread": "Sprid ämnen över veckan",
     "weightPreferredFree": "Respektera önskad ledig tid",

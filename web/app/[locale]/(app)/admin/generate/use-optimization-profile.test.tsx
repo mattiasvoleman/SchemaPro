@@ -67,6 +67,16 @@ describe("useOptimizationProfile", () => {
     expect(api.put).not.toHaveBeenCalled();
   });
 
+  it("gives a school with no profile exactly the weights the page always sent, byte for byte, before and after the read", async () => {
+    const BEFORE = '{"preferredFree":10,"preferredBusy":5,"disruption":8,"spread":3,"teacherGap":2}';
+    api.get.mockResolvedValue(view(DEFAULT_WEIGHTS, false));
+    const { result } = mount();
+    expect(JSON.stringify(result.current.weights)).toBe(BEFORE);
+    await waitFor(() => expect(result.current.status).toBe("idle"));
+    expect(JSON.stringify(result.current.weights)).toBe(BEFORE);
+    expect(api.put).not.toHaveBeenCalled();
+  });
+
   it("saves the whole profile once, half a second after the last move, however many moves a drag made", async () => {
     api.get.mockResolvedValue(view());
     api.put.mockResolvedValue(view({ ...SCHOOLS, spread: 12 }));
@@ -136,14 +146,76 @@ describe("useOptimizationProfile", () => {
     expect(window.localStorage.getItem(LOCAL_KEY)).not.toBeNull();
   });
 
-  it("keeps the move a reader made before the school's profile came, and does not write it over the school's", async () => {
+  it("puts only the weight the reader moved over what the school holds now, so a colleague's save since this page read is not written back", async () => {
+    // This page read SCHOOLS; a colleague has since saved disruption 40; this reader moves spread: the save must carry 40, not this page's 9.
+    api.get.mockResolvedValueOnce(view()).mockResolvedValue(view({ ...SCHOOLS, disruption: 40 }));
+    api.put.mockImplementation(async (_url: string, body: typeof SCHOOLS) => view(body));
+    const { result } = mount();
+    await waitFor(() => expect(result.current.weights).toEqual(SCHOOLS));
+    act(() => result.current.setWeight("spread", 12));
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1), { timeout: SAVE_AFTER_MS + 2000 });
+    expect(api.put).toHaveBeenCalledWith("/api/v1/optimization/profile", { ...SCHOOLS, disruption: 40, spread: 12 });
+    // ... and the sliders then show what the school holds, the colleague's weight included.
+    await waitFor(() => expect(result.current.weights).toEqual({ ...SCHOOLS, disruption: 40, spread: 12 }));
+  });
+
+  it("saves the page's profile as it stands for a school that has none, with the one weight the reader moved", async () => {
+    api.get.mockResolvedValue(view(DEFAULT_WEIGHTS, false));
+    api.put.mockImplementation(async (_url: string, body: typeof SCHOOLS) => view(body));
+    const { result } = mount();
+    await waitFor(() => expect(result.current.status).toBe("idle"));
+    act(() => result.current.setWeight("spread", 12));
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1), { timeout: SAVE_AFTER_MS + 2000 });
+    expect(api.put).toHaveBeenCalledWith("/api/v1/optimization/profile", { ...DEFAULT_WEIGHTS, spread: 12 });
+  });
+
+  it("reads the school's profile again when the page is opened again, and does not show what a colleague has changed since from a cache", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    api.get.mockResolvedValue(view());
+    const first = renderHook(() => useOptimizationProfile(), { wrapper });
+    await waitFor(() => expect(first.result.current.weights).toEqual(SCHOOLS));
+    first.unmount();
+    await act(() => wait(50));
+    api.get.mockResolvedValue(view({ ...SCHOOLS, spread: 17 }));
+    const second = renderHook(() => useOptimizationProfile(), { wrapper });
+    await waitFor(() => expect(second.result.current.weights.spread).toBe(17));
+    expect(api.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("saves a move made in the last half second when the page is left, instead of dropping it with the timer", async () => {
+    api.get.mockResolvedValue(view());
+    api.put.mockImplementation(async (_url: string, body: typeof SCHOOLS) => view(body));
+    const { result, unmount } = mount();
+    await waitFor(() => expect(result.current.weights).toEqual(SCHOOLS));
+    act(() => result.current.setWeight("spread", 12));
+    unmount();
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+    expect(api.put).toHaveBeenCalledWith("/api/v1/optimization/profile", { ...SCHOOLS, spread: 12 });
+  });
+
+  it("does not offer the sliders before the school's profile is read: a move then would be saved as the defaults over the school's own four weights", async () => {
     let answer!: (value: unknown) => void;
     api.get.mockReturnValue(new Promise((resolve) => (answer = resolve)));
-    api.put.mockResolvedValue(view({ ...SCHOOLS, spread: 33 }));
+    api.put.mockResolvedValue(view({ ...DEFAULT_WEIGHTS, spread: 33 }));
     const { result } = mount();
+    expect(result.current.canSave).toBe(false);
     act(() => result.current.setWeight("spread", 33));
     await act(async () => answer(view()));
-    expect(result.current.weights.spread).toBe(33);
-    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1), { timeout: SAVE_AFTER_MS + 2000 });
+    await waitFor(() => expect(result.current.canSave).toBe(true));
+    await act(() => wait(SAVE_AFTER_MS + 200));
+    expect(api.put).not.toHaveBeenCalled();
+    expect(result.current.weights).toEqual(SCHOOLS);
+  });
+
+  it("offers no slider when the school's profile could not be read, says so, and saves nothing over it", async () => {
+    api.get.mockRejectedValue(new ApiError(503, "Servern svarade inte", undefined));
+    api.put.mockResolvedValue(view({ ...DEFAULT_WEIGHTS, spread: 33 }));
+    const { result } = mount();
+    await waitFor(() => expect(result.current.status).toBe("unreadable"));
+    expect(result.current.canSave).toBe(false);
+    act(() => result.current.setWeight("spread", 33));
+    await act(() => wait(SAVE_AFTER_MS + 200));
+    expect(api.put).not.toHaveBeenCalled();
   });
 });
