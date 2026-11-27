@@ -13,6 +13,7 @@ import { familyRoutes } from "./gateway-family";
 import { huvudmanRoutes } from "./gateway-huvudman";
 import { leaveRoutes } from "./gateway-leave";
 import { lessonJudgeRoutes } from "./gateway-lesson-judge";
+import { possibleTimesRoutes } from "./gateway-possible-times";
 import { lessonLogRoutes } from "./gateway-lesson-logs";
 import { lessonMoveRoutes } from "./gateway-lesson-moves";
 import { localRoutes } from "./gateway-local";
@@ -50,6 +51,7 @@ export const ROUTE_FILES: Array<{ file: string; routes: GatewayRoute[] }> = [
   { file: "gateway-lesson-logs.ts", routes: lessonLogRoutes },
   { file: "gateway-lesson-moves.ts", routes: lessonMoveRoutes },
   { file: "gateway-lesson-judge.ts", routes: lessonJudgeRoutes },
+  { file: "gateway-possible-times.ts", routes: possibleTimesRoutes },
   { file: "gateway-huvudman.ts", routes: huvudmanRoutes },
   { file: "gateway-absence-watch.ts", routes: absenceWatchRoutes },
   { file: "gateway-absence-stats.ts", routes: absenceStatsRoutes },

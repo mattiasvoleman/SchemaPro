@@ -514,7 +514,8 @@ export class Ss12000V2Service {
         givenName: user.firstName,
         familyName: user.lastName,
         ...model.securityMarking(user.id),
-        emails: [{ value: user.email, type: EMAIL_TYPE[user.role] }],
+        // S1 types an email's value as an address: a person with none (Personer utan e-postadress) has an empty list, never a null value.
+        emails: user.email === null ? [] : [{ value: user.email, type: EMAIL_TYPE[user.role] }],
         ...(enrolment ? { enrolments: [enrolment] } : {}),
         ...(theirs.length > 0 ? { responsibles: theirs.map((person) => ({ person })) } : {}),
       };

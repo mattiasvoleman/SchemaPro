@@ -514,51 +514,113 @@ and no `Set-Cookie`.
 
 ## 7. Bootstrap the first school and admin
 
-There is intentionally no public signup. One-time, in the Supabase dashboard:
+There is intentionally no public signup and no button that makes a school: the operator makes each school once, with a script, from
+their own machine, as the migrations are run (step 2). It replaces the two SQL statements this section used to hand out, and the
+gap between them (a school with nobody in it, which `npm run db:seed` takes for no school at all).
 
-1. **Create the auth user**: Authentication → Users → *Add user* → email +
-   temporary password (or *Send invitation*). Copy the user's **UUID**.
-2. **Create the tenant and profile** (SQL editor, as owner):
-
-```sql
-insert into "Schools" (name, slug, timezone, "updatedAt")
-values ('Demo School', 'demo-school', 'Europe/Stockholm', now());
-
-insert into "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "invitedAt", "updatedAt")
-values (
-  (select id from "Schools" where slug = 'demo-school'),
-  '<AUTH_USER_UUID>',
-  'SCHOOL_ADMIN',
-  'Anna', 'Andersson', '<same email as the auth user>',
-  now(), now()
-);
+```bash
+DIRECT_URL="postgresql://postgres:<DB_PASSWORD>@db.<ref>.supabase.co:5432/postgres?sslmode=require&uselibpqcompat=true" \
+SUPABASE_URL="https://<ref>.supabase.co" \
+SUPABASE_SERVICE_ROLE_KEY="<service role key>" \
+npm run operator:new-school -- \
+  --name "Ekeby skola" --slug ekeby-skola \
+  --admin-email rektor@ekeby.example --admin-first-name Anna --admin-last-name Andersson \
+  --web-url https://app.ekeby.example
 ```
 
-`"invitedAt"` says the person has a login. Without it the row reads as a
-catalogue entry nobody invited: when gallring pseudonymises the person after
-they have left it would leave their login behind, and the school-account
-domain checks (§11) would not count them.
+Run it as written and it only **reads**: it says which database it would write in, checks the Supabase Auth project (below) and
+says what it would make. Nothing is written and no mail is sent. Add `--apply --expect-host db.<ref>.supabase.co` to do it. The
+host is compared with the one `DIRECT_URL` names before anything is written, so that a stale variable in the shell cannot pick the
+database; `--apply` without `--expect-host` is refused.
 
-The two statements are two statements: between the `Schools` row and the
-administrator the school has nobody in it, and `npm run db:seed` (§37) takes a
-school with nobody in it for no school at all and will add the demo school
-beside it. Run the two together (paste both into the SQL editor and run them
-as one), and do not run a seed against this database in between.
+It reads **no `.env` file** and no variable but `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, the two named below for
+the project's settings, and the one `--password-env` names. A spec holds that (`src/operator/operator-reads-no-env.spec.ts`). It
+never prints a key, a password or the database password.
 
-`"updatedAt"` is mapped with Prisma's `@updatedAt`, which is maintained in the
-application layer and creates **no database default** — every hand-written
-`insert` against these tables must supply it, on all 12 models that carry it.
-`"createdAt"` does default, so only `"updatedAt"` errors. Keep the double
-quotes: unquoted, PostgreSQL folds the identifier to `updatedat`.
+What `--apply` does, in this order:
 
-`"authId"` is the only link between the Supabase Auth user and this profile —
-`JwtStrategy` resolves the account by it alone. A wrong UUID produces a
-successful sign-in followed by *"No active user profile is linked to this
-account."*
+1. **The school and its administrator, in one transaction.** The administrator is a `SCHOOL_ADMIN` with the `FULL` profile, with no
+   login yet. A failure leaves neither.
+2. **The login, at Supabase Auth**, with the same admin calls the API's invitations use, tagged with the administrator's row so
+   that a later invitation can move the login as the row's own. By default it is an **invitation mail**: the person sets their own
+   password, and the mail arriving is the proof that the project can send. With `--password-env ADMIN_PASSWORD` (a variable of at
+   least 12 characters, never an argument) it makes a confirmed login with that password instead and sends nothing, for a project
+   that has no sender yet. An address Supabase already has a login for (made by hand in the dashboard, as this section used to
+   say) is adopted, and the script says that no mail went out.
+3. **`"invitedAt"` and the login on the row.** `"invitedAt"` says the person has a login. Without it the row reads as a catalogue
+   entry nobody invited: when gallring pseudonymises the person after they have left it would leave their login behind, and the
+   school-account domain checks (§11) would not count them. The login is attached last, and the row is the one that was written
+   first, as `UsersService` does for every other person.
 
-3. Sign in on the web app — you land on the admin dashboard. Every subsequent
-   user is invited through **Admin → People** (the API sends the Supabase
-   invite email automatically).
+It is safe to run twice. A school and an administrator that exist are found by the slug and the address and are not made again:
+a run that stopped before the login (the sender refused, the network went) continues from the login when the same command is run
+again, and one that is done says so and does nothing. A slug that holds anything else (another administrator, other people) is
+refused. A login that **another school's person already holds** is not taken: a person joins a second school by that school's own
+invitation (`Users_a_login_joins_another_school_by_invitation`), and the row stays un-invited with the sentence to say why.
+
+If the script cannot be run, the rows are two: a `"Schools"` row and a `"Users"` row with role `SCHOOL_ADMIN`, the person's real
+address, the Supabase user's UUID as `"authId"` and `"invitedAt"` set, written in one transaction by whoever has the owner
+connection. `"updatedAt"` has no database default (Prisma maintains it in the application), so every hand-written `insert` supplies
+it, with the camelCase columns in double quotes.
+
+`"authId"` is the only link between the Supabase Auth user and this profile: `JwtStrategy` resolves the account by it alone. A
+wrong UUID produces a successful sign-in followed by *"No active user profile is linked to this account."*
+
+Then sign in on the web app: you land on the admin dashboard. Every subsequent user is invited through **Admin → People** (the API
+sends the Supabase invite email automatically).
+
+### 7.1 The project's sender: check it before the first invitation
+
+Every invitation and every password reset is a mail from Supabase Auth, not from Resend (the notification mail of §10 is another
+road). On Supabase's own sender that is **2 mails an hour**; once the project sets its own SMTP (Authentication → SMTP) the default
+becomes **30 an hour**, and the limit is changed under Authentication → Rate Limits (`rate_limit_email_sent`). Past it Supabase
+answers **HTTP 429, `over_email_send_rate_limit`**. A school of 300 people therefore takes 10 hours to invite at the default, and
+the first administrator's own invitation is refused on a project that already sent two. (Source: Supabase's documentation of
+custom SMTP and of Auth rate limits.)
+
+The script reads what it can before it writes anything, and says it plainly:
+
+| Line | Where it comes from | When it says "not read" |
+|---|---|---|
+| Public signups | `GET <SUPABASE_URL>/auth/v1/settings`, with the service-role key as `apikey` | the project did not answer. Look at Authentication → Providers → Email: *Allow new users to sign up* must be off (§1) |
+| Sender (SMTP) | Supabase's Management API, `GET https://api.supabase.com/v1/projects/<ref>/config/auth`: `smtp_host` says whether the project sends through its own SMTP, `rate_limit_email_sent` how many an hour | `SUPABASE_ACCESS_TOKEN` (an access token from Supabase's account page) and `SUPABASE_PROJECT_REF` (the reference in the dashboard's address) are not both set. The token is **yours**, never the API's: give it on the one command line and it is gone with the shell |
+
+Only the host, port, sender and the hourly limit are read out of the answer; the SMTP user and password are not kept or printed.
+`--require-smtp` makes the script refuse to write anything unless the project's own SMTP is verified this way.
+
+**What the script cannot check is that mail really arrives.** The invitation to the first administrator is that check: a project
+whose SMTP server refuses the mail answers the script with HTTP 500, and the script says to look at host, port, user and the
+sender address under Authentication → SMTP. The same mail is what the first administrator signs in from, so a mail that does not
+arrive is found on day one and not when the school invites its teachers.
+
+### 7.2 Pupils and guardians with no address (20270310090000)
+
+A pupil or a guardian can be added **without an e-mail address**. Younger pupils seldom have a school address, and Skola24's pupil file has
+none, so a school should not have to invent one to get them into the register. The person is in every list, in the class lists, in
+attendance and on the timetable (they are rows of `"Users"` like any other, and no reader of those looks at the address); they have **no
+login** until an address is added and the person is invited.
+
+- **What holds it.** `"Users"."email"` is optional. `Users_a_person_with_no_address_has_no_login` (a CHECK) says no row has an
+  `"invitedAt"` without an address, so no road gives a person with no address a login, and none takes the address from a person who
+  has one. `Users_only_a_pupil_or_guardian_has_no_address` says a teacher or an administrator always has one: they are somebody the
+  school invites. The API says the same with words (`ADDRESS_REQUIRED`, `PERSON_HAS_NO_ADDRESS`, `ADDRESS_OF_AN_INVITED_PERSON`);
+  the constraints are what stays if a script or a hand-written `insert` forgets.
+- **Adding one later.** Edit the person (Admin → People) and give an address; the same dialog can send the invitation at once. An
+  address is given to a person with none, or corrected on one who was never invited: a person who was invited has a login with the
+  address it has, and the API refuses to change it from here (409).
+- **Importing.** A pupils' file may leave `epost` empty, or have no such column: the pupils are made with no address, and the report
+  says how many. A pupil with no address is known by first name, last name and class, so a second upload skips them; a later file
+  that has the address gives it to the one pupil of that name in that class (`updated`), and says so when two have the same name and
+  cannot be told apart. The files that name a pupil by address (the guardians' file, the group memberships) cannot name one with none:
+  the guardians' export says how many links it left out, and those links are made on the people page.
+- **Mail.** A notice to a person with no address is in their inbox, which they cannot open yet, and no mail goes. The mass invitation
+  counts them apart (`noAddress`) and invites the rest.
+- **Order of deploy.** Apply the migration before the API that writes an empty address; deploy the API and the web together (an older
+  web that reads a person with `email: null` where it expected text is the one thing that can break). Rolling the migration back
+  needs `ALTER COLUMN "email" SET NOT NULL`, which fails while a person with no address exists: `SELECT count(*) FROM "Users" WHERE
+  "email" IS NULL`.
+- **The Schemavisaren and the iCal feeds** are not logins, and a school shows the timetable to a family through them whether or not
+  the pupil has an address.
 
 ## 8. Mobile app
 

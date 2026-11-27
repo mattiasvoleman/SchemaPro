@@ -224,6 +224,16 @@ describe('Ss12000Service', () => {
       );
     });
 
+    it('gives a person the school has no address for (Personer utan e-postadress) an empty eduPersonPrincipalNames, not a null in it', async () => {
+      arrangeList('user', 2, [user({ id: 'p', role: 'STUDENT', email: null }), user({ id: 'q', role: 'STUDENT' })]);
+
+      const result = await service.persons(SCHOOL_ID);
+      expect((result.data as Array<{ id: string; eduPersonPrincipalNames: unknown }>).map((one) => [one.id, one.eduPersonPrincipalNames])).toEqual([
+        ['p', []],
+        ['q', ['karin@example.test']],
+      ]);
+    });
+
     it('does not take the mark on a pupil or a guardian for a teacher', async () => {
       arrangeList('user', 2, [user({ id: 'p', role: 'STUDENT', teaches: true }), user({ id: 'g', role: 'GUARDIAN', teaches: true })]);
 

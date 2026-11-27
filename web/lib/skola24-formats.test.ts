@@ -161,10 +161,11 @@ describe("a description without columns", () => {
 
 describe("what Skola24's own files cannot give Rastra's importers", () => {
   it("is named, once, in the description and not found out file by file", () => {
-    // The staff file carries every field the teachers' import needs; the pupils' file has no e-mail, and the parents' file links the
-    // guardian to the pupil by personnummer where Rastra's import wants the pupil's e-mail. If an importer changes, this says so.
+    // The staff file carries every field the teachers' import needs; the pupils' file has no e-mail, which the pupils' import no longer
+    // needs (Personer utan e-postadress), and the parents' file links the guardian to the pupil by personnummer where Rastra's import
+    // wants the pupil's e-mail. If an importer changes, this says so.
     expect(unfillableFields(formatById("skola24-personal-csv")!)).toEqual([]);
-    expect(unfillableFields(formatById("skola24-elever-klass")!)).toEqual(["email"]);
+    expect(unfillableFields(formatById("skola24-elever-klass")!)).toEqual([]);
     expect(unfillableFields(formatById("skola24-foraldrar-csv")!)).toEqual(["studentEmail"]);
     expect(unfillableFields(formatById("skola24-barn-csv")!)).toEqual([]);
     expect(unfillableFields(formatById("skola24-textfil")!)).toEqual([]);

@@ -37,8 +37,11 @@ export const DEMO: DemoSpec = { slug: 'demo-skola', name: 'Demo Skola', domain: 
 export interface SchoolFacts {
   slug: string;
   name: string;
-  /** The address of every person row of the school: active or not, any role. */
-  emails: readonly string[];
+  /**
+   * The address of every person row of the school: active or not, any role. NULL for a person added without one (Personer utan
+   * e-postadress): that is no address at the demo's domain, so such a person is outside the demo and the school is refused.
+   */
+  emails: readonly (string | null)[];
   /** Rows that tie the school to a huvudman (ownership, a request, an event in its history). */
   huvudmanTies: number;
   /** Rows that tie it to another school: a travel time, a room on loan, a teacher shared with it. */
@@ -58,7 +61,8 @@ export type Refusal =
  * `x@evil.demo-skola.example.com`, `x@demo-skola.example.com.evil.org` and `x@xdemo-skola.example.com` are not. The case is not
  * the address's: a mail address is read without it.
  */
-export function isDemoAddress(email: string, domain: string = DEMO.domain): boolean {
+export function isDemoAddress(email: string | null, domain: string = DEMO.domain): boolean {
+  if (email === null) return false;
   // Whatever stands after the first `@` must be the domain and nothing else: a second `@` is a part of it and makes it another.
   const at = email.indexOf('@');
   if (at < 1) return false;

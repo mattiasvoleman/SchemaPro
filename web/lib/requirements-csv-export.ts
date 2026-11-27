@@ -69,7 +69,7 @@ export function requirementsToCsv(
   }[],
   groups: { id: string; name: string }[],
   subjects: { id: string; name: string; code: string | null }[],
-  people: { id: string; email: string; isActive?: boolean }[],
+  people: { id: string; email: string | null; isActive?: boolean }[],
 ): string {
   const groupName = new Map(groups.map((group) => [group.id, group.name]));
   const subjectLabel = new Map(

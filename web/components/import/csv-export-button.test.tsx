@@ -199,6 +199,19 @@ describe("CsvExportButton", () => {
       expect(downloadCsv).not.toHaveBeenCalled();
     });
 
+    it("says how many members of a teaching groups file are not in it for want of an address, in its own words", async () => {
+      const user = userEvent.setup();
+      render(
+        <CsvExportButton
+          exports={[{ kind: "teachingGroups", build: async () => ({ content: "GRUPPER", heldOut: 0, unit: "people", withoutAddress: 2, withoutAddressUnit: "members" }) }]}
+        />,
+      );
+      await user.click(screen.getByRole("button", { name: "exportButton" }));
+
+      await waitFor(() => expect(toast.info).toHaveBeenCalledWith("withoutAddressMembers:2", expect.anything()));
+      expect(toast.info).not.toHaveBeenCalledWith("withoutAddressLinks:2", expect.anything());
+    });
+
     it("says nothing for a file that names nobody, or when nothing was built", async () => {
       const user = userEvent.setup();
       const { rerender } = render(<CsvExportButton exports={[{ kind: "roomTypes", build: () => "SALSTYPER" }]} />);
