@@ -209,12 +209,13 @@ describe("what the card says of how far a number is known, and how long an analy
     }
   });
 
-  it("says an engine that is busy is busy with something else, not only a timetable or suggestions for someone else (g493-L-7)", () => {
+  it("says an engine that is busy is busy with something else, and that this is also another school's analysis: its gate lets one run, and answers the same 429 (g493-L-7, g510)", () => {
     const busy = say(sv, "sv", "failed.ENGINE_BUSY");
     for (const word of ["schema", "tjänstefördelning", "provplan", "salförslag"]) expect(busy).toContain(word);
-    expect(busy).not.toMatch(/förslag åt någon annan/);
+    // The engine's 429 is also "Another analysis is running" (the gate of one, app/api/v1/suggest_changes.py): the case the text was first written for.
+    expect(busy).toMatch(/förslag åt någon annan/);
     expect(say(en, "en", "failed.ENGINE_BUSY")).toMatch(/something else/);
-    expect(say(en, "en", "failed.ENGINE_BUSY")).not.toMatch(/for someone else/);
+    expect(say(en, "en", "failed.ENGINE_BUSY")).toMatch(/suggestions for someone else/);
   });
 });
 

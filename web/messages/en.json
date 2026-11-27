@@ -2241,7 +2241,7 @@
       "running": "The engine is working out suggestions. It takes about two minutes. You can leave the page: the answer is saved on the run and shown under Last run when you come back with the same school year chosen, as long as the run is the year's newest.",
       "failed": {
         "ENGINE_LACKS_SUGGESTIONS": "Suggestions cannot be worked out right now: the scheduling engine does not have that function yet. Try again in a few minutes.",
-        "ENGINE_BUSY": "The engine has something else to work on right now: a timetable, a staffing proposal, an exam plan or a room proposal. Try again in a moment.",
+        "ENGINE_BUSY": "The engine has something else to work on right now: a timetable, a staffing proposal, an exam plan, a room proposal or suggestions for someone else. Try again in a moment.",
         "ENGINE_FAILED": "The suggestions could not be worked out. Try again.",
         "NOTHING_TO_PLACE": "Every post is placed by hand, so there is nothing for the engine to work on.",
         "ABANDONED": "The calculation stopped before it was done, probably because of a restart. Work out again to try once more."
