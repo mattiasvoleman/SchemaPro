@@ -494,6 +494,17 @@ describe('SuggestionsService', () => {
       expect(writtenBy(columnCalls()[columnCalls().length - 1]!)).toMatchObject({ state: 'DONE', startedAt });
     });
 
+    it('renews at least three times within one lease, so that one renewal that fails (a full pool) is not an abandonment', async () => {
+      // The comment on ANALYSIS_LEASE_SECONDS promises it, and nothing else holds the two numbers together: a beat as long as the lease
+      // abandons an analysis that is alive, the first time its engine call takes longer than the beat.
+      const engine = engineHeldOpen();
+      await service.start(JOB_ID, user);
+      await jest.advanceTimersByTimeAsync(ANALYSIS_LEASE_SECONDS * 1000 - 1);
+      expect(renewals().length).toBeGreaterThanOrEqual(3);
+      engine.release();
+      await service.settled();
+    });
+
     it('lets a renewal that fails cost nothing: the analysis goes on, and the failure is said', async () => {
       const engine = engineHeldOpen();
       tx.$executeRaw.mockImplementation(async (statement: unknown) => {
