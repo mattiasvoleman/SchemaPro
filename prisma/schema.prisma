@@ -3292,7 +3292,7 @@ model OptimizationJob {
   /// Åtgärdsförslag vid vägran; 20270305090000): the engine's answer to /suggest-changes as the gateway whitelisted it
   /// (src/optimization/suggestions.ts), or the state of the analysis that makes it (RUNNING, FAILED). Null when nobody asked and for every
   /// run before the column. No person's name and no figure of a post is in it (a part-timer's days are stored in their hidden form). A
-  /// RUNNING analysis holds its place by `leaseUntil` inside it, renewed by its process (omgång 15, G6b; 20270314090000), and
+  /// RUNNING analysis holds its place by `leaseUntil` inside it, renewed by its process (omgång 15, G6b; 20270313090000), and
   /// app.optimization_jobs_sweep() writes one whose lease has run out as abandoned. DB CHECK: a JSON object, at most 8 KiB.
   suggestions           Json?
   /// The schedule a run was asked to start from and what became of its lessons (omgång 15, M9 Ett schema som start; 20270308090000):

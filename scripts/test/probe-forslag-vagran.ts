@@ -14,7 +14,7 @@
  *   ag-e  the whitelist holds across the database: a column a hand edited (a part-timer's days in the open) is shown as nothing;
  *   ag-f  the engine's cores are one stream at a time (D2): Generera's start is refused 409 SUGGESTIONS_RUNNING while an analysis of the year
  *         is alive, and an analysis is refused 409 SUGGESTIONS_YEAR_BUSY while a schemaförslag run of the year is alive;
- *   ag-h  the analysis holds its place by a lease (G6b, 20270314090000): a press writes it from the database's clock and a renewal moves
+ *   ag-h  the analysis holds its place by a lease (G6b, 20270313090000): a press writes it from the database's clock and a renewal moves
  *         it, over its own analysis only; a restart ends the analyses it holds at once (and gives back the finished one a press was asked
  *         over); a lapsed lease is what Generera's start and every reader judge without any sweep, and the sweep, through its door, writes
  *         it as abandoned or as the finished analysis (the web's whitelist accepts what SQL wrote), skipping a row another transaction holds

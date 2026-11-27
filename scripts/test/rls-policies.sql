@@ -70299,7 +70299,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- g6b 1: städningen av analysen (20270314090000), med klockan stilla.
+-- g6b 1: städningen av analysen (20270313090000), med klockan stilla.
 --
 -- app.optimization_jobs_sweep() städar nu också en analys av en vägrad körning ("suggestions"): RUNNING och förbi sin lease (leaseUntil),
 -- eller, utan lease, mer än sex minuter från sin start, skrivs som FAILED ABANDONED, avslutad när leasen tog slut (utan lease: nu), eller

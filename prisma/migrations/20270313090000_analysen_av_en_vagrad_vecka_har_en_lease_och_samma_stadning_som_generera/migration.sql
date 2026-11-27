@@ -144,7 +144,7 @@ END
 $$;
 
 COMMENT ON FUNCTION app.optimization_jobs_sweep() IS
-  'Generera lease (20270222090000, extended 20270314090000): marks an active Generera run whose lease has run out, or that began more than 30 minutes ago, FAILED (ENGINE_RUN_ABANDONED), finished when its lease ran out, skipping rows another transaction holds; returns how many it marked. Also writes a RUNNING analysis of a refused run ("suggestions") whose lease has run out (six minutes from its start when it has none) as FAILED ABANDONED, or as the finished analysis it was asked over, and counts none of them. Takes no argument, reads nothing back, and refuses (GQ403) a call that carries a login.';
+  'Generera lease (20270222090000, extended 20270313090000): marks an active Generera run whose lease has run out, or that began more than 30 minutes ago, FAILED (ENGINE_RUN_ABANDONED), finished when its lease ran out, skipping rows another transaction holds; returns how many it marked. Also writes a RUNNING analysis of a refused run ("suggestions") whose lease has run out (six minutes from its start when it has none) as FAILED ABANDONED, or as the finished analysis it was asked over, and counts none of them. Takes no argument, reads nothing back, and refuses (GQ403) a call that carries a login.';
 
 -- ---------------------------------------------------------------------------
 -- Grants, as they were
