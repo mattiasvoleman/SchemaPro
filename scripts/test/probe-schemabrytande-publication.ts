@@ -88,6 +88,8 @@ async function world(owner: Client, api: PrismaService, marker: string, tag: str
       [`${marker} aktivitet ${tag}`, slug],
     )
   ).id;
+  // The question before a change in Direkt that reaches families (P5): these checks edit published lessons, so the school has answered it.
+  await owner.query(`INSERT INTO "PublicationSettings" ("schoolId", "directReachAcknowledgedAt") VALUES ($1, now())`, [s]);
   const yearId = (
     await one<{ id: string }>(
       `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")

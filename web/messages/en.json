@@ -46,6 +46,7 @@
       "CLASS_HAS_HALVES": "The class is split into halves and cannot change type or school year. Remove the halves first.",
       "CLASS_HAS_ONE_HALF": "The class has only one of its two halves. Remove it under Classes and try again, and the class is split into two new halves.",
       "DATABASE_BUSY": "The server is busy right now, and nothing was done. Try again in a moment.",
+      "DIRECT_REACH_UNANSWERED": "The change reaches pupils and guardians in the published period {validFrom}–{validTo}, and the school has not answered the question about that yet. Nothing was changed. Make the change in Schema, where the question is asked.",
       "EMPLOYMENT_PERIOD_OVERLAP": "The period overlaps another period of the post. Change or remove that one first: a day has one post.",
       "EXAM_CAPS": "The weekly limit cannot be lower than the daily limit: a week holds at least as many exams as a day.",
       "EXAM_GROUPS": "A chosen class or group is not in the school year.",
@@ -6755,6 +6756,17 @@
     "supervisionLine": "Break duty by the supervision rota: {shifts, plural, one {# shift} other {# shifts}}, {minutes} min/wk.",
     "dutyRam": "budget for the supervision rota, counts in weeks the teacher has no shift"
   },
+  "directReach": {
+    "title": "The change reaches families straight away",
+    "published": "The school publishes in Direkt mode, and the timetable is published {from}–{to}. A change moves or removes the published lessons in the calendar at once.",
+    "publishedNoPeriod": "The school publishes in Direkt mode. A change moves or removes the published lessons in the calendar at once.",
+    "who": "When a lesson is moved, the pupils in it and their guardians get a notice that the timetable has changed. Teachers see the change in their calendar.",
+    "audience": "The school has {pupils, plural, one {# pupil} other {# pupils}} and {guardians, plural, one {# guardian} other {# guardians}} who can get a notice. A change reaches only those who have the lesson.",
+    "draftOffer": "If you want to work on the timetable without anything reaching families until you publish, switch to draft. Your changes are then kept as a draft until you publish them.",
+    "onlyOnce": "The question is asked once. It is asked again if the school switches mode.",
+    "stayDirect": "Continue in Direkt",
+    "useDraft": "Use draft"
+  },
   "publishing": {
     "title": "Publishing",
     "yearLabel": "School year",
@@ -11381,6 +11393,7 @@
       "ROOM_NEEDS_APPROVAL": "The room requires approval and is booked by the office instead.",
       "SPLIT_MINUTES": "The parts must be at least 15 minutes each and together as long as the lesson.",
       "LESSON_IS_PLACED": "The lesson is placed on the curriculum and is written again from there at every Generera. The scheduler changes it, on its curriculum entry.",
+      "DIRECT_REACH_UNANSWERED": "The school has not yet answered the question about staying in Direkt, and this change reaches families. An administrator answers it when she changes something in Schema, and then the change can be published.",
       "UNKNOWN": "The lesson cannot be changed by the class teacher."
     },
     "problem": {

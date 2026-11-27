@@ -8688,3 +8688,93 @@ BEGIN
   RAISE NOTICE 'ut 594o: % checks', current_setting('ut.checks');
 END $$;
 ROLLBACK;
+
+-- 600o ----------------------------------------------------------------------
+-- Frågan före en ändring i Direkt som når familjer (20270312090000): app.direct_reach_facts(year_id), som den inloggade skolans
+-- administratör kör den. Publiceringar planteras som ägaren (som de skrivs av en publicering); funktionen läser dem förbi områdesarmen.
+BEGIN;
+DO $$
+DECLARE
+  a uuid := (SELECT id FROM "Schools" ORDER BY id LIMIT 1);
+  b uuid := (SELECT id FROM "Schools" ORDER BY id OFFSET 1 LIMIT 1);
+  ya uuid; yb uuid; admin_a uuid; admin_b uuid;
+  tz text; today date;
+  p1 uuid; p2 uuid;
+  rec record;
+BEGIN
+  SELECT timezone INTO tz FROM "Schools" WHERE id = a;
+  today := (now() AT TIME ZONE tz)::date;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+    VALUES (a, '600o a', today - 100, today + 200, false, 'NIOARIG', now()) RETURNING id INTO ya;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+    VALUES (b, '600o b', today - 100, today + 200, false, 'NIOARIG', now()) RETURNING id INTO yb;
+  SELECT "authId" INTO admin_a FROM "Users" WHERE "schoolId" = a AND role = 'SCHOOL_ADMIN' ORDER BY id LIMIT 1;
+  SELECT "authId" INTO admin_b FROM "Users" WHERE "schoolId" = b AND role = 'SCHOOL_ADMIN' ORDER BY id LIMIT 1;
+  PERFORM pg_temp.ut_expect('600o both schools have an administrator to act as', (admin_a IS NOT NULL AND admin_b IS NOT NULL)::text, 'true');
+
+  -- The catalogue: a definer function with its search_path fixed, run by the API's role and by neither PUBLIC nor PostgREST's roles.
+  PERFORM pg_temp.ut_expect('600o the reader is SECURITY DEFINER with a fixed search_path',
+    (SELECT (p.prosecdef AND p.proconfig::text LIKE '%search_path=%')::text FROM pg_proc p WHERE p.oid = 'app.direct_reach_facts(uuid)'::regprocedure), 'true');
+  PERFORM pg_temp.ut_expect('600o ... the API''s role may run it', has_function_privilege('app_authenticated', 'app.direct_reach_facts(uuid)', 'EXECUTE')::text, 'true');
+  PERFORM pg_temp.ut_expect('600o ... PUBLIC may not', has_function_privilege('public', 'app.direct_reach_facts(uuid)', 'EXECUTE')::text, 'false');
+  FOR rec IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role') LOOP
+    PERFORM pg_temp.ut_expect('600o ... nor ' || rec.rolname, has_function_privilege(rec.rolname, 'app.direct_reach_facts(uuid)', 'EXECUTE')::text, 'false');
+  END LOOP;
+  PERFORM pg_temp.ut_expect('600o the column is nullable with no default: a school never asked has null',
+    (SELECT (is_nullable = 'YES' AND column_default IS NULL)::text FROM information_schema.columns
+      WHERE table_name = 'PublicationSettings' AND column_name = 'directReachAcknowledgedAt'), 'true');
+
+  -- Logged in as school A's administrator.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', admin_a)::text, true);
+  PERFORM pg_temp.ut_expect('600o a year with no publication gives no row', (SELECT count(*)::text FROM app.direct_reach_facts(ya)), '0');
+
+  -- What does not hold: ended yesterday, a refused attempt, a refill of an older publication.
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo")
+    VALUES (a, ya, 'PUBLISH', 'PUBLISHED', 'DIRECT', today - 90, today - 1);
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo")
+    VALUES (a, ya, 'PUBLISH', 'REFUSED', 'DIRECT', today, today + 100);
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo")
+    VALUES (a, ya, 'REFILL', 'PUBLISHED', 'DIRECT', today, today + 100);
+  PERFORM pg_temp.ut_expect('600o a publication that ended yesterday, a refusal and a refill hold nothing', (SELECT count(*)::text FROM app.direct_reach_facts(ya)), '0');
+
+  -- One that holds: it ends today, in the school''s own day, which is still a period that has not ended.
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", "publishedAt")
+    VALUES (a, ya, 'LEGACY_PUBLISH', 'PUBLISHED', 'DIRECT', today - 30, today, now() - interval '2 hours') RETURNING id INTO p1;
+  PERFORM pg_temp.ut_expect('600o one that ends today holds, and has not been answered',
+    (SELECT "validTo"::text || '|' || coalesce("acknowledgedAt"::text, '-') || '|' || answered::text FROM app.direct_reach_facts(ya)), today::text || '|-|false');
+
+  -- The later of two that hold is the one named.
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", "publishedAt")
+    VALUES (a, ya, 'PUBLISH', 'PUBLISHED', 'DIRECT', today + 1, today + 120, now() - interval '1 hour') RETURNING id INTO p2;
+  PERFORM pg_temp.ut_expect('600o the later publication is the one named', (SELECT "validTo"::text FROM app.direct_reach_facts(ya)), (today + 120)::text);
+  PERFORM pg_temp.ut_expect('600o ... and it is one row', (SELECT count(*)::text FROM app.direct_reach_facts(ya)), '1');
+
+  -- The answer: written once, it answers; a switch of mode writes null and the question is new.
+  INSERT INTO "PublicationSettings" ("schoolId", "directReachAcknowledgedAt") VALUES (a, now())
+    ON CONFLICT ("schoolId") DO UPDATE SET "directReachAcknowledgedAt" = now();
+  PERFORM pg_temp.ut_expect('600o an answered school is answered', (SELECT answered::text FROM app.direct_reach_facts(ya)), 'true');
+  PERFORM pg_temp.ut_expect('600o ... and the time is the answer''s', (SELECT ("acknowledgedAt" IS NOT NULL)::text FROM app.direct_reach_facts(ya)), 'true');
+  UPDATE "PublicationSettings" SET "directReachAcknowledgedAt" = NULL WHERE "schoolId" = a;
+  PERFORM pg_temp.ut_expect('600o a switch of mode takes it back', (SELECT answered::text FROM app.direct_reach_facts(ya)), 'false');
+
+  -- Another school's year is another school's, whoever asks.
+  PERFORM pg_temp.ut_expect('600o school A''s administrator asking for school B''s year gets no row', (SELECT count(*)::text FROM app.direct_reach_facts(yb)), '0');
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo")
+    VALUES (b, yb, 'PUBLISH', 'PUBLISHED', 'DIRECT', today, today + 100);
+  PERFORM pg_temp.ut_expect('600o ... also when B has a publication that holds', (SELECT count(*)::text FROM app.direct_reach_facts(yb)), '0');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', admin_b)::text, true);
+  PERFORM pg_temp.ut_expect('600o ... which B''s own administrator is told of', (SELECT count(*)::text FROM app.direct_reach_facts(yb)), '1');
+  PERFORM pg_temp.ut_expect('600o ... and B''s administrator asking for school A''s year gets no row', (SELECT count(*)::text FROM app.direct_reach_facts(ya)), '0');
+  -- B's answer is not A's.
+  INSERT INTO "PublicationSettings" ("schoolId", "directReachAcknowledgedAt") VALUES (b, now())
+    ON CONFLICT ("schoolId") DO UPDATE SET "directReachAcknowledgedAt" = now();
+  PERFORM pg_temp.ut_expect('600o B has answered', (SELECT answered::text FROM app.direct_reach_facts(yb)), 'true');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', admin_a)::text, true);
+  PERFORM pg_temp.ut_expect('600o ... and A has not', (SELECT answered::text FROM app.direct_reach_facts(ya)), 'false');
+
+  -- No login, and an empty claim a pooled connection reads: no school, no row.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM pg_temp.ut_expect('600o with no login there is no school and no row', (SELECT count(*)::text FROM app.direct_reach_facts(ya)), '0');
+  RAISE NOTICE 'ut 600o: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;

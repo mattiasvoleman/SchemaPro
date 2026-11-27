@@ -37,6 +37,7 @@ export const PROBLEM_CODES: Readonly<Record<string, readonly string[]>> = {
   CLASS_HAS_HALVES: [],
   CLASS_HAS_ONE_HALF: [],
   DATABASE_BUSY: [],
+  DIRECT_REACH_UNANSWERED: ["validFrom", "validTo"],
   EMPLOYMENT_PERIOD_OVERLAP: [],
   EXAM_CAPS: [],
   EXAM_GROUPS: [],
