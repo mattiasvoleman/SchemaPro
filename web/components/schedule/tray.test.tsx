@@ -333,14 +333,81 @@ describe("laying a brick", () => {
     fireEvent.change(screen.getByRole("textbox", { name: /Start/ }), { target: { value: "25:00" } });
     expect(lay).toBeDisabled();
     fireEvent.change(screen.getByRole("textbox", { name: /Start/ }), { target: { value: "09:15" } });
-    expect(lay).toBeEnabled();
+    // A clock is not all it waits for: the rooms of that time are asked for first (see "while the rooms of the time are on their way").
+    await waitFor(() => expect(lay).toBeEnabled());
   });
 
   it("names the lesson on the parking when the brick is one, so that it is moved back and no new lesson is made", async () => {
     await open("Lägg Svenska 7B");
     fireEvent.change(screen.getByRole("textbox", { name: /Start/ }), { target: { value: "13:00" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Lägg" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Lägg" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/board-tray/lay", expect.objectContaining({ lessonId: "l9", postId: "p2", teacherId: "t2", minutes: 45, partKey: "aaaaaaaaaaaaaaaa" })));
+  });
+
+  describe("while the rooms of the time are on their way", () => {
+    /** The gateway as above, with the answer to the room question held back until the test lets it go. */
+    function holdRooms(answer: "later" | "fails") {
+      gateway();
+      const original = post.getMockImplementation()!;
+      let release: (value: unknown) => void = () => {};
+      post.mockImplementation((path: string, body: Record<string, unknown>, ...rest: unknown[]) => {
+        if (path !== "/api/v1/master-lessons/room-choices") return original(path, body, ...rest);
+        return answer === "fails" ? Promise.reject(new ApiError(500, "boom", "SOMETHING")) : new Promise((resolve) => (release = resolve));
+      });
+      return { release: (value: unknown) => release(value) };
+    }
+    async function openWithStart() {
+      panel();
+      await screen.findByRole("list");
+      fireEvent.click(screen.getAllByRole("button", { name: /^Lägg Matematik 7A/ })[0]!);
+      fireEvent.change(screen.getByRole("textbox", { name: /Start/ }), { target: { value: "09:00" } });
+      await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/master-lessons/room-choices", expect.anything(), expect.anything()));
+    }
+
+    it("does not lay until they have come, so that a quick press does not lay without the room the generator ranks first", async () => {
+      const rooms = holdRooms("later");
+      await openWithStart();
+      expect(screen.getByRole("button", { name: "Lägg" })).toBeDisabled();
+      expect(screen.getByText("Hämtar salarna …")).toBeInTheDocument();
+      fireEvent.submit(screen.getByRole("form", { name: "Lägg Matematik 7A" }));
+      expect(post).not.toHaveBeenCalledWith("/api/v1/board-tray/lay", expect.anything());
+
+      rooms.release(ROOMS);
+      await waitFor(() => expect(screen.getByRole("combobox", { name: "Sal" })).toHaveValue("r1"));
+      expect(screen.getByRole("button", { name: "Lägg" })).toBeEnabled();
+      expect(screen.queryByText("Hämtar salarna …")).toBeNull();
+    });
+
+    it("lets the reader lay at once without a room, by choosing Utan sal before they have come", async () => {
+      holdRooms("later");
+      await openWithStart();
+      fireEvent.change(screen.getByRole("combobox", { name: "Sal" }), { target: { value: "" } });
+      expect(screen.getByRole("button", { name: "Lägg" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "Lägg" }));
+      await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/board-tray/lay", expect.objectContaining({ roomId: null })));
+    });
+
+    it("says it when they could not be read, and lays without a room then: nothing is waited for that will not come", async () => {
+      holdRooms("fails");
+      await openWithStart();
+      expect(await screen.findByText(/Salarna gick inte att hämta/)).toBeInTheDocument();
+      expect(screen.queryByText("Hämtar salarna …")).toBeNull();
+      expect(screen.getByRole("button", { name: "Lägg" })).toBeEnabled();
+    });
+
+    it("waits again for the rooms of another time, and does not lay with a room that belongs to the time before", async () => {
+      gateway();
+      panel();
+      await screen.findByRole("list");
+      fireEvent.click(screen.getAllByRole("button", { name: /^Lägg Matematik 7A/ })[0]!);
+      fireEvent.change(screen.getByRole("textbox", { name: /Start/ }), { target: { value: "09:00" } });
+      await waitFor(() => expect(screen.getByRole("combobox", { name: "Sal" })).toHaveValue("r1"));
+      fireEvent.change(screen.getByRole("combobox", { name: "Sal" }), { target: { value: "r2" } });
+      fireEvent.change(screen.getByRole("textbox", { name: /Start/ }), { target: { value: "10:00" } });
+      expect(screen.getByRole("button", { name: "Lägg" })).toBeDisabled();
+      await waitFor(() => expect(screen.getByRole("button", { name: "Lägg" })).toBeEnabled());
+    });
   });
 
   it("cancels, and leaves the brick on the tray", async () => {
@@ -363,6 +430,7 @@ describe("laying a brick", () => {
       await screen.findByRole("list");
       fireEvent.click(screen.getAllByRole("button", { name: /^Lägg Matematik 7A/ })[0]!);
       fireEvent.change(screen.getByRole("textbox", { name: /Start/ }), { target: { value: "09:00" } });
+      await waitFor(() => expect(screen.getByRole("button", { name: "Lägg" })).toBeEnabled());
       fireEvent.click(screen.getByRole("button", { name: "Lägg" }));
       return view;
     }
@@ -415,6 +483,54 @@ describe("laying a brick", () => {
       gateway();
       fireEvent.click(screen.getByRole("button", { name: "Lägg ändå" }));
       await waitFor(() => expect(post).toHaveBeenLastCalledWith("/api/v1/board-tray/lay", expect.objectContaining({ exempt: ["FRAME"] })));
+    });
+
+    it("answers Lägg ändå without the room that was refused: a time that is both outside the frame and in a room that does not suit is laid by two answers, not by two answers that undo each other", async () => {
+      const lays: Array<{ roomId: unknown; exempt: unknown }> = [];
+      gateway({
+        lay: (body) => {
+          lays.push({ roomId: body["roomId"], exempt: body["exempt"] });
+          // The gateway asks the room first and the judge second.
+          if (body["roomId"] !== null) throw new ApiError(409, "x", "BOARD_ROOM_NOT_ALLOWED", { roomId: "r1", reason: "SEATS" });
+          if (body["exempt"] === undefined) throw new ApiError(409, "Matematik 7A: Tiden ligger utanför ramtiden.", "MASTER_LESSON_REFUSED", { reason: "FRAME", reasons: "FRAME" });
+          return { lesson: { id: "n1", dayOfWeek: 2, startTime: "09:00", endTime: "10:00", roomId: null }, noRoom: true };
+        },
+      });
+      panel();
+      await screen.findByRole("list");
+      fireEvent.click(screen.getAllByRole("button", { name: /^Lägg Matematik 7A/ })[0]!);
+      fireEvent.click(await screen.findByRole("button", { name: /1\. Tisdag/ }));
+      await waitFor(() => expect(screen.getByRole("combobox", { name: "Sal" })).toHaveValue("r1"));
+      fireEvent.click(screen.getByRole("button", { name: "Lägg" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Lägg utan sal" }));
+      // The room field says what is laid: none.
+      expect(await screen.findByRole("button", { name: "Lägg ändå" })).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Sal" })).toHaveValue("");
+      fireEvent.click(screen.getByRole("button", { name: "Lägg ändå" }));
+      await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+      expect(lays).toEqual([
+        { roomId: "r1", exempt: undefined },
+        { roomId: null, exempt: undefined },
+        { roomId: null, exempt: ["FRAME"] },
+      ]);
+    });
+
+    it("takes the refusal away when the reader changes what it was about: the time, the day or the room", async () => {
+      refuse(new ApiError(409, "Matematik 7A: Tiden ligger utanför ramtiden.", "MASTER_LESSON_REFUSED", { reason: "FRAME", reasons: "FRAME" }));
+      await layAt();
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Lägg ändå" })).toBeInTheDocument();
+      fireEvent.change(screen.getByRole("textbox", { name: /Start/ }), { target: { value: "08:00" } });
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Lägg ändå" })).toBeNull();
+      // The same for the day and for the room: each press that is refused shows the refusal, and each change takes it away.
+      for (const [name, value] of [["Dag", "3"], ["Sal", "r2"]] as const) {
+        await waitFor(() => expect(screen.getByRole("button", { name: "Lägg" })).toBeEnabled());
+        fireEvent.click(screen.getByRole("button", { name: "Lägg" }));
+        expect(await screen.findByRole("alert")).toBeInTheDocument();
+        fireEvent.change(screen.getByRole("combobox", { name }), { target: { value } });
+        expect(screen.queryByRole("alert")).toBeNull();
+      }
     });
 
     it("offers no Lägg ändå for a time that breaks a rule that cannot be exempted", async () => {

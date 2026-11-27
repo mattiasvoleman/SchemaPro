@@ -2468,6 +2468,7 @@
     "startHint": "HH:MM",
     "room": "Room",
     "roomsLoading": "Fetching the rooms …",
+    "roomsFailed": "The rooms could not be read, so the lesson is laid without one. Change the time to try again.",
     "noRoom": "No room",
     "laid": "Placed and locked: {lesson} {day} {from}–{to}",
     "laidNoRoom": "Placed and locked, with no room: {lesson} {day} {from}–{to}",

@@ -2468,6 +2468,7 @@
     "startHint": "HH:MM",
     "room": "Sal",
     "roomsLoading": "Hämtar salarna …",
+    "roomsFailed": "Salarna gick inte att hämta, så lektionen läggs utan sal. Ändra tiden för att försöka igen.",
     "noRoom": "Utan sal",
     "laid": "Lagd och låst: {lesson} {day} {from}–{to}",
     "laidNoRoom": "Lagd och låst, utan sal: {lesson} {day} {from}–{to}",

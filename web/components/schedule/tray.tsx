@@ -301,6 +301,11 @@ function BrickForm({ brick, yearId, names, onDone }: { brick: TrayBrick; yearId:
   }, [roomKey, clockOk, brick.partKey, brick.lessonId]);
 
   const roomList = rooms?.key === roomKey ? rooms.rooms : null;
+  // The rooms of the time in the fields are on their way: until they have come the field holds no room of this time, and a lay then would be made without the
+  // one the generator ranks first (or with a room that belongs to the time before). The reader who chooses Utan sal is not waited for, and an answer that
+  // failed is no answer to wait for.
+  const roomsPending = clockOk && rooms?.key !== roomKey && !(roomTouched && roomId === "");
+  const roomsFailed = clockOk && rooms?.key === roomKey && rooms.rooms === null;
   // The room the generator would put the lesson in is the default, until the reader has chosen one themselves.
   const best = roomList?.find((room) => room.state === "FREE" && room.rank === 1)?.roomId ?? "";
   const shownRoom = roomTouched ? roomId : best;
@@ -313,7 +318,7 @@ function BrickForm({ brick, yearId, names, onDone }: { brick: TrayBrick; yearId:
   };
 
   const submit = async (override?: { roomId?: string | null; exempt?: ("FRAME" | "LUNCH")[] }) => {
-    if (!clockOk || busy) return;
+    if (!clockOk || busy || roomsPending) return;
     setBusy(true);
     const room = override && "roomId" in override ? (override.roomId ?? null) : shownRoom === "" ? null : shownRoom;
     try {
@@ -383,7 +388,13 @@ function BrickForm({ brick, yearId, names, onDone }: { brick: TrayBrick; yearId:
 
       <div className="grid gap-3 sm:grid-cols-3">
         <FormField id={`${id}-day`} label={t("day")}>
-          <NativeSelect value={day} onChange={(event) => setDay(event.target.value)}>
+          <NativeSelect
+            value={day}
+            onChange={(event) => {
+              setFailure(null);
+              setDay(event.target.value);
+            }}
+          >
             {[1, 2, 3, 4, 5].map((value) => (
               <option key={value} value={String(value)}>
                 {tDays(String(value))}
@@ -392,12 +403,22 @@ function BrickForm({ brick, yearId, names, onDone }: { brick: TrayBrick; yearId:
           </NativeSelect>
         </FormField>
         <FormField id={`${id}-start`} label={t("start")} hint={t("startHint")}>
-          <Input value={start} inputMode="numeric" placeholder="08:00" autoComplete="off" onChange={(event) => setStart(event.target.value)} />
+          <Input
+            value={start}
+            inputMode="numeric"
+            placeholder="08:00"
+            autoComplete="off"
+            onChange={(event) => {
+              setFailure(null);
+              setStart(event.target.value);
+            }}
+          />
         </FormField>
-        <FormField id={`${id}-room`} label={t("room")} hint={clockOk && !roomList ? t("roomsLoading") : undefined}>
+        <FormField id={`${id}-room`} label={t("room")} hint={roomsPending ? t("roomsLoading") : roomsFailed ? t("roomsFailed") : undefined}>
           <NativeSelect
             value={shownRoom}
             onChange={(event) => {
+              setFailure(null);
               setRoomTouched(true);
               setRoomId(event.target.value);
             }}
@@ -417,7 +438,19 @@ function BrickForm({ brick, yearId, names, onDone }: { brick: TrayBrick; yearId:
           <p>{failure.failure.kind === "ROOM" ? t(`errors.ROOM.${failure.failure.reason}`) : failure.text || t(`errors.${failure.failure.kind}.text`)}</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {failure.failure.kind === "ROOM" ? (
-              <Button type="button" size="sm" variant="outline" className="min-h-11" disabled={busy} onClick={() => void submit({ roomId: null })}>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="min-h-11"
+                disabled={busy}
+                onClick={() => {
+                  // The field says what is laid: none, so that the answers that may follow (Lägg ändå) are given for the lay that is made.
+                  setRoomTouched(true);
+                  setRoomId("");
+                  void submit({ roomId: null });
+                }}
+              >
                 {t("layWithoutRoom")}
               </Button>
             ) : null}
@@ -431,7 +464,7 @@ function BrickForm({ brick, yearId, names, onDone }: { brick: TrayBrick; yearId:
       ) : null}
 
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" className="min-h-11" disabled={!clockOk || busy} data-writes="SCHEMALAGGNING DRIFT">
+        <Button type="submit" className="min-h-11" disabled={!clockOk || busy || roomsPending} data-writes="SCHEMALAGGNING DRIFT">
           {t("submit")}
         </Button>
         <Button type="button" variant="outline" className="min-h-11" onClick={onDone}>
