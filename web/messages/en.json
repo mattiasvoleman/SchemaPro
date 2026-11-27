@@ -5829,13 +5829,13 @@
       "volume": "Differs from {plan} in {count, plural, one {# subject} other {# subjects}}"
     },
     "volumeLine": "{subject}: {carried} min/week, timplan {planned}",
-    "breaksHint": "No holidays are carried over unless you tick them. The dates are proposals: Christmas moves by whole weeks, the Easter break and the public holidays around Easter (Good Friday, Ascension Day, Whitsun) follow Easter, a public holiday with a fixed date keeps it, and the rest keep their week numbers. Change them if the school has decided otherwise.",
+    "breaksHint": "No holidays are carried over unless you tick them. The dates are proposals: Christmas moves by whole weeks, the Easter break and the public holidays around Easter (Good Friday, Ascension Day, Whitsun) follow Easter, a public holiday with a fixed date keeps it (Christmas Eve and Midsummer Eve follow the calendar's day), and the rest keep their week numbers. Change them if the school has decided otherwise.",
     "noBreaks": "The year has no holidays or staff days.",
     "breakThisYear": "This year {start} – {end}",
     "anchor": {
       "CHRISTMAS": "Proposed {start} – {end} (whole weeks, like Christmas)",
       "EASTER": "Proposed {start} – {end} (follows Easter)",
-      "FIXED_DATE": "Proposed {start} (same date every year)",
+      "FIXED_DATE": "Proposed {start} (follows the calendar)",
       "ISO_WEEK": "Proposed {start} – {end} (same weeks)",
       "NONE": "No proposal — the week does not exist next year, or the day is a Saturday or Sunday. Enter the dates or leave the break."
     },

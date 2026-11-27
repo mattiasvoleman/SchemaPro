@@ -293,6 +293,40 @@ describe('dates', () => {
   });
 });
 
+describe('julafton and midsommarafton as single-day lov (Skolans kalender)', () => {
+  const day = (date: string) => ({ startDate: date, endDate: date });
+  const years = (from: number) => ({
+    source: { startDate: `${from}-08-15`, endDate: `${from + 1}-08-14` },
+    target: { startDate: `${from + 1}-08-14`, endDate: `${from + 2}-08-13` },
+  });
+
+  it('keeps midsommarafton on the Friday of 19-25 June, in every year a week number would put it elsewhere', () => {
+    // Friday 20 June 2031 is in ISO week 25, and week 25 of 2032 has its Friday on the 18th: the eve is the 25th.
+    const { source, target } = years(2030);
+    expect(proposeBreak(day('2031-06-20'), source, target)).toEqual({ proposedStart: '2032-06-25', proposedEnd: '2032-06-25', anchor: 'FIXED_DATE', fits: true });
+    // And 2032's, the 25th, on the 24th of 2033 and not 1 July.
+    const next = years(2031);
+    expect(proposeBreak(day('2032-06-25'), next.source, next.target)).toMatchObject({ proposedStart: '2033-06-24', anchor: 'FIXED_DATE' });
+  });
+
+  it('carries every Friday midsommarafton and every julafton to the next year\'s own, for twenty years', () => {
+    const friday = (year: number) => {
+      for (let date = 19; date <= 25; date += 1) {
+        const iso = `${year}-06-${date}`;
+        if (new Date(`${iso}T00:00:00Z`).getUTCDay() === 5) return iso;
+      }
+      throw new Error('no Friday');
+    };
+    for (let from = 2026; from < 2046; from += 1) {
+      const { source, target } = years(from);
+      expect(['midsommarafton', from + 1, proposeBreak(day(friday(from + 1)), source, target).proposedStart]).toEqual(['midsommarafton', from + 1, friday(from + 2)]);
+      const eve = proposeBreak(day(`${from}-12-24`), source, target);
+      const weekday = new Date(`${from + 1}-12-24T00:00:00Z`).getUTCDay();
+      expect(['julafton', from, eve.proposedStart]).toEqual(['julafton', from, weekday === 0 || weekday === 6 ? null : `${from + 1}-12-24`]);
+    }
+  });
+});
+
 describe('the proposals for the public holidays (Skolans kalender)', () => {
   it('moves a lov that holds Good Friday, Ascension Day or Whit Sunday with Easter, not with the week number', () => {
     // Easter 2027 is 28 March and 2028 is 16 April: 19 days on. Kristi himmelsfärd 2027 is Thursday 6 May and 2028 is 25 May; the ISO

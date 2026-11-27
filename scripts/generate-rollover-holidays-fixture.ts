@@ -33,6 +33,9 @@ const lovs: DayBounds[] = [
   day('2026-12-25'),
   day('2027-05-01'),
   day('2027-06-06'),
+  // Julafton is the 24th (2026's Thursday, 2027's Friday), and midsommarafton the Friday of 19-25 June (25 June 2027, 23 June 2028).
+  day('2026-12-24'),
+  day('2027-06-25'),
   // A range is not a single day: the same dates as a week keep the ISO-week rule.
   { startDate: '2027-01-04', endDate: '2027-01-08' },
 ];

@@ -641,6 +641,24 @@ export function proposeBreak(lov: DayBounds, source: DayBounds, target: DayBound
     start <= end && start >= target.startDate && end <= target.endDate;
   const yearDelta = Number(target.startDate.slice(0, 4)) - Number(source.startDate.slice(0, 4));
 
+  // A single day that is julafton or midsommarafton is a red day of its own and follows the calendar, not the weeks: julafton
+  // is the 24th, and midsommarafton the Friday of 19-25 June, which the ISO week of last year puts a week off in some
+  // years (2031's, Friday 20 June, would be 18 June in 2032, whose midsommarafton is the 25th).
+  if (lov.startDate === lov.endDate) {
+    const targetYear = Number(lov.startDate.slice(0, 4)) + yearDelta;
+    let day: string | null = null;
+    if (lov.startDate.slice(5) === "12-24") day = `${targetYear}-12-24`;
+    else if (isoWeekOf(lov.startDate).weekday === 5 && lov.startDate.slice(5) >= "06-19" && lov.startDate.slice(5) <= "06-25") {
+      const first = `${targetYear}-06-19`;
+      day = addDays(first, (5 - isoWeekOf(first).weekday + 7) % 7);
+    }
+    if (day !== null) {
+      // Saturday and Sunday are not school days: the day costs the school nothing that year.
+      if (isoWeekOf(day).weekday > 5) return { proposedStart: null, proposedEnd: null, anchor: "NONE", fits: false };
+      return { proposedStart: day, proposedEnd: day, anchor: "FIXED_DATE", fits: fits(day, day) };
+    }
+  }
+
   const years = new Set([Number(lov.startDate.slice(0, 4)), Number(lov.endDate.slice(0, 4))]);
   const christmasYear = [...years].find((year) => {
     const christmasEve = `${year}-12-24`;

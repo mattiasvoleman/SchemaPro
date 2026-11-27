@@ -1307,6 +1307,38 @@
     },
     {
       "lov": {
+        "startDate": "2026-12-24",
+        "endDate": "2026-12-24"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2027-12-24",
+        "proposedEnd": "2027-12-24",
+        "anchor": "FIXED_DATE",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2027-06-25",
+        "endDate": "2027-06-25"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2028-06-23",
+        "proposedEnd": "2028-06-23",
+        "anchor": "FIXED_DATE",
+        "fits": false
+      }
+    },
+    {
+      "lov": {
         "startDate": "2027-01-04",
         "endDate": "2027-01-08"
       },
