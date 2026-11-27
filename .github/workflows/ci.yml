@@ -288,7 +288,10 @@ jobs:
   rls:
     name: Database — row-level-security policies
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # The probes of the schedule board (the judge's fall file, the possible times held against it) run every start of the week of every
+    # world of the file: the job took 17 to 21 minutes on the runs of 2026-11-27 and 20 min 28 s with the fall file's richer worlds. A job
+    # that is cut at the limit is a red check that says nothing about the code, so the limit is set well above what a slow runner takes.
+    timeout-minutes: 35
     env:
       POSTGRES_PASSWORD: postgres_local
       # docker-compose.yml declares JWT_SECRET and JWT_ISSUER with `:?`, so

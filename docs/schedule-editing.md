@@ -43,6 +43,17 @@ a Sunday (`SCHOOL_DAY`, the förläggning's own first question, in its words).
 - **Held in place by** `scripts/test/probe-domaren.ts` (the same drag through the hand edit's, a swap's and a förläggning's judge
   over real Postgres, with the cases in `src/calendar/__fixtures__/lesson-judge-cases.json` that the web's mirror is held to) and
   `src/calendar/lesson-judge.property.spec.ts` (the other schools' holds and the board's rules over random facts).
+  The file's first eighteen worlds have a class with no pupil in it, one class to a lesson, no window of dates and no other school;
+  the worlds from the nineteenth on (`generateRichWorlds`, their cases after the first eighteen's) carry pupils with a home class,
+  teaching groups of pupils from several classes (PUPILS), lessons with an extra class or with pupils named on them, lessons and
+  meals that run in a window of dates, and a room that a second school has borrowed for an hour (OTHER_SCHOOL). The förläggning's
+  judge is not asked to agree on a lesson that has an extra class or a named pupil: its row is a post's and has no word for them.
+  The board's painting (`probe-mojliga-tider.ts`) is held to the same file, so a time the board paints open or closed is the time
+  the judge lets through or refuses in every one of its worlds. After those come four richer worlds with no pupil named on a lesson
+  (the possible-times probe holds its prune exact only where none is, since it cannot see one) and six edge worlds
+  (`generateEdgeWorlds`), written by hand, that ask each turn of a comparison on both sides: a pupil named on two lessons, two windows
+  of dates that meet on one day, a window that touches a meal's first or last day, an extra class of the younger stage's ramtid, a
+  teaching group no pupil of which the ramtid reaches, and an hour lent to another school that a lesson touches without covering.
 
 ## Att lägga: grundschemats bricklåda (E4)
 

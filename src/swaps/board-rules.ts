@@ -193,8 +193,12 @@ export interface BoardReadInput {
 
 export async function readBoardFacts(tx: PrismaClient, input: BoardReadInput): Promise<BoardFacts> {
   const { academicYearId, schoolId, groupIds, weekday } = input;
+  // The asked groups AND the year's classes: a teaching group has no årskurs of its own, its years are those of its pupils' home classes
+  // (gradeSpanOf), and the rosters know a class's year only when it is among the groups they are given. A swap's snapshot reads every
+  // group of the year; asked for the group alone, this said no year for a teaching group, so a lesson of one was never held to a ramtid
+  // or to a rule on årskurser (found by the richer worlds of the fall file, probe-domaren.ts).
   const groupRows = await tx.studentGroup.findMany({
-    where: { id: { in: [...groupIds] } },
+    where: { OR: [{ id: { in: [...groupIds] } }, { academicYearId, kind: 'CLASS' }] },
     select: { id: true, gradeLevel: true, halfOfId: true },
   });
   const [frames, weeklySittings, rules] = [
@@ -259,7 +263,10 @@ export async function readBoardFacts(tx: PrismaClient, input: BoardReadInput): P
 
   const rosters = await loadRosters(tx, input.basis, [...groupIds], groupRows);
   const spans = new Map<string, GapSpan>();
+  const asked = new Set(groupIds);
   for (const group of groupRows) {
+    // The years of the groups asked about, not of every class read for its grade.
+    if (!asked.has(group.id)) continue;
     const span = toNioarigSpan(gradeSpanOf(rosters, [group.id]), input.gradeNumbering);
     if (span) spans.set(group.id, [span.min, span.max]);
   }

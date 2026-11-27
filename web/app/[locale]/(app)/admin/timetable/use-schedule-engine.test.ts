@@ -104,6 +104,26 @@ describe("judging a drag", () => {
     expect(result.current.validateChange("b", ontoA)).toBe(true);
   });
 
+  it("holds a dragged lesson to its own weeks and window of dates, as the gateway's judge does (the fall file's richer worlds)", () => {
+    // The same teacher, the same clock, and two lessons that are never taught in the same week: one in the autumn and one in the spring, one on
+    // odd weeks and one on even. Dragged onto the other's hour, the dragged lesson is no clash: the candidate must carry its weeks and its
+    // window, or it was taken for a lesson of every week of the year and refused a place the judge lets it have.
+    const autumn = { ...lessonAt("autumn", "g-1", "08:00:00", "09:00:00"), startDate: "2026-08-17", endDate: "2026-12-20" } as MasterLesson;
+    const spring = { ...lessonAt("spring", "g-2", "10:00:00", "11:00:00"), startDate: "2027-01-11", endDate: "2027-06-06" } as MasterLesson;
+    const lets = renderHook(() => useScheduleEngine(inputs({ lessons: [autumn, spring] as never })));
+    expect(lets.result.current.validateChange("spring", { dayOfWeek: 1, startMinutes: 8 * 60, endMinutes: 9 * 60 })).toBe(true);
+    // Both in the autumn: the same hour is a clash, whatever the window.
+    const alsoAutumn = { ...spring, startDate: "2026-10-26", endDate: "2026-12-20" } as MasterLesson;
+    const refuses = renderHook(() => useScheduleEngine(inputs({ lessons: [autumn, alsoAutumn] as never })));
+    expect(refuses.result.current.validateChange("spring", { dayOfWeek: 1, startMinutes: 8 * 60, endMinutes: 9 * 60 })).toBe(false);
+
+    const odd = { ...lessonAt("odd", "g-1", "08:00:00", "09:00:00"), recurrence: "ODD_WEEKS" } as MasterLesson;
+    const even = { ...lessonAt("even", "g-2", "10:00:00", "11:00:00"), recurrence: "EVEN_WEEKS" } as MasterLesson;
+    const weeks = renderHook(() => useScheduleEngine(inputs({ lessons: [odd, even] as never })));
+    expect(weeks.result.current.validateChange("even", { dayOfWeek: 1, startMinutes: 8 * 60, endMinutes: 9 * 60 })).toBe(true);
+    expect(weeks.result.current.validateChange("odd", { dayOfWeek: 1, startMinutes: 10 * 60, endMinutes: 11 * 60 })).toBe(true);
+  });
+
   it("marks the clash a hand-placed overlap makes, and none before", () => {
     const overlapping = lessonAt("b", "g-2", "08:30:00", "09:30:00");
     const apart = renderHook(() => useScheduleEngine(inputs({ lessons: [a, b] as never })));

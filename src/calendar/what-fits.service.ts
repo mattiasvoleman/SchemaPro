@@ -268,7 +268,7 @@ export class WhatFitsService {
         blockers,
         stats: { candidates: entries.length, judged, refused, truncated, elapsedMs: Date.now() - started },
       };
-    });
+    }, { timeoutMs: this.possible.transactionMs() });
   }
 
   async roomChoices(dto: RoomChoicesDto, user: AuthenticatedUser): Promise<RoomChoices> {
@@ -327,6 +327,6 @@ export class WhatFitsService {
       }
       const rooms = roomChoicesOf(world, subject, dto.dayOfWeek, startMinutes, full);
       return { ...base, rooms, stats: { rooms: rooms.length, free: rooms.filter((room) => room.state === 'FREE').length, elapsedMs: Date.now() - started } };
-    });
+    }, { timeoutMs: this.possible.transactionMs() });
   }
 }
