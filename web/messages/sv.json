@@ -2539,6 +2539,7 @@
     "markerTaken": "{day} {from}–{to}: går inte att lägga här. Enter visar de närmaste lediga tiderna.",
     "markerRank": "{day} {from}–{to}: förslag {rank}. Enter lägger.",
     "markerChange": "{day} {from}–{to}: ledigt, men i en annan sal än lektionens egen. Lägg den med ett av de bästa förslagen eller i Justera lektion, där salen väljs.",
+    "markerChangeHere": "{day} {from}–{to}: ledigt i en annan sal än lektionens egen. Enter lägger den där.",
     "markerClosed": "{day} {from}–{to}: stängt av {code, select, FRAME {ramtiden} LUNCH {klassens lunch} GRADE_RULE {en regel för årskursen} OTHER_SCHOOL {en annan skolas tid} AVAILABILITY {en markering om att något inte är tillgängligt} other {en regel}}. Enter visar de närmaste lediga tiderna.",
     "markerInTheWay": "{day} {from}–{to}: {subject} {className} ligger i vägen. Enter visar de närmaste lediga tiderna.",
     "markerCrowded": "{day} {from}–{to}: {units, plural, =0 {något är i vägen} one {en lektion ligger i vägen} other {# lektioner ligger i vägen}}. Enter visar de närmaste lediga tiderna.",

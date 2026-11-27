@@ -51,6 +51,13 @@ const DEFAULT_TO = 18 * 60;
 export const BRICK_ID = 'brick';
 export const isNewLesson = (id: string): boolean => id.startsWith(BRICK_ID);
 
+/** The rooms of the lessons of a unit that stand in another than their own at a candidate start: what a run of "another room" carries. */
+function roomsOf(subject: PossibleSubject, candidate: CostedStart): Array<{ lessonId: string; roomId: string | null }> {
+  return subject.unit.members
+    .filter((member) => (candidate.rooms.get(member.id) ?? null) !== member.roomId)
+    .map((member) => ({ lessonId: isNewLesson(member.id) ? '' : member.id, roomId: candidate.rooms.get(member.id) ?? null }));
+}
+
 export interface PossibleOption {
   /** 1 is the best. */
   rank: number;
@@ -531,7 +538,9 @@ export class PossibleTimesService {
         judged += 1;
         const ok = verdicts[index]!;
         const answer: Settled = ok
-          ? { kind: candidate.roomChanged ? 'CHANGE' : 'FREE' }
+          ? candidate.roomChanged
+            ? { kind: 'CHANGE', rooms: roomsOf(subject, candidate) }
+            : { kind: 'FREE' }
           : // The prune let it through and the judge did not (a rule only the judge holds): nothing is painted, and nothing offered.
             { kind: 'CROWDED', units: 0, locked: false };
         settled.set(keyOf(candidate.dayOfWeek, candidate.startMinutes), { dayOfWeek: candidate.dayOfWeek, startMinutes: candidate.startMinutes, answer });

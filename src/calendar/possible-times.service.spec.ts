@@ -80,6 +80,41 @@ describe('possible times: what the service reads, asks and says', () => {
     expect(answer.stats.starts).toBe(85);
   });
 
+  it('names, in every run of another room, the room the lesson stands in there: not its own, one of the school\'s, and the numbered time\'s where one lies in the run (E3, Ledigt, annan sal läggs)', async () => {
+    const svc = service(txFor());
+    const answer = await ask(svc, { lessonId: mover.id, limit: 40, stepMinutes: 5 });
+    const changes = answer.days.flatMap((day) => day.runs).filter((run) => run.kind === 'CHANGE');
+    // The seeded week has starts where the lesson's own room is taken and another is free: without them the run below proves nothing.
+    expect(changes.length).toBeGreaterThan(0);
+    for (const run of changes) {
+      expect(run.rooms).toHaveLength(1);
+      const [named] = run.rooms!;
+      expect(named!.lessonId).toBe(mover.id);
+      expect(named!.roomId).not.toBe(mover.roomId);
+      expect(['r1', 'r2', 'r3', 'r4', 'r5', 'r6']).toContain(named!.roomId);
+    }
+    // A numbered time in another room names the same room as the run it lies in.
+    for (const option of answer.options.filter((entry) => entry.roomChanged)) {
+      const run = changes.find((candidate) => candidate.dayOfWeek === option.dayOfWeek && candidate.fromMinutes <= option.startMinutes && option.startMinutes <= candidate.toMinutes)!;
+      expect(run.rooms).toEqual([{ lessonId: mover.id, roomId: option.lessons[0]!.roomId }]);
+    }
+    // And no other kind of run carries a room.
+    expect(answer.days.flatMap((day) => day.runs).filter((run) => run.kind !== 'CHANGE' && run.rooms !== undefined)).toEqual([]);
+  });
+
+  it('offers another room only where the generator would take the lesson: the seats count the extra classes too (E3, Ledigt, annan sal läggs; E4, BOARD_ROOM_NOT_ALLOWED)', async () => {
+    // The lesson's own room holds thirty; every other room five. Three pupils of its own class fit a small room, six with an extra class do not.
+    const rooms = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6'].map((id) => ({ id, name: id, capacity: id === mover.roomId ? 30 : 5, roomTypeId: null, minGradeLevel: null, maxGradeLevel: null, building: null }));
+    const another = world.classIds.find((id) => id !== mover.studentGroupId)!;
+    const withExtra: SwapData = { ...world.data, lessons: world.data.lessons.map((lesson) => (lesson.id === mover.id ? { ...lesson, extraGroupIds: [another] } : lesson)) };
+    const changesOf = async (data: SwapData) =>
+      (await ask(service(txFor({ rooms }), undefined, data), { lessonId: mover.id, limit: 40, stepMinutes: 5 })).days.flatMap((day) => day.runs).filter((run) => run.kind === 'CHANGE');
+    // The control: the class alone fits a small room, so the week has starts where the own room is taken and a small one is offered.
+    expect((await changesOf(world.data)).length).toBeGreaterThan(0);
+    // With the extra class the pupils are six, and a room of five is no room the generator takes: nothing is offered in another room.
+    expect(await changesOf(withExtra)).toEqual([]);
+  });
+
   it('names a lesson in the way once, with its class, subject, day and time', async () => {
     const svc = service(txFor());
     const answer = await ask(svc, { lessonId: mover.id });

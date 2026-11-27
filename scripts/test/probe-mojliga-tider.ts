@@ -161,11 +161,17 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
                 seen.free += 1;
                 assert.ok(verdict.ok, `${where}: the query says FREE and the judge says ${reasons.join(',')}`);
                 break;
-              case 'CHANGE':
+              case 'CHANGE': {
                 // Another room: the judge is asked below with it. A CHANGE where the own room is fine is a mistake.
                 seen.change += 1;
                 assert.ok(!verdict.ok, `${where}: the query says CHANGE although the lesson's own room is free`);
+                // The run carries the room the board lays the lesson in (Ledigt, annan sal läggs), and the judge lets the lesson through in it.
+                const room = run.rooms?.find((entry) => entry.lessonId === lessonId)?.roomId;
+                assert.ok(room, `${where}: a run of another room that names no room (${JSON.stringify(run.rooms)})`);
+                const there = await masters.judgeMoves({ moves: [{ lessonId, dayOfWeek: day, startTime: clockOf(start), endTime: clockOf(start + minutes), roomId: room }] }, caller);
+                assert.ok(there.ok, `${where}: the judge refuses the room the run names (${there.moves[0]!.refusals.map((refusal) => refusal.reason).join(',')})`);
                 break;
+              }
               case 'CLOSED': {
                 seen.closed.set(run.code!, (seen.closed.get(run.code!) ?? 0) + 1);
                 assert.ok(!verdict.ok, `${where}: the query says CLOSED ${run.code} and the judge lets it through`);
