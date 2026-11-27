@@ -79,6 +79,8 @@ RESPONSE_KEYS = {
 CHANGE_KEYS = {
     "rule", "cost", "current", "needed", "weekdays", "requirementIds", "roomIds", "resourceIds", "proof",
 }
+#: `neededIsLeast` (G6b): in the schema, and in a change's bytes only where the engine tried to lower `needed` (None is omitted).
+LEAST_KEY = "neededIsLeast"
 
 
 def _engine(**overrides: object) -> Settings:
@@ -627,10 +629,10 @@ def test_the_route_answers_with_exactly_the_published_names(client: TestClient) 
 
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == RESPONSE_KEYS
+    assert set(body) == RESPONSE_KEYS  # `report` is in the bytes of a NOT_FOUND only (test_suggest_changes_not_found)
     assert body["verdict"] == "CHANGES" and body["verified"] is True
     (change,) = body["changes"]
-    assert set(change) == CHANGE_KEYS
+    assert set(change) - {LEAST_KEY} == CHANGE_KEYS
     assert (change["rule"], change["current"], change["needed"], change["proof"]) == (
         "TEACHER_DAILY_CAP", 60, 120, "SOLVED",
     )
@@ -739,8 +741,8 @@ def test_the_openapi_document_gains_a_route_and_schemas_and_changes_nothing_else
         "$ref": "#/components/schemas/OptimizeScheduleRequest",
     }
     schemas = with_route["components"]["schemas"]
-    assert set(schemas["SuggestChangesResponse"]["properties"]) == RESPONSE_KEYS
-    assert set(schemas["SuggestedChange"]["properties"]) == CHANGE_KEYS
+    assert set(schemas["SuggestChangesResponse"]["properties"]) == RESPONSE_KEYS | {"report"}
+    assert set(schemas["SuggestedChange"]["properties"]) == CHANGE_KEYS | {LEAST_KEY}
     assert schemas["SuggestChangesResponse"]["properties"]["verdict"]["enum"] == [
         "CHANGES", "SOLVABLE_AS_IS", "NOT_FOUND", "HARD_REFUSAL",
     ]

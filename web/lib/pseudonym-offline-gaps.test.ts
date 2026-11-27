@@ -36,6 +36,14 @@ describe("the tool that looks, tried on the ways out it had missed", () => {
         "identifier Function",
         "identifier Audio",
         "open()",
+        // And, since X1b, the names the calls go through: window, globalThis, location, navigator, and what document.body is reached by.
+        "reference to window",
+        "reference to window",
+        "reference to window",
+        "reference to globalThis",
+        "reference to location",
+        "reference to navigator",
+        "reference to document (document.body)",
       ].sort(),
     );
     expect(found).not.toContain('createElement("a")');
@@ -43,6 +51,43 @@ describe("the tool that looks, tried on the ways out it had missed", () => {
 
   it("still finds what the first probe has, and nothing more in it", () => {
     const first = closureOf(["lib/__fixtures__/offline-probe.ts"]).findings.map((finding) => finding.what).sort();
-    expect(first).toEqual(["identifier XMLHttpRequest", "identifier fetch", "location.href", "property .cookie", "window.open"].sort());
+    expect(first).toEqual(
+      ["identifier XMLHttpRequest", "identifier fetch", "location.href", "property .cookie", "window.open", "reference to document (document.cookie)", "reference to location", "reference to window"].sort(),
+    );
+  });
+});
+
+/*
+ * THE WAYS OUT THAT START FROM A NAME OF THEIR OWN (X1b, the review of #398, L-4).
+ *
+ * `const w: any = window; const loc = w.location; loc.assign(url)` went through the proof and through the component test (28 of 28 green), and the page's policy does not refuse a navigation either. The rules above look for `location.assign` and
+ * `window.open` by their spelling, and a variable has another. The review left it as "a trade-off for X1": to forbid the word `location` in the whole closure changes the exact lists of the search tool's tests. The price is
+ * paid here, once, because nothing the pseudonymiser does needs the browser's objects but `document.createElement("a")` for a download: window, globalThis, self, top, parent, frames, opener, location, history and navigator are findings
+ * wherever they are referenced, and so is every use of document but that one. A name that is only a property (`box.top`) is not a reference.
+ */
+describe("the tool that looks, tried on the ways out that go through a name of their own", () => {
+  const found = closureOf(["lib/__fixtures__/offline-probe-aliases.ts"]).findings.map((finding) => finding.what);
+
+  it("finds the name every one of them starts from", () => {
+    for (const reference of ["reference to window", "reference to globalThis", "reference to top", "reference to parent", "reference to self", "reference to location", "reference to history", "reference to navigator"]) {
+      expect(found, reference).toContain(reference);
+    }
+    expect(found).toContain("reference to document (document.location)");
+    expect(found).toContain("reference to document (document.defaultView)");
+  });
+
+  it("finds the alias of window, which every rule above let through: the function that has nothing but a variable", () => {
+    const only = closureOf(["lib/__fixtures__/offline-probe-aliases.ts"]).findings;
+    expect(only.filter((finding) => finding.what === "reference to window").length).toBe(2);
+  });
+
+  it("lets a property called top or parent be, and the anchor of a download", () => {
+    expect(found).not.toContain('createElement("a")');
+    expect(found.filter((what) => what === "reference to top")).toHaveLength(1);
+    expect(found.filter((what) => what === "reference to parent")).toHaveLength(1);
+  });
+
+  it("finds nothing of the kind in the pseudonymiser: the core and the tool use none of them", () => {
+    expect(closureOf(["lib/pseudonym-run.ts", "lib/pseudonym-download.ts", "app/[locale]/pseudonymisera/tool.tsx"]).findings).toEqual([]);
   });
 });

@@ -72,7 +72,7 @@ describe('NotificationsService', () => {
    * Who has an address in the database. notifyUsers reads them inside the transaction (tx.user.findMany) and the delivery
    * reads them again when the row is planned (app.outbound_addresses), so a spec says them once for both.
    */
-  const addressed = (rows: Array<{ id: string; email: string }>) => {
+  const addressed = (rows: Array<{ id: string; email: string | null }>) => {
     tx.user.findMany.mockResolvedValue(rows);
     for (const row of rows) if (row.email) store.directory.set(row.id, row.email);
   };
@@ -258,6 +258,32 @@ describe('NotificationsService', () => {
 
       expect(tx.user.findMany).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('mirrors to the people who have an address and to nobody else: a person with none (Personer utan e-postadress) gets the notice in the inbox', async () => {
+      process.env.RESEND_API_KEY = 'resend-key';
+      process.env.EMAIL_FROM = 'SchemaPro <noreply@schemapro.test>';
+      addressed([
+        { id: 'user-1', email: 'anna@school.se' },
+        { id: 'user-2', email: null },
+      ]);
+
+      await expect(
+        inTransaction((c) =>
+          service.notifyUsers(c, {
+            schoolId: SCHOOL_ID,
+            userIds: ['user-1', 'user-2'],
+            type: 'LEAVE_DECIDED',
+            meta: {},
+            email: { subject: 'Decided', body: 'Your leave was approved.' },
+          }),
+        ),
+      ).resolves.toBe(2);
+
+      await flushDelivery();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+      expect((JSON.parse(init.body) as { bcc: string[] }).bcc).toEqual(['anna@school.se']);
     });
 
     it('mirrors to email after the commit: resolves active recipients in-tx and BCCs their addresses', async () => {

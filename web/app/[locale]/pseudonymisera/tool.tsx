@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Treatment } from "@/lib/pseudonym-headers";
 import { parseSource, type InputSource, type ParseFailure } from "@/lib/pseudonym-input";
 import { sayWith, type Labels, type LabelKey, type Say } from "@/lib/pseudonym-labels";
@@ -50,7 +50,7 @@ function aboutFile(say: Say, key: "problem.line" | "problem.hiddenSheets", name:
  * from the code, the component test runs with every way out replaced by a trap, and the page's own policy (connect-src 'none') makes the
  * browser refuse. The state lives in this component and goes with the tab; "Rensa allt" drops it at once.
  */
-function Tool({ labels, locale, onClear }: { labels: Labels; locale: string; onClear: () => void }) {
+function Tool({ labels, locale, onClear, focusOnMount, onHolds }: { labels: Labels; locale: string; onClear: () => void; focusOnMount: boolean; onHolds: () => void }) {
   const say = sayWith(labels, locale);
   const nextId = useRef(1);
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -65,6 +65,11 @@ function Tool({ labels, locale, onClear }: { labels: Labels; locale: string; onC
 
   // A result that has just been made is where the person is taken: the heading, which says so to a screen reader too.
   const resultReady = result !== null && result.ok;
+  // After "Rensa allt" the old instance is gone and the focus with it (the browser puts it on the page): the new one takes it to the first control, so that a person at the keyboard or with a screen reader is where they began (the review of #429, L-4).
+  const fileInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (focusOnMount) fileInput.current?.focus();
+  }, [focusOnMount]);
   useEffect(() => {
     if (resultReady) resultHeading.current?.focus();
   }, [resultReady]);
@@ -142,12 +147,19 @@ function Tool({ labels, locale, onClear }: { labels: Labels; locale: string; onC
 
   // "Rensa allt" is on the page whenever there is anything for it to drop: a file, text pasted and not yet added, the user's own words, or the message
   // about a file that could not be read (it names the file). It stands by the run button once a file is added, and by the paste box before.
-  const holdsSomething = entries.length > 0 || pasted !== "" || words !== "" || problems.length > 0;
+  // (Not `entries.length > 0` as well: the button is drawn here only when there is no file, and with one it stands by the run button, so that term was never read: the review of #429, L-2.)
+  const holdsSomething = pasted !== "" || words !== "" || problems.length > 0;
   const clearButton = (
     <button type="button" className={BUTTON_OUTLINE} onClick={clearAll}>
       {say("tool.clearAll")}
     </button>
   );
+
+  // The page says it is empty after "Rensa allt"; once the person puts something in it, that sentence has done its work.
+  const usedAgain = entries.length > 0 || holdsSomething;
+  useEffect(() => {
+    if (usedAgain) onHolds();
+  }, [usedAgain, onHolds]);
 
   const undecided = entries.reduce(
     (sum, entry) => sum + entry.plan.columns.filter((column) => (entry.treatments[column.index] ?? column.proposal?.treatment) === undefined).length,
@@ -166,6 +178,7 @@ function Tool({ labels, locale, onClear }: { labels: Labels; locale: string; onC
               {say("tool.chooseFiles")}
             </label>
             <input
+              ref={fileInput}
               id="file-input"
               type="file"
               multiple
@@ -326,5 +339,20 @@ function Tool({ labels, locale, onClear }: { labels: Labels; locale: string; onC
  */
 export function PseudonymiserareTool({ labels, locale }: { labels: Labels; locale: string }) {
   const [instance, setInstance] = useState(0);
-  return <Tool key={instance} labels={labels} locale={locale} onClear={() => setInstance((current) => current + 1)} />;
+  // Said once, by the part of the page that is not dropped with the rest: a screen reader is told that everything is gone, and the person who pressed the button sees it (the review of #429, L-4).
+  const [cleared, setCleared] = useState(false);
+  const say = sayWith(labels, locale);
+  const clear = useCallback(() => {
+    setInstance((current) => current + 1);
+    setCleared(true);
+  }, []);
+  const used = useCallback(() => setCleared(false), []);
+  return (
+    <>
+      <p id="cleared-status" aria-live="polite" className="min-h-5 text-sm text-muted-foreground">
+        {cleared ? say("tool.cleared") : ""}
+      </p>
+      <Tool key={instance} labels={labels} locale={locale} onClear={clear} focusOnMount={instance > 0} onHolds={used} />
+    </>
+  );
 }

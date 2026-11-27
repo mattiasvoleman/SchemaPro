@@ -119,6 +119,7 @@ import { LunchSettingsService } from '../../src/resources/lunch-settings.service
 import type { RealtimeService } from '../../src/realtime/realtime.service';
 import type { ScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CalendarService } from '../../src/calendar/calendar.service';
+import { DirectReachService } from '../../src/publication/direct-reach.service';
 import { PublicationsService } from '../../src/publication/publications.service';
 import { DraftService } from '../../src/publication/draft.service';
 import { snapshotRanges } from '../../src/publication/published-grundschema';
@@ -5796,7 +5797,11 @@ async function runChecks(
           // holds on the new teacher (the siblings of the huvudman and the loans, one SELECT each; a school with neither
           // stops there). A PATCH that moves nothing asks none of it, and the board's rules only a PATCH that moves where
           // the lesson stands.
-          'PATCH a new teacher': 40,
+          // +1 on this one and on both drags since Frågan före en ändring i Direkt (P5, 20270312090000): a PATCH that reached published
+          // lessons in a school that is in Direkt asks app.direct_reach_facts whether the school has answered the question before such a
+          // change (one SELECT; this school has a published lesson, and no publication in the log, so nothing more follows). A PATCH
+          // that reached no lesson, or in utkast, asks nothing of it.
+          'PATCH a new teacher': 41,
           // +1 each since Ämnesfördelning: a drag to another weekday asks the
           // lesson's timplanspost for its distribution rule (one indexed
           // SELECT), and stops there when the post has none, as here. A
@@ -5825,8 +5830,8 @@ async function runChecks(
           // reads), and the other schools' holds (the siblings and the loans). The ramtid, the meal and the rule on årskurser
           // are rows of the school's, so no school is spared them; the roster reads are the stage's years, which the clash
           // rule's own reads of the same pupils do not carry.
-          'PATCH a drag': 35,
-          'PATCH a drag back beside 8A': 40,
+          'PATCH a drag': 36,
+          'PATCH a drag back beside 8A': 41,
           // +1 since Klassens måltid per del av läsåret (20270209090000): a
           // class has one meal on a DATE, which the table's exclusion
           // constraint says, so the placing reads the class's meals of the
@@ -8954,6 +8959,9 @@ async function givenPublicationSchool(
     `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
     [`${MARKER} ${suffix}`, `${MARKER}-${suffix}`],
   );
+  // The question before a change in Direkt that reaches families (P5): these checks edit published lessons, so the school has answered it.
+  // (src/publication/direct-reach.ts; the question itself is asked in probe-direkt-fragan.ts.)
+  await owner.query(`INSERT INTO "PublicationSettings" ("schoolId", "directReachAcknowledgedAt") VALUES ($1, now())`, [school.id]);
   const person = (role: string, email: string, groupId: string | null = null) =>
     one<{ id: string; authId: string }>(
       `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
@@ -9325,6 +9333,13 @@ async function draftChecks(owner: Client, api: PrismaService): Promise<void> {
       assert.notDeepEqual(now.delivered, before.delivered);
       const back = await drafts.switchMode('DIRECT', school.admin);
       assert.equal(back.publishMode, 'DIRECT');
+      // Back in Direkt is a new decision about who is reached (P5): the switch took the school's answer back, so the first edit that reaches
+      // published lessons is refused and rolled back, and goes once the school has answered again.
+      await assert.rejects(
+        lessons.update(school.monday, { startTime: '09:00', endTime: '10:00' }, school.admin),
+        (error: unknown) => error instanceof ConflictException && JSON.stringify(error.getResponse()).includes('DIRECT_REACH_UNANSWERED'),
+      );
+      await new DirectReachService(api).acknowledge(school.admin);
       const moved = await lessons.update(school.monday, { startTime: '09:00', endTime: '10:00' }, school.admin);
       assert.ok(moved.propagatedLessons > 30);
       await new Promise<void>((resolve) => setImmediate(resolve));

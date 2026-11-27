@@ -23,8 +23,15 @@ interface School {
   year: IntakeView["year"];
   subjects: number;
   rooms: number;
+  roomTypes: number;
   frameTimes: number;
   rasts: number;
+  /** The year's lov, the school's lunch serving rows, its rastvakt areas and the year's passes, and how many of the four switches are on. */
+  breaks: number;
+  lunchServings: number;
+  supervisionAreas: number;
+  supervisionShifts: number;
+  switchesOn: number;
   classes: number;
   teachingGroups: number;
   teachers: number;
@@ -45,9 +52,24 @@ function view(school: School, gaps: Record<string, IntakeGap>): IntakeView {
       found: { subjects: school.subjects },
       gaps: [presence("NO_SUBJECTS", "HARD", school.subjects === 0), g("SUBJECTS_WITHOUT_POSTS", "INFO"), g("ROOM_TYPE_WITHOUT_ROOM", "HARD")],
     },
-    { area: "ROOMS", found: { rooms: school.rooms }, waitsForYear: false, gaps: [presence("NO_ROOMS", "HARD", school.rooms === 0)] },
+    {
+      area: "ROOMS",
+      found: { rooms: school.rooms, roomTypes: school.roomTypes },
+      waitsForYear: false,
+      gaps: [presence("NO_ROOMS", "HARD", school.rooms === 0), presence("NO_ROOM_TYPES", "INFO", school.roomTypes === 0)],
+    },
     { area: "FRAME_TIMES", found: { frameTimes: school.frameTimes }, waitsForYear: false, gaps: [g("FRAME_TIMES_MISSING", "SOFT")] },
     { area: "RASTS", found: { rasts: school.rasts }, waitsForYear: false, gaps: [presence("NO_RASTS", "INFO", school.rasts === 0)] },
+    { area: "BREAKS", found: { breaks: school.year === null ? 0 : school.breaks }, waitsForYear: waits, gaps: [presence("NO_BREAKS", "INFO", school.year !== null && school.breaks === 0)] },
+    // Lunch is the school's (a row of LunchSettings, none meaning off): the gap is its own count, 1 when it is off, and the gateway's `lunchOn` is not
+    // a count of the area, so a school with serving rows and no lunch rule says both.
+    { area: "LUNCH", found: { lunchServings: school.lunchServings }, waitsForYear: false, gaps: [g("LUNCH_OFF", "INFO")] },
+    {
+      area: "SUPERVISION",
+      found: { supervisionAreas: school.supervisionAreas, supervisionShifts: school.year === null ? 0 : school.supervisionShifts },
+      waitsForYear: waits,
+      gaps: [presence("NO_SUPERVISION", "INFO", school.year !== null && school.supervisionShifts === 0)],
+    },
     {
       area: "CLASSES",
       waitsForYear: waits,
@@ -69,6 +91,12 @@ function view(school: School, gaps: Record<string, IntakeGap>): IntakeView {
       gaps: [presence("NO_REQUIREMENTS", "HARD", school.year !== null && school.requirements === 0)],
     },
     { area: "STAFFING", found: { posts: school.posts }, waitsForYear: waits, gaps: [g("UNSTAFFED_POSTS", "SOFT"), g("TEACHERS_WITHOUT_POST", "INFO"), g("POSTS_WITHOUT_SIGNATURE", "INFO")] },
+    {
+      area: "SWITCHES",
+      found: { switchesOn: school.switchesOn },
+      waitsForYear: false,
+      gaps: [g("ABSENCE_WATCH_OFF", "INFO"), g("ACK_OFF", "INFO"), g("VIEWER_OFF", "INFO"), g("SICK_REPORT_OFF", "INFO")],
+    },
   ];
   const there = areas.flatMap((area) => area.gaps).filter((entry) => entry.count > 0);
   return {
@@ -86,8 +114,15 @@ const NEARLY_READY = view(
     year: { id: YEAR.id, name: YEAR.name, isActive: true },
     subjects: 8,
     rooms: 7,
+    roomTypes: 3,
     frameTimes: 2,
     rasts: 3,
+    breaks: 6,
+    lunchServings: 2,
+    supervisionAreas: 2,
+    supervisionShifts: 14,
+    // Bevakning and kvittens are off, Schemavisaren and sjukanmälan are on.
+    switchesOn: 2,
     classes: 4,
     teachingGroups: 2,
     teachers: 8,
@@ -102,12 +137,40 @@ const NEARLY_READY = view(
     SUBJECTS_WITHOUT_POSTS: gap("SUBJECTS_WITHOUT_POSTS", "INFO", 1, ["Teknik"]),
     TIMPLAN_NOT_DECIDED: gap("TIMPLAN_NOT_DECIDED", "INFO", 1, ["8"]),
     POSTS_WITHOUT_SIGNATURE: gap("POSTS_WITHOUT_SIGNATURE", "INFO", 3),
+    ABSENCE_WATCH_OFF: gap("ABSENCE_WATCH_OFF", "INFO", 1),
+    ACK_OFF: gap("ACK_OFF", "INFO", 1),
   },
 );
 
 const EMPTY = view(
-  { years: 0, year: null, subjects: 0, rooms: 0, frameTimes: 0, rasts: 0, classes: 0, teachingGroups: 0, teachers: 0, students: 0, gradesWithTimplan: 0, requirements: 0, posts: 0 },
-  {},
+  {
+    years: 0,
+    year: null,
+    subjects: 0,
+    rooms: 0,
+    roomTypes: 0,
+    frameTimes: 0,
+    rasts: 0,
+    breaks: 0,
+    lunchServings: 0,
+    supervisionAreas: 0,
+    supervisionShifts: 0,
+    switchesOn: 0,
+    classes: 0,
+    teachingGroups: 0,
+    teachers: 0,
+    students: 0,
+    gradesWithTimplan: 0,
+    requirements: 0,
+    posts: 0,
+  },
+  {
+    LUNCH_OFF: gap("LUNCH_OFF", "INFO", 1),
+    ABSENCE_WATCH_OFF: gap("ABSENCE_WATCH_OFF", "INFO", 1),
+    ACK_OFF: gap("ACK_OFF", "INFO", 1),
+    VIEWER_OFF: gap("VIEWER_OFF", "INFO", 1),
+    SICK_REPORT_OFF: gap("SICK_REPORT_OFF", "INFO", 1),
+  },
 );
 
 /**
@@ -124,10 +187,10 @@ const DEMO_SCHOOL: IntakeView = {
   areas: [
     {
       area: "YEAR",
-      waitsForYear: false,
       found: {
         years: 1
       },
+      waitsForYear: false,
       gaps: [
         {
           code: "NO_YEAR",
@@ -140,10 +203,10 @@ const DEMO_SCHOOL: IntakeView = {
     },
     {
       area: "SUBJECTS",
-      waitsForYear: false,
       found: {
         subjects: 8
       },
+      waitsForYear: false,
       gaps: [
         {
           code: "NO_SUBJECTS",
@@ -170,14 +233,22 @@ const DEMO_SCHOOL: IntakeView = {
     },
     {
       area: "ROOMS",
-      waitsForYear: false,
       found: {
-        rooms: 7
+        rooms: 7,
+        roomTypes: 10
       },
+      waitsForYear: false,
       gaps: [
         {
           code: "NO_ROOMS",
           level: "HARD",
+          count: 0,
+          items: [],
+          more: 0
+        },
+        {
+          code: "NO_ROOM_TYPES",
+          level: "INFO",
           count: 0,
           items: [],
           more: 0
@@ -186,10 +257,10 @@ const DEMO_SCHOOL: IntakeView = {
     },
     {
       area: "FRAME_TIMES",
-      waitsForYear: false,
       found: {
         frameTimes: 0
       },
+      waitsForYear: false,
       gaps: [
         {
           code: "FRAME_TIMES_MISSING",
@@ -205,10 +276,10 @@ const DEMO_SCHOOL: IntakeView = {
     },
     {
       area: "RASTS",
-      waitsForYear: false,
       found: {
         rasts: 0
       },
+      waitsForYear: false,
       gaps: [
         {
           code: "NO_RASTS",
@@ -220,11 +291,60 @@ const DEMO_SCHOOL: IntakeView = {
       ]
     },
     {
-      area: "CLASSES",
+      area: "BREAKS",
+      found: {
+        breaks: 0
+      },
       waitsForYear: false,
+      gaps: [
+        {
+          code: "NO_BREAKS",
+          level: "INFO",
+          count: 1,
+          items: [],
+          more: 0
+        }
+      ]
+    },
+    {
+      area: "LUNCH",
+      found: {
+        lunchServings: 0
+      },
+      waitsForYear: false,
+      gaps: [
+        {
+          code: "LUNCH_OFF",
+          level: "INFO",
+          count: 0,
+          items: [],
+          more: 0
+        }
+      ]
+    },
+    {
+      area: "SUPERVISION",
+      found: {
+        supervisionAreas: 0,
+        supervisionShifts: 0
+      },
+      waitsForYear: false,
+      gaps: [
+        {
+          code: "NO_SUPERVISION",
+          level: "INFO",
+          count: 1,
+          items: [],
+          more: 0
+        }
+      ]
+    },
+    {
+      area: "CLASSES",
       found: {
         classes: 4
       },
+      waitsForYear: false,
       gaps: [
         {
           code: "NO_CLASSES",
@@ -251,10 +371,10 @@ const DEMO_SCHOOL: IntakeView = {
     },
     {
       area: "TEACHING_GROUPS",
-      waitsForYear: false,
       found: {
         teachingGroups: 1
       },
+      waitsForYear: false,
       gaps: [
         {
           code: "TEACHING_GROUPS_WITHOUT_MEMBERS",
@@ -267,11 +387,11 @@ const DEMO_SCHOOL: IntakeView = {
     },
     {
       area: "PEOPLE",
-      waitsForYear: false,
       found: {
         teachers: 8,
         students: 80
       },
+      waitsForYear: false,
       gaps: [
         {
           code: "NO_TEACHERS",
@@ -298,10 +418,10 @@ const DEMO_SCHOOL: IntakeView = {
     },
     {
       area: "TIMPLAN",
-      waitsForYear: false,
       found: {
         gradesWithTimplan: 0
       },
+      waitsForYear: false,
       gaps: [
         {
           code: "TIMPLAN_MISSING",
@@ -324,10 +444,10 @@ const DEMO_SCHOOL: IntakeView = {
     },
     {
       area: "REQUIREMENTS",
-      waitsForYear: false,
       found: {
         requirements: 33
       },
+      waitsForYear: false,
       gaps: [
         {
           code: "NO_REQUIREMENTS",
@@ -340,10 +460,10 @@ const DEMO_SCHOOL: IntakeView = {
     },
     {
       area: "STAFFING",
-      waitsForYear: false,
       found: {
         posts: 0
       },
+      waitsForYear: false,
       gaps: [
         {
           code: "UNSTAFFED_POSTS",
@@ -367,11 +487,48 @@ const DEMO_SCHOOL: IntakeView = {
           more: 0
         }
       ]
+    },
+    {
+      area: "SWITCHES",
+      found: {
+        switchesOn: 0
+      },
+      waitsForYear: false,
+      gaps: [
+        {
+          code: "ABSENCE_WATCH_OFF",
+          level: "INFO",
+          count: 1,
+          items: [],
+          more: 0
+        },
+        {
+          code: "ACK_OFF",
+          level: "INFO",
+          count: 1,
+          items: [],
+          more: 0
+        },
+        {
+          code: "VIEWER_OFF",
+          level: "INFO",
+          count: 1,
+          items: [],
+          more: 0
+        },
+        {
+          code: "SICK_REPORT_OFF",
+          level: "INFO",
+          count: 1,
+          items: [],
+          more: 0
+        }
+      ]
     }
   ],
   hard: 0,
   soft: 1,
-  info: 3
+  info: 9
 };
 
 export const intakeRoutes: GatewayRoute[] = [

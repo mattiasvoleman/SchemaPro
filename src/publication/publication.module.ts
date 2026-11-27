@@ -6,6 +6,7 @@ import { TimplanModule } from '../timplan/timplan.module';
 import { PublicationsController } from './publications.controller';
 import { PublicationsService } from './publications.service';
 import { DraftService } from './draft.service';
+import { DirectReachService } from './direct-reach.service';
 import { CancellationBatchesController } from './cancellation-batches.controller';
 import { CancellationBatchesService } from './cancellation-batches.service';
 import { ScheduleActivitiesController } from './schedule-activities.controller';
@@ -44,6 +45,7 @@ import { PrintTimetablesService } from './print-timetables.service';
   providers: [
     PublicationsService,
     DraftService,
+    DirectReachService,
     CancellationBatchesService,
     ScheduleActivitiesService,
     PublicLinksService,

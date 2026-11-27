@@ -7,6 +7,7 @@ import type {
   useUpdateMasterLesson,
 } from "@/lib/queries";
 import { ApiError } from "@/lib/api";
+import { DirectReachDeclined } from "@/lib/direct-reach";
 import { LESSON_IS_PLACED } from "@/lib/lesson-is-placed";
 import { staffingRefusal, refusalText } from "@/lib/staffing-warnings";
 import type { MasterLesson } from "@/lib/types";
@@ -27,6 +28,9 @@ type Translator = ReturnType<typeof useTranslations>;
  */
 const undoOfAMove = new WeakSet<object>();
 
+/** A write that is asked nothing first: one function for every render, so the callbacks below keep their identity. */
+const runAsIs = <T>(run: () => Promise<T>): Promise<T> => run();
+
 /**
  * Undoable writes of lessons, the history keyboard and the one way a failed write is told. Every
  * mutation of the page goes through here, so that "drag freely, undo if wrong" is one idiom.
@@ -39,8 +43,15 @@ export function useUndoableEdits(inputs: {
   history: ReturnType<typeof useScheduleHistory>;
   createLesson: ReturnType<typeof useCreateMasterLesson>;
   deleteLesson: ReturnType<typeof useDeleteMasterLesson>;
+  /**
+   * The question before a change in Direkt that reaches families (lib/use-direct-reach-ask.tsx): asked around a write that moves or
+   * removes published lessons, once, and never around an undo or a redo (a change put back is the same change). Left out, a write is
+   * run as it is and the gateway's own guard answers 409 when it reached families unasked.
+   */
+  ask?: <T>(run: () => Promise<T>) => Promise<T>;
 }) {
   const { tEngine, t, tCommon, updateLesson, history, createLesson, deleteLesson } = inputs;
+  const ask = inputs.ask ?? runAsIs;
 
   // -------------------------------------------------------------------
   // Undoable mutations
@@ -48,6 +59,8 @@ export function useUndoableEdits(inputs: {
 
   const showError = useCallback(
     (error: unknown) => {
+      // The reader said no to the question before a change in Direkt: Avbryt is an answer, and not a failure to tell.
+      if (error instanceof DirectReachDeclined) return;
       // The staffing policy's REFUSE is a 409 too, but no clash: its own
       // sentence, from the catalogue, without "Schemakonflikt" in front.
       const refusal = staffingRefusal(error);
@@ -61,7 +74,11 @@ export function useUndoableEdits(inputs: {
         // time, in the reader's language and from the catalogue, so "Schemakonflikt" in front would only say it twice.
         // A block's card names the member it is about (lib/problem-codes.ts says it, as it does for a swap's apply).
         const why = apiErrorText(error, tCommon);
-        toast.error(undoOfAMove.has(error) ? t("undoRefused", { why }) : why);
+        // The sentence is the heaviest reason's, the one the gateway sends the params of; the others are only named by their codes (`reasons`),
+        // and the reader is told that there are more and where to see them, which is more than a toast that says one rule and stops.
+        const reasons = typeof error.params?.["reasons"] === "string" ? new Set(error.params["reasons"].split(",").filter(Boolean)) : new Set<string>();
+        const more = reasons.size > 1 ? ` ${t("moreReasons", { count: reasons.size - 1 })}` : "";
+        toast.error(undoOfAMove.has(error) ? t("undoRefused", { why: `${why}${more}` }) : `${why}${more}`);
       } else if (error instanceof ApiError && error.status === 409) {
         toast.error(`${t("editConflict")}: ${apiErrorText(error, tCommon)}`);
       } else {
@@ -75,7 +92,7 @@ export function useUndoableEdits(inputs: {
   const undoableUpdate = useCallback(
     async (lesson: MasterLesson, patch: Partial<LessonSnapshot>) => {
       const before = snapshotOf(lesson);
-      const result = await updateLesson.mutateAsync({ id: lesson.id, ...patch });
+      const result = await ask(() => updateLesson.mutateAsync({ id: lesson.id, ...patch }));
       const after = { ...before, ...patch };
       history.push({
         label: "update",
@@ -96,7 +113,7 @@ export function useUndoableEdits(inputs: {
       });
       return result;
     },
-    [updateLesson, history],
+    [updateLesson, history, ask],
   );
 
   const undoableCreate = useCallback(
@@ -121,7 +138,7 @@ export function useUndoableEdits(inputs: {
   const undoableDelete = useCallback(
     async (lesson: MasterLesson) => {
       const input: CreateMasterLessonInput = restorableInput(lesson);
-      const result = await deleteLesson.mutateAsync(lesson.id);
+      const result = await ask(() => deleteLesson.mutateAsync(lesson.id));
       const ref = { id: lesson.id };
       history.push({
         label: "delete",
@@ -135,7 +152,7 @@ export function useUndoableEdits(inputs: {
       });
       return result;
     },
-    [deleteLesson, createLesson, history],
+    [deleteLesson, createLesson, history, ask],
   );
 
   useHistoryKeyboard(

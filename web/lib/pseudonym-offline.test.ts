@@ -78,7 +78,19 @@ describe("what the page's tool, the part that runs in the browser, can reach", (
 describe("the tool that looks (it must find what it is looking for)", () => {
   it("finds a network call in a file that has one, and not in a comment or a string that names one", () => {
     const found = closureOf(["lib/__fixtures__/offline-probe.ts"]);
-    expect(found.findings.map((f) => f.what).sort()).toEqual(["identifier XMLHttpRequest", "identifier fetch", "location.href", "property .cookie", "window.open"].sort());
+    expect(found.findings.map((f) => f.what).sort()).toEqual(
+      [
+        "identifier XMLHttpRequest",
+        "identifier fetch",
+        "location.href",
+        "property .cookie",
+        "window.open",
+        // The names the calls above go through are findings of their own since X1b (offline-probe-aliases.ts says why).
+        "reference to document (document.cookie)",
+        "reference to location",
+        "reference to window",
+      ].sort(),
+    );
     // The package that is imported is found; the one that is imported only for its types (erased when the code is built) is not.
     expect(found.packages).toEqual(["clsx"]);
   });

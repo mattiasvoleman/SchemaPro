@@ -373,6 +373,8 @@ Run it with (see `.env.example` for the full annotated list):
 | `JWT_AUDIENCE` | `authenticated` |
 | `SUPABASE_URL` | project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key |
+| `AUTH_SMTP` | **optional.** `custom` is the operator's word that Supabase Auth sends its mail through the project's **own SMTP** (Authentication → SMTP). It changes what the administrator's start page says (§7.3) and nothing the API does: the API cannot read the project's setting, because the token that does is yours and never the API's. Unset, the page warns that Supabase's own sender lets two mails an hour through. Blank is unset; any other value is refused at start |
+| `AUTH_EMAIL_LIMIT_PER_HOUR` | **optional.** The project's mail limit an hour as you read it under Authentication → Rate Limits (30 is what a project gets with its own SMTP). The start page and the mass invitation say how long 300 people take at it. A whole number, 1 to 100 000; blank is unset |
 | `AI_ENGINE_URL` | solver base URL, scheme included (`https://…`) — a bare hostname is not a URL and surfaces as "AI engine unavailable". **A public https address has a road limit of 300 s (§5.3); `http://<engine service>.railway.internal:<port>` has none.** |
 | `AI_ENGINE_API_KEY` | the shared secret from step 0 |
 | `AI_ENGINE_TIMEOUT_MS` | **optional, and best left unset.** Unset, the API waits as long as the engine says its route can take (`GET /api/v1/timing`) plus 10 s: 240 s at a 180 s budget and a 20 s probe, and it follows the engine when its budget is changed, so nothing is set in two places. An engine that says nothing (older, or not up yet) is waited for 120 000 ms. Set, it is the wait, and the request carries it to the engine as its deadline (`deadlineSeconds`), so the engine answers inside it; it must then be at least the engine's ceiling plus 5 s: `240000` at a 180 s budget and a 20 s probe (235 000 is the least). **A production start that finds it set and shorter is refused**, with a sentence that says which number to change, **and the API is then down**: no service in Railway has a health check (read 2026-11-18), so nothing holds the deploy before it up while the new one is refused, and a refused start is a stopped API until the variable is removed or raised, or the engine's budget is lowered and the API restarted (a change on the engine restarts only the engine). **Remove the variable, or raise it to the new ceiling plus 5 s, before raising the engine's budget** (`SOLVER_MAX_TIME_SECONDS`, `SOLVER_PROBE_SECONDS`), not after, or a deploy that follows the engine's change finds it too short; at runtime a shorter wait is answered with a shorter search, which a TIMEOUT states ("within 94 s"), and a line in the log. To get out of a refused start remove the variable. |
@@ -514,51 +516,142 @@ and no `Set-Cookie`.
 
 ## 7. Bootstrap the first school and admin
 
-There is intentionally no public signup. One-time, in the Supabase dashboard:
+There is intentionally no public signup and no button that makes a school: the operator makes each school once, with a script, from
+their own machine, as the migrations are run (step 2). It replaces the two SQL statements this section used to hand out, and the
+gap between them (a school with nobody in it, which `npm run db:seed` takes for no school at all).
 
-1. **Create the auth user**: Authentication → Users → *Add user* → email +
-   temporary password (or *Send invitation*). Copy the user's **UUID**.
-2. **Create the tenant and profile** (SQL editor, as owner):
-
-```sql
-insert into "Schools" (name, slug, timezone, "updatedAt")
-values ('Demo School', 'demo-school', 'Europe/Stockholm', now());
-
-insert into "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "invitedAt", "updatedAt")
-values (
-  (select id from "Schools" where slug = 'demo-school'),
-  '<AUTH_USER_UUID>',
-  'SCHOOL_ADMIN',
-  'Anna', 'Andersson', '<same email as the auth user>',
-  now(), now()
-);
+```bash
+DIRECT_URL="postgresql://postgres:<DB_PASSWORD>@db.<ref>.supabase.co:5432/postgres?sslmode=require&uselibpqcompat=true" \
+SUPABASE_URL="https://<ref>.supabase.co" \
+SUPABASE_SERVICE_ROLE_KEY="<service role key>" \
+npm run operator:new-school -- \
+  --name "Ekeby skola" --slug ekeby-skola \
+  --admin-email rektor@ekeby.example --admin-first-name Anna --admin-last-name Andersson \
+  --web-url https://app.ekeby.example
 ```
 
-`"invitedAt"` says the person has a login. Without it the row reads as a
-catalogue entry nobody invited: when gallring pseudonymises the person after
-they have left it would leave their login behind, and the school-account
-domain checks (§11) would not count them.
+Run it as written and it only **reads**: it says which database it would write in, checks the Supabase Auth project (below) and
+says what it would make. Nothing is written and no mail is sent. Add `--apply --expect-host db.<ref>.supabase.co` to do it. The
+host is compared with the one `DIRECT_URL` names before anything is written, so that a stale variable in the shell cannot pick the
+database; `--apply` without `--expect-host` is refused.
 
-The two statements are two statements: between the `Schools` row and the
-administrator the school has nobody in it, and `npm run db:seed` (§37) takes a
-school with nobody in it for no school at all and will add the demo school
-beside it. Run the two together (paste both into the SQL editor and run them
-as one), and do not run a seed against this database in between.
+It reads **no `.env` file** and no variable but `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, the two named below for
+the project's settings, and the one `--password-env` names. A spec holds that (`src/operator/operator-reads-no-env.spec.ts`). It
+never prints a key, a password or the database password.
 
-`"updatedAt"` is mapped with Prisma's `@updatedAt`, which is maintained in the
-application layer and creates **no database default** — every hand-written
-`insert` against these tables must supply it, on all 12 models that carry it.
-`"createdAt"` does default, so only `"updatedAt"` errors. Keep the double
-quotes: unquoted, PostgreSQL folds the identifier to `updatedat`.
+What `--apply` does, in this order:
 
-`"authId"` is the only link between the Supabase Auth user and this profile —
-`JwtStrategy` resolves the account by it alone. A wrong UUID produces a
-successful sign-in followed by *"No active user profile is linked to this
-account."*
+1. **The school and its administrator, in one transaction.** The administrator is a `SCHOOL_ADMIN` with the `FULL` profile, with no
+   login yet. A failure leaves neither.
+2. **The login, at Supabase Auth**, with the same admin calls the API's invitations use, tagged with the administrator's row so
+   that a later invitation can move the login as the row's own. By default it is an **invitation mail**: the person sets their own
+   password, and the mail arriving is the proof that the project can send. With `--password-env ADMIN_PASSWORD` (a variable of at
+   least 12 characters, never an argument) it makes a confirmed login with that password instead and sends nothing, for a project
+   that has no sender yet. An address Supabase already has a login for (made by hand in the dashboard, as this section used to
+   say) is adopted, and the script says that no mail went out.
+3. **`"invitedAt"` and the login on the row.** `"invitedAt"` says the person has a login. Without it the row reads as a catalogue
+   entry nobody invited: when gallring pseudonymises the person after they have left it would leave their login behind, and the
+   school-account domain checks (§11) would not count them. The login is attached last, and the row is the one that was written
+   first, as `UsersService` does for every other person.
 
-3. Sign in on the web app — you land on the admin dashboard. Every subsequent
-   user is invited through **Admin → People** (the API sends the Supabase
-   invite email automatically).
+It is safe to run twice. A school and an administrator that exist are found by the slug and the address and are not made again:
+a run that stopped before the login (the sender refused, the network went) continues from the login when the same command is run
+again, and one that is done says so and does nothing. A slug that holds anything else (another administrator, other people) is
+refused. A login that **another school's person already holds** is not taken: a person joins a second school by that school's own
+invitation (`Users_a_login_joins_another_school_by_invitation`), and the row stays un-invited with the sentence to say why.
+
+If the script cannot be run, the rows are two: a `"Schools"` row and a `"Users"` row with role `SCHOOL_ADMIN`, the person's real
+address, the Supabase user's UUID as `"authId"` and `"invitedAt"` set, written in one transaction by whoever has the owner
+connection. `"updatedAt"` has no database default (Prisma maintains it in the application), so every hand-written `insert` supplies
+it, with the camelCase columns in double quotes.
+
+`"authId"` is the only link between the Supabase Auth user and this profile: `JwtStrategy` resolves the account by it alone. A
+wrong UUID produces a successful sign-in followed by *"No active user profile is linked to this account."*
+
+Then sign in on the web app: you land on the admin dashboard. Every subsequent user is invited through **Admin → People** (the API
+sends the Supabase invite email automatically).
+
+### 7.1 The project's sender: check it before the first invitation
+
+Every invitation and every password reset is a mail from Supabase Auth, not from Resend (the notification mail of §10 is another
+road). On Supabase's own sender that is **2 mails an hour**; once the project sets its own SMTP (Authentication → SMTP) the default
+becomes **30 an hour**, and the limit is changed under Authentication → Rate Limits (`rate_limit_email_sent`). Past it Supabase
+answers **HTTP 429, `over_email_send_rate_limit`**. A school of 300 people therefore takes 10 hours to invite at the default, and
+the first administrator's own invitation is refused on a project that already sent two. (Source: Supabase's documentation of
+custom SMTP and of Auth rate limits.)
+
+The script reads what it can before it writes anything, and says it plainly:
+
+| Line | Where it comes from | When it says "not read" |
+|---|---|---|
+| Public signups | `GET <SUPABASE_URL>/auth/v1/settings`, with the service-role key as `apikey` | the project did not answer. Look at Authentication → Providers → Email: *Allow new users to sign up* must be off (§1) |
+| Sender (SMTP) | Supabase's Management API, `GET https://api.supabase.com/v1/projects/<ref>/config/auth`: `smtp_host` says whether the project sends through its own SMTP, `rate_limit_email_sent` how many an hour | `SUPABASE_ACCESS_TOKEN` (an access token from Supabase's account page) and `SUPABASE_PROJECT_REF` (the reference in the dashboard's address) are not both set. The token is **yours**, never the API's: give it on the one command line and it is gone with the shell |
+
+Only the host, port, sender and the hourly limit are read out of the answer; the SMTP user and password are not kept or printed.
+`--require-smtp` makes the script refuse to write anything unless the project's own SMTP is verified this way.
+
+**What the script cannot check is that mail really arrives.** The invitation to the first administrator is that check: a project
+whose SMTP server refuses the mail answers the script with HTTP 500, and the script says to look at host, port, user and the
+sender address under Authentication → SMTP. The same mail is what the first administrator signs in from, so a mail that does not
+arrive is found on day one and not when the school invites its teachers.
+
+### 7.2 Pupils and guardians with no address (20270310090000)
+
+A pupil or a guardian can be added **without an e-mail address**. Younger pupils seldom have a school address, and Skola24's pupil file has
+none, so a school should not have to invent one to get them into the register. The person is in every list, in the class lists, in
+attendance and on the timetable (they are rows of `"Users"` like any other, and no reader of those looks at the address); they have **no
+login** until an address is added and the person is invited.
+
+- **What holds it.** `"Users"."email"` is optional. `Users_a_person_with_no_address_has_no_login` (a CHECK) says no row has an
+  `"invitedAt"` without an address, so no road gives a person with no address a login, and none takes the address from a person who
+  has one. `Users_only_a_pupil_or_guardian_has_no_address` says a teacher or an administrator always has one: they are somebody the
+  school invites. The API says the same with words (`ADDRESS_REQUIRED`, `PERSON_HAS_NO_ADDRESS`, `ADDRESS_OF_AN_INVITED_PERSON`);
+  the constraints are what stays if a script or a hand-written `insert` forgets.
+- **Adding one later.** Edit the person (Admin → People) and give an address; the same dialog can send the invitation at once. An
+  address is given to a person with none, or corrected on one who was never invited: a person who was invited has a login with the
+  address it has, and the API refuses to change it from here (409).
+- **Importing.** A pupils' file may leave `epost` empty, or have no such column: the pupils are made with no address, and the report
+  says how many. A pupil with no address is known by first name, last name and class, so a second upload skips them; a later file
+  that has the address gives it to the one pupil of that name in that class (`updated`), and says so when two have the same name and
+  cannot be told apart. The files that name a pupil by address (the guardians' file, the group memberships) cannot name one with none:
+  the guardians' export says how many links it left out, and those links are made on the people page.
+- **Mail.** A notice to a person with no address is in their inbox, which they cannot open yet, and no mail goes. The mass invitation
+  counts them apart (`noAddress`) and invites the rest.
+- **Order of deploy.** Apply the migration before the API that writes an empty address; deploy the API and the web together (an older
+  web that reads a person with `email: null` where it expected text is the one thing that can break). Rolling the migration back
+  needs `ALTER COLUMN "email" SET NOT NULL`, which fails while a person with no address exists: `SELECT count(*) FROM "Users" WHERE
+  "email" IS NULL`.
+- **The Schemavisaren and the iCal feeds** are not logins, and a school shows the timetable to a family through them whether or not
+  the pupil has an address.
+
+### 7.3 Inviting a whole school: in parts, and where it stops
+
+Every invitation and every password reset is a mail from Supabase Auth. **Supabase's own sender lets 2 an hour through; a project that sets
+its own SMTP gets 30 an hour until the limit is raised under Authentication → Rate Limits** (`rate_limit_email_sent`). Past it Supabase answers
+HTTP 429 `over_email_send_rate_limit`. A school of 300 people is therefore ten hours of invitations at the default, and a day with Supabase's
+own sender.
+
+- **The start page says it.** `GET /api/v1/users/invitation-channel` (an administrator's, and nothing of any person) answers whether the API
+  can make a login at all (`SUPABASE_URL` and the service key), what `AUTH_SMTP` says, and `AUTH_EMAIL_LIMIT_PER_HOUR`. The page warns
+  where nobody has said that the project has its own SMTP, says so when somebody has, and says that no invitation can go where the API has
+  no connection. The API cannot ask the project: set both variables when you have configured the sender (the operator script of §7.1 reads
+  it for you with `SUPABASE_ACCESS_TOKEN`).
+- **The web sends the mass invitation in parts of twenty**, one at a time, and shows how far it has got (Admin → People → *Bjud in N ej
+  inbjudna*). It can be stopped, and taken up again, at any time, also after the window was closed: *Ta om* asks the register who is still not
+  invited and sends only those. The gateway skips a person who is invited already (`alreadyInvited`) unless the request says `resend`, and one
+  who another request is inviting that moment, so **nobody gets two invitations**, whether the run stopped for the limit, a network error, a
+  Stop or a closed tab. A person with no address (§7.2) is counted apart (`noAddress`).
+- **When the project's mail limit is spent**, GoTrue refuses the invitation (429 `over_email_send_rate_limit`) **and makes no user** (read
+  against GoTrue v2.195.0: the refused address has no row in `auth.users` afterwards, and the refused invitation of an address never invited
+  before leaves nothing behind to look up). Until now the API read every refusal as "already registered, no mail needed" **when a user with
+  the address existed**, which is the case for an address whose earlier invitation went out and whose row was never marked, or an address a
+  person at another school holds: the person was marked invited without a mail from this call. A first invitation was a 503 ("Could not
+  send the invitation email") and no more. It is now the refusal (`INVITATION_RATE_LIMITED`, 429) and the person is **not** marked
+  invited; the mass invitation stops at the first (`stopped`, `notTried`) and the dialog says how many are left, in place of an error for
+  each person. The next invitation of the address is a first one.
+- **Rate limit per login, not per address.** `POST /api/v1/users/invitations` is limited to 30 parts a minute per verified login, with a
+  high ceiling per address for the route (1 200): a school is one NAT address, and the web calls the API from every browser, so the earlier 5 a
+  minute per address stopped a run at its sixth part and took every other administrator of the school with it.
 
 ## 8. Mobile app
 
@@ -7284,6 +7377,7 @@ anonymous ids the request carried (`requirementIds`, `roomIds`, `resourceIds`: t
 - The check builds the STRICT model of the changed week (no priced rule), warm-starts it from the search's timetable and stops at its first solution. A hint that holds is
   accepted at once; one that does not holds the solve for what it needs to repair it, and a solution found that way proves the changed week as well.
 - **It is a timetable that exists, not one the next Generera finds.** Generera has no hint, and the changed week may still run out of time.
+- **`needed` is the least the engine found, not (unless it says so) the least there is** (G6b, §33.6): after the check the engine lowers each value while the strict model still lays the week.
 - **It is not the cheapest.** The search's first timetable is not its best one; on the högstadium week the priced search ended at 40 s with five deviations where the strict
   solver lays the week cleanly (`verification-baseline.md`). The list is what the engine found.
 - **"Found nothing in N seconds" says the N the search had.** For a `NOT_FOUND`, `searchSeconds` is the budget the search really ran on (the TIMEOUT report's own), not the one it was asked for: a caller that waits less than the engine's budget leaves it less, down to none.
@@ -7317,6 +7411,17 @@ both entrances counted and back at zero, the analysis counted for its thread, an
 five rules, and not one step short of `needed`), the proof's shape, the four verdicts, the route (key, validation, the payload's own 400 as `/optimize` gives it, the gate, the
 ceiling) and the OpenAPI comparison. Twenty-one hand mutants of `suggestions.py` were run against it; none survives.
 
+
+### 33.6 The edges: a lower `needed`, the account of a NOT_FOUND, and the short routes (G6b)
+
+- **`needed` lowered (`app/solver/suggestions.py` `refine`).** The search's timetable needs a value, and the search is not looking for the least: on 3 of 59 random weeks the strict solver laid the week a step below it (a cap of 240 where 180 holds). After the check has accepted the list, the engine tries the values back toward the school's own, **dearest change first**, the value one step below `needed` first and then by halving (`needed` is the least on nearly every week, so one check is then the whole proof, and the route has time for one on a long week): a cap by five minutes, a post's days, a subject's lessons a day and its days apart by one (the spread is tightened by raising it). Each probe is a strict check of the whole list with that one value changed (the others as they then are), warm-started from the search's timetable. **ACCEPTED** lowers `needed`; **INFEASIBLE** ends that change's descent, and when it is the value next below the lowest accepted it is a proof: `neededIsLeast: true`; anything else (no time, a solve that decides nothing, a build the engine refuses) ends it with `neededIsLeast: false` (tried, not decided). A change that was never tried carries no `neededIsLeast` (omitted from the bytes). A list that holds with a change at **the school's own value** does not need the change, and it is dropped (all of them: `SOLVABLE_AS_IS`).
+- **The route's ceiling is unchanged (150 s on a production engine).** The lowering has no seconds of its own: it takes what the ceiling has left after the search and the check, each probe at most 15 s (its build is not under its clock) and none started with under 5 s, at most eight in all. On a week whose builds take ten seconds that is one probe or none, and the answer says nothing of the values it did not try. The proof of the list is the last accepted probe, which applied exactly the list that is returned.
+- **`needed` for a locked lesson over the cap in one of two weeks** (g384-L-2): the line says the week that binds. `_worst_week` chose the week by `over` (what the generated lessons add beyond what the locks leave), and a week with a lock over the cap can go over by less and need more; it is now by `needed`, then `over`. The same function writes the deviations a Generera with the five rules free stores (`deviations_of`, BEST_EFFORT), so such a school's stored `DEVIATION_TEACHER_DAILY_CAP` now says the week that binds too (`needed` 150 and `over` 30 where it said 120 and 60), and the deviations' digest moves with it. Pinned on the real solver for both routes.
+- **A `NOT_FOUND` carries `report`** (M2's account: the steps, the searches) where the search itself ran out of its time (g384-L-4), so that "found nothing in 60 s" can say whether the minute was the builds or the search. Omitted where it is None.
+- **The short routes are counted** (g391-L-5): `/api/v1/staff`, `/api/v1/plan-exams` and `/api/v1/optimize-rooms` share the cores and were counted by nothing. Their threads are counted as `OTHER` (`app/solve_load.py`) and an analysis answers 429 (`ENGINE_BUSY`) while one runs, as it does for a Generera. They are short (their own budgets, 10 to 20 s).
+- **Contract: additive.** `neededIsLeast` on a change and `report` on the response, each omitted where None; `app.openapi()` gains those two properties and no schema. An older gateway ignores them (it builds the stored value field by field); the gateway reads them in a later part.
+- **Proven by** `tests/test_suggest_changes_refine.py` (the values back by rule, the halving against a check whose answer the test decides: the least and its proof, no claim where the check does not decide, nothing spent without time, a dropped change out of the later probes, the dearest first; against the real strict solver a `needed` made 60 too high is brought back to 120 with `neededIsLeast` true; the week that binds), `tests/test_suggest_changes_not_found.py`, `tests/test_solve_load_other.py` and `tests/test_suggest_changes_refine_claims.py` (a `true` only where `needed` is the least, over eight budgets; `UNKNOWN`, `MODEL_INVALID` and a refused build decide nothing; the 5 s floor; an unchecked list is not lowered; every probe gets 4 workers and the search's schedule). Mutants that tell the least from the undecided, that keep a dropped change in the checks, that pick the week by `over` and that halve wrongly are each caught, and so are ones that take a clock that ran out, a model not built or a refused build for a proof, that claim the least without the value below refused, and that let an undecided probe keep an earlier proof.
+
 ## 34. Changes that would let a refused week be laid ("Åtgärdsförslag vid vägran", omgång 13, G6, part 2 of 3: the analysis in the gateway and its column)
 
 Part 1 is the engine's route `POST /api/v1/suggest-changes` (the engine section above this one, if it has merged). This part is what the gateway does with it: an administrator asks for the
@@ -7329,7 +7434,7 @@ analysis of a run that ended without a timetable, the gateway asks the engine, a
   `suggestionsOffered` (whether the button may be shown).
 - **Asked for, never started by itself.** It costs the engine up to a minute and a half of its cores. It may be asked for a run that ended **INFEASIBLE** or **TIMEOUT**, with a 400 named by one of the five rules
   (`TEACHER_LESSON_LONGER_THAN_DAILY_CAP`, `TEACHER_DAILY_CAP_*`, `TEACHER_WORK_DAYS_*`, `SUBJECT_DISTRIBUTION_*`, `DISTRIBUTION_*`, `ROOM_LOCK_*`), or with the engine's own clock run out
-  (`ENGINE_TIMED_OUT`, `ENGINE_WAIT_EXPIRED`, `ENGINE_PATH_CLOSED`: the road to the engine closed the call). Not for a run with a timetable, one still going, one the engine never answered (`ENGINE_NOT_REACHED`, `ENGINE_RUN_ABANDONED`) or one a rule that never gives way refused.
+  (`ENGINE_TIMED_OUT`, `ENGINE_WAIT_EXPIRED`, `ENGINE_PATH_CLOSED`: the road to the engine closed the call). Not for a run with a timetable, one still going, one the engine never answered (`ENGINE_NOT_REACHED`, `ENGINE_RUN_ABANDONED`), one a rule that never gives way refused, or one the **gateway** refused before the engine was asked (G6b: its summary code is one of `PREFLIGHT_REFUSAL_CODES`: `STAFF_UNSTAFFED_REQUIREMENTS`, `BLOCK_PARTLY_LOCKED_SUMMARY`, `PLACEMENTS_REFUSED_SUMMARY`, `GROUP_CONFLICTS_OVER_ENGINE_LIMIT`; they travel as INFEASIBLE runs, and an analysis would answer a refusal after a minute of the engine's cores).
   A refused start is **409** with a code the page words: `SUGGESTIONS_NOT_FOR_THIS_RUN`, `SUGGESTIONS_RUN_IS_OLD` (the year has a newer run: a Generera that is going is the year's newest, so it is this one that a press meets), `SUGGESTIONS_YEAR_BUSY` (a schemaförslag run of the year is alive, or a Generera was started in the moment between the press reading its run as the newest and taking the year's start lock; the engine's cores are shared).
 - **One solve stream per year, in both directions (D2).** The analysis claim takes the year's solve-start lock (`lockYearForSolveStart`, the one Generera's start and a schemaförslag run's start take) before it counts the year's runs, and Generera's start and a schemaförslag run's start are refused
   **409 `SUGGESTIONS_RUNNING`** while an analysis of the year is `RUNNING` and began less than 240 s ago (`suggestions-running.ts`: it waits for the engine 200 s at most; an analysis whose process went away holds nobody off for longer than that, where a read gives it up only after six minutes).
@@ -7345,7 +7450,7 @@ analysis of a run that ended without a timetable, the gateway asks the engine, a
 - What the value holds (`suggestions.ts`): `state` (`RUNNING`, `DONE`, `FAILED`), the verdict and `verified` of the engine, `total` (how many changes the list had), at most six changes each of at most three named posts and rooms (names cut to 80 characters),
   and for a failure its code (`ENGINE_LACKS_SUGGESTIONS`, `ENGINE_BUSY`, `ENGINE_FAILED`, `NOTHING_TO_PLACE`, `ABANDONED`). The value is rebuilt through a whitelist on the way in and again on the way out; one that is not wholly well formed shows nothing.
 - **No person's name and no figure of a post.** A cap's teacher rides as the teacher's Users id, which no view carries on; the page reads the name as it does for a free-day note. A change to a part-timer's days is stored in its **hidden form for every reader**
-  (the rule, the price and the proof, and no post, no teacher, no number, no weekday; several are one): nothing HR is kept, and the post stays the one place the figure lives (`work-days.ts`).
+  (the rule and the proof, and **no price** (G6b: the price is a weight times the days a post goes over, so `3 600` said three days to a reader without HR-läs), no post, no teacher, no number, no weekday; several are one, and it stands after the others of its proof, so that its place says no more than its price would): nothing HR is kept, and the post stays the one place the figure lives (`work-days.ts`).
 
 ### 34.3 What can go wrong, and what the page then says
 
@@ -7354,6 +7459,12 @@ analysis of a run that ended without a timetable, the gateway asks the engine, a
 - **An engine older than the route** answers 404: `ENGINE_LACKS_SUGGESTIONS`, said as "not just now"; the run reads as it did. **429** from the engine (one analysis at a time in its process): `ENGINE_BUSY`. A **400** is the engine's hard rules refusing the week: not a failure but the answer
   (`HARD_REFUSAL`, no change of the five can help). Every other error is `ENGINE_FAILED`, with nothing of its text kept.
 - **A change that was never checked** (`verified` false) is never above `MAY_HELP`, whatever the engine's changes say; the gateway lowers it. `SOLVABLE_AS_IS` is only to be said with `verified`.
+
+### 34.3a The edges (G6b)
+
+- **A press never replaces an analysis the school can use with a failure.** A press over a DONE analysis with a list (`CHANGES`, `SOLVABLE_AS_IS`) keeps it inside the RUNNING one (`previous`, one level, DONE only, never in what the page reads), and when the new analysis ends without a list (it failed, or it searched and found `NOT_FOUND`) the column holds the old one again (`settledAs`). A list or a refusal by a rule that never gives way replaces it: the week is not the one the list was made for. A RUNNING analysis that is read as abandoned gives back what it was asked over, and not `ABANDONED`. The column's 8 KiB check holds the two (5 500 bytes each at most; the column's text a fifth to a quarter longer than the compact JSON).
+- **The page is not offered what cannot come.** `suggestionsOffered` is false for a run the gateway refused before the engine was asked (above).
+- **The candidate runs' pool.** A schemaförslag run whose save found the pool full (`DATABASE_BUSY`, Prisma's P2028 that never started, pg's own wait) is stored with that code and the sentence of the 503, and not with the driver's English (g424-L-4).
 
 ### 34.4 Operations
 
@@ -7694,7 +7805,7 @@ So what the clique rows buy is a smaller model and a search that does a little m
 
 ## 36. What the school's base data holds, and what is missing ("Vad kom in", P1 Pilotkit, part 2)
 
-A page, `/admin/intake` (menu: Grunddata › Vad kom in), and one route behind it, `GET /api/v1/intake`. It counts the active läsår's base data (the year, subjects, rooms, frame times, rasts, classes, teaching groups, teachers and pupils, the lokal timplan, the posts, the staffing) against what Generera and the steps after it ask for, and names each gap at one of three levels (stops Generera, gives a worse timetable, only another step reads). The rules are `src/intake/intake.ts`; the page gives each gap its words and the page that owns it. It writes nothing and holds no migration.
+A page, `/admin/intake` (menu: Grunddata › Vad kom in), and one route behind it, `GET /api/v1/intake`. It counts the active läsår's base data (the year, subjects, rooms and room types, frame times, rasts, the year's lov and studiedagar, the lunch, the rastvakt, classes, teaching groups, teachers and pupils, the lokal timplan, the posts, the staffing, and the four switches that reach families and staff: frånvarobevakning, kvittens, Schemavisaren and the teachers' own sjukanmälan) against what Generera and the steps after it ask for, and names each gap at one of three levels (stops Generera, gives a worse timetable, only another step reads). What the school has not laid or turned on (no lov, lunch off, no rastvakt, no room types, a switch off) is always the third level and never a recommendation: a school that does not want kvittens reads "Kvittens är av" and is right (P5, part 1). The rules are `src/intake/intake.ts`; the page gives each gap its words and the page that owns it. It writes nothing and holds no migration.
 
 - **Deploy order.** Either. The route is new and nothing calls it but the page; a web that is ahead of the API shows "Det som kom in kunde inte hämtas" (a 404 is a failed read, never "nothing is missing"), and an API that is ahead is a route nobody calls. Nothing to run in production and nothing to roll back but the two deployments.
 - **What it reads.** Counts, and the names of classes, subjects and årskurser, as the person asking, under row security: every administrator profile, the läsare and the huvudman's reader included (`huvudman-gets` holds the shape). It selects no person's name, no e-mail address, no percentage of a post and no signature; a post is a row that exists. A teacher, a pupil and a guardian have no route.
@@ -7882,3 +7993,53 @@ When the judge says a time breaks the stage's ramtid or the class's lunch, an ad
 
 - The function `app.master_lesson_exemption_ends()` has no `REVOKE ... FROM PUBLIC`, which nearly all of the schema's other trigger functions have: the next migration that touches `MasterLessons` adds it.
 - A school's students and participants read `exemptFrom` through the PostgREST door like every other column of the table; whether to revoke it by column or let it stand is a decision not taken.
+
+## 41. Leave and absence, what was missing ("Ledighet och anmälan", omgång 15, K6)
+
+K6 is made in parts, each its own release; this section grows with them.
+
+### 41.1 The mail about a teacher's absence report (`20270311090000`)
+
+A teacher who reports their own absence (`TeacherAbsencesService.tellAdmins`) has always written an inbox notice, `TEACHER_ABSENCE_REPORTED`, to the school's active administrators. It could not leave the inbox: a `CHECK` on `NotificationOptOuts` (`NotificationOptOuts_absence_report_is_never_a_type`, 20261013100000) kept an opt-out row for it from existing, and the gateway kept the type out of every list and out of the delivery (`NEVER_EXTERNAL`). It now can go as a **mail**, and never as a push:
+
+- **The mail says that a teacher has reported an absence, and nothing more**: no name, no day, no reason (`ABSENCE_REPORTED_MAIL_BODY`, bilingual like the other fixed letters). A mail is read on any screen; the notice in the inbox keeps who and when, behind the login, as before. Never why.
+- **It goes to the same administrators as the inbox notice, through the queue of §40**, and only where `RESEND_API_KEY` is set (production today: it is not, so nothing is sent and nothing is queued; §40.3).
+- **An administrator can switch it off** under their notification settings, like any other type (`TYPES_BY_ROLE.SCHOOL_ADMIN`, the label *Lärarfrånvaro* was already in both apps' lists): the opt-out is read by user when the row is planned. A teacher, a guardian and a pupil are not offered the switch (`NOTIFICATION_TYPE_NOT_OFFERED`).
+- **It is never pushed**: `NEVER_PUSHED` replaces `NEVER_EXTERNAL`, and `app.push_targets` still answers nothing for the type, so the database says the same behind the gateway.
+- **Deploy order.** Run the migration before the merge (§20.2). It drops one `CHECK` on a small table, taking `ACCESS EXCLUSIVE` on `NotificationOptOuts` with `NOWAIT` in a loop of 50 ms for 30 s (nothing is held between tries; after 30 s it stops with nothing changed and can be run again). The API before it works unchanged. The API after it, with the migration not run, cannot store an administrator's switch (a `CHECK` violation, 500) but sends nothing different; nothing else depends on it.
+- **Rolling back**: the gateway can be rolled back at any time. To put the `CHECK` back, delete any opt-out row for the type first: `DELETE FROM "NotificationOptOuts" WHERE "type" = 'TEACHER_ABSENCE_REPORTED';` and then `ALTER TABLE "NotificationOptOuts" ADD CONSTRAINT "NotificationOptOuts_absence_report_is_never_a_type" CHECK ("type" <> 'TEACHER_ABSENCE_REPORTED');`.
+
+## 42. A change in Direkt that reaches families asks first ("Förvalen en ny skola möter", omgång 15, P5, part 2)
+
+Direkt stays the default. What changes is that the school is asked once, before the first change that moves or removes published lessons, and is told who gets the notice. The answer is kept in one new nullable column, **`PublicationSettings."directReachAcknowledgedAt"`**, and read through one new function, **`app.direct_reach_facts(uuid)`** (migration `20270312090000`).
+
+### 42.1 What the migration is
+
+- **One column**, `timestamptz`, nullable, no default: null is "never answered", not null is "answered", and a switch of mode writes null again (`DraftService.switchMode`, both directions), because going to utkast and back is a new decision about who is reached. Nothing is backfilled: every school is asked at its first change that reaches families after the deploy.
+- **One `SECURITY DEFINER` function**, `app.direct_reach_facts(year_id uuid)`, one row at most: the caller's own school's latest publication of the year that has not ended (`PUBLISHED`, not a `REFILL`, `validTo` today or later in the school's own time zone) and the school's answer. Both tables are Publicering's arms (`20261110100000`), and every profile that moves a lesson writes Publicering today (`PROFILE_WRITES`), so the arms would let a guard read them. The function is there so the guard does not depend on that: a guard that read zero rows because an arm hid them would stay silent where it must ask. It answers only for `app.current_school_id()`, so a session with no login or another school's gets no row. The API's role may run it; `anon`, `authenticated` and `service_role` may not (RLS sections 600 and 600o hold it).
+- **No arm, no index, no trigger changes.** The column follows the table's existing arm: Publicering writes it.
+- **Lock.** `ADD COLUMN` takes `ACCESS EXCLUSIVE` on `PublicationSettings`, which every grundschema writer reads (`app.school_publish_mode`); the migration takes it `NOWAIT` in a 50 ms loop for 30 s with `lock_timeout` 5 s, and stops with nothing changed if it is not free in that time (run it again).
+
+### 42.2 What the gateway does
+
+- `GET /api/v1/publication-settings/direct-reach` (every administrator) answers whether the page should ask, which period is published, and, only when it asks, how many pupils and guardians can get a notice (counted, never listed). `POST …/acknowledge` (area Publicering) writes the answer at the database's own clock.
+- **The guard** (`requireDirectReachAnswered`, `src/publication/direct-reach.ts`) is called by `PATCH /master-lessons/:id`, `PATCH /master-lessons/block-card` and `DELETE /master-lessons/:id` **after** they have moved or removed the published lessons, inside their transaction, with the number reached. In Direkt, with at least one lesson reached and no answer, it answers **409 `DIRECT_REACH_UNANSWERED`** and the transaction rolls the whole edit back: nothing has moved and no notice has gone. An edit that reached no published lesson (`propagate: false`, a note, a lesson outside the period) asks nothing, and nothing asks in utkast. E4's laying calls the same function with the number it reached.
+- **Guarded the same way**: `POST /api/v1/swaps/apply`, after its moves have propagated and inside its transaction, so a refused swap rolls back its safety version with it.
+- **Not guarded**: the other writers of published lessons (vikarier, inläsning, Generera's apply) have their own explicit confirmations and are not the first drag of a school that has never been asked.
+
+### 42.3 Deploy order and rolling back
+
+- **Run the migration before the API is merged (§20.2)**, from a tree that has every migration applied. The API before it names its own columns and never reads the new one, so it is unaffected; the API after it calls the function from the first propagating edit, and one deployed before the migration would answer 500 to such an edit.
+- **After the deploy** a school in Direkt with a published period is asked at its first propagating edit; until then nothing differs. The web asks before the write and the gateway holds the line for a stale page, a second tab or a script.
+- **Rolling back** the gateway needs nothing: the previous one ignores the column and the function. To remove them: `ALTER TABLE "PublicationSettings" DROP COLUMN "directReachAcknowledgedAt"; DROP FUNCTION app.direct_reach_facts(uuid);`.
+
+### 42.4 Looking at it (read-only)
+
+- Who has answered: `SELECT "schoolId", "directReachAcknowledgedAt" FROM "PublicationSettings" WHERE "directReachAcknowledgedAt" IS NOT NULL`.
+- What the guard sees for a school: `SELECT * FROM app.direct_reach_facts('<year id>')` as that school's administrator (it answers nothing under the owner, which carries no login).
+- The refusals are 409s with `code=DIRECT_REACH_UNANSWERED` in the access log; a school that sees many has an administrator who dismisses the question (Avbryt) or a script that writes without it.
+
+### 42.5 What is not done
+
+- The page asks before a write; **the reach is not counted per change**. The dialog gives the school's totals, not the pupils of the lesson at hand.
+- Answering needs the area Publicering, which every profile that moves a lesson has today. A profile that did not would see the question's 403 and ask one who has it.

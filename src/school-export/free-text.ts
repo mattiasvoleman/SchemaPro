@@ -19,7 +19,8 @@ export const normalize = (value: string): string => value.toLowerCase().replace(
 export interface ProtectedPerson {
   first: string;
   last: string;
-  email: string;
+  /** NULL for a person the school added without an address (Personer utan e-postadress): the names are terms, an address is not. */
+  email: string | null;
 }
 
 /** The names (first-last and last-first) and the address of each person, normalized; names of one word are left out. */
@@ -32,7 +33,7 @@ export function termsOf(people: ReadonlyArray<ProtectedPerson>): string[] {
       terms.add(`${first} ${last}`);
       terms.add(`${last} ${first}`);
     }
-    const email = normalize(person.email);
+    const email = person.email === null ? '' : normalize(person.email);
     if (email !== '') terms.add(email);
   }
   return [...terms];

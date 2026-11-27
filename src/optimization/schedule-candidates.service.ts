@@ -14,6 +14,7 @@ import { Prisma, type PrismaClient, type ScheduleCandidateRunStatus } from '@pri
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import { DEFAULT_CANDIDATES_CONFIG, type CandidatesConfig } from '../config/configuration';
+import { DATABASE_BUSY, DATABASE_BUSY_DETAIL, isPoolBusy } from '../database/pool-wait';
 import { PrismaService } from '../database/prisma.service';
 import { isWriteConflict } from '../common/utils/prisma-errors';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -637,6 +638,9 @@ function failureOf(error: unknown): RunFailure {
     }
     return { message: typeof body === 'string' ? body : error.message, code: null, params: null };
   }
+  // A run that had no connection to the database to save its result with (the pool was full: Prisma's P2028, pg's own wait) says so, with a
+  // code the page has a sentence for, and not the driver's own English (g424-L-4): the run took minutes in the engine and its result was lost.
+  if (isPoolBusy(error)) return { message: DATABASE_BUSY_DETAIL, code: DATABASE_BUSY, params: null };
   return { message: error instanceof Error ? error.message : 'The candidate run failed.', code: null, params: null };
 }
 

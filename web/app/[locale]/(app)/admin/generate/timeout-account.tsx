@@ -26,9 +26,11 @@ export interface TimeoutAccountProps {
 /** A step's colour: the checks and builds muted, the searches in the page's own colour, the explanation lighter. */
 const STAGE_CLASS: Record<TimeoutReport["stages"][number]["stage"], string> = {
   PRECHECKS: "bg-muted-foreground/30",
+  START: "bg-muted-foreground/40",
   BUILD: "bg-muted-foreground/50",
   SITES: "bg-accent",
   SEARCH_CLEAN: "bg-primary",
+  YEARS: "bg-primary/85",
   SEARCH_CLONE: "bg-primary/70",
   PROBE: "bg-warning/40",
 };

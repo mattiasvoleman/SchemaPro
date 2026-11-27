@@ -395,6 +395,16 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-intake.ts
 
+      # Frågan före en ändring i Direkt som når familjer (P5, beslut 8): a drag, a deletion and the school's answer through the real services as
+      # the API role under row security. A refused edit leaves the master lesson, the calendar and the inbox as they were, nothing is asked where
+      # nothing reaches families, a switch of mode takes the answer back, the view counts the school's own pupils and guardians, and a läsare cannot
+      # answer. It builds its own schools (slug probe-direkt-*) and drops them.
+      - name: Direkt question probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-direkt-fragan.ts
+
       # Demoskolans återställning (P1 Pilotkit, part 3): a reset deletes a school, and this shows it never deletes one that is not the
       # demo school. Schools made here from a spec of their own (never `demo-skola`, which the RLS fixtures and the adapter probe have
       # put rows in): a real school untouched row for row, a school with the demo's name and a real person (deactivated, look-alike
@@ -405,6 +415,28 @@ jobs:
         env:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-demo-reset.ts
+
+      # P3 Personer utan e-postadress: a pupil and a guardian the school has no address for are in the register, the class, the roster of
+      # a lesson (and marked there), and the register extract, through the real services under row security, and have no login by any
+      # road: the invitation is 409, the mass invitation counts them apart, the database refuses an invitedAt on their row, a teacher
+      # needs an address, a file of pupils with none is made once and given the address later, and a removal asks the provider nothing.
+      # It makes a school of its own and drops it.
+      - name: People with no address probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-personer-utan-adress.ts
+
+      # P3 Första veckan utan operatören: the operator script that makes a school and its first administrator
+      # (scripts/operator/new-school.ts, docs/DEPLOYMENT.md §7), run against the database with a stand-in for the
+      # Supabase Auth admin API. A dry run writes nothing; --apply makes the school and the administrator in one
+      # transaction and attaches the login last; a run that stopped before the login continues from it and makes one
+      # school, not two; a finished one does nothing; a slug that holds another school, the wrong host and a login
+      # another school holds are refused with the rows untouched. It makes schools of its own and drops them.
+      - name: New school probe
+        env:
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-new-school.ts
 
       # Den utgående kön (H3, 20270309090000, omgång 15): mail and push wait in the database and survive a restart. A child process
       # of the probe takes the queue up against a Resend and an Expo that are servers of the probe's own, and is killed with SIGKILL
@@ -449,6 +481,14 @@ jobs:
           DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-att-lagga.ts
+
+      # Att lägga (E4), the write: a lay judged as a hand edit is (the school day, the frame, an exemption), a room the generator would not use, a parked
+      # lesson that is the brick only when it answers the post, a lay that names no lesson beside a parked one, and six who lay one picture at once.
+      - name: Att lägga, skrivvägen probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=8
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-att-lagga-skrivvagen.ts
 
       # Möjliga tider (E3): the query that says where a lesson can stand, held against the judge. Every lesson of the judge's
       # fall file (src/calendar/__fixtures__/lesson-judge-cases.json), every fifteenth minute of the week, over real Postgres as the
@@ -653,6 +693,20 @@ jobs:
           DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-maltidskollen.ts
+
+      # Skolans kalender (P4): a whole calendar of lov in one call through the
+      # real SchoolBreaksService on the API's role. The dry run counts what the
+      # write then takes, to the lesson (a cancelled lesson and one that has
+      # begun stay), and writes nothing; a list with one row outside the läsår
+      # writes none and names the row; the same list again is unchanged and
+      # takes no lesson; a week for some årskurser takes those groups' lessons
+      # only; a row with an id moves that lov; a teacher is refused by the
+      # table. It removes the school it made.
+      - name: School calendar probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-skolans-kalender.ts
 
       # Klassens måltid håller veckor (20270209090000): the oracle over the
       # calendar, date by date through a läsår that starts on a Saturday, of a

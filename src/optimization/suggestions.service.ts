@@ -11,8 +11,10 @@ import {
   STALE_AFTER_MS,
   failedSuggestions,
   suggestionsMayBeAskedFor,
+  keptOf,
   refusedSuggestions,
   runningSuggestions,
+  settledAs,
   suggestionsFromEngine,
   suggestionsOf,
   viewOf,
@@ -94,11 +96,18 @@ export class SuggestionsService {
    */
   async start(jobId: string, user: AuthenticatedUser): Promise<SuggestionsView> {
     const now = new Date();
-    const running = runningSuggestions(now);
     const claim = await this.prisma.withRls(user, async (tx) => {
       const job = await tx.optimizationJob.findUnique({
         where: { id: jobId },
-        select: { id: true, academicYearId: true, status: true, solverStatus: true, errorCode: true, suggestions: true },
+        select: {
+          id: true,
+          academicYearId: true,
+          status: true,
+          solverStatus: true,
+          errorCode: true,
+          conflictSummaryCode: true,
+          suggestions: true,
+        },
       });
       if (!job) throw new NotFoundException('Run not found.');
       if (!suggestionsMayBeAskedFor(job)) {
@@ -121,6 +130,8 @@ export class SuggestionsService {
       }
       // A second press is the first one's answer, not a second analysis.
       const held = suggestionsOf(job.suggestions);
+      // A press over a finished analysis keeps it while the new one runs, and gets it back if the new one ends without a list (g385-L-5).
+      const running = runningSuggestions(now, keptOf(held, now));
       if (held !== null && held.state === 'RUNNING' && now.getTime() - Date.parse(held.startedAt) <= STALE_AFTER_MS) {
         return { academicYearId: job.academicYearId, stored: held, started: false };
       }
@@ -206,8 +217,15 @@ export class SuggestionsService {
    * abandoned is not overwritten by it. Through the whitelist on the way in, as it is on the way out.
    */
   private async write(jobId: string, user: AuthenticatedUser, startedAt: string, outcome: SuggestionsStored): Promise<void> {
-    const safe = suggestionsOf(outcome) ?? failedSuggestions(startedAt, 'ENGINE_FAILED', new Date());
+    const ended = suggestionsOf(outcome) ?? failedSuggestions(startedAt, 'ENGINE_FAILED', new Date());
     await this.prisma.withRls(user, async (tx: PrismaClient) => {
+      // What the press was asked over, read in the same transaction as the write: an analysis that ends without a list leaves the one it
+      // was asked over in the column (settledAs). A press that took the claim after this one was abandoned has another startedAt, and the
+      // UPDATE below does not touch it.
+      const row = await tx.optimizationJob.findUnique({ where: { id: jobId }, select: { suggestions: true } });
+      const current = suggestionsOf(row?.suggestions);
+      const previous = current !== null && current.state === 'RUNNING' && current.startedAt === startedAt ? current.previous : null;
+      const safe = settledAs(ended, previous);
       await tx.$executeRaw(
         Prisma.sql`UPDATE "OptimizationJobs"
                       SET "suggestions" = ${JSON.stringify(safe)}::jsonb

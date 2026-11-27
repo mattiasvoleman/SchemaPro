@@ -48,6 +48,7 @@ import type { MasterLesson, StaffingWarning, TeachingBlock, TeachingRequirement 
 import type { HistoryEntry } from "@/lib/use-schedule-history";
 import { createClient } from "@/utils/supabase/client";
 import type { LessonChange, TimetableLesson } from "@/components/schedule/timetable-grid";
+import { PossibleTimesChoices } from "@/components/schedule/possible-times-choices";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -126,6 +127,8 @@ export interface BlockActions {
   validate: (id: string, change: LessonChange, without?: ReadonlySet<string>) => boolean;
   history: { push: (entry: HistoryEntry) => void };
   showError: (error: unknown) => void;
+  /** The question before a change in Direkt that reaches families: asked around a card's first move (lib/use-direct-reach-ask.tsx). */
+  guard: <T>(run: () => Promise<T>) => Promise<T>;
   /** The page's saved toast. */
   announce: (result: SavedWrite) => void;
   /** The page's saved sentence ("Sparat. 3 lektioner i kalendern flyttades."). */
@@ -357,7 +360,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       try {
         // What the card took in where it landed, and the other term's card
         // it took along: its undo leaves the one and takes back the other.
-        let result = await patchCard(to);
+        let result = await acts.current.guard(() => patchCard(to));
         acts.current.history.push({
           label: "block-move",
           undo: async () => {
@@ -626,6 +629,17 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
                   </li>
                 ))}
               </ul>
+              {/* Where the block can stand (E3): a block cannot be dragged on a phone, and this is the way to move it without. A time here is
+                  one the gateway's judge has let through for the whole block, so it is moved as the card is, and asked no more. */}
+              <PossibleTimesChoices
+                lessonId={opened.lessons[0]!.id}
+                writes="SCHEMALAGGNING DRIFT"
+                onChoose={(option) => {
+                  const change = { dayOfWeek: option.dayOfWeek, startMinutes: option.startMinutes, endMinutes: option.endMinutes };
+                  handOff.current = { focus: opened.id, run: () => void kit.move(opened.id, change) };
+                  setOpened(null);
+                }}
+              />
               {opened.complete ? null : <p className="text-sm text-foreground">{t("splitNote")}</p>}
               <p className="text-sm text-foreground">{t("lockHint")}</p>
             </div>

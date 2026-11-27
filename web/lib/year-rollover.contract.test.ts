@@ -48,7 +48,7 @@ describe("the rollover mirror agrees with the gateway's fixture", () => {
     // case would otherwise pass both sides by proving less.
     expect(fixture.shift.crossesIsoWeek53).toBe(true);
     const anchors = new Set(fixture.breaks.map((row) => row.expected.anchor));
-    expect([...anchors].sort()).toEqual(["CHRISTMAS", "EASTER", "ISO_WEEK", "NONE"]);
+    expect([...anchors].sort()).toEqual(["CHRISTMAS", "EASTER", "FIXED_DATE", "ISO_WEEK", "NONE"]);
     const statuses = new Set(fixture.periods.map((row) => row.expected.status));
     expect([...statuses].sort()).toEqual(["BOUND_ANCHORED", "DROPPED", "SHIFTED", "UNCHANGED"]);
     const outcomes = new Set(

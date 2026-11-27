@@ -8,6 +8,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import {
+  DirectReachQueryDto,
   DiscardDraftDto,
   PublicationListQueryDto,
   PublicationRangeDto,
@@ -17,6 +18,7 @@ import {
   UpsertPublicationSettingsDto,
 } from './dto/publication.dto';
 import { DraftService, type DraftState, type ModeSwitchResult } from './draft.service';
+import { DirectReachService, type DirectReachView } from './direct-reach.service';
 import type { PublishResult } from '../calendar/calendar.service';
 import type { GateItem } from './publication-gates';
 import {
@@ -43,6 +45,7 @@ export class PublicationsController {
   constructor(
     private readonly publications: PublicationsService,
     private readonly drafts: DraftService,
+    private readonly directReach: DirectReachService,
   ) {}
 
   @Get('publication-settings')
@@ -96,6 +99,29 @@ export class PublicationsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ModeSwitchResult> {
     return this.drafts.switchMode(dto.publishMode, user);
+  }
+
+  /**
+   * Frågan före en ändring i Direkt som når familjer (P5, beslut 8): om sidan ska fråga, vilken publicerad period det gäller och hur många
+   * som kan få en notis. Läses av varje administratör: den som drar lektionen ställs frågan till.
+   */
+  @Get('publication-settings/direct-reach')
+  directReachQuestion(
+    @Query() query: DirectReachQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<DirectReachView> {
+    return this.directReach.read(user, query.academicYearId);
+  }
+
+  /** "Fortsätt i Direkt": the school has answered for the publication that holds. Publicering writes the settings row, so Publicering answers. */
+  @Post('publication-settings/direct-reach/acknowledge')
+  @HttpCode(HttpStatus.OK)
+  @Area('PUBLICERING')
+  acknowledgeDirectReach(
+    @Body() dto: DirectReachQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<DirectReachView> {
+    return this.directReach.acknowledge(user, dto.academicYearId);
   }
 
   /** The draft against what is published: added, changed, removed, pending. */

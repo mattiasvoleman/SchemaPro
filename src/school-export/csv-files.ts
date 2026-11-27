@@ -115,9 +115,14 @@ export const LESSON_LENGTHS_HEADER = 'lektionslangder';
 
 export const isActivePerson = (person: { isActive?: boolean }) => person.isActive !== false;
 
-/** Person id -> e-mail, for the active people only. */
-export const activeEmails = (people: { id: string; email: string; isActive?: boolean }[]) =>
-  new Map(people.filter(isActivePerson).map((person) => [person.id, person.email]));
+/**
+ * Person id -> e-mail, for the active people with an address (Personer utan e-postadress: a pupil or a guardian may have none, and a
+ * row about one is not written by address).
+ */
+export const activeEmails = (people: { id: string; email: string | null; isActive?: boolean }[]) =>
+  new Map(
+    people.filter(isActivePerson).flatMap((person) => (person.email === null ? [] : [[person.id, person.email] as const])),
+  );
 
 const CONTRACT_WORD: Record<TeacherContractKind, string> = { FERIE: 'ferie', SEMESTER: 'semester' };
 
@@ -251,7 +256,7 @@ export function teachersToCsv(
     teaches?: boolean | null;
     firstName: string;
     lastName: string;
-    email: string;
+    email: string | null;
     phone?: string | null;
     isActive?: boolean;
   }[],
@@ -274,7 +279,7 @@ export function teachersToCsv(
         return [
           person.firstName,
           person.lastName,
-          person.email,
+          person.email ?? '',
           person.phone ?? '',
           post ? decimalComma(post.employmentPercent!) : '',
           post && (post.reductionPercent ?? 0) > 0 ? decimalComma(post.reductionPercent!) : '',
@@ -293,7 +298,7 @@ export function teacherQualificationsToCsv(
     maxGradeLevel: number;
     kind: TeacherQualificationKind;
   }[],
-  people: { id: string; email: string; isActive?: boolean }[],
+  people: { id: string; email: string | null; isActive?: boolean }[],
   subjects: { id: string; name: string; code: string | null }[],
 ): string {
   const email = activeEmails(people);
@@ -313,7 +318,7 @@ export function studentsToCsv(
     role: string;
     firstName: string;
     lastName: string;
-    email: string;
+    email: string | null;
     phone?: string | null;
     studentGroupId: string | null;
     isActive?: boolean;
@@ -324,13 +329,13 @@ export function studentsToCsv(
     CSV_TEMPLATES.students.headers,
     people
       .filter((person) => person.role === 'STUDENT' && isActivePerson(person))
-      .map((person) => [person.firstName, person.lastName, person.email, person.phone ?? '', className(person.studentGroupId)]),
+      .map((person) => [person.firstName, person.lastName, person.email ?? '', person.phone ?? '', className(person.studentGroupId)]),
   );
 }
 
 export function membershipsToCsv(
   groups: { id: string; name: string }[],
-  people: { id: string; email: string; isActive?: boolean }[],
+  people: { id: string; email: string | null; isActive?: boolean }[],
   memberships: { studentGroupId: string; studentId: string }[],
 ): string {
   const groupName = new Map(groups.map((group) => [group.id, group.name]));
@@ -357,7 +362,7 @@ export function teacherDutiesToCsv(
     validTo: string | null;
     note: string | null;
   }[],
-  people: { id: string; email: string; isActive?: boolean }[],
+  people: { id: string; email: string | null; isActive?: boolean }[],
   subjects: { id: string; name: string; code: string | null }[],
   groups: { id: string; name: string }[],
 ): string {
@@ -427,7 +432,7 @@ export function requirementsToCsv(
   }[],
   groups: { id: string; name: string }[],
   subjects: { id: string; name: string; code: string | null }[],
-  people: { id: string; email: string; isActive?: boolean }[],
+  people: { id: string; email: string | null; isActive?: boolean }[],
 ): string {
   const groupName = new Map(groups.map((group) => [group.id, group.name]));
   const subjectLabel = new Map(subjects.map((subject) => [subject.id, subject.code?.trim() || subject.name]));

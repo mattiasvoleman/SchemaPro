@@ -82,6 +82,18 @@ describe('SubjectAccessService', () => {
     expect(unzip(answer.contentBase64).get('README.txt')!.toString('utf8')).toContain('Personen har en markering för skyddad identitet');
   });
 
+  it('treats an upper-case id as the person it is: a protected person asked for in capitals is still isolated, and the person is looked up in lower case', async () => {
+    // An id with letters in it: PUPIL has none, and its upper case is itself.
+    const LETTERED = 'abcdef12-aaaa-4bbb-8ccc-ddddeeee0001';
+    tx.user.findUnique.mockResolvedValue({ id: LETTERED });
+    tx.guardianStudent.findMany.mockResolvedValue([{ guardianId: GUARDIAN, studentId: LETTERED }]);
+    marks([{ id: LETTERED, first: 'Skyddad', last: 'Elev', email: 'elev@x.example' }]);
+    const answer = await service.extract(testUser({ schoolId: SCHOOL }), LETTERED.toUpperCase(), true);
+    expect(answer).toMatchObject({ subjectIsMarked: true, relatedIncluded: 0, relatedHeldOut: 1 });
+    expect(tx.user.findUnique).toHaveBeenCalledWith({ where: { id: LETTERED }, select: { id: true } });
+    expect(answer.filename).toMatch(/-abcdef12\.zip$/);
+  });
+
   it('records the read per kind, in the läslogg, before the answer leaves, and fails if it cannot', async () => {
     marks([]);
     await service.extract(testUser({ schoolId: SCHOOL, channel: 'WEB' }), PUPIL, false);

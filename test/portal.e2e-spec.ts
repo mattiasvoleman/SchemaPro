@@ -494,6 +494,13 @@ describe('Portal and platform surfaces (e2e)', () => {
   });
 
   describe('user administration', () => {
+    // The describes above leave `$queryRaw` answering their own rows (clearAllMocks clears the calls, not the answers). An invitation reads
+    // the row's address under a lock before it puts the login on it (Personer utan e-postadress), and a row without the address it was sent
+    // to is the 409 for a correction that overtook it. Answer no row, which leaves the update its own 404.
+    beforeEach(() => {
+      Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([]) });
+    });
+
     it('409s deleting the person a decided timplan names as its decider, and keeps the identity', async () => {
       harness.tx['user']!['findUnique']!.mockResolvedValueOnce({
         authId: '11111111-1111-4111-8111-111111111111',
@@ -643,7 +650,7 @@ describe('Portal and platform surfaces (e2e)', () => {
       // counts that answer whether the role may leave staff at all.
       const USERS: LockedTable = {
         name: 'Users',
-        columns: ['id', 'schoolId', 'role', 'firstName', 'lastName', 'email', 'isActive', 'studentGroupId', 'deactivatedAt', 'pseudonymisedAt', 'adminProfile', 'hrRead', 'teaches'],
+        columns: ['id', 'schoolId', 'role', 'firstName', 'lastName', 'email', 'isActive', 'studentGroupId', 'deactivatedAt', 'pseudonymisedAt', 'adminProfile', 'hrRead', 'teaches', 'invitedAt'],
         lock: 'FOR NO KEY UPDATE',
       };
       Object.assign(harness.tx, {

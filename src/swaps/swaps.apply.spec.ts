@@ -14,6 +14,18 @@ jest.mock('../calendar/propagate-template', () => ({
 
 const user = { userId: 'u1', role: 'SCHOOL_ADMIN', schoolId: SCHOOL } as never;
 
+/** What app.direct_reach_facts answers (P5): no publication of the year holds, as it is for a school that has published nothing. */
+const directReach: { facts: unknown[] } = { facts: [] };
+const publicationHolds = (answered: boolean) => [
+  {
+    publishedAt: new Date('2026-08-01T10:00:00Z'),
+    validFrom: new Date('2026-08-01T00:00:00Z'),
+    validTo: new Date('2027-06-11T00:00:00Z'),
+    acknowledgedAt: answered ? new Date('2026-08-02T10:00:00Z') : null,
+    answered,
+  },
+];
+
 const clockOf = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 
 /** The tx of an apply: the clash reads of the world, the row locks, the writes recorded. */
@@ -31,7 +43,7 @@ function applyTx(
   const calls: string[] = [];
   const tx = {
     ...base,
-    $queryRaw: jest.fn(async () => [{ mode: 'DIRECT' }]),
+    $queryRaw: jest.fn(async (query?: { sql?: string }) => (/direct_reach_facts/.test(query?.sql ?? '') ? directReach.facts : [{ mode: 'DIRECT' }])),
     masterLesson: {
       ...base.masterLesson,
       findMany: jest.fn(async (args: { where: Record<string, unknown> }) => {
@@ -107,7 +119,10 @@ async function aGoodSwap(world: World) {
 describe('SwapsService.apply', () => {
   const world = makeWorld({ seed: 7 });
 
-  beforeEach(() => (propagateTemplateChange as jest.Mock).mockClear());
+  beforeEach(() => {
+    (propagateTemplateChange as jest.Mock).mockClear();
+    directReach.facts = [];
+  });
 
   it('writes a proposal as one move: a safety version first, then every lesson, the calendar following, a log row each', async () => {
     const { lesson, swap } = await aGoodSwap(world);
@@ -210,6 +225,36 @@ describe('SwapsService.apply', () => {
     await draft.swaps.apply({ ...request, propagate: undefined }, user);
     expect(propagateTemplateChange).not.toHaveBeenCalled();
     expect(draft.realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL, { draft: true });
+  });
+
+  it('P5: refuses a swap that moved published lessons before the school has answered the question about Direkt, and tells nobody', async () => {
+    const { lesson, swap } = await aGoodSwap(world);
+    const request = {
+      lessonId: lesson.id,
+      moves: swap.moves.map((move) => ({
+        lessonId: move.lessonId,
+        from: { dayOfWeek: move.from.dayOfWeek, startTime: clockOf(move.from.startMinutes), endTime: clockOf(move.from.endMinutes) },
+        to: { dayOfWeek: move.to.dayOfWeek, startTime: clockOf(move.to.startMinutes), endTime: clockOf(move.to.endMinutes) },
+      })),
+    };
+    directReach.facts = publicationHolds(false);
+    const refused = build(world, applyTx(world).tx);
+    await expect(refused.swaps.apply(request, user)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'DIRECT_REACH_UNANSWERED', params: { validFrom: '2026-08-01', validTo: '2027-06-11' } }),
+    });
+    // The throw is inside the transaction that wrote the version and the moves, so they go with it; nothing is announced or sent.
+    expect(refused.notifications.notifyUsers).not.toHaveBeenCalled();
+    expect(refused.realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
+
+    directReach.facts = publicationHolds(true);
+    const answered = build(world, applyTx(world).tx);
+    await expect(answered.swaps.apply(request, user)).resolves.toMatchObject({ propagatedLessons: 2 });
+    expect(answered.notifications.notifyUsers).toHaveBeenCalledTimes(2);
+
+    // A swap that leaves the calendar alone reached nobody, so it asks nothing, answered or not.
+    directReach.facts = publicationHolds(false);
+    const quiet = build(world, applyTx(world).tx);
+    await expect(quiet.swaps.apply({ ...request, propagate: false }, user)).resolves.toMatchObject({ propagatedLessons: 0 });
   });
 
   it('is a 409 SWAP_STALE when a lesson no longer stands where the page saw it, and writes nothing', async () => {

@@ -926,6 +926,167 @@
    "expected": "﻿fornamn;efternamn;epost;telefon;klass\r\nAlma;Sjö;alma@skola.se;;7A\r\nNoah;Sjö;noah@skola.se;+46701234567;\r\n"
   },
   {
+   "name": "studentsToCsv: a pupil with no address is written with an empty address",
+   "builder": "studentsToCsv",
+   "args": [
+    [
+     {
+      "id": "t1",
+      "role": "TEACHER",
+      "firstName": "Karin",
+      "lastName": "Ek",
+      "email": "karin.ek@skola.se",
+      "phone": "070-123 45 67",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t2",
+      "role": "TEACHER",
+      "firstName": "=Nils",
+      "lastName": "Berg",
+      "email": "nils@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t3",
+      "role": "TEACHER",
+      "firstName": "Gun",
+      "lastName": "Lind",
+      "email": "gun@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": null
+     },
+     {
+      "id": "t4",
+      "role": "TEACHER",
+      "firstName": "Åsa",
+      "lastName": "Öberg",
+      "email": "asa@skola.se",
+      "phone": "-12,5",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p1",
+      "role": "STUDENT",
+      "firstName": "Alma",
+      "lastName": "Sjö",
+      "email": "alma@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "p2",
+      "role": "STUDENT",
+      "firstName": "Noah",
+      "lastName": "Sjö",
+      "email": "noah@skola.se",
+      "phone": "+46701234567",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p3",
+      "role": "STUDENT",
+      "firstName": "Ivar",
+      "lastName": "Ek",
+      "email": "ivar@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "a1",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Rek",
+      "lastName": "Tor",
+      "email": "rektor@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "a2",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Sture",
+      "lastName": "Mark",
+      "email": "sture@skola.se",
+      "phone": "070-765 43 21",
+      "isActive": true,
+      "studentGroupId": null,
+      "teaches": true
+     },
+     {
+      "id": "a3",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Lena",
+      "lastName": "Borta",
+      "email": "lena@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": null,
+      "teaches": true
+     },
+     {
+      "id": "a5",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Olof",
+      "lastName": "Utan",
+      "email": "olof@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null,
+      "teaches": false
+     },
+     {
+      "id": "p4",
+      "role": "STUDENT",
+      "firstName": "Alva",
+      "lastName": "Utan",
+      "email": null,
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "p5",
+      "role": "STUDENT",
+      "firstName": "Bo",
+      "lastName": "Utan",
+      "email": null,
+      "phone": "070-111 22 33",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "g9",
+      "role": "GUARDIAN",
+      "firstName": "Vera",
+      "lastName": "Utan",
+      "email": null,
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     }
+    ],
+    {
+     "g1": "7A",
+     "g2": "7A halva 1",
+     "g3": "Elevens val 8",
+     "g4": "Fk",
+     "g5": "Utan klass",
+     "g6": "Föräldralös halva",
+     "g7": "Okänt ämne"
+    }
+   ],
+   "expected": "﻿fornamn;efternamn;epost;telefon;klass\r\nAlma;Sjö;alma@skola.se;;7A\r\nNoah;Sjö;noah@skola.se;+46701234567;\r\nAlva;Utan;;;7A\r\nBo;Utan;;070-111 22 33;\r\n"
+  },
+  {
    "name": "membershipsToCsv",
    "builder": "membershipsToCsv",
    "args": [
@@ -1126,6 +1287,246 @@
      {
       "studentGroupId": "g1",
       "studentId": "pX"
+     }
+    ]
+   ],
+   "expected": "﻿grupp;epost\r\n7A;alma@skola.se\r\n7A halva 1;alma@skola.se\r\nElevens val 8;noah@skola.se\r\n"
+  },
+  {
+   "name": "membershipsToCsv: a pupil with no address is not named by it, and is left out",
+   "builder": "membershipsToCsv",
+   "args": [
+    [
+     {
+      "id": "g1",
+      "name": "7A",
+      "kind": "CLASS",
+      "gradeLevel": 7,
+      "halfOfId": null,
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g2",
+      "name": "7A halva 1",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": "g1",
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g3",
+      "name": "Elevens val 8",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 8,
+      "halfOfId": null,
+      "replacesSubjectId": "s3"
+     },
+     {
+      "id": "g4",
+      "name": "Fk",
+      "kind": "CLASS",
+      "gradeLevel": 0,
+      "halfOfId": null,
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g5",
+      "name": "Utan klass",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": null,
+      "halfOfId": null,
+      "replacesSubjectId": "s1"
+     },
+     {
+      "id": "g6",
+      "name": "Föräldralös halva",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": "gX",
+      "replacesSubjectId": null
+     },
+     {
+      "id": "g7",
+      "name": "Okänt ämne",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": 7,
+      "halfOfId": null,
+      "replacesSubjectId": "sX"
+     }
+    ],
+    [
+     {
+      "id": "t1",
+      "role": "TEACHER",
+      "firstName": "Karin",
+      "lastName": "Ek",
+      "email": "karin.ek@skola.se",
+      "phone": "070-123 45 67",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t2",
+      "role": "TEACHER",
+      "firstName": "=Nils",
+      "lastName": "Berg",
+      "email": "nils@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "t3",
+      "role": "TEACHER",
+      "firstName": "Gun",
+      "lastName": "Lind",
+      "email": "gun@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": null
+     },
+     {
+      "id": "t4",
+      "role": "TEACHER",
+      "firstName": "Åsa",
+      "lastName": "Öberg",
+      "email": "asa@skola.se",
+      "phone": "-12,5",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p1",
+      "role": "STUDENT",
+      "firstName": "Alma",
+      "lastName": "Sjö",
+      "email": "alma@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "p2",
+      "role": "STUDENT",
+      "firstName": "Noah",
+      "lastName": "Sjö",
+      "email": "noah@skola.se",
+      "phone": "+46701234567",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "p3",
+      "role": "STUDENT",
+      "firstName": "Ivar",
+      "lastName": "Ek",
+      "email": "ivar@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "a1",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Rek",
+      "lastName": "Tor",
+      "email": "rektor@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "a2",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Sture",
+      "lastName": "Mark",
+      "email": "sture@skola.se",
+      "phone": "070-765 43 21",
+      "isActive": true,
+      "studentGroupId": null,
+      "teaches": true
+     },
+     {
+      "id": "a3",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Lena",
+      "lastName": "Borta",
+      "email": "lena@skola.se",
+      "phone": null,
+      "isActive": false,
+      "studentGroupId": null,
+      "teaches": true
+     },
+     {
+      "id": "a5",
+      "role": "SCHOOL_ADMIN",
+      "firstName": "Olof",
+      "lastName": "Utan",
+      "email": "olof@skola.se",
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null,
+      "teaches": false
+     },
+     {
+      "id": "p4",
+      "role": "STUDENT",
+      "firstName": "Alva",
+      "lastName": "Utan",
+      "email": null,
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": "g1"
+     },
+     {
+      "id": "p5",
+      "role": "STUDENT",
+      "firstName": "Bo",
+      "lastName": "Utan",
+      "email": null,
+      "phone": "070-111 22 33",
+      "isActive": true,
+      "studentGroupId": null
+     },
+     {
+      "id": "g9",
+      "role": "GUARDIAN",
+      "firstName": "Vera",
+      "lastName": "Utan",
+      "email": null,
+      "phone": null,
+      "isActive": true,
+      "studentGroupId": null
+     }
+    ],
+    [
+     {
+      "studentGroupId": "g1",
+      "studentId": "p1"
+     },
+     {
+      "studentGroupId": "g2",
+      "studentId": "p1"
+     },
+     {
+      "studentGroupId": "g2",
+      "studentId": "p3"
+     },
+     {
+      "studentGroupId": "g3",
+      "studentId": "p2"
+     },
+     {
+      "studentGroupId": "gX",
+      "studentId": "p2"
+     },
+     {
+      "studentGroupId": "g1",
+      "studentId": "pX"
+     },
+     {
+      "studentGroupId": "g2",
+      "studentId": "p4"
      }
     ]
    ],

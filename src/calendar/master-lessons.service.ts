@@ -14,6 +14,7 @@ import type { LessonRecurrence } from '@prisma/client';
 import { RealtimeService } from '../realtime/realtime.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
+import { requireDirectReachAnswered } from '../publication/direct-reach';
 import { lockYearForGrundschemaEdit, lockYearsOfLessonsForGrundschemaEdit } from '../optimization/regeneration-lock';
 import { propagateTemplateChange, reconcilableLessons } from './propagate-template';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -411,6 +412,25 @@ export class MasterLessonsService {
   // ---------------------------------------------------------------------
 
   /**
+   * `create` inside a transaction the caller holds: what the tray (Att lägga) lays a brick with, in the same transaction that has checked
+   * that the brick is still there to lay (board-tray.service.ts). The body is `create`'s own, so the lesson is judged, logged and announced
+   * as every hand edit is.
+   */
+  createIn(tx: PrismaClient, dto: CreateMasterLessonDto, user: AuthenticatedUser): Promise<CreateMasterLessonResult> {
+    return this.create(dto, user, tx);
+  }
+
+  /** `update` inside a transaction the caller holds (see createIn). */
+  updateIn(tx: PrismaClient, id: string, dto: UpdateMasterLessonDto, user: AuthenticatedUser): Promise<UpdateMasterLessonResult> {
+    return this.update(id, dto, user, tx);
+  }
+
+  /** The work in the caller's transaction when it holds one, else in a transaction of its own under the caller's row-level security. */
+  private inTransaction<T>(user: AuthenticatedUser, held: PrismaClient | undefined, work: (tx: PrismaClient) => Promise<T>): Promise<T> {
+    return held ? work(held) : this.prisma.withRls(user, work);
+  }
+
+  /**
    * The academic year is looked up under RLS because `schoolId` is taken from
    * it; the subject, group, teachers, room, extra classes and participants are
    * used as they arrived. That is deliberate — each of them is named through a
@@ -427,8 +447,9 @@ export class MasterLessonsService {
   async create(
     dto: CreateMasterLessonDto,
     user: AuthenticatedUser,
+    held?: PrismaClient,
   ): Promise<CreateMasterLessonResult> {
-    return this.prisma.withRls(user, async (tx) => {
+    return this.inTransaction(user, held, async (tx) => {
       const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
       const teachers = [dto.teacherId ?? null, dto.coTeacherId ?? null];
       const year = await tx.academicYear.findUnique({
@@ -754,8 +775,9 @@ export class MasterLessonsService {
     id: string,
     dto: UpdateMasterLessonDto,
     user: AuthenticatedUser,
+    held?: PrismaClient,
   ): Promise<UpdateMasterLessonResult> {
-    return this.prisma.withRls(user, async (tx) => {
+    return this.inTransaction(user, held, async (tx) => {
       const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
       const lesson = await tx.masterLesson.findUnique({
         where: { id },
@@ -1125,6 +1147,13 @@ export class MasterLessonsService {
               schoolId: lesson.school.id,
               academicYearId: lesson.academicYearId,
             });
+      // Direkt: the edit reached published lessons. The first one in a published period is asked of the school before it goes (P5,
+      // beslut 8); the throw rolls the whole edit back, so nothing has moved and no notice has gone.
+      await requireDirectReachAnswered(tx, {
+        academicYearId: lesson.academicYearId,
+        mode,
+        reached: propagatedLessons + removedCalendarLessons,
+      });
 
       // The ämnesfördelning, asked of the week as the PATCH leaves it. A
       // warning and never a 409: a school that puts two idrott lessons on one
@@ -1661,6 +1690,12 @@ export class MasterLessonsService {
         results.push(after);
         if (moved > 0 || removed > 0) notices.push({ lesson, after });
       }
+      // As update(): a card whose move reached published lessons asks the school first, once, and the throw takes the whole card back.
+      await requireDirectReachAnswered(tx, {
+        academicYearId: leader.academicYearId,
+        mode,
+        reached: propagatedLessons + removedCalendarLessons,
+      });
       // Låset vid en flytt (E4, beslut 2): the block the card belongs to is the school's now, and locked whole (lockBlock's own write), or the
       // next generation lays it again; a card put where it stood is no move. The lessons it locks are the block's other cards too: the generation
       // refuses a block with only some of its lessons locked.
@@ -2306,6 +2341,9 @@ export class MasterLessonsService {
           : await tx.calendarLesson.deleteMany({
               where: reconcilableLessons(id),
             });
+
+      // Direkt: the deletion took published lessons out of the calendar; asked of the school once, and the throw puts them back.
+      await requireDirectReachAnswered(tx, { academicYearId: lesson.academicYearId, mode, reached: removedCalendarLessons });
 
       await tx.masterLesson.delete({ where: { id } });
 

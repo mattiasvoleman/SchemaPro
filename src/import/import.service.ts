@@ -160,6 +160,9 @@ const swedishRows = (rows: readonly number[]): string =>
 /** The warning a pupil created without a class carries (importStudents). */
 export const STUDENT_WITHOUT_CLASS = 'IMPORT_STUDENT_WITHOUT_CLASS';
 
+/** The warning a pupil created without an e-mail address carries (importStudents; Personer utan e-postadress). */
+export const STUDENT_WITHOUT_ADDRESS = 'IMPORT_STUDENT_WITHOUT_ADDRESS';
+
 /** The two address columns of vardnadshavare.csv, as the template spells them, for the sentences about a cell. */
 const GUARDIAN_FILE_GUARDIAN_COLUMN = 'epost';
 const GUARDIAN_FILE_PUPIL_COLUMN = 'elev_epost';
@@ -173,6 +176,13 @@ const ROLE_WORD: Record<string, string> = {
   SCHOOL_ADMIN: 'en administratör',
   GUARDIAN: 'en vårdnadshavare',
 };
+
+/**
+ * Person ids by address in lower case, for the people who have one. A teacher always does; a pupil or a guardian may have none
+ * (Personer utan e-postadress), and a file that names people by address cannot name them.
+ */
+const idsByAddress = (people: ReadonlyArray<{ id: string; email: string | null }>): Map<string, string> =>
+  new Map(people.flatMap((person) => (person.email === null ? [] : [[person.email.toLowerCase(), person.id] as const])));
 
 const noPupilWith = (address: string): string =>
   `Kolumnen "${GUARDIAN_FILE_PUPIL_COLUMN}": ingen elev har e-postadressen "${address}". Eleven måste finnas i skolan och vara aktiv. Importera eleverna först, eller rätta adressen.`;
@@ -527,7 +537,7 @@ export class ImportService {
         : [];
       return {
         year: activeYear,
-        staffByEmail: new Map(staff.map((person) => [person.email.toLowerCase(), person.id])),
+        staffByEmail: idsByAddress(staff),
         signatureOwner: new Map(held.map((post) => [post.signature as string, post.userId])),
       };
     });
@@ -691,7 +701,7 @@ export class ImportService {
         },
         select: { id: true, email: true },
       });
-      const staffByEmail = new Map(staff.map((person) => [person.email.toLowerCase(), person.id]));
+      const staffByEmail = idsByAddress(staff);
 
       const subjects = await tx.subject.findMany({
         select: { id: true, name: true, code: true },
@@ -846,11 +856,7 @@ export class ImportService {
           .filter((person) => person.role === 'TEACHER' || person.role === 'SCHOOL_ADMIN')
           .map((person) => person.id),
       );
-      const staffByEmail = new Map(
-        staff
-          .filter((person) => stillStaff.has(person.id))
-          .map((person) => [person.email.toLowerCase(), person.id]),
-      );
+      const staffByEmail = idsByAddress(staff.filter((person) => stillStaff.has(person.id)));
 
       const subjects = await tx.subject.findMany({ select: { id: true, name: true, code: true } });
       const groups = await tx.studentGroup.findMany({
@@ -1026,11 +1032,19 @@ export class ImportService {
     requireSchoolId(user); // 403 up front, same contract as the sibling methods
     // Resolve class NAMES once, up front. Names are what a school's lists
     // contain; ids never appear in a CSV.
-    const groups = await this.prisma.withRls(user, (tx) =>
-      tx.studentGroup.findMany({
-        where: { academicYearId: dto.academicYearId },
-        select: { id: true, name: true },
-      }),
+    // The pupils the school has with no address are read in the same transaction (Personer utan e-postadress): they are known by
+    // name and class, which importPeople reads them by.
+    const [groups, unaddressed] = await this.prisma.withRls(user, (tx) =>
+      Promise.all([
+        tx.studentGroup.findMany({
+          where: { academicYearId: dto.academicYearId },
+          select: { id: true, name: true },
+        }),
+        tx.user.findMany({
+          where: { role: 'STUDENT', email: null },
+          select: { id: true, firstName: true, lastName: true, studentGroupId: true },
+        }),
+      ]),
     );
     const groupByName = new Map(
       groups.map((group) => [this.normalizeName(group.name), group.id]),
@@ -1051,7 +1065,8 @@ export class ImportService {
       .map((row) => ({ ...row, studentGroupId: row.studentGroupId ?? undefined }));
 
     const created = new Set<number>();
-    const report = await this.importPeople(resolved, 'STUDENT', user, created);
+    const addressRows = { given: new Set<number>(), without: new Set<number>() };
+    const report = await this.importPeople(resolved, 'STUDENT', user, created, addressRows, unaddressed);
     for (const row of unresolved) {
       report.errors.push({
         row: row.index + 1,
@@ -1064,14 +1079,23 @@ export class ImportService {
     // column emptied by mistake has to be seen in this report, not in
     // October. The web counts them into one sentence.
     const classless = resolved.filter((row) => row.studentGroupId === undefined && created.has(row.index));
-    if (classless.length > 0) {
-      report.warnings = classless.map((row) => ({
+    // The same for a pupil made with no address (Personer utan e-postadress): in the register and the lists, with no login until an
+    // address is given, which a later upload with the address does, to the one pupil of that name in that class.
+    const warnings = [
+      ...classless.map((row) => ({
         row: row.index + 1,
         code: STUDENT_WITHOUT_CLASS,
         params: {},
         message: 'Eleven skapades utan klass. Ge eleven en klass under Personer.',
-      }));
-    }
+      })),
+      ...[...addressRows.without].map((index) => ({
+        row: index + 1,
+        code: STUDENT_WITHOUT_ADDRESS,
+        params: {},
+        message: 'Eleven skapades utan e-postadress och kan inte bjudas in förrän en adress finns. Eleven syns i listor, närvaro och schema.',
+      })),
+    ].sort((a, b) => a.row - b.row);
+    if (warnings.length > 0) report.warnings = warnings;
     return report;
   }
 
@@ -1152,7 +1176,8 @@ export class ImportService {
       select: { id: true, email: true, role: true, isActive: true },
     });
     const holders = new Map<string, GuardianFileHolder[]>();
-    for (const person of known) holders.set(key(person.email), [...(holders.get(key(person.email)) ?? []), person]);
+    // Found by address, so each has one (a person with none is not matched by the query).
+    for (const person of known) holders.set(key(person.email!), [...(holders.get(key(person.email!)) ?? []), person]);
 
     interface Judged {
       position: number;
@@ -1226,7 +1251,7 @@ export class ImportService {
         skipDuplicates: true,
         select: { id: true, email: true },
       });
-      for (const person of inserted) made.set(key(person.email), person.id);
+      for (const person of inserted) made.set(key(person.email!), person.id);
       report.created = inserted.length;
     }
 
@@ -1653,9 +1678,7 @@ export class ImportService {
         },
         select: { id: true, email: true, studentGroupId: true },
       });
-      const studentByEmail = new Map(
-        students.map((student) => [student.email.toLowerCase(), student.id]),
-      );
+      const studentByEmail = idsByAddress(students);
       const homeOf = new Map(students.map((student) => [student.id, student.studentGroupId]));
 
       // Groups by name; a missing teaching group is created on the fly — the
@@ -1881,9 +1904,7 @@ export class ImportService {
               },
               select: { id: true, email: true },
             });
-      const teacherByEmail = new Map(
-        teachers.map((teacher) => [teacher.email.toLowerCase(), teacher.id]),
-      );
+      const teacherByEmail = idsByAddress(teachers);
 
       // Kolumnmappning (X2): a teacher named by lärarsignatur. The signature is unique per school and year (a
       // partial unique index), so it names one teacher of THIS year, found as the schedule exchange finds them:
@@ -2585,7 +2606,8 @@ export class ImportService {
     rows: Array<{
       firstName: string;
       lastName: string;
-      email: string;
+      /** None only for a pupil (Personer utan e-postadress); the teachers file requires one. */
+      email?: string | null;
       phone?: string | null;
       index?: number;
       studentGroupId?: string;
@@ -2594,18 +2616,86 @@ export class ImportService {
     user: AuthenticatedUser,
     /** Filled with the index of every row this call created, for a caller that writes more per row. */
     createdRows?: Set<number>,
+    /** Filled with the index of every row that gave a pupil their address, and with every row of a pupil made with none. */
+    addressRows?: { given: Set<number>; without: Set<number> },
+    /** The pupils the school has with no address, for a students file: what a row without one, or with one now, is known by. */
+    held: ReadonlyArray<{ id: string; firstName: string; lastName: string; studentGroupId: string | null }> = [],
   ): Promise<ImportReport> {
     const report: ImportReport = { created: 0, skipped: 0, errors: [] };
     const seenEmails = new Set<string>();
 
+    // A pupil with no address is known by name and class: a second upload skips the pupils the school has with none, and a row that has
+    // the address now gives it to the one of that name in that class.
+    type Unaddressed = { id: string; first: string; last: string; group: string };
+    const nameKey = (first: string, last: string, group: string | undefined): string =>
+      `${this.normalizeName(first)}|${this.normalizeName(last)}|${group ?? ''}`;
+    const unaddressed = new Map<string, Unaddressed[]>();
+    for (const pupil of held) {
+      const key = nameKey(pupil.firstName, pupil.lastName, pupil.studentGroupId ?? undefined);
+      unaddressed.set(key, [...(unaddressed.get(key) ?? []), { id: pupil.id, first: pupil.firstName, last: pupil.lastName, group: pupil.studentGroupId ?? '' }]);
+    }
+    const seenWithoutAddress = new Set<string>();
+
     for (const [position, row] of rows.entries()) {
       const rowNumber = (row.index ?? position) + 1;
-      const email = row.email.toLowerCase();
-      if (seenEmails.has(email)) {
-        report.skipped += 1; // duplicated within the file itself
-        continue;
+      const address = row.email?.trim() ? row.email.trim() : null;
+      const known = unaddressed.get(nameKey(row.firstName, row.lastName, row.studentGroupId)) ?? [];
+
+      if (address === null) {
+        // No address to know the pupil by: first name, last name and class. A pupil of that name in that class who is there already is
+        // the one the file means, as a second upload of an address is; two rows of the file with the same name and class cannot be told
+        // from two pupils, and are said so rather than one of them being dropped.
+        if (role !== 'STUDENT') {
+          report.errors.push({ row: rowNumber, message: 'E-postadress saknas. Bara elever och vårdnadshavare kan läggas upp utan adress.' });
+          continue;
+        }
+        const key = nameKey(row.firstName, row.lastName, row.studentGroupId);
+        if (seenWithoutAddress.has(key)) {
+          report.errors.push({
+            row: rowNumber,
+            message: `Flera rader heter ${row.firstName.trim()} ${row.lastName.trim()} i samma klass och har ingen e-postadress, så de går inte att skilja åt. Lägg till eleven under Personer, eller ge raderna en adress.`,
+          });
+          continue;
+        }
+        seenWithoutAddress.add(key);
+        if (known.length > 0) {
+          report.skipped += 1; // already registered — idempotent re-upload
+          continue;
+        }
+      } else {
+        const email = address.toLowerCase();
+        if (seenEmails.has(email)) {
+          report.skipped += 1; // duplicated within the file itself
+          continue;
+        }
+        seenEmails.add(email);
+        // The address is new to the school, and a pupil of that name in that class has none: the one the school meant, now with an
+        // address. More than one cannot be chosen between.
+        if (role === 'STUDENT' && known.length > 0) {
+          if (known.length > 1) {
+            report.errors.push({
+              row: rowNumber,
+              message: `Det finns flera elever som heter ${row.firstName.trim()} ${row.lastName.trim()} i klassen och saknar e-postadress, så adressen kan inte läggas på rätt. Lägg adressen under Personer.`,
+            });
+            continue;
+          }
+          try {
+            await this.users.update(known[0]!.id, { email: address }, user);
+            report.updated = (report.updated ?? 0) + 1;
+            addressRows?.given.add(row.index ?? position);
+            unaddressed.delete(nameKey(row.firstName, row.lastName, row.studentGroupId));
+          } catch (error) {
+            if (error instanceof ConflictException) {
+              report.skipped += 1; // the address is held by a pupil already
+              continue;
+            }
+            const message = error instanceof Error ? error.message : 'Raden kunde inte importeras.';
+            report.errors.push({ row: rowNumber, message });
+            this.logger.warn(`CSV import row failed [role=${role}, row=${rowNumber}]: ${message}`);
+          }
+          continue;
+        }
       }
-      seenEmails.add(email);
 
       try {
         await this.users.create(
@@ -2613,7 +2703,7 @@ export class ImportService {
             role,
             firstName: row.firstName.trim(),
             lastName: row.lastName.trim(),
-            email: row.email.trim(),
+            email: address,
             phone: row.phone?.trim() || null,
             studentGroupId: row.studentGroupId,
             // An import never emails anybody. Uploading a class list is
@@ -2625,6 +2715,7 @@ export class ImportService {
         );
         report.created += 1;
         createdRows?.add(row.index ?? position);
+        if (address === null) addressRows?.without.add(row.index ?? position);
       } catch (error) {
         if (error instanceof ConflictException) {
           report.skipped += 1; // already registered — idempotent re-upload

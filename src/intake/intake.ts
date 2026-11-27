@@ -22,6 +22,12 @@ import { toNioarig, type GradeNumbering } from '../common/grade-numbering';
  *   INFO  Something another step reads and Generera does not: the lokal timplan (a shortfall is *under mål*, never a
  *         refusal), the signatures a schedule file is read by, the teachers who have no post.
  *
+ * AND WHAT IS OFF (P5, Förvalen en ny skola möter). A school that has not set up its lov, its lunch, its rastvakt or the
+ * switches that reach families (bevakning, kvittens, Schemavisaren, sjukanmälan) has not got them wrong: it has not turned them
+ * on, and nothing tells it that they are there. Each is an INFO row that says it is not there (or "av") and links to where it is
+ * turned on; none stops Generera, and none is a recommendation. A school that does not want kvittens reads "Kvittens är av" and is
+ * right.
+ *
  * This page counts. It does not say that a week can be laid, and it never says "klart": that is what the engine's
  * Kontrollera veckan answers, and only sometimes. A green page here is the absence of the gaps below and nothing more.
  */
@@ -35,12 +41,16 @@ export const INTAKE_AREAS = [
   'ROOMS',
   'FRAME_TIMES',
   'RASTS',
+  'BREAKS',
+  'LUNCH',
+  'SUPERVISION',
   'CLASSES',
   'TEACHING_GROUPS',
   'PEOPLE',
   'TIMPLAN',
   'REQUIREMENTS',
   'STAFFING',
+  'SWITCHES',
 ] as const;
 export type IntakeArea = (typeof INTAKE_AREAS)[number];
 
@@ -48,21 +58,25 @@ export type IntakeArea = (typeof INTAKE_AREAS)[number];
  * The areas whose rows belong to a läsår: with none active they have nothing to count, and the page says it waits for the year
  * instead of "nothing is missing" (a school with no year has not got no classes: it has not got a year to have them in).
  */
-export const YEAR_BOUND_AREAS: readonly IntakeArea[] = ['CLASSES', 'TEACHING_GROUPS', 'TIMPLAN', 'REQUIREMENTS', 'STAFFING'];
+export const YEAR_BOUND_AREAS: readonly IntakeArea[] = ['BREAKS', 'SUPERVISION', 'CLASSES', 'TEACHING_GROUPS', 'TIMPLAN', 'REQUIREMENTS', 'STAFFING'];
 
 /** What an area has found: a fixed set of counts, so that the answer has one shape whatever the school holds. */
 export const INTAKE_FOUND: Readonly<Record<IntakeArea, readonly string[]>> = {
   YEAR: ['years'],
   SUBJECTS: ['subjects'],
-  ROOMS: ['rooms'],
+  ROOMS: ['rooms', 'roomTypes'],
   FRAME_TIMES: ['frameTimes'],
   RASTS: ['rasts'],
+  BREAKS: ['breaks'],
+  LUNCH: ['lunchServings'],
+  SUPERVISION: ['supervisionAreas', 'supervisionShifts'],
   CLASSES: ['classes'],
   TEACHING_GROUPS: ['teachingGroups'],
   PEOPLE: ['teachers', 'students'],
   TIMPLAN: ['gradesWithTimplan'],
   REQUIREMENTS: ['requirements'],
   STAFFING: ['posts'],
+  SWITCHES: ['switchesOn'],
 };
 
 /**
@@ -76,8 +90,12 @@ export const GAP_DEFINITIONS = [
   { code: 'SUBJECTS_WITHOUT_POSTS', area: 'SUBJECTS', level: 'INFO' },
   { code: 'ROOM_TYPE_WITHOUT_ROOM', area: 'SUBJECTS', level: 'HARD' },
   { code: 'NO_ROOMS', area: 'ROOMS', level: 'HARD' },
+  { code: 'NO_ROOM_TYPES', area: 'ROOMS', level: 'INFO' },
   { code: 'FRAME_TIMES_MISSING', area: 'FRAME_TIMES', level: 'SOFT' },
   { code: 'NO_RASTS', area: 'RASTS', level: 'INFO' },
+  { code: 'NO_BREAKS', area: 'BREAKS', level: 'INFO' },
+  { code: 'LUNCH_OFF', area: 'LUNCH', level: 'INFO' },
+  { code: 'NO_SUPERVISION', area: 'SUPERVISION', level: 'INFO' },
   { code: 'NO_CLASSES', area: 'CLASSES', level: 'SOFT' },
   { code: 'CLASSES_WITHOUT_GRADE', area: 'CLASSES', level: 'SOFT' },
   { code: 'CLASSES_WITHOUT_POSTS', area: 'CLASSES', level: 'SOFT' },
@@ -91,6 +109,10 @@ export const GAP_DEFINITIONS = [
   { code: 'UNSTAFFED_POSTS', area: 'STAFFING', level: 'SOFT' },
   { code: 'TEACHERS_WITHOUT_POST', area: 'STAFFING', level: 'INFO' },
   { code: 'POSTS_WITHOUT_SIGNATURE', area: 'STAFFING', level: 'INFO' },
+  { code: 'ABSENCE_WATCH_OFF', area: 'SWITCHES', level: 'INFO' },
+  { code: 'ACK_OFF', area: 'SWITCHES', level: 'INFO' },
+  { code: 'VIEWER_OFF', area: 'SWITCHES', level: 'INFO' },
+  { code: 'SICK_REPORT_OFF', area: 'SWITCHES', level: 'INFO' },
 ] as const;
 
 export type IntakeGapCode = (typeof GAP_DEFINITIONS)[number]['code'];
@@ -116,9 +138,19 @@ export interface IntakeFacts {
   /** Subjects with a post in the year that need a room type no room has. */
   subjectsNeedingMissingRoomType: Named;
   rooms: number;
+  /** The school's room types (Gymnastiksal, Slöjdsal …): a subject that asks for a kind of room names one, and a school made by hand starts with none. */
+  roomTypes: number;
   /** The school's frame times, as the years each spans (stated in NIOARIG, like every school-wide span). */
   frameTimes: readonly { minGradeLevel: number; maxGradeLevel: number }[];
   rasts: number;
+  /** The year's lov and studiedagar (SchoolBreaks): publish skips their days. 0 for a school with no year. */
+  breaks: number;
+  /** Whether the school has turned lunch on (LunchSettings.lunchEnabled; no row is off), and how many serving rows it has. */
+  lunchOn: boolean;
+  lunchServings: number;
+  /** The school's rastvakt areas, and the year's passes in them. */
+  supervisionAreas: number;
+  supervisionShifts: number;
   classes: number;
   /** The årskurs of each class of the year, in the year's own numbering; null for a class with none. One entry per class. */
   classGrades: readonly (number | null)[];
@@ -139,6 +171,8 @@ export interface IntakeFacts {
   posts: number;
   postsWithoutSignature: number;
   teachersWithoutPost: number;
+  /** The four switches that reach families or staff, each off until the school turns it on (no settings row is off): the page says which are. */
+  switches: { absenceWatch: boolean; ack: boolean; viewer: boolean; sickReport: boolean };
 }
 
 export interface IntakeGapView {
@@ -214,8 +248,12 @@ export function assess(facts: IntakeFacts): IntakeView {
     SUBJECTS_WITHOUT_POSTS: yearBound(named(facts.subjectsWithoutPost)),
     ROOM_TYPE_WITHOUT_ROOM: yearBound(named(facts.subjectsNeedingMissingRoomType)),
     NO_ROOMS: presence(facts.rooms === 0),
+    NO_ROOM_TYPES: presence(facts.roomTypes === 0),
     FRAME_TIMES_MISSING: yearBound(asItems(uncovered)),
     NO_RASTS: presence(facts.rasts === 0),
+    NO_BREAKS: yearBound(presence(facts.breaks === 0)),
+    LUNCH_OFF: presence(!facts.lunchOn),
+    NO_SUPERVISION: yearBound(presence(facts.supervisionShifts === 0)),
     NO_CLASSES: yearBound(presence(facts.classes === 0)),
     CLASSES_WITHOUT_GRADE: yearBound(named(facts.classesWithoutGrade)),
     // With no post at all every class lacks one, and NO_REQUIREMENTS says it once instead of once per class.
@@ -230,6 +268,10 @@ export function assess(facts: IntakeFacts): IntakeView {
     UNSTAFFED_POSTS: yearBound({ count: facts.unstaffedRequirements, items: [], more: 0 }),
     TEACHERS_WITHOUT_POST: yearBound({ count: facts.teachersWithoutPost, items: [], more: 0 }),
     POSTS_WITHOUT_SIGNATURE: yearBound({ count: facts.postsWithoutSignature, items: [], more: 0 }),
+    ABSENCE_WATCH_OFF: presence(!facts.switches.absenceWatch),
+    ACK_OFF: presence(!facts.switches.ack),
+    VIEWER_OFF: presence(!facts.switches.viewer),
+    SICK_REPORT_OFF: presence(!facts.switches.sickReport),
   };
 
   const levelOf = (definition: (typeof GAP_DEFINITIONS)[number]): IntakeLevel =>
@@ -238,15 +280,19 @@ export function assess(facts: IntakeFacts): IntakeView {
   const found: Record<IntakeArea, Record<string, number>> = {
     YEAR: { years: facts.years },
     SUBJECTS: { subjects: facts.subjects },
-    ROOMS: { rooms: facts.rooms },
+    ROOMS: { rooms: facts.rooms, roomTypes: facts.roomTypes },
     FRAME_TIMES: { frameTimes: facts.frameTimes.length },
     RASTS: { rasts: facts.rasts },
+    BREAKS: { breaks: hasYear ? facts.breaks : 0 },
+    LUNCH: { lunchServings: facts.lunchServings },
+    SUPERVISION: { supervisionAreas: facts.supervisionAreas, supervisionShifts: hasYear ? facts.supervisionShifts : 0 },
     CLASSES: { classes: hasYear ? facts.classes : 0 },
     TEACHING_GROUPS: { teachingGroups: hasYear ? facts.teachingGroups : 0 },
     PEOPLE: { teachers: facts.teachers, students: facts.students },
     TIMPLAN: { gradesWithTimplan: hasYear ? grades.filter((grade) => withTimplan.has(grade)).length : 0 },
     REQUIREMENTS: { requirements: hasYear ? facts.requirements : 0 },
     STAFFING: { posts: hasYear ? facts.posts : 0 },
+    SWITCHES: { switchesOn: Object.values(facts.switches).filter(Boolean).length },
   };
 
   const areas = INTAKE_AREAS.map(
