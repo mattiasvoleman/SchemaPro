@@ -2336,6 +2336,68 @@
     "limits": "Siffrorna är nedre gränser som motorn kan bevisa för årskursens trängsta del av läsåret. En vecka över ramtiden räknas bara till den första period motorn nekar, så den siffran kan vara lägre än den trängsta periodens och jämförs inte med andra. De säger inte att ett schema finns. Behörigheter räknas som de gäller i dag.",
     "notRun": "{count, plural, one {# ämne} other {# ämnen}} hann inte räknas om inom tiden."
   },
+  "boardPossible": {
+    "free": "Ledigt",
+    "change": "Ledigt, annan sal",
+    "closed": {
+      "FRAME": "Ramtid",
+      "LUNCH": "Lunch",
+      "GRADE_RULE": "Årskursregel",
+      "OTHER_SCHOOL": "Annan skola",
+      "AVAILABILITY": "Inte tillgänglig"
+    },
+    "inTheWay": "{subject} {className} i vägen",
+    "inTheWayUnnamed": "En lektion i vägen",
+    "rooms": {
+      "title": "Salar för den här tiden",
+      "hint": "Lediga salar som passar står först. Välj en sal så fylls fältet Sal i; välj den igen för att ta bort valet.",
+      "noClock": "Skriv ett klockslag för att se salarna.",
+      "failed": "Det gick inte att hämta salarna. Fältet Sal fungerar som förut.",
+      "none": "Skolan har inga salar.",
+      "seats": "{capacity, plural, =-1 {platser okända} one {# plats} other {# platser}}, {needed, plural, one {# elev} other {# elever}}",
+      "current": "lektionens sal",
+      "free": "ledig, förslag {rank}",
+      "freeNotRanked": "ledig",
+      "busy": "upptagen av {subject} {className} {day} {from}–{to}{more, plural, =0 {} one { och en till} other { och # till}}",
+      "busyUnnamed": "upptagen",
+      "closed": "stängd: {rule}",
+      "tooSmall": "för liten",
+      "wrongType": "inte den typ ämnet kräver",
+      "outsideYears": "inte för gruppens årskurser",
+      "shared": "delas av flera lektioner: domaren räknar eleverna när lektionen läggs"
+    },
+    "dialog": {
+      "title": "Möjliga tider",
+      "hint": "Välj en tid så fylls dag och klockslag i (och salen, om tiden går i en annan). Spara lägger lektionen.",
+      "failed": "Det gick inte att hämta de möjliga tiderna. Fälten nedan fungerar som förut."
+    },
+    "list": {
+      "title": "Möjliga tider för {lesson}",
+      "loading": "Letar efter tider …",
+      "failed": "Det gick inte att hämta de möjliga tiderna. Pilarna och Enter fungerar som förut.",
+      "none": "Det finns ingen tid i veckan att lägga {lesson} på.",
+      "option": "{rank}. {day} {from}–{to}",
+      "plain": "ingen skillnad för veckan i övrigt",
+      "lay": "Lägg",
+      "layLabel": "Lägg {lesson} {day} {from}–{to}",
+      "typeLabel": "Skriv en tid",
+      "typeGo": "Flytta markören",
+      "layAtMarker": "Lägg där markören står",
+      "words": {
+        "pupilsBetter": "färre håltimmar för eleverna",
+        "pupilsWorse": "fler håltimmar för eleverna",
+        "teacherLess": "färre håltimmar för läraren",
+        "teacherMore": "fler håltimmar för läraren",
+        "distributionBetter": "ämnet fördelas bättre över veckan",
+        "distributionWorse": "ämnet fördelas sämre över veckan",
+        "dayBetter": "lärarens dag blir bättre",
+        "dayWorse": "lärarens dag bryter en gräns",
+        "wishMet": "uppfyller ett önskemål",
+        "wishBroken": "bryter ett önskemål",
+        "roomChanged": "i en annan sal"
+      }
+    }
+  },
   "boardKeys": {
     "clash": "Krock",
     "blockDialog": "{lesson} är ett block: blockets egen ruta öppnas, där lås, parkera och ta bort gäller hela blocket.",
@@ -2344,6 +2406,13 @@
     "pickedUp": "Tog upp {lesson}, {day} {from}–{to}. Pilarna flyttar markören, Enter lägger, Esc släpper.",
     "markerFree": "{day} {from}–{to}: går att lägga. Enter lägger.",
     "markerTaken": "{day} {from}–{to}: går inte att lägga här. Enter visar de närmaste lediga tiderna.",
+    "markerRank": "{day} {from}–{to}: förslag {rank}. Enter lägger.",
+    "markerChange": "{day} {from}–{to}: ledigt, men i en annan sal än lektionens egen. Lägg den med ett av de bästa förslagen eller i Justera lektion, där salen väljs.",
+    "markerClosed": "{day} {from}–{to}: stängt av {code, select, FRAME {ramtiden} LUNCH {klassens lunch} GRADE_RULE {en regel för årskursen} OTHER_SCHOOL {en annan skolas tid} AVAILABILITY {en markering om att något inte är tillgängligt} other {en regel}}. Enter visar de närmaste lediga tiderna.",
+    "markerInTheWay": "{day} {from}–{to}: {subject} {className} ligger i vägen. Enter visar de närmaste lediga tiderna.",
+    "markerCrowded": "{day} {from}–{to}: {units, plural, =0 {något är i vägen} one {en lektion ligger i vägen} other {# lektioner ligger i vägen}}. Enter visar de närmaste lediga tiderna.",
+    "numberNone": "Det finns inget förslag {rank}.",
+    "typedOutside": "Tiden ligger utanför veckans dag: skriv en tid mellan {from} och {to}.",
     "placed": "Flyttar {lesson} till {day} {from}–{to}.",
     "refused": "{lesson} går inte att lägga {day} {from}–{to}. De närmaste lediga tiderna visas.",
     "letGo": "Släppte {lesson}. Ingenting ändrades.",
@@ -2367,6 +2436,10 @@
       "marker": {
         "keys": "Pilar, med en lektion uppe",
         "does": "Flyttar markören ett kvarter upp eller ned (med Skift fem minuter) eller en dag åt sidan."
+      },
+      "numbers": {
+        "keys": "1 till 9, med en lektion uppe",
+        "does": "Flyttar markören till det bästa förslaget med det numret, där brädet har märkt ut de tider lektionen kan ligga."
       },
       "put": {
         "keys": "Enter eller mellanslag, med en lektion uppe",
@@ -2468,6 +2541,7 @@
     "undo": "Ångra",
     "redo": "Gör om",
     "undoRefused": "Det går inte att ångra. {why} Lektionen ligger kvar där den är, och nästa Ångra tar steget före.",
+    "moreReasons": "{count, plural, one {En regel till säger nej} other {# regler till säger nej}}: Justera lektion visar dem.",
     "undone": "Ändringen ångrades",
     "redone": "Ändringen gjordes om",
     "conflictCount": "{count, plural, =1 {1 konflikt} other {# konflikter}}",
