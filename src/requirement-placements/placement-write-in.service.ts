@@ -11,6 +11,7 @@ import { lockYearForRegeneration } from '../optimization/regeneration-lock';
 import type { PlacedPost } from '../optimization/placed-lessons';
 import { enterGrundschemaWrite, type PublishMode } from '../publication/publish-mode';
 import { RealtimeService } from '../realtime/realtime.service';
+import { roomRefusalsOf } from './placement-room-refusal';
 import { planWriteIn, type NotWrittenRow, type WriteInPlan } from './placement-write-in';
 import { RequirementPlacementsService } from './requirement-placements.service';
 
@@ -183,6 +184,12 @@ export class PlacementWriteInService {
     const judged = await this.placements.judgedYear(tx, user, academicYearId);
     const existing = await tx.masterLesson.findMany({ where: { academicYearId, fromPlacement: true }, select: EXISTING_SELECT, orderBy: { id: 'asc' } });
     const posts = new Map<string, PlacedPost>(judged.posts.map((post) => [post.id, post]));
+    // The rows the week holds and that name a room are asked whether the generator would put the lesson in it, as a lay is (BOARD_ROOM_NOT_ALLOWED).
+    const holding = judged.rows.flatMap((row, index) => {
+      const post = posts.get(row.requirementId);
+      return judged.verdicts[index]?.ok !== false && row.roomId !== null && post && judged.basis ? [{ id: row.id, roomId: row.roomId, studentGroupId: post.studentGroupId, subjectId: post.subjectId }] : [];
+    });
+    const roomRefusals = judged.basis ? await roomRefusalsOf(tx, { id: academicYearId, gradeNumbering: judged.year.gradeNumbering }, judged.basis, holding) : new Map();
     const plan = planWriteIn({
       schoolId: requireSchoolId(user),
       academicYearId,
@@ -191,6 +198,7 @@ export class PlacementWriteInService {
       posts,
       blockRows: judged.ofBlocks.flatMap((entry) => entry.block.rows.map((row) => ({ id: row.id, blockId: entry.block.id }))),
       existing,
+      roomRefusals,
     });
     return { plan, existing };
   }

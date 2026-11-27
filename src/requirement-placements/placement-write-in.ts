@@ -14,6 +14,9 @@ import type { PlacementParams, PlacementVerdict } from './placement-judge';
  *     row's day, clock, room and weeks, locked and marked as the run's own, so that the next Generera writes it again from the row as it then stands.
  *   - One the week does not hold is not written, and is named with its verdict. (Generera refuses the whole run for it; the bridge writes the
  *     rest and says which it left.)
+ *   - One whose room the generator would not take (fewer seats than the pupils, another kind than the subject needs, years the room is fenced from)
+ *     is not written either, and is named with the reason (BOARD_ROOM_NOT_ALLOWED, the code a lay in that room is refused with): a lock names its room
+ *     and the engine asks nothing of it, but a lesson made by hand here is held to the rule a lay is held to.
  *   - One that leaves the room to the engine is not written: a lesson has to name its room here, and only the engine chooses one. It is named.
  *   - A parallel block's förläggningar are pinned lessons of every member and are the engine's too (a lock inside a block is a partly locked
  *     block). They are named and left to Generera.
@@ -56,6 +59,9 @@ export interface ExistingPlacedLesson {
   endDate: Date | null;
 }
 
+/** Why the generator would not put a lesson of the row's class and subject in its room (placement-room-refusal.ts). */
+export type RoomRefusalReason = 'SEATS' | 'TYPE' | 'YEARS';
+
 export interface WriteInInput {
   schoolId: string;
   academicYearId: string;
@@ -68,6 +74,8 @@ export interface WriteInInput {
   blockRows: readonly { id: string; blockId: string }[];
   /** The lessons an earlier run wrote from förläggningar (fromPlacement). */
   existing: readonly ExistingPlacedLesson[];
+  /** The rows (by id) whose room the generator would not take: left and named, as a lay in that room is refused. A row with no room has none. */
+  roomRefusals?: ReadonlyMap<string, { roomId: string; reason: RoomRefusalReason }>;
 }
 
 export interface WriteInPlan {
@@ -127,6 +135,15 @@ export function planWriteIn(input: WriteInInput): WriteInPlan {
     } else if (row.roomId === null) {
       leave(row);
       notWritten.push({ rowId: row.id, requirementId: row.requirementId, reason: 'NO_ROOM' });
+    } else if (input.roomRefusals?.has(row.id)) {
+      // The generator would not put the lesson in that room (a lay there is BOARD_ROOM_NOT_ALLOWED): left and named, as a row the week does not hold.
+      leave(row);
+      notWritten.push({
+        rowId: row.id,
+        requirementId: row.requirementId,
+        reason: 'REFUSED',
+        verdict: { reason: 'BOARD_ROOM_NOT_ALLOWED', params: input.roomRefusals.get(row.id)! },
+      });
     } else {
       written.push(row);
     }

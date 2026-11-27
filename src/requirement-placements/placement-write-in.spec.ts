@@ -133,6 +133,46 @@ describe('planWriteIn', () => {
     expect(plan.notWritten).toEqual([{ rowId: 'b', requirementId: POST_MATH, reason: 'REFUSED', verdict: { reason: 'GROUP', params: { other: 'Svenska 7A' } } }]);
   });
 
+  it('names a row whose room the generator would not take and does not write it, as a lay in that room is refused (BOARD_ROOM_NOT_ALLOWED): the rows in rooms it takes are written', () => {
+    const plan = planWriteIn(
+      input({
+        rows: [row({ id: 'a' }), row({ id: 'b', dayOfWeek: 2, roomId: OLD_ROOM }), row({ id: 'c', dayOfWeek: 3 })],
+        verdicts: [ok(0), ok(1), ok(2)],
+        roomRefusals: new Map([['b', { roomId: OLD_ROOM, reason: 'TYPE' as const }]]),
+      }),
+    );
+    expect(plan.creates.map((create) => create.dayOfWeek)).toEqual([1, 3]);
+    expect(plan.notWritten).toEqual([
+      { rowId: 'b', requirementId: POST_MATH, reason: 'REFUSED', verdict: { reason: 'BOARD_ROOM_NOT_ALLOWED', params: { roomId: OLD_ROOM, reason: 'TYPE' } } },
+    ]);
+  });
+
+  it('says the week\'s verdict before the room\'s when a row has both, and takes no room for a row that has none', () => {
+    const plan = planWriteIn(
+      input({
+        rows: [row({ id: 'a', roomId: OLD_ROOM }), row({ id: 'b', dayOfWeek: 2, roomId: null })],
+        verdicts: [refused(0), ok(1)],
+        roomRefusals: new Map([['a', { roomId: OLD_ROOM, reason: 'SEATS' as const }], ['b', { roomId: ROOM, reason: 'YEARS' as const }]]),
+      }),
+    );
+    expect(plan.notWritten).toEqual([
+      { rowId: 'a', requirementId: POST_MATH, reason: 'REFUSED', verdict: { reason: 'GROUP', params: { other: 'Svenska 7A' } } },
+      { rowId: 'b', requirementId: POST_MATH, reason: 'NO_ROOM' },
+    ]);
+  });
+
+  it('keeps the lesson an earlier run wrote for a row whose room it will not take now: it is not the bridge\'s to take away', () => {
+    const plan = planWriteIn(
+      input({
+        rows: [row({ id: 'a' }), row({ id: 'b', dayOfWeek: 2, roomId: OLD_ROOM })],
+        verdicts: [ok(0), ok(1)],
+        roomRefusals: new Map([['b', { roomId: OLD_ROOM, reason: 'YEARS' as const }]]),
+        existing: [lesson({ id: 'old-a' }), lesson({ id: 'old-b', dayOfWeek: 2, roomId: ROOM })],
+      }),
+    );
+    expect(plan.deleteIds).toEqual(['old-a']);
+  });
+
   it('names a row that leaves the room to the engine and does not write it: only the engine can choose it', () => {
     const plan = planWriteIn(input({ rows: [row({ id: 'a', roomId: null })] }));
     expect(plan.creates).toEqual([]);

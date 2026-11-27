@@ -13,7 +13,9 @@
  *   (si-c) a row moved since replaces its lesson; a lesson that answers a row the bridge does not write stays; the dated lessons of a replaced one go from the
  *          calendar, and a restore point is taken;
  *   (si-d) a written lesson is a placed lesson: a hand edit cannot move it (409 LESSON_IS_PLACED); another school's year is a 404; a year being rewritten
- *          by something else is a 409 SCHEDULE_BUSY and nothing is written.
+ *          by something else is a 409 SCHEDULE_BUSY and nothing is written;
+ *   (si-f) a row whose room the generator would not take (another kind of room than the subject needs, years the room is fenced from) is left and named
+ *          with BOARD_ROOM_NOT_ALLOWED and the reason, as a lay in that room is refused, and the rows in rooms it takes are written.
  *
  * It works in schools of its own (slug `probe-skriv-in-<n>`) and drops them.
  */
@@ -233,6 +235,42 @@ export async function skrivInChecks(owner: Client, api: PrismaService, check: Ch
       const lessons = (await owner.query<{ id: string; recurrence: string }>(`SELECT id, recurrence::text AS recurrence FROM "MasterLessons" WHERE "academicYearId" = $1 AND "fromPlacement" ORDER BY recurrence, id`, [a.year])).rows;
       assert.deepEqual(lessons.map((lesson) => lesson.recurrence), ['EVEN_WEEKS', 'ODD_WEEKS'], 'one lesson for each half, none written twice');
       assert.deepEqual([result.lessonsWritten, result.lessonsReplaced], [0, 0], 'the odd half\'s lesson is what its row writes: nothing to do');
+    });
+
+    await check('(si-f) a row whose room the generator would not take is left and named, with why, as a lay in that room is refused; the rows in rooms it takes are written', async () => {
+      const school = (await owner.query<{ id: string }>(`SELECT id FROM "Schools" WHERE slug = $1`, [slugs[0]!])).rows[0]!.id;
+      const labb = (await owner.query<{ id: string }>(`INSERT INTO "RoomTypes" ("schoolId", name, "updatedAt") VALUES ($1, 'SI Labb', now()) RETURNING id`, [school])).rows[0]!.id;
+      const room = async (name: string, over: { type?: string; min?: number } = {}) =>
+        (
+          await owner.query<{ id: string }>(
+            `INSERT INTO "Rooms" ("schoolId", name, "roomTypeId", "minGradeLevel", "updatedAt") VALUES ($1, $2, $3, $4, now()) RETURNING id`,
+            [school, name, over.type ?? null, over.min ?? null],
+          )
+        ).rows[0]!.id;
+      const [labRoom, plainRoom, upperRoom] = [await room('SI Labbsal', { type: labb }), await room('SI Klassrum'), await room('SI Högstadiesal', { min: 8 })];
+      const fysik = (await owner.query<{ id: string }>(`INSERT INTO "Subjects" ("schoolId", name, "requiredRoomTypeId", "updatedAt") VALUES ($1, 'SI Fysik', $2, now()) RETURNING id`, [school, labb])).rows[0]!.id;
+      const pFysik = (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "minutesPerLesson", recurrence, "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, 2, 60, 'ALL_WEEKS'::"LessonRecurrence", now()) RETURNING id`,
+          [school, a.year, fysik, a.classId.get('7A'), a.teacherId.get('T2')],
+        )
+      ).rows[0]!.id;
+      const inLab = await row(pFysik, 5, '08:00', 60, labRoom);
+      const inPlain = await row(pFysik, 5, '14:00', 60, plainRoom);
+      // Matematik for a seventh class in a room fenced to the eighth and up.
+      const inUpper = await row(pMath, 5, '11:00', 60, upperRoom);
+      const preview = await bridge.preview(a.year, a.caller);
+      const left = Object.fromEntries(preview.notWritten.filter((entry) => [inLab, inPlain, inUpper].includes(entry.rowId)).map((entry) => [entry.rowId, entry]));
+      assert.deepEqual(Object.keys(left).sort(), [inPlain, inUpper].sort(), 'the labb room is allowed, the other two are left');
+      assert.deepEqual(left[inPlain], { rowId: inPlain, requirementId: pFysik, reason: 'REFUSED', verdict: { reason: 'BOARD_ROOM_NOT_ALLOWED', params: { roomId: plainRoom, reason: 'TYPE' } } });
+      assert.deepEqual(left[inUpper], { rowId: inUpper, requirementId: pMath, reason: 'REFUSED', verdict: { reason: 'BOARD_ROOM_NOT_ALLOWED', params: { roomId: upperRoom, reason: 'YEARS' } } });
+      const written = await bridge.write(a.year, a.caller);
+      assert.equal(written.lessonsWritten, 1, 'only the lesson in the labb room is written');
+      const lessons = (await owner.query<{ room: string; subject: string }>(`SELECT l."roomId" AS room, s.name AS subject FROM "MasterLessons" l JOIN "Subjects" s ON s.id = l."subjectId" WHERE l."academicYearId" = $1 AND l."fromPlacement" AND s.name = 'SI Fysik'`, [a.year])).rows;
+      assert.deepEqual(lessons, [{ room: labRoom, subject: 'SI Fysik' }]);
+      // The same rule as the lay's: the room the bridge leaves is the room a lay in it is refused for (the lay's own probe holds that against the lay).
+      assert.equal(written.notWritten.filter((entry) => entry.verdict?.reason === 'BOARD_ROOM_NOT_ALLOWED').length, 2);
     });
   } finally {
     await cleanup();

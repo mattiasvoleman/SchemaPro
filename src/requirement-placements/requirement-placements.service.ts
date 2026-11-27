@@ -479,15 +479,17 @@ export class RequirementPlacementsService {
 
     // The posts' rows first, then each block's, one row per lesson and member (judgedRowsOfBlock).
     const judgedRows = [...rows.map((row) => judgedRowOf(postById.get(row.requirementId)!, slotOf(row), row.id)), ...ofBlocks.flatMap((entry) => entry.judged)];
+    // The year's pupils as every judge of a row reads them (also what Skriv in förläggningarna asks the rows' rooms by); none to read for a year with no row.
+    const basis = judgedRows.length === 0 ? null : await rostersOfYear(tx, user, academicYearId, { isActive: year.isActive, predecessorId: year.predecessorId });
     // Every row of the year at once, as Generera's pre-flight judges them, against the lessons it keeps and each other.
     const verdicts: PlacementVerdict[] =
-      judgedRows.length === 0
+      basis === null
         ? []
         : await judgePlacements(tx, this.masters, {
             academicYearId,
             schoolId: requireSchoolId(user),
             gradeNumbering: year.gradeNumbering as GradeNumbering,
-            basis: await rostersOfYear(tx, user, academicYearId, { isActive: year.isActive, predecessorId: year.predecessorId }),
+            basis,
             rows: judgedRows,
             beside: [],
             demand: new Map(
@@ -497,7 +499,7 @@ export class RequirementPlacementsService {
               }),
             ),
           });
-    return { year, posts, rows, kept, mealRows, written, held, blocks, postById, slotsOf, keyedOfPost, locksByPost, ofBlocks, judgedRows, verdicts };
+    return { year, basis, posts, rows, kept, mealRows, written, held, blocks, postById, slotsOf, keyedOfPost, locksByPost, ofBlocks, judgedRows, verdicts };
   }
 
   /**

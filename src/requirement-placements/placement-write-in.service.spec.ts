@@ -6,6 +6,7 @@ import { regenerationSweepDay } from '../optimization/optimization-proxy.service
 import { lockYearForRegeneration, SCHEDULE_BUSY, scheduleBusy } from '../optimization/regeneration-lock';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
 import type { RealtimeService } from '../realtime/realtime.service';
+import { roomRefusalsOf } from './placement-room-refusal';
 import { PlacementWriteInService } from './placement-write-in.service';
 import type { RequirementPlacementsService } from './requirement-placements.service';
 
@@ -19,6 +20,7 @@ import type { RequirementPlacementsService } from './requirement-placements.serv
 
 jest.mock('../publication/publish-mode', () => ({ ...jest.requireActual('../publication/publish-mode'), enterGrundschemaWrite: jest.fn() }));
 jest.mock('../optimization/regeneration-lock', () => ({ ...jest.requireActual('../optimization/regeneration-lock'), lockYearForRegeneration: jest.fn() }));
+jest.mock('./placement-room-refusal', () => ({ roomRefusalsOf: jest.fn(async () => new Map()) }));
 jest.mock('../optimization/optimization-proxy.service', () => ({ ...jest.requireActual('../optimization/optimization-proxy.service'), regenerationSweepDay: jest.fn() }));
 
 const YEAR = '99999999-9999-4999-8999-999999999999';
@@ -29,6 +31,7 @@ const ANNA = '44444444-4444-4444-8444-444444444444';
 const ROOM = '11111111-1111-4111-8111-111111111111';
 const OLD_ROOM = '12121212-1212-4212-8212-121212121212';
 const POST = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const BASIS = { kind: 'basis' };
 const time = (value: string): Date => new Date(`1970-01-01T${value}:00.000Z`);
 
 const post = {
@@ -96,7 +99,7 @@ describe('PlacementWriteInService', () => {
     existing = [];
     judgedYear = jest.fn(async () => {
       order.push('judge');
-      return { posts: [post], rows, verdicts, ofBlocks: [] };
+      return { posts: [post], rows, verdicts, ofBlocks: [], basis: BASIS, year: { gradeNumbering: 'NIOARIG' } };
     });
     snapshot = jest.fn(async () => {
       order.push('version');
@@ -130,6 +133,7 @@ describe('PlacementWriteInService', () => {
     });
     (lockYearForRegeneration as jest.Mock).mockReset().mockImplementation(async () => void order.push('lock'));
     (regenerationSweepDay as jest.Mock).mockReset().mockResolvedValue(new Date('2026-11-26T00:00:00.000Z'));
+    (roomRefusalsOf as jest.Mock).mockReset().mockResolvedValue(new Map());
   });
 
   it('writes in the order a rewrite of the year takes: the mode, the year\'s lock, the reads, a restore point, the sweep, the replacing, the writing, the log', async () => {
@@ -185,6 +189,30 @@ describe('PlacementWriteInService', () => {
     const result = await service.write(YEAR, user);
     expect(result.lessonsWritten).toBe(1);
     expect(result.notWritten).toEqual([{ rowId: 'block-row-1', blockId: 'block-1', reason: 'BLOCK' }]);
+  });
+
+  it('asks the generator\'s room rule of the rows the week holds and that name a room, and only of them, and leaves the one it refuses, named', async () => {
+    rows = [rowOf({ id: 'a' }), rowOf({ id: 'b', dayOfWeek: 2 }), rowOf({ id: 'c', dayOfWeek: 3, roomId: null }), rowOf({ id: 'd', dayOfWeek: 4 })];
+    verdicts = [{ index: 0, ok: true }, { index: 1, ok: true }, { index: 2, ok: true }, { index: 3, ok: false, reason: 'GROUP' }];
+    (roomRefusalsOf as jest.Mock).mockResolvedValue(new Map([['b', { roomId: ROOM, reason: 'TYPE' }]]));
+    const result = await service.write(YEAR, user);
+    expect(roomRefusalsOf).toHaveBeenCalledWith(tx, { id: YEAR, gradeNumbering: 'NIOARIG' }, BASIS, [
+      { id: 'a', roomId: ROOM, studentGroupId: G7A, subjectId: MATH },
+      { id: 'b', roomId: ROOM, studentGroupId: G7A, subjectId: MATH },
+    ]);
+    expect(result.lessonsWritten).toBe(1);
+    expect(result.notWritten).toEqual([
+      { rowId: 'b', requirementId: POST, reason: 'REFUSED', verdict: { reason: 'BOARD_ROOM_NOT_ALLOWED', params: { roomId: ROOM, reason: 'TYPE' } } },
+      { rowId: 'c', requirementId: POST, reason: 'NO_ROOM' },
+      { rowId: 'd', requirementId: POST, reason: 'REFUSED', verdict: { reason: 'GROUP' } },
+    ]);
+  });
+
+  it('asks no room of a year with no rows to judge: there are no pupils read for it', async () => {
+    judgedYear.mockImplementation(async () => ({ posts: [post], rows: [], verdicts: [], ofBlocks: [], basis: null, year: { gradeNumbering: 'NIOARIG' } }));
+    const result = await service.write(YEAR, user);
+    expect(roomRefusalsOf).not.toHaveBeenCalled();
+    expect(result.lessonsWritten).toBe(0);
   });
 
   it('writes nothing for a preview, and says what a write would do', async () => {
