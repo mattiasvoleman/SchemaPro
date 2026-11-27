@@ -82,6 +82,8 @@ export interface SavedWrite {
   joined?: { id: string; isGenerated: boolean }[];
   /** PATCH block-card: the lessons of a block on the same times that moved with the card. */
   followed?: string[];
+  /** Låset vid en flytt (E4): the card's move locked its block whole; these are the lessons it locked, which its undo unlocks. */
+  lockedLessonIds?: string[];
 }
 
 /**
@@ -341,6 +343,9 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
     };
     const patchCard = (body: Record<string, unknown>) =>
       api.patch<SavedWrite>("/api/v1/master-lessons/block-card", body).finally(invalidate);
+    /** The lock a card's move put on its block, taken off again for exactly the lessons it locked (lockBlock). */
+    const unlockMoved = (blockId: string, lessonIds: string[]) =>
+      api.patch("/api/v1/master-lessons/block-lock", { blockId, isLocked: false, lessonIds }).finally(invalidate);
 
     const moveCard = async (card: BlockCard, change: LessonChange) => {
       const lessonIds = card.lessons.map((lesson) => lesson.id);
@@ -358,7 +363,13 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
         let result = await acts.current.guard(() => patchCard(to));
         acts.current.history.push({
           label: "block-move",
-          undo: async () => void (await patchCard(moveBackOf(from, result))),
+          undo: async () => {
+            // Låset vid en flytt (E4): the gateway locks the block the card was moved in, and the way back moves nothing it did not move, so the lock is
+            // taken off here, by the lessons the move locked, once the card is back where it stood.
+            const locked = result.lockedLessonIds ?? [];
+            await patchCard(moveBackOf(from, result));
+            if (locked.length > 0) await unlockMoved(card.blockId, locked);
+          },
           redo: async () => {
             result = await patchCard(to);
           },

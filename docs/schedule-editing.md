@@ -175,14 +175,29 @@ whatever the request names (decision 5: no forced clash).
   begäran själv satte eller tog bort (en låst lektion som flyttas med `isLocked: false` låses upp), inte en lektion som redan är låst, inte en ny sal eller lärare
   (det flyttar ingenting av var lektionen står) och inte en lektion i ett parallellt block, vars lås är blockets (Lås blocket). Sidan säger "Flyttad och låst" och
   ger Lås upp; ett ångrat flyttande tar låset med sig, eftersom ögonblicksbilden bär lektionens lås.
+- **Ett byte låser det det flyttar** (granskaren g486, M-2). `POST /api/v1/swaps/apply` låser varje lektion den flyttar som inte var låst, i samma skrivning, och svaret säger det
+  som ett PATCH gör: `lockedByMove: true` och `lockedLessonIds`, de lektioner byten låste (inte en som redan var låst, som den valda lektionen kan vara). Annars lägger nästa
+  Generera om bägge där de stod. En låst lektion är en låst partner: Byt och Föreslå hoppar över den, så ett par som bytt plats byts inte igen av en slump.
+  **Utom en lektion i ett parallellt block vars andra lektioner byten lämnar olåsta** (granskaren g505, M-1): Generera vägrar ett block där bara några av lektionerna är
+  låsta (`BLOCK_PARTLY_LOCKED`), så ett byte som flyttar ett kort av ett block med flera kort låser inte kortets lektioner, och nästa Generera lägger om blocket som förr.
+  Ett block läggs för hand med sitt kort (`block-card`), som låser blocket helt. Flyttar byten blockets alla lektioner, eller är de andra redan låsta, låses de som andra.
+  **Ångra** är samma flyttar omvända till samma väg, och den tar låset av igen utan något nytt fält i begäran (den äldre webbens Ångra går som förut): en låst lektion
+  som inte är den valda flyttas bara om dess senast loggade ändring var den som låste den (olåst före, låst efter) och begäran för den tillbaka dit den ändringen fann den;
+  då låses den upp. Ett lås handen satt efteråt, eller en lektion som flyttats sedan, nekas som förut (`SWAP_LOCKED`).
+- **Ett blockkort som flyttas låser sitt block** (g486, M-2). `PATCH /api/v1/master-lessons/block-card` skriver bara dag och klockslag till kortets lektioner, men låser sedan
+  blocket helt, med `lockBlock`s egen skrivning: varje placerad lektion i varje medlem, och i ett block på samma tider (en lektion på parkeringen låses inte). Det är blockets
+  lås och inte kortets, eftersom Generera vägrar ett block där bara några av lektionerna är låsta (`BLOCK_PARTLY_LOCKED`), så kortets lås ensamt hade flyttat vägran till
+  nästa Generera. Svaret har `lockedByMove: true` och `lockedLessonIds`; ett kort som släpps där det stod är ingen flytt och låser inget. Att ta tillbaka låset är
+  `lockBlock` med `isLocked: false` och de id svaret nämnde: ett ångrat korts flytt tar inte låset med sig.
 - **Att låsa eller låsa upp frågar inte klashregeln** (granskaren g461, L-5). Ett PATCH som inte ändrar något domaren läser (dag, klockslag, veckor, lärare, sal,
   klasser, elever) och inte namnger `exempt` flyttar ingenting och krockar inte med något nytt, så en lektion som redan är dubbelbokad kan låsas och låsas upp.
   En ny sal, en flytt och en ny lärare frågas som förut.
 - **Ett undantag ges inte åt en lektion på parkeringen** (granskaren g467, L-3): `exempt` på en lektion som redan ligger på parkeringen är 400, och den läsande
   frågan svarar inget undantag för en sådan. Det PATCH som parkerar lektionen får bära `exempt` (webbens Gör om skickar lektionens ögonblicksbild, undantaget med):
   parkeringen frågas inget och tar undantaget, så inget sparas och inget nekas.
-- **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, och en dubbelbokad
-  lektion kan låsas) och `src/calendar/master-lessons.lock-at-move.spec.ts`.
+- **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, en dubbelbokad
+  lektion kan låsas, ett byte låser sina två lektioner och Ångra tar låset av, och ett blockkort låser hela sitt block), `src/calendar/master-lessons.lock-at-move.spec.ts`,
+  `src/swaps/swaps.apply.spec.ts` och blockkortets prov i `master-lessons.service.spec.ts`.
 
 ## Tier 3
 
