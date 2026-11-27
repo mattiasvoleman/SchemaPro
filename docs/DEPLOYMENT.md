@@ -7932,17 +7932,27 @@ Until now a family that had applied for leave and thought better of it had to as
 
 ### 42.2 The route
 
-`POST /family/leave-requests/:id/withdraw` (guardian, pupil or school administrator, 20 a minute): 404 if the request is not in the caller's school, 403 `LEAVE_WITHDRAW_NOT_YOURS` if somebody else filed it, 409 `LEAVE_REQUEST_DECIDED` if it is not waiting. A request that is already taken back answers as it did (idempotent, 200), so a double click and a retry over a bad line are harmless. The reply is the request in the family's own shape (`status: WITHDRAWN`). Nobody is notified: the mentor and the administrator had a notice that is now read, and the family knows.
+`POST /family/leave-requests/:id/withdraw` (guardian, pupil or school administrator, 20 a minute): 404 if the request is not in the caller's school, 403 `LEAVE_WITHDRAW_NOT_YOURS` if somebody else filed it, 409 `LEAVE_REQUEST_DECIDED` if it is not waiting. A request that is already taken back answers as it did (idempotent, 201: it is a POST), so a double click and a retry over a bad line are harmless. The reply is the request in the family's own shape (`status: WITHDRAWN`). Nobody is notified: the mentor and the administrator had a notice that is now read, and the family knows.
 
 ### 42.3 Deploy order
 
 1. Run the two migrations **before** the merge (§20.2), from a tree that holds every applied migration. The first is instant. The second takes `ACCESS EXCLUSIVE` on `LeaveRequests` with `NOWAIT` in a loop of 50 ms for 30 s and `lock_timeout` 5 s (nothing is held between tries; after 30 s it stops with nothing changed and can be run again). No row has the status yet, so the `VALIDATE` reads the table once and finds nothing to refuse.
 2. The API before the migration works unchanged: it never writes the status. **The API before the release, with the migration run and a request taken back**, reads a status it does not know: Prisma reads an unknown enum value of a model read as an error (as §18.1 says of `GUARDIAN_DECLINED`). The deploy replaces every instance within the minute, and nothing writes the status until the new gateway is serving; so run the migration first and merge at once.
-3. The mobile app of an older release lists a request with a status it has no label for: it shows the raw word. Nothing else of the old app's lists changes (nothing is removed or renamed); the label is in the release of the app that carries the status (`mobile/src/i18n`).
+3. The mobile app of an older release lists a request with a status it has no label for: it shows the catalogue key (`leave.status.WITHDRAWN`) where the label would be. Nothing else of the old app's lists changes (nothing is removed or renamed); the label is in the release of the app that carries the status (`mobile/src/i18n`).
 
 ### 42.4 Rolling back
 
-The gateway can be rolled back at any time, but the old one cannot read a taken-back request (§42.3 point 2), so if any exist **convert them first**: `UPDATE "LeaveRequests" SET "status" = 'REJECTED' WHERE "status" = 'WITHDRAWN';` is the closest status the old code knows (the check of `20261023091000` allows an empty `decidedAs`, and `decidedAt` keeps the moment). The old list then says *Avslagen* for a request the family took back, which is not what happened; tell the school if it is done. The enum value cannot be dropped in Postgres without rebuilding the type: leave it. The `CHECK`, the function and the door can stay, since nothing reaches them with the old gateway.
+The gateway can be rolled back at any time, but the old one cannot read a taken-back request (§42.3 point 2), so if any exist **convert them first**. The closest status the old code knows is `REJECTED` (the check of `20261023091000` allows an empty `decidedAs`, and `decidedAt` keeps the moment). A bare `UPDATE` does not do it: the trigger `LeaveRequests_gate` refuses to move a taken-back request to any other status (`LV409`), the owner's `UPDATE` included. Take the gate out of the way for the one statement, in one transaction (`DISABLE TRIGGER` holds writers of the table back for the moment it takes, and nothing else changes):
+
+```sql
+BEGIN;
+ALTER TABLE "LeaveRequests" DISABLE TRIGGER "LeaveRequests_gate";
+UPDATE "LeaveRequests" SET "status" = 'REJECTED' WHERE "status" = 'WITHDRAWN';
+ALTER TABLE "LeaveRequests" ENABLE TRIGGER "LeaveRequests_gate";
+COMMIT;
+```
+
+The old list then says *Avslagen* for a request the family took back, which is not what happened; tell the school if it is done. The enum value cannot be dropped in Postgres without rebuilding the type: leave it. The `CHECK`, the function and the door can stay, since nothing reaches them with the old gateway.
 
 ### 42.5 What is not done
 

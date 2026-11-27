@@ -8758,6 +8758,15 @@ BEGIN
   PERFORM pg_temp.ut_expect('600o ... and the function says no', app.leave_request_withdraw(r2)::text, 'false');
   PERFORM set_config('request.jwt.claims', '', true);
   PERFORM pg_temp.ut_expect('600o a withdrawn request is decided by nobody (LV409)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'APPROVED' WHERE id = %L$q$, r1)), 'LV409');
+  -- DEPLOYMENT "A family takes back a leave request", Rolling back: the owner's bare UPDATE to the old code's REJECTED is refused too (LV409),
+  -- and with the gate out of the way for the statement the request becomes a REJECTED one with no decider and the moment it was taken back.
+  PERFORM pg_temp.ut_expect('600o the rollback''s conversion to REJECTED is refused by the gate (LV409)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET "status" = 'REJECTED' WHERE "status" = 'WITHDRAWN' AND id = %L$q$, r1)), 'LV409');
+  ALTER TABLE "LeaveRequests" DISABLE TRIGGER "LeaveRequests_gate";
+  UPDATE "LeaveRequests" SET "status" = 'REJECTED' WHERE "status" = 'WITHDRAWN' AND id = r1;
+  ALTER TABLE "LeaveRequests" ENABLE TRIGGER "LeaveRequests_gate";
+  PERFORM pg_temp.ut_expect('600o ... and with the gate out of the way it is converted, with no decider and its moment kept',
+    (SELECT concat_ws('|', status, "decidedById" IS NULL, "decidedAs" IS NULL, "decidedAt" IS NOT NULL) FROM "LeaveRequests" WHERE id = r1), 'REJECTED|t|t|t');
+  PERFORM pg_temp.ut_expect('600o ... and the gate is on again', (SELECT tgenabled::text FROM pg_trigger WHERE tgrelid = '"LeaveRequests"'::regclass AND tgname = 'LeaveRequests_gate'), 'O');
 
   -- Rights: the API's role alone.
   PERFORM pg_temp.ut_expect('600o the function is the API role''s alone',
