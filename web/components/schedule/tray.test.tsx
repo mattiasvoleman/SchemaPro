@@ -261,6 +261,14 @@ describe("laying a brick", () => {
     expect(post).toHaveBeenCalledWith("/api/v1/master-lessons/possible-times", expect.objectContaining({ brick: brickSubject }), expect.anything());
   });
 
+  it("asks about a lesson on the parking by the lesson, which knows its extra classes and pupils, and not by what the brick knows of it", async () => {
+    await open("Lägg Svenska 7B");
+    fireEvent.change(screen.getByRole("textbox", { name: /Start/ }), { target: { value: "13:00" } });
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/master-lessons/room-choices", expect.objectContaining({ lessonId: "l9", dayOfWeek: 1, startTime: "13:00" }), expect.anything()));
+    expect(post).toHaveBeenCalledWith("/api/v1/master-lessons/possible-times", expect.objectContaining({ lessonId: "l9" }), expect.anything());
+    for (const call of post.mock.calls.filter((entry) => String(entry[0]).startsWith("/api/v1/master-lessons/"))) expect(call[1]).not.toHaveProperty("brick");
+  });
+
   it("fills the day and the start with a time that is chosen, asks the rooms for it, and puts the room the generator ranks first in the field", async () => {
     await open();
     fireEvent.click(await screen.findByRole("button", { name: /2\. Torsdag/ }));

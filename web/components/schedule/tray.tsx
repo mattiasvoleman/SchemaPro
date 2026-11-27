@@ -24,7 +24,7 @@ import {
   type LayFailure,
   type TrayBrick,
 } from "@/lib/board-tray";
-import { askPossibleTimes, askRoomChoices, clockOf, costWords, type PossibleOption, type PossibleTimes, type RoomChoice } from "@/lib/possible-times";
+import { askPossibleTimes, askRoomChoices, clockOf, costWords, type PossibleOption, type PossibleSubject, type PossibleTimes, type RoomChoice } from "@/lib/possible-times";
 import { roomWords } from "@/lib/room-words";
 import { cn } from "@/lib/utils";
 
@@ -285,7 +285,9 @@ function BrickForm({
   const tDays = useTranslations("days");
   const tCommon = useTranslations("common");
   const queryClient = useQueryClient();
-  const subject = brickSubject(brick, yearId);
+  // A lesson on the parking is asked about as the lesson it is (the gateway knows its extra classes and its pupils); a brick that is none, by what the
+  // post says of it.
+  const subject: PossibleSubject = brick.lessonId ?? brickSubject(brick, yearId);
   const [day, setDay] = useState("1");
   const [start, setStart] = useState("");
   const [roomId, setRoomId] = useState("");
