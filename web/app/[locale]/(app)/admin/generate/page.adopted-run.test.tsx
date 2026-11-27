@@ -188,6 +188,36 @@ describe("the run a reload leaves behind, read through the real hooks", () => {
     expect(gw.calls).toContain("GET /api/v1/optimization/jobs/job-1");
   });
 
+  it("says on the card when the run was made, as the history list does (G6b, g393-L-2): a refusal from weeks ago is not mistaken for today's", async () => {
+    // D9 shows the year's newest refusal whatever its age. The title said "Senaste körning" and nothing of when.
+    const weeksAgo = "2026-10-29T09:15:00.000Z";
+    gw.history[Y1] = [run("job-1", { createdAt: weeksAgo })];
+    gw.jobs["job-1"] = run("job-1", { createdAt: weeksAgo });
+    const Page = await loadPage();
+    render(<Page />);
+    expect(await screen.findByText("Overlap in job-1.", undefined, SLOW)).toBeInTheDocument();
+
+    const stamp = lastRun()!.querySelector("time");
+    expect(stamp).not.toBeNull();
+    expect(stamp!.getAttribute("datetime")).toBe(weeksAgo);
+    expect(stamp!.textContent).toBe(new Intl.DateTimeFormat("sv-SE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(weeksAgo)));
+    // The card's title is where it stands: the date is not a line of its own below the answer.
+    expect(lastRun()!.querySelector("h2, h3")?.contains(stamp)).toBe(true);
+  });
+
+  it("says it on the card of a run whose process went away before the reload, too: the same moment, in the same format (G6b, g393-L-2)", async () => {
+    const weeksAgo = "2026-10-29T09:15:00.000Z";
+    gw.history[Y1] = [run("job-1", { status: "FAILED", solverStatus: null, errorCode: "ENGINE_RUN_ABANDONED", suggestionsOffered: false, createdAt: weeksAgo })];
+    const Page = await loadPage();
+    render(<Page />);
+    await waitFor(() => expect(lastRun()).not.toBeNull(), SLOW);
+
+    const stamp = lastRun()!.querySelector("time");
+    expect(stamp).not.toBeNull();
+    expect(stamp!.getAttribute("datetime")).toBe(weeksAgo);
+    expect(stamp!.textContent).toBe(new Intl.DateTimeFormat("sv-SE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(weeksAgo)));
+  });
+
   it("stops showing it when the history is read again and a run that laid a timetable is on top of it", async () => {
     gw.history[Y1] = [run("job-1")];
     gw.jobs["job-1"] = run("job-1");
@@ -285,15 +315,15 @@ describe("the run a reload leaves behind, read through the real hooks", () => {
     expect(screen.queryByText("Overlap in job-2.")).toBeNull();
   });
 
-  it("does not keep the läsår that was chosen: a reload shows the active läsår's run, and the run of the other one waits for the choice", async () => {
-    // The choice is the page's own state (lib/planning-year.ts: `chosenId`), and `?year=` is read only when the page opens. A reader who made a
-    // run for next year, left, and came back is on the active year: the run is saved, and the card is there once next year is chosen again.
+  it("keeps the läsår that was chosen in the address (G6b, g393-U-1): a reload shows the run of the läsår that was counted for, and the active läsår once it is chosen again", async () => {
+    // The choice is written to the address (?year=, lib/planning-year.ts) and read when the page opens. A reader who made a run for next year,
+    // left, and came back is on next year, where the run and its card are; choosing the active year again takes `?year=` off.
     state.years = [ACTIVE, NEXT];
     gw.history[Y1] = [];
     gw.history[Y2] = [run("job-2")];
     gw.jobs["job-2"] = run("job-2");
     const Page = await loadPage();
-    render(<Page />);
+    const first = render(<Page />);
     await settle();
     expect(screen.getByRole("button", { name: "planningYear.optionActive(2026/27)" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText("Overlap in job-2.")).toBeNull();
@@ -301,5 +331,17 @@ describe("the run a reload leaves behind, read through the real hooks", () => {
 
     await userEvent.setup().click(screen.getByRole("button", { name: "planningYear.optionNext(2027/28)" }));
     expect(await screen.findByText("Overlap in job-2.", undefined, SLOW)).toBeInTheDocument();
+    expect(window.location.search).toBe(`?year=${Y2}`);
+
+    // A reload: the page is mounted again on the address it left.
+    first.unmount();
+    render(<Page />);
+    expect(await screen.findByText("Overlap in job-2.", undefined, SLOW)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "planningYear.optionNext(2027/28)" })).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "planningYear.optionActive(2026/27)" }));
+    await settle();
+    expect(window.location.search).toBe("");
+    expect(screen.queryByText("Overlap in job-2.")).toBeNull();
   });
 });
