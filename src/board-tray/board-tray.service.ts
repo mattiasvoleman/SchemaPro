@@ -12,6 +12,7 @@ import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { REQUIREMENT_PLACEMENTS_STALE } from '../requirement-placements/placement-refusal';
 import { lockPostForShares } from '../resources/requirement-shares';
 import type { LayBrickDto } from './dto/lay-brick.dto';
+import { BOARD_ROOM_NOT_ALLOWED, layRoomRefusal } from './lay-room';
 import { boardPostOf, boardPostShape, coveringLocksOf, type KeptForCount } from '../requirement-placements/placement-board';
 import { loadBlocksOfYear } from '../requirement-placements/block-placement-judge';
 import { BOARD_KEPT_SELECT, BOARD_POST_SELECT, VIEW_SELECT, countedPostsOf, keptForCountOf } from '../requirement-placements/requirement-placements.service';
@@ -156,6 +157,15 @@ export class BoardTrayService {
         });
       }
       const roomId = dto.roomId ?? null;
+      // A room the generator would not put the lesson in is refused as such, and "Utan sal" (no room) is the way to lay the brick all the same.
+      const refusedRoom = roomId === null ? null : await layRoomRefusal(tx, user, { academicYearId: dto.academicYearId, studentGroupId: brick.studentGroupId, subjectId: brick.subjectId, roomId });
+      if (refusedRoom !== null) {
+        throw new ConflictException({
+          message: 'Salen passar inte lektionen (platser, typ eller årskurser): välj en annan sal eller lägg den utan sal.',
+          code: BOARD_ROOM_NOT_ALLOWED,
+          params: { roomId: roomId!, reason: refusedRoom },
+        });
+      }
       const endTime = clockOf(Number(dto.startTime.slice(0, 2)) * 60 + Number(dto.startTime.slice(3, 5)) + dto.minutes);
       if (dto.lessonId !== undefined) {
         // The brick that is a lesson on the tray: only one of the part's own (the tray names them, and no other), moved back where it was put.
