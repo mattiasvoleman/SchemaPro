@@ -519,8 +519,14 @@ export class LeaveService {
       if (request.status === 'WITHDRAWN') return { id, status: 'WITHDRAWN' as const };
       if (request.status !== 'PENDING') throw alreadyDecided();
       const [row] = await tx.$queryRaw<Array<{ withdrawn: boolean }>>`SELECT app.leave_request_withdraw(${id}::uuid) AS "withdrawn"`;
-      // A decision won the race between the read and the write.
-      if (!row?.withdrawn) throw alreadyDecided();
+      if (!row?.withdrawn) {
+        // Somebody else's write won the race between the read and the write. When it was the same person's own (a double submit, or a
+        // retry that crossed the first call), the first one's commit is visible now (READ COMMITTED) and this is no news, as the second of
+        // two calls in a row is; when it was a decision, the request is decided.
+        const now = await tx.leaveRequest.findUnique({ where: { id }, select: { status: true } });
+        if (now?.status === 'WITHDRAWN') return { id, status: 'WITHDRAWN' as const };
+        throw alreadyDecided();
+      }
       this.logger.log(`Leave request taken back [request=${id}]`);
       return { id, status: 'WITHDRAWN' as const };
     });

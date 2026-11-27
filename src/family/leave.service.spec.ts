@@ -796,6 +796,25 @@ describe('LeaveService', () => {
       expect(tx.$queryRaw).not.toHaveBeenCalled();
     });
 
+    it('answers a second taking back that crossed the first as no news, and a taking back that a decision beat as decided', async () => {
+      // The first call of the same person commits while the second waits for the row: the door says no, and the row now says WITHDRAWN.
+      tx.leaveRequest.findUnique.mockReset();
+      tx.leaveRequest.findUnique
+        .mockResolvedValueOnce({ requestedById: GUARDIAN_ID, status: 'PENDING' })
+        .mockResolvedValueOnce({ status: 'WITHDRAWN' });
+      tx.$queryRaw = jest.fn().mockResolvedValue([{ withdrawn: false }]);
+      await expect(service.withdrawLeaveRequest(REQUEST_ID, guardianUser())).resolves.toEqual({ id: REQUEST_ID, status: 'WITHDRAWN' });
+
+      // A decision won: the row says APPROVED, and so does the answer's code.
+      tx.leaveRequest.findUnique.mockReset();
+      tx.leaveRequest.findUnique
+        .mockResolvedValueOnce({ requestedById: GUARDIAN_ID, status: 'PENDING' })
+        .mockResolvedValueOnce({ status: 'APPROVED' });
+      const lost = await service.withdrawLeaveRequest(REQUEST_ID, guardianUser()).catch((error: unknown) => error);
+      expect(lost).toBeInstanceOf(ConflictException);
+      expect((lost as ConflictException).getResponse()).toMatchObject({ code: LEAVE_REQUEST_DECIDED });
+    });
+
     it('409s a taking back that a decision beat, and answers one that is taken back already as no news, asking nothing', async () => {
       tx.leaveRequest.findUnique.mockResolvedValue({ requestedById: GUARDIAN_ID, status: 'PENDING' });
       tx.$queryRaw = jest.fn().mockResolvedValue([{ withdrawn: false }]);
