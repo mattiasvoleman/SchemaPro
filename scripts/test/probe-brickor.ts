@@ -7,7 +7,9 @@
  *
  *   (br-a) a lesson Generera laid and nobody has locked is not kept by the next Generera; a PATCH that moves it by hand locks it (beslut 2), says
  *          so, and the lesson is then one of the lessons Generera keeps (keptMastersWhere, the one read of Generera's fetch);
- *   (br-b) a lock, an unlock and a restated save of a lesson that is double-booked are let through, and a new room on it is asked as before.
+ *   (br-b) a lock, an unlock and a restated save of a lesson that is double-booked are let through, and a new room on it is asked as before;
+ *   (br-w) the lesson dialog's save, which sends the weeks as they stood: a new room on a lesson Generera laid leaves it Generera's, weeks it did not
+ *          have hand it to the school, and a move locks it and leaves it Generera's (granskaren g509, M-3).
  *
  * It works in schools of its own (slug `probe-brickor-<n>`) and drops them.
  */
@@ -84,6 +86,43 @@ export async function brickorChecks(owner: Client, api: PrismaService, check: Ch
         refused = error as HttpException;
       }
       assert.equal(refused?.getStatus(), 409, 'a new room on a double-booked lesson is asked the clash rule');
+    });
+
+    await check('(br-w) a save that sends the weeks as they stood is no write of them: only weeks the lesson did not have hand it to the school', async () => {
+      const R1 = a.roomId.get('R1')!;
+      const R2 = a.roomId.get('R2')!;
+      const weeks = async (id: string) => (await owner.query<{ recurrence: string; start: string | null }>(`SELECT recurrence, to_char("startDate", 'YYYY-MM-DD') AS start FROM "MasterLessons" WHERE id = $1`, [id])).rows[0]!;
+      /** L1 as Generera laid it: Monday 09:00, R1, every week, nobody's lock. */
+      const reset = () => owner.query(`UPDATE "MasterLessons" SET "dayOfWeek" = 1, "startTime" = '09:00', "endTime" = '10:00', "roomId" = $2, "isLocked" = false, "isGenerated" = true, recurrence = 'ALL_WEEKS', "startDate" = NULL, "endDate" = NULL WHERE id = $1`, [L1, R1]);
+      /** What the dialog sends: every field, the weeks as it read them. */
+      const dialog = (change: Record<string, unknown>) => ({ dayOfWeek: 1, startTime: '09:00', endTime: '10:00', roomId: R1, isLocked: false, recurrence: 'ALL_WEEKS' as const, startDate: null, endDate: null, ...change });
+
+      await reset();
+      const room = await masters.update(L1, dialog({ roomId: R2 }), a.caller);
+      assert.equal(room.lockedByMove, undefined);
+      assert.deepEqual(await stateOf(L1), { locked: false, generated: true, day: 1, start: '09:00' }, 'a room changed in the dialog leaves the lesson Generera\'s');
+      assert.ok(!(await kept()).includes(L1), 'and the next Generera lays it again');
+
+      // The same date that the lesson has, sent again, is no window either.
+      await owner.query(`UPDATE "MasterLessons" SET "startDate" = '2026-08-17' WHERE id = $1`, [L1]);
+      await masters.update(L1, dialog({ roomId: R1, startDate: '2026-08-17' }), a.caller);
+      assert.equal((await stateOf(L1)).generated, true, 'a first day sent as it stands is no write of it');
+
+      // Weeks the lesson did not have are the school's: Generera cannot make them, and keeps the lesson as it is.
+      await reset();
+      await masters.update(L1, dialog({ recurrence: 'ODD_WEEKS' }), a.caller);
+      assert.deepEqual([(await stateOf(L1)).generated, (await weeks(L1)).recurrence], [false, 'ODD_WEEKS']);
+      assert.ok((await kept()).includes(L1), 'a lesson handed to the school is kept by the next Generera');
+      await reset();
+      await masters.update(L1, dialog({ startDate: '2026-09-01' }), a.caller);
+      assert.deepEqual([(await stateOf(L1)).generated, (await weeks(L1)).start], [false, '2026-09-01']);
+
+      // A move by the dialog locks the lesson, in sight, and leaves it Generera's: the lock is what keeps it.
+      await reset();
+      const moved = await masters.update(L1, dialog({ dayOfWeek: 3, startTime: '13:00', endTime: '14:00' }), a.caller);
+      assert.deepEqual([moved.isLocked, moved.lockedByMove], [true, true]);
+      assert.deepEqual(await stateOf(L1), { locked: true, generated: true, day: 3, start: '13:00' });
+      assert.ok((await kept()).includes(L1), 'kept for the lock, and still Generera\'s own lesson');
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [slug]);

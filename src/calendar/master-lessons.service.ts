@@ -993,10 +993,10 @@ export class MasterLessonsService {
        * as surely as a drag would have taken it.
        *
        * Asked of a move that leaves the lesson placed — another slot or other
-       * weeks, or put back from the tray — and of weeks written as they stood,
-       * which the lesson dialog does on every save and an undo on every
-       * restore: one statement. A lesson set aside, or edited while it stays
-       * on the tray, occupies nothing and is no move of a block's.
+       * weeks, or put back from the tray: one statement. A lesson set aside,
+       * edited while it stays on the tray, or saved with the weeks it already
+       * has (the lesson dialog's every save, an undo's every restore),
+       * occupies nothing new and is no move of a block's.
        */
       const placedAfter = dto.isParked === false || (!lesson.isParked && dto.isParked !== true);
       const landing: BlockSlot = {
@@ -1016,17 +1016,21 @@ export class MasterLessonsService {
         endDate: toDateStringOrNull(lesson.endDate),
       };
       const movesTheLesson = placedAfter && (lesson.isParked || !sameSlot(landing, origin));
-      const writesWindow =
-        dto.recurrence !== undefined || dto.startDate !== undefined || dto.endDate !== undefined;
-      const block =
-        movesTheLesson || (writesWindow && placedAfter) ? await readLessonBlock(tx, lesson) : null;
+      // A window is written when it differs from the lesson's own, and not when
+      // it is only sent: the lesson dialog sends the weeks as they stood on every
+      // save and an undo on every restore, and a save that changes a room is no
+      // change of them. Counted as written it would hand a lesson Generera made
+      // to the school at the first Spara, under a sentence that said the engine
+      // still owned it (granskaren g509, M-3), and leave a block's lesson
+      // refused with its whole block as partly locked.
+      const changesWindow =
+        landing.recurrence !== origin.recurrence ||
+        landing.startDate !== origin.startDate ||
+        landing.endDate !== origin.endDate;
+      const block = movesTheLesson ? await readLessonBlock(tx, lesson) : null;
       const inBlock = block !== null && block.siblings.length > 0;
       const blockMove =
         inBlock && movesTheLesson ? blockMoveOf(block, origin, landing) : null;
-      // The weeks written as they stood, on a block's lesson that does not
-      // move: the dialog's every save. Handing it to the school here would
-      // leave its whole block refused as partly locked by a room change.
-      const restatesWindow = inBlock && !movesTheLesson;
       const locksByMove = movesTheLesson && !inBlock && !lesson.isLocked && !lesson.fromPlacement && dto.isLocked !== true;
       if (block && blockMove?.kind === 'split') {
         warnings.push({ code: BLOCK_SPLIT, params: { block: block.name } });
@@ -1069,7 +1073,8 @@ export class MasterLessonsService {
            * next regeneration deletes the very intent they just expressed,
            * without saying so.
            *
-           * Only a window flips ownership, not every edit, and the difference
+           * Only a window that CHANGES flips ownership, not every edit and not
+           * a window only sent along (changesWindow), and the difference
            * is what the engine can express. It plans no dates, and odd or
            * even weeks only as the requirement's own (A/B-veckor), so a window
            * written on the lesson is unreproducible and preserving it is the
@@ -1079,11 +1084,12 @@ export class MasterLessonsService {
            * make each nudge a second, invisible lock and leave the padlock
            * meaning nothing.
            */
-          // Never on a lesson Generera wrote from a förläggning: its window
-          // is the post's and cannot change here (assertPlacedLessonStands),
+          // Never on a lesson Generera wrote from a förläggning, and none of
+          // them gets here: its window is the post's and a different one is
+          // refused above (assertPlacedLessonStands), one restated is no change,
           // and handed over it would be kept beside its förläggning as a
           // second copy of the same lesson (review of #293, MEDEL-2).
-          ...(writesWindow && !restatesWindow && !lesson.fromPlacement ? { isGenerated: false } : {}),
+          ...(changesWindow ? { isGenerated: false } : {}),
           // The block's say comes last: joining a card makes the lesson the
           // card's, whatever the window above said (the window is the card's
           // own, or the slot would not be the card's), and a split is the

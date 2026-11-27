@@ -168,8 +168,13 @@ whatever the request names (decision 5: no forced clash).
 - **Ett undantag ges inte åt en lektion på parkeringen** (granskaren g467, L-3): `exempt` på en lektion som redan ligger på parkeringen är 400, och den läsande
   frågan svarar inget undantag för en sådan. Det PATCH som parkerar lektionen får bära `exempt` (webbens Gör om skickar lektionens ögonblicksbild, undantaget med):
   parkeringen frågas inget och tar undantaget, så inget sparas och inget nekas.
-- **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, och en dubbelbokad
-  lektion kan låsas) och `src/calendar/master-lessons.lock-at-move.spec.ts`.
+- **Veckorna som skickas med är inte veckorna som skrivs** (granskaren g509, M-3). Justera lektion skickar lektionens veckor (`recurrence`, `startDate`, `endDate`) som
+  de stod vid varje Spara, och Ångra skickar dem vid varje återställning. Bara veckor som skiljer sig från lektionens egna lämnar en lektion Generera lagt över till
+  skolan (`isGenerated: false`; Generera kan inte lägga datum eller udda och jämna veckor utanför en posts egna, så de enda sättet att behålla dem är att lektionen står
+  kvar). En ny sal, en ny lärare eller en flytt med veckorna som de stod lämnar lektionen Generera lagd, och sidans mening "Fri för motorn" stämmer därför också efter
+  Spara. En flytt låser lektionen (ett lås vid en flytt, ovan), och det är låset som håller den. En lektion i ett block frågas om sitt block bara när den flyttas.
+- **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, en dubbelbokad
+  lektion kan låsas, och Justera lektions Spara lämnar bara över en lektion vars veckor ändrats, br-w) och `src/calendar/master-lessons.lock-at-move.spec.ts`.
 
 ## Tier 3
 
