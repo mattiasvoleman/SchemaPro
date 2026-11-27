@@ -475,12 +475,16 @@
       "ROOMS": "Rooms",
       "FRAME_TIMES": "Frame times",
       "RASTS": "Breaks",
+      "BREAKS": "Holidays and study days",
+      "LUNCH": "Lunch",
+      "SUPERVISION": "Break supervision",
       "CLASSES": "Classes",
       "TEACHING_GROUPS": "Teaching groups",
       "PEOPLE": "People",
       "TIMPLAN": "Local timplan",
       "REQUIREMENTS": "Curriculum entries",
-      "STAFFING": "Staffing"
+      "STAFFING": "Staffing",
+      "SWITCHES": "Settings that are off"
     },
     "found": {
       "years": "{count, plural, one {# school year} other {# school years}}",
@@ -494,7 +498,13 @@
       "students": "{count, plural, one {# pupil} other {# pupils}}",
       "gradesWithTimplan": "{count, plural, one {# year with a local timplan} other {# years with a local timplan}}",
       "requirements": "{count, plural, one {# curriculum entry} other {# curriculum entries}}",
-      "posts": "{count, plural, one {# post} other {# posts}}"
+      "posts": "{count, plural, one {# post} other {# posts}}",
+      "roomTypes": "{count, plural, one {# room type} other {# room types}}",
+      "breaks": "{count, plural, one {# holiday or study day} other {# holidays and study days}}",
+      "lunchServings": "{count, plural, one {# lunch sitting} other {# lunch sittings}}",
+      "supervisionAreas": "{count, plural, one {# supervision area} other {# supervision areas}}",
+      "supervisionShifts": "{count, plural, one {# supervision shift} other {# supervision shifts}}",
+      "switchesOn": "{count, plural, one {# of 4 is on} other {# of 4 are on}}"
     },
     "gaps": {
       "NO_YEAR": {
@@ -577,6 +587,38 @@
       "POSTS_WITHOUT_SIGNATURE": {
         "title": "{count, plural, one {# post has} other {# posts have}} no signature",
         "hint": "A schedule from Untis or aSc finds the teacher by signature or e-mail address. Add the signatures before you read a schedule in."
+      },
+      "NO_ROOM_TYPES": {
+        "title": "No room types are entered",
+        "hint": "A subject can name a room type (Gym, Slöjd room) so that the engine places it only in a room of that type. Without room types the subjects go in any room. A school started by hand begins with none."
+      },
+      "NO_BREAKS": {
+        "title": "The school year has no holidays or study days",
+        "hint": "Holidays and study days are skipped when the timetable is published. Without them lessons are published on the autumn break, the Christmas break and the study days too."
+      },
+      "LUNCH_OFF": {
+        "title": "Lunch is off",
+        "hint": "Without a lunch rule the engine plans no meal for the classes and makes no lunch sitting. The window, the length and the dining hall's seats are entered under Availability."
+      },
+      "NO_SUPERVISION": {
+        "title": "No break supervision is laid for the school year",
+        "hint": "The supervision schedule is the areas the school watches and who watches when. It does not affect Generate: a teacher's shifts show in their own timetable."
+      },
+      "ABSENCE_WATCH_OFF": {
+        "title": "Absence watch is off",
+        "hint": "The watch counts pupils' absence against the school's limits and sends summaries to the mentor, the principal, the office and the guardians. It is off until the school turns it on."
+      },
+      "ACK_OFF": {
+        "title": "Acknowledgement (kvittens) is off",
+        "hint": "With kvittens a teacher asks guardians to confirm a message, and those who have not answered get a reminder. It is off until the school turns it on."
+      },
+      "VIEWER_OFF": {
+        "title": "Schemavisaren is off",
+        "hint": "Schemavisaren shows a class's, a group's, a teacher's or a room's schedule to whom the school chooses. Nothing is shown until the school chooses which kinds of schedule are shown and who may look."
+      },
+      "SICK_REPORT_OFF": {
+        "title": "Teachers' own sick reporting is off",
+        "hint": "A teacher cannot report themselves sick in the app: an administrator enters the absence. It is turned on among the settings under Teacher absence."
       }
     }
   },
