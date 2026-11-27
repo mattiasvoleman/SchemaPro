@@ -205,6 +205,19 @@ describe("the run a reload leaves behind, read through the real hooks", () => {
     expect(lastRun()!.querySelector("h2, h3")?.contains(stamp)).toBe(true);
   });
 
+  it("says it on the card of a run whose process went away before the reload, too: the same moment, in the same format (G6b, g393-L-2)", async () => {
+    const weeksAgo = "2026-10-29T09:15:00.000Z";
+    gw.history[Y1] = [run("job-1", { status: "FAILED", solverStatus: null, errorCode: "ENGINE_RUN_ABANDONED", suggestionsOffered: false, createdAt: weeksAgo })];
+    const Page = await loadPage();
+    render(<Page />);
+    await waitFor(() => expect(lastRun()).not.toBeNull(), SLOW);
+
+    const stamp = lastRun()!.querySelector("time");
+    expect(stamp).not.toBeNull();
+    expect(stamp!.getAttribute("datetime")).toBe(weeksAgo);
+    expect(stamp!.textContent).toBe(new Intl.DateTimeFormat("sv-SE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(weeksAgo)));
+  });
+
   it("stops showing it when the history is read again and a run that laid a timetable is on top of it", async () => {
     gw.history[Y1] = [run("job-1")];
     gw.jobs["job-1"] = run("job-1");
