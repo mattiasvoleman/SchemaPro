@@ -49,11 +49,35 @@ describe('notification preferences (e2e)', () => {
     ['a teacher', 'TEACHER', ['LESSON_COVER_WITHDRAWN'], 'NOTIFICATION_TYPE_REQUIRED'],
     ['an admin', 'SCHOOL_ADMIN', ['LESSON_COVER_WITHDRAWN'], 'NOTIFICATION_TYPE_REQUIRED'],
     ['a pupil', 'STUDENT', ['ROOM_BOOKING_DECIDED'], 'NOTIFICATION_TYPE_NOT_OFFERED'],
-    ['an admin', 'SCHOOL_ADMIN', ['TEACHER_ABSENCE_REPORTED'], 'NOTIFICATION_TYPE_NOT_OFFERED'],
+    // A teacher's own report of an absence is offered to the school's administrators only (the mail, K6).
+    ['a teacher', 'TEACHER', ['TEACHER_ABSENCE_REPORTED'], 'NOTIFICATION_TYPE_NOT_OFFERED'],
+    ['a guardian', 'GUARDIAN', ['TEACHER_ABSENCE_REPORTED'], 'NOTIFICATION_TYPE_NOT_OFFERED'],
+    ['a pupil', 'STUDENT', ['TEACHER_ABSENCE_REPORTED'], 'NOTIFICATION_TYPE_NOT_OFFERED'],
   ])('refuses %s opting out of %s', async (_name, role, optOut, code) => {
     const response = await request(http()).put('/api/v1/notification-preferences').set('x-test-user', who(role)).send({ optOut }).expect(400);
     expect(response.body.code).toBe(code);
     expect(harness.tx.notificationOptOut.deleteMany).not.toHaveBeenCalled();
+  });
+
+  // K6: the mail about a teacher's own absence report is the administrator's to switch off, and nobody else's to be offered.
+  it('offers an administrator the mail about a teacher’s absence report, on, and stores the choice to switch it off', async () => {
+    const listed = await request(http()).get('/api/v1/notification-preferences').set('x-test-user', who('SCHOOL_ADMIN')).expect(200);
+    expect(listed.body.types.find((t: { type: string }) => t.type === 'TEACHER_ABSENCE_REPORTED')).toEqual({
+      type: 'TEACHER_ABSENCE_REPORTED',
+      enabled: true,
+      required: false,
+    });
+    const put = await request(http())
+      .put('/api/v1/notification-preferences')
+      .set('x-test-user', who('SCHOOL_ADMIN'))
+      .send({ optOut: ['TEACHER_ABSENCE_REPORTED'] })
+      .expect(200);
+    expect(put.body.types.find((t: { type: string }) => t.type === 'TEACHER_ABSENCE_REPORTED').enabled).toBe(false);
+    expect(harness.tx.notificationOptOut.createMany).toHaveBeenCalledWith({ data: [{ userId: ME, schoolId: SCHOOL, type: 'TEACHER_ABSENCE_REPORTED' }] });
+    for (const role of ['TEACHER', 'GUARDIAN', 'STUDENT']) {
+      const other = await request(http()).get('/api/v1/notification-preferences').set('x-test-user', who(role)).expect(200);
+      expect(other.body.types.map((t: { type: string }) => t.type)).not.toContain('TEACHER_ABSENCE_REPORTED');
+    }
   });
 
   // Administratör som lärare (Users.teaches): the teacher's three notices are the person's to turn off, and the cover request is not
