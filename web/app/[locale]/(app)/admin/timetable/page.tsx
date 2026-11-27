@@ -1351,6 +1351,7 @@ export default function TimetablePage() {
               createLesson={createLesson}
               history={history}
               showError={showError}
+              guard={directReach.ask}
               onClear={() => setSelectedIds(new Set())}
               // Handed in rather than imported there: every admin page with a
               // delete button shares this icon, and taking it out of this
@@ -1768,6 +1769,7 @@ export default function TimetablePage() {
             }}
             roomName={(id) => roomById.get(id)?.name ?? null}
             onApplied={afterSwap}
+            guard={directReach.ask}
           />
         </Suspense>
         </DialogLoadBoundary>
