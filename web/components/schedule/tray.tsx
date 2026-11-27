@@ -100,6 +100,8 @@ export function TrayPanel({
   subjectById,
   teacherById,
   writable,
+  guard,
+  declined,
   onClose,
 }: {
   yearId: string;
@@ -109,6 +111,14 @@ export function TrayPanel({
   teacherById: ReadonlyMap<string, { firstName: string; lastName: string }>;
   /** Whether this reader may lay a brick: a reader of the grundschema sees the tray and no button. */
   writable: boolean;
+  /**
+   * The question before a change in Direkt that reaches families (P5, beslut 8; lib/use-direct-reach-ask.tsx `ask`): a lay of a lesson from the
+   * parking moves published lessons in the calendar, and the gateway refuses it (409 DIRECT_REACH_UNANSWERED) until the school has answered. The
+   * page hands in the function that asks first and runs the lay; left out, the lay is run as it is.
+   */
+  guard?: <T>(run: () => Promise<T>) => Promise<T>;
+  /** Whether an error of `guard` is the reader's no to its question (Avbryt): not a failure, and nothing is said. */
+  declined?: (error: unknown) => boolean;
   onClose: () => void;
 }) {
   const names: TrayNames = {
@@ -124,6 +134,8 @@ export function TrayPanel({
   const [groupId, setGroupId] = useState<string | null>(null);
   const [laying, setLaying] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  // The button that opened each form: a form that is cancelled gives the focus back to it, and a form that laid its brick (whose row is gone) to the heading.
+  const layButtons = useRef(new Map<string, HTMLButtonElement | null>());
 
   // The class a reader picked that has no brick left any more (the last one was laid) is the whole year again.
   const chosen = tray && groupId !== null && tray.groups.some((group) => group.studentGroupId === groupId && group.left > 0) ? groupId : null;
@@ -178,12 +190,19 @@ export function TrayPanel({
                   writable={writable}
                   open={open}
                   onLay={() => setLaying(open ? null : key)}
+                  buttonRef={(element) => void layButtons.current.set(key, element)}
                 />
                 {open ? (
                   <BrickForm
                     brick={brick}
                     yearId={yearId}
                     names={names}
+                    guard={guard}
+                    declined={declined}
+                    onCancel={() => {
+                      setLaying(null);
+                      layButtons.current.get(key)?.focus();
+                    }}
                     onDone={() => {
                       setLaying(null);
                       heading.current?.focus();
@@ -205,12 +224,14 @@ function BrickRow({
   writable,
   open,
   onLay,
+  buttonRef,
 }: {
   brick: TrayBrick;
   names: TrayNames;
   writable: boolean;
   open: boolean;
   onLay: () => void;
+  buttonRef: (element: HTMLButtonElement | null) => void;
 }) {
   const t = useTranslations("boardTray");
   const lesson = t("brick", { subject: names.subject(brick.subjectId), className: names.group(brick.studentGroupId) });
@@ -230,7 +251,7 @@ function BrickRow({
         ) : null}
       </div>
       {writable && brick.cannotPlace === null ? (
-        <Button size="sm" variant="outline" className="min-h-11" aria-expanded={open} aria-label={t("layLabel", { lesson })} data-writes="SCHEMALAGGNING DRIFT" onClick={onLay}>
+        <Button ref={buttonRef} size="sm" variant="outline" className="min-h-11" aria-expanded={open} aria-label={t("layLabel", { lesson })} data-writes="SCHEMALAGGNING DRIFT" onClick={onLay}>
           {t("lay")}
         </Button>
       ) : null}
@@ -242,7 +263,23 @@ const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ROOM_DELAY_MS = 300;
 
 /** The form under a brick: the gateway's best times, the day and the start, the room, and the answer when it says no. */
-function BrickForm({ brick, yearId, names, onDone }: { brick: TrayBrick; yearId: string; names: TrayNames; onDone: () => void }) {
+function BrickForm({
+  brick,
+  yearId,
+  names,
+  guard,
+  declined,
+  onCancel,
+  onDone,
+}: {
+  brick: TrayBrick;
+  yearId: string;
+  names: TrayNames;
+  guard?: <T>(run: () => Promise<T>) => Promise<T>;
+  declined?: (error: unknown) => boolean;
+  onCancel: () => void;
+  onDone: () => void;
+}) {
   const t = useTranslations("boardTray");
   const tPossible = useTranslations("boardPossible");
   const tDays = useTranslations("days");
@@ -322,12 +359,15 @@ function BrickForm({ brick, yearId, names, onDone }: { brick: TrayBrick; yearId:
     setBusy(true);
     const room = override && "roomId" in override ? (override.roomId ?? null) : shownRoom === "" ? null : shownRoom;
     try {
-      const answer = await layBrick(layBodyOf(brick, yearId, { dayOfWeek: Number(day), startTime: start, roomId: room, exempt: override?.exempt }));
+      const body = layBodyOf(brick, yearId, { dayOfWeek: Number(day), startTime: start, roomId: room, exempt: override?.exempt });
+      const answer = await (guard ? guard(() => layBrick(body)) : layBrick(body));
       const where = { lesson, day: tDays(day), from: start, to: answer.lesson.endTime ?? "" };
       toast.success(answer.noRoom ? t("laidNoRoom", where) : t("laid", where));
       for (const key of [TRAY_KEY, "masterLessons", "calendarLessons", "teacherLessons"]) void queryClient.invalidateQueries({ queryKey: [key] });
       onDone();
     } catch (error) {
+      // The reader said no to the question before a change in Direkt: the form stays as it was, and nothing is said.
+      if (declined?.(error)) return;
       const found = layFailureOf(error);
       if (found.kind === "STALE") {
         toast.error(t("errors.stale"));
@@ -467,7 +507,7 @@ function BrickForm({ brick, yearId, names, onDone }: { brick: TrayBrick; yearId:
         <Button type="submit" className="min-h-11" disabled={!clockOk || busy || roomsPending} data-writes="SCHEMALAGGNING DRIFT">
           {t("submit")}
         </Button>
-        <Button type="button" variant="outline" className="min-h-11" onClick={onDone}>
+        <Button type="button" variant="outline" className="min-h-11" onClick={onCancel}>
           {t("cancel")}
         </Button>
       </div>

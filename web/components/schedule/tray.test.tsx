@@ -417,6 +417,15 @@ describe("laying a brick", () => {
     expect(post).not.toHaveBeenCalledWith("/api/v1/board-tray/lay", expect.anything());
   });
 
+  it("puts the focus back on the button that opened the form when it is cancelled, not on the top of a list that may be forty bricks long", async () => {
+    await open("Lägg Svenska 7B");
+    expect(screen.getByRole("button", { name: "Lägg Svenska 7B" })).toHaveAttribute("aria-expanded", "true");
+    screen.getByRole("button", { name: "Avbryt" }).focus();
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    expect(screen.getByRole("button", { name: "Lägg Svenska 7B" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Lägg Svenska 7B" })).toHaveAttribute("aria-expanded", "false");
+  });
+
   describe("when the gateway says no", () => {
     const refuse = (error: ApiError) => {
       gateway({
@@ -548,5 +557,52 @@ describe("laying a brick", () => {
       expect(screen.getByRole("form", { name: "Lägg Matematik 7A" })).toBeInTheDocument();
       expect(toast.success).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("in Direkt, where the school is asked before a change that reaches families (P5, beslut 8)", () => {
+  class Declined extends Error {
+    constructor() {
+      super("DIRECT_REACH_DECLINED");
+      this.name = "DirectReachDeclined";
+    }
+  }
+  const isDeclined = (error: unknown) => error instanceof Declined;
+  async function layWith(guard: <T>(run: () => Promise<T>) => Promise<T>) {
+    gateway();
+    panel({ guard, declined: isDeclined });
+    await screen.findByRole("list");
+    fireEvent.click(screen.getByRole("button", { name: "Lägg Svenska 7B" }));
+    fireEvent.change(screen.getByRole("textbox", { name: /Start/ }), { target: { value: "13:00" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Lägg" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Lägg" }));
+  }
+
+  it("lays inside the page's question, once, and asks it of nothing else the form does", async () => {
+    const guard = vi.fn((run: () => Promise<unknown>) => run());
+    await layWith(guard as never);
+    await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith("/api/v1/board-tray/lay", expect.objectContaining({ lessonId: "l9" }));
+  });
+
+  it("does not lay when the reader answers no to the question, and says no failure: the form stays as it was", async () => {
+    const guard = vi.fn(async () => {
+      throw new Declined();
+    });
+    await layWith(guard as never);
+    await waitFor(() => expect(guard).toHaveBeenCalledTimes(1));
+    expect(post).not.toHaveBeenCalledWith("/api/v1/board-tray/lay", expect.anything());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(screen.getByRole("form", { name: "Lägg Svenska 7B" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Lägg" })).toBeEnabled();
+  });
+
+  it("says an error of the question's own that is not a no", async () => {
+    await layWith((async () => {
+      throw new ApiError(500, "boom", "SOMETHING");
+    }) as never);
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
   });
 });
