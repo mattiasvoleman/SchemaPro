@@ -10,6 +10,7 @@ import type { OptimizationProxyService, PrepareResult } from './optimization-pro
 import {
   ANALYSIS_HEARTBEAT_MS,
   ANALYSIS_LEASE_SECONDS,
+  PREFLIGHT_REFUSAL_CODES,
   failedSuggestions,
   runningSuggestions,
   suggestionsFromEngine,
@@ -129,6 +130,17 @@ describe('SuggestionsService', () => {
     ])('is 409 %s, and wakes nothing', async (_name, run) => {
       tx.optimizationJob!.findUnique!.mockResolvedValue({ ...refused, ...run });
       await expect(service.start(JOB_ID, user)).rejects.toMatchObject({ response: { code: SUGGESTIONS_NOT_FOR_THIS_RUN } });
+      expect(proxy.prepareSchedule).not.toHaveBeenCalled();
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it.each(PREFLIGHT_REFUSAL_CODES)('is 409 for a run the gateway itself refused before the engine was asked (%s), and the start reads the code that says so (G6b)', async (code) => {
+      tx.optimizationJob!.findUnique!.mockResolvedValue({ ...refused, conflictSummaryCode: code });
+      await expect(service.start(JOB_ID, user)).rejects.toMatchObject({ response: { code: SUGGESTIONS_NOT_FOR_THIS_RUN } });
+      // The mock answers whatever it is given whether the select asks for the code or not: that it is asked for is held here.
+      expect(tx.optimizationJob!.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ select: expect.objectContaining({ conflictSummaryCode: true }) }),
+      );
       expect(proxy.prepareSchedule).not.toHaveBeenCalled();
       expect(tx.$executeRaw).not.toHaveBeenCalled();
     });
