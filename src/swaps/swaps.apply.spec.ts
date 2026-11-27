@@ -3,7 +3,7 @@ import { MasterLessonsService } from '../calendar/master-lessons.service';
 import { propagateTemplateChange } from '../calendar/propagate-template';
 import { fakeTx, makeWorld, rowOf, SCHOOL, YEAR, type World } from './__fixtures__/swap-world';
 import { readSwapData } from './swap-snapshot';
-import type { SwapLesson } from './swap-types';
+import type { SwapLesson, SwapMove } from './swap-types';
 import { SWAP_BREAKS_BOARD_RULE, SWAP_LOCKED, SWAP_SPLITS_PARALLEL, SWAP_STALE, SwapsService } from './swaps.service';
 
 jest.mock('./swap-snapshot', () => ({ readSwapData: jest.fn() }));
@@ -617,5 +617,88 @@ describe('SwapsService.apply locks what it moves (E4, låset vid flytt)', () => 
         expect(written).toHaveLength(0);
       }
     });
+  });
+});
+
+describe('SwapsService.apply does not lock one card of a parallel block (g505, M-1)', () => {
+  beforeEach(() => (propagateTemplateChange as jest.Mock).mockClear());
+
+  const lessonAt = (n: number, group: string, subject: string, teacher: string, room: string, day: number, startMinutes: number): SwapLesson => ({
+    id: `00000000-0000-4000-8000-${String(900 + n).padStart(12, '0')}`,
+    subjectId: subject,
+    subjectName: `Ämne ${subject}`,
+    studentGroupId: group,
+    groupName: group.toUpperCase(),
+    teacherId: teacher,
+    coTeacherId: null,
+    roomId: room,
+    dayOfWeek: day,
+    startMinutes,
+    endMinutes: startMinutes + 60,
+    recurrence: 'ALL_WEEKS',
+    startDate: null,
+    endDate: null,
+    isLocked: false,
+    isGenerated: true,
+    extraGroupIds: [],
+    studentIds: [],
+  });
+  const post = (lesson: SwapLesson, blockId: string | null) => ({
+    studentGroupId: lesson.studentGroupId,
+    subjectId: lesson.subjectId,
+    blockId,
+    minutesBefore: 0,
+    minutesAfter: 0,
+    distribution: { maxLessonsPerDay: null, minDaysBetween: null },
+  });
+
+  /** A block of two members with a card on Monday 08:00 (first, second) and, when asked, a second card on Wednesday 10:00; a plain lesson on Tuesday 08:00 to change places with. */
+  function blockedWorld(otherCard: boolean) {
+    const world = makeWorld({ seed: 7 });
+    const first = lessonAt(1, 'c1', 's1', 't1', 'r1', 1, 480);
+    const second = lessonAt(2, 'c2', 's2', 't2', 'r2', 1, 480);
+    const plain = lessonAt(3, 'c3', 's3', 't3', 'r3', 2, 480);
+    const first2 = lessonAt(4, 'c1', 's1', 't1', 'r1', 3, 600);
+    const second2 = lessonAt(5, 'c2', 's2', 't2', 'r2', 3, 600);
+    world.data.lessons = otherCard ? [first, second, plain, first2, second2] : [first, second, plain];
+    world.data.posts = [post(first, 'block-1'), post(second, 'block-1'), post(plain, null)];
+    world.data.blocks = [{ id: 'block-1', sameTimesAsBlockId: null }];
+    return { world, first, second, plain };
+  }
+
+  const requestOf = (lessonId: string, moves: Array<{ lessonId: string; from: SwapLesson; to: SwapLesson }>) => ({
+    lessonId,
+    moves: moves.map((move) => ({
+      lessonId: move.lessonId,
+      from: { dayOfWeek: move.from.dayOfWeek, startTime: clockOf(move.from.startMinutes), endTime: clockOf(move.from.endMinutes) },
+      to: { dayOfWeek: move.to.dayOfWeek, startTime: clockOf(move.to.startMinutes), endTime: clockOf(move.to.endMinutes) },
+    })),
+  });
+  const swapOf = (first: SwapLesson, second: SwapLesson, plain: SwapLesson) =>
+    requestOf(first.id, [
+      { lessonId: first.id, from: first, to: plain },
+      { lessonId: second.id, from: second, to: plain },
+      { lessonId: plain.id, from: plain, to: first },
+    ]);
+
+  it('moves the card and leaves its lessons unlocked when the block has another card that stays: Generera would refuse a partly locked block', async () => {
+    const { world, first, second, plain } = blockedWorld(true);
+    const { tx, written } = applyTx(world);
+    const result = await build(world, tx).swaps.apply(swapOf(first, second, plain), user);
+    const ofCard = written.filter((entry) => [first.id, second.id].includes(entry.where['id'] as string));
+    expect(ofCard).toHaveLength(2);
+    for (const entry of ofCard) expect(entry.data).not.toHaveProperty('isLocked');
+    expect(result.lockedLessonIds).toEqual([plain.id]);
+    // What is not the block's is locked as before.
+    expect(written.find((entry) => entry.where['id'] === plain.id)!.data).toMatchObject({ isLocked: true });
+  });
+
+  it('locks the card when it is all the block has', async () => {
+    const { world, first, second, plain } = blockedWorld(false);
+    const { tx, written } = applyTx(world);
+    const result = await build(world, tx).swaps.apply(swapOf(first, second, plain), user);
+    expect(written).toHaveLength(3);
+    for (const entry of written) expect(entry.data).toMatchObject({ isLocked: true });
+    expect([...result.lockedLessonIds].sort()).toEqual([first.id, second.id, plain.id].sort());
   });
 });

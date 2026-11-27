@@ -23,6 +23,7 @@ import { enterGrundschemaWrite, publishModeOf } from '../publication/publish-mod
 import { RealtimeService } from '../realtime/realtime.service';
 import type { ApplySwapDto, SuggestSwapsDto } from './dto/swaps.dto';
 import { SwapContext } from './swap-context';
+import { lessonsLeftUnlockedByBlock } from './swap-block-lock';
 import { removedCalendarLessons } from './swap-calendar';
 import { dayLessonOf, SwapReads } from './swap-reads';
 import { proposalId, searchSwaps } from './swap-search';
@@ -467,6 +468,8 @@ export class SwapsService {
       // found it, and that move was what locked it) is let move it and takes the lock off again. The undo is the same moves reversed.
       const takenBack = await this.locksTakenBack(tx, rows, moves);
       this.assertWhole(context, dto.lessonId, moves, takenBack);
+      // A lesson of a parallel block whose other lessons the swap leaves unlocked is not locked (swap-block-lock.ts): Generera refuses a partly locked block.
+      const leftUnlocked = lessonsLeftUnlockedByBlock(data, new Set(moves.map((move) => move.lessonId)));
 
       const board = context.boardVerdict(moves);
       if (board !== null) {
@@ -518,7 +521,7 @@ export class SwapsService {
         const endTime = parseTimeString(clockOf(move.to.endMinutes));
         // Låset vid en flytt (E4, beslut 2): a lesson moved by hand is the school's and is locked (a lesson that was locked stays so), or the next
         // Generera lays it again where it stood. An undo that takes back the move that locked it takes the lock off.
-        const locks = !row.isLocked;
+        const locks = !row.isLocked && !leftUnlocked.has(row.id);
         const unlocks = takenBack.has(row.id);
         const { count } = await tx.masterLesson.updateMany({
           where: {

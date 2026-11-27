@@ -128,6 +128,46 @@ export async function brickorChecks(owner: Client, api: PrismaService, check: Ch
       // The block is unlocked as a block, by the ids the answer named (lockBlock).
       await masters.lockBlock({ blockId: block, isLocked: false, lessonIds: moved.lockedLessonIds } as never, a.caller);
       assert.ok((await lockedOf()).every((row) => !row.locked));
+
+      // (br-e) a swap that moves ONE card of the block does not lock that card: Generera refuses a block with some of its lessons locked and the rest
+      // to place (BLOCK_PARTLY_LOCKED); a swap that moves every card of the block locks it whole (granskaren g505, M-1).
+      await check('(br-e) a swap of one card of a block with two cards locks the plain lesson only; a swap of both cards locks the block whole', async () => {
+        const swaps = new SwapsService(api, masters, new ScheduleVersionsService(api), realtime as never, notifications as never);
+        const slotOf = (day: number, start: string) => ({ dayOfWeek: day, startTime: start, endTime: `${String(Number(start.slice(0, 2)) + 1).padStart(2, '0')}:00` });
+        const put = async (id: string, day: number, start: string) =>
+          owner.query(`UPDATE "MasterLessons" SET "dayOfWeek" = $2, "startTime" = $3, "endTime" = $4, "isLocked" = false, "isGenerated" = true WHERE id = $1`, [id, day, start, slotOf(day, start).endTime]);
+        await put(B1, 3, '10:00');
+        await put(B2, 3, '10:00');
+        await put(B3, 5, '10:00');
+        await put(B4, 5, '10:00');
+        await put(L2, 2, '10:00');
+        await put(L1, 4, '13:00'); // out of the way: (br-b) left it double-booked beside L2
+        // The moves of the swap, written out: the card on Wednesday 10:00 and L2 on Tuesday 10:00 change places; the chain moves the other card too.
+        const at = (day: number, start: string) => ({ dayOfWeek: day, startTime: start, endTime: `${String(Number(start.slice(0, 2)) + 1).padStart(2, '0')}:00` });
+        const move = (lessonId: string, from: ReturnType<typeof at>, to: ReturnType<typeof at>) => ({ lessonId, from, to });
+        const card = [move(B1, at(3, '10:00'), at(2, '10:00')), move(B2, at(3, '10:00'), at(2, '10:00')), move(L2, at(2, '10:00'), at(3, '10:00'))];
+        const answer = await swaps.apply({ lessonId: L2, moves: card } as never, a.caller);
+        assert.deepEqual(answer.lockedLessonIds, [L2], 'only the plain lesson is locked');
+        assert.ok((await lockedOf()).every((row) => !row.locked), 'the block is not partly locked: Generera would refuse it');
+        assert.equal((await stateOf(L2)).locked, true);
+
+        // Both cards move (a chain: B1 and B2 to Tuesday 10:00, B3 and B4 to Wednesday 10:00, L2 to Friday 10:00): the block is locked whole.
+        await put(B1, 3, '10:00');
+        await put(B2, 3, '10:00');
+        await put(B3, 5, '10:00');
+        await put(B4, 5, '10:00');
+        await put(L2, 2, '10:00');
+        const chain = [
+          move(B1, at(3, '10:00'), at(2, '10:00')),
+          move(B2, at(3, '10:00'), at(2, '10:00')),
+          move(B3, at(5, '10:00'), at(3, '10:00')),
+          move(B4, at(5, '10:00'), at(3, '10:00')),
+          move(L2, at(2, '10:00'), at(5, '10:00')),
+        ];
+        const whole = await swaps.apply({ lessonId: L2, moves: chain } as never, a.caller);
+        assert.deepEqual([...whole.lockedLessonIds].sort(), [L2, B1, B2, B3, B4].sort());
+        assert.ok((await lockedOf()).every((row) => row.locked), 'every lesson of the block is locked');
+      });
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [slug]);

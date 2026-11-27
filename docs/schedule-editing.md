@@ -147,6 +147,9 @@ whatever the request names (decision 5: no forced clash).
 - **Ett byte låser det det flyttar** (granskaren g486, M-2). `POST /api/v1/swaps/apply` låser varje lektion den flyttar som inte var låst, i samma skrivning, och svaret säger det
   som ett PATCH gör: `lockedByMove: true` och `lockedLessonIds`, de lektioner byten låste (inte en som redan var låst, som den valda lektionen kan vara). Annars lägger nästa
   Generera om bägge där de stod. En låst lektion är en låst partner: Byt och Föreslå hoppar över den, så ett par som bytt plats byts inte igen av en slump.
+  **Utom en lektion i ett parallellt block vars andra lektioner byten lämnar olåsta** (granskaren g505, M-1): Generera vägrar ett block där bara några av lektionerna är
+  låsta (`BLOCK_PARTLY_LOCKED`), så ett byte som flyttar ett kort av ett block med flera kort låser inte kortets lektioner, och nästa Generera lägger om blocket som förr.
+  Ett block läggs för hand med sitt kort (`block-card`), som låser blocket helt. Flyttar byten blockets alla lektioner, eller är de andra redan låsta, låses de som andra.
   **Ångra** är samma flyttar omvända till samma väg, och den tar låset av igen utan något nytt fält i begäran (den äldre webbens Ångra går som förut): en låst lektion
   som inte är den valda flyttas bara om dess senast loggade ändring var den som låste den (olåst före, låst efter) och begäran för den tillbaka dit den ändringen fann den;
   då låses den upp. Ett lås handen satt efteråt, eller en lektion som flyttats sedan, nekas som förut (`SWAP_LOCKED`).
