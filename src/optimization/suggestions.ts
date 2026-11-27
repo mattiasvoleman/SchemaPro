@@ -42,8 +42,26 @@ export const MAX_NAME = 80;
  * colon and comma, two bytes for an å), which is a fifth to a quarter longer than this; 5 500 leaves that and more under 8 192.
  */
 export const MAX_STORED_BYTES = 5_500;
-/** A run of the analysis that has been RUNNING this long is read as abandoned: its process went away (a deploy, a crash). */
+/**
+ * A RUNNING analysis that carries no lease (one an API from before the lease wrote, still in the column when the new one starts) that
+ * has been RUNNING this long is read as abandoned: its process went away (a deploy, a crash). One with a lease is judged by the lease.
+ */
 export const STALE_AFTER_MS = 6 * 60 * 1000;
+
+/**
+ * THE ANALYSIS HOLDS ITS PLACE BY A LEASE (omgång 15, G6b, g385-L-4), as a Generera run does (generate-runs.ts): the process that runs
+ * it renews `leaseUntil` every ANALYSIS_HEARTBEAT_MS, to the database's now plus ANALYSIS_LEASE_SECONDS, and an analysis whose lease has
+ * run out has no process left to finish it and no engine call left to wait for. Until then it was judged by its start alone (six
+ * minutes to read it abandoned, four to let Generera begin), which for an analysis nobody was running meant a page that went on counting
+ * and a Generera that was refused for the rest of it.
+ *
+ * THE LEASE IS THE LONGEST THE ENGINE CAN STILL BE SOLVING FOR IT, plus thirty seconds: the engine stops at its own ceiling for this
+ * route (the search's 60 s and 90 more, 150 s: suggest_changes.py route_limits), and a process that died on the first second of that
+ * leaves the cores in use until then. A lease that ran out earlier would let Generera begin beside a call that is still going, which is
+ * what the year's solve-start lock exists to prevent. Three heartbeats fit in it, so one that fails (a full pool) is not an abandonment.
+ */
+export const ANALYSIS_LEASE_SECONDS = 180;
+export const ANALYSIS_HEARTBEAT_MS = 30_000;
 
 export const SUGGESTION_STATES = ['RUNNING', 'DONE', 'FAILED'] as const;
 export type SuggestionsState = (typeof SUGGESTION_STATES)[number];
@@ -92,6 +110,11 @@ export interface SuggestionsStored {
   changes: StoredChange[];
   failure: SuggestionsFailure | null;
   /**
+   * Until when a RUNNING analysis holds its place (the database's clock at its last heartbeat, plus ANALYSIS_LEASE_SECONDS); null on one
+   * that has ended and on one an API from before the lease wrote. Only the column keeps it: the page is told RUNNING, not for how long.
+   */
+  leaseUntil: string | null;
+  /**
    * The finished analysis a RUNNING one was asked over (g385-L-5), kept so that a press never replaces a list with a failure: when the
    * new analysis ends without one, this is what the column holds again. Only a RUNNING analysis has one, it is DONE, and it has none.
    */
@@ -101,7 +124,7 @@ export interface SuggestionsStored {
 /** What the page reads of a change: the stored one without the Users ids, with the teachers named. */
 export type SuggestionChangeView = Omit<StoredChange, 'teacherIds'> & { teacherNames: string[] };
 
-export type SuggestionsView = Omit<SuggestionsStored, 'changes' | 'previous'> & { changes: SuggestionChangeView[] };
+export type SuggestionsView = Omit<SuggestionsStored, 'changes' | 'previous' | 'leaseUntil'> & { changes: SuggestionChangeView[] };
 
 /** How the engine's anonymous ids are turned back into the school's own. */
 export interface Realiser {
@@ -265,6 +288,8 @@ export function suggestionsOf(value: unknown): SuggestionsStored | null {
   // A list the strict model did not accept holds MAY_HELP and nothing more: suggestionsFromEngine stores it so, and a column that says
   // SOLVED over an unverified list was written by something else (the review of #388, U-1).
   if (!value.verified && changes.some((change) => change.proof !== 'MAY_HELP')) return null;
+  // The lease is a RUNNING analysis's: on one that has ended it is not shown, and a value that is no time is no lease (the old rule judges it).
+  const leaseUntil = state === 'RUNNING' && value.leaseUntil != null ? isoOf(value.leaseUntil) : null;
   // The analysis a RUNNING one was asked over: one level, and a finished one. Whatever else is there is not shown (nor is the analysis).
   let previous: SuggestionsStored | null = null;
   if (value.previous !== null && value.previous !== undefined) {
@@ -284,6 +309,7 @@ export function suggestionsOf(value: unknown): SuggestionsStored | null {
     verifySeconds,
     changes,
     failure: (failureValue ?? null) as SuggestionsFailure | null,
+    leaseUntil,
     previous,
   };
   // The bound is on one analysis: the previous one is held to it on its own (above), and the column's own limit (8 KiB of jsonb text) has
@@ -292,8 +318,8 @@ export function suggestionsOf(value: unknown): SuggestionsStored | null {
 }
 
 /**
- * The analysis has been asked for and is running. `previous` is the finished analysis it was asked over, if there is one
- * (`kept` makes it): it is what the column holds again if this one ends without a list.
+ * The analysis has been asked for and is running, with its lease from `now`. `previous` is the finished analysis it was asked over, if
+ * there is one (`kept` makes it): it is what the column holds again if this one ends without a list.
  */
 export function runningSuggestions(now: Date, previous: SuggestionsStored | null = null): SuggestionsStored {
   return {
@@ -308,6 +334,7 @@ export function runningSuggestions(now: Date, previous: SuggestionsStored | null
     verifySeconds: null,
     changes: [],
     failure: null,
+    leaseUntil: new Date(now.getTime() + ANALYSIS_LEASE_SECONDS * 1000).toISOString(),
     previous,
   };
 }
@@ -343,6 +370,7 @@ export function failedSuggestions(startedAt: string, failure: SuggestionsFailure
     state: 'FAILED',
     finishedAt: now.toISOString(),
     failure,
+    leaseUntil: null,
   };
 }
 
@@ -356,15 +384,24 @@ export function refusedSuggestions(startedAt: string, now: Date): SuggestionsSto
     state: 'DONE',
     finishedAt: now.toISOString(),
     verdict: 'HARD_REFUSAL',
+    leaseUntil: null,
   };
 }
 
 /**
- * Whether a stored analysis is one a read must give up on: it says RUNNING and has said so for longer than any analysis lasts (the
- * engine's ceiling is about two and a half minutes). The process that started it went away, and nothing else will ever finish it.
+ * When a RUNNING analysis stops holding its place: its lease, or for one that has none (an API from before the lease) the old rule's six
+ * minutes from its start.
+ */
+export function holdsUntil(stored: SuggestionsStored): number {
+  return stored.leaseUntil !== null ? Date.parse(stored.leaseUntil) : Date.parse(stored.startedAt) + STALE_AFTER_MS;
+}
+
+/**
+ * Whether a stored analysis is one a read must give up on: it says RUNNING and its lease has run out (or, with no lease, it has said so
+ * for longer than any analysis lasts). The process that started it went away, and nothing else will ever finish it.
  */
 export function isAbandoned(stored: SuggestionsStored, now: Date): boolean {
-  return stored.state === 'RUNNING' && now.getTime() - Date.parse(stored.startedAt) > STALE_AFTER_MS;
+  return stored.state === 'RUNNING' && now.getTime() > holdsUntil(stored);
 }
 
 /** What a read shows of a stored analysis: an abandoned one is a failed one, said so. */
@@ -375,7 +412,7 @@ export function readAs(stored: SuggestionsStored, now: Date): SuggestionsStored 
   // A run that was asked over a finished analysis gives it back: the list is still the school's best answer, and nothing ran in its place.
   return (
     stored.previous ??
-    failedSuggestions(stored.startedAt, 'ABANDONED', new Date(Date.parse(stored.startedAt) + STALE_AFTER_MS))
+    failedSuggestions(stored.startedAt, 'ABANDONED', new Date(holdsUntil(stored)))
   );
 }
 
@@ -481,6 +518,7 @@ export function suggestionsFromEngine(
     verifySeconds: secondsOrNull(response.verifySeconds) ?? null,
     changes: kept,
     failure: null,
+    leaseUntil: null,
     previous: null,
   };
   while (kept.length > 0 && Buffer.byteLength(JSON.stringify({ ...base, changes: kept })) > MAX_STORED_BYTES) {
@@ -491,7 +529,7 @@ export function suggestionsFromEngine(
 
 /** What the page reads: the stored value with each cap's teacher named, and the Users ids left behind. */
 export function viewOf(stored: SuggestionsStored, teacherNames: ReadonlyMap<string, string>): SuggestionsView {
-  const { previous: _previous, ...shown } = stored;
+  const { previous: _previous, leaseUntil: _leaseUntil, ...shown } = stored;
   return {
     ...shown,
     changes: stored.changes.map(({ teacherIds, ...change }) => ({

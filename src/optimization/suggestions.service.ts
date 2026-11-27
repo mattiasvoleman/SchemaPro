@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ConflictException, HttpException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, HttpException, Injectable, Logger, NotFoundException, type OnModuleDestroy } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -7,9 +7,12 @@ import type { AiEngineSuggestChangesResponse } from './interfaces/suggest-change
 import { OptimizationProxyService } from './optimization-proxy.service';
 import { lockYearForSolveStart, SCHEDULE_BUSY } from './regeneration-lock';
 import { yearHasActiveCandidateRun } from './schedule-candidates.service';
+import { analysisHoldsSql, leaseEndSql } from './suggestions-running';
 import {
+  ANALYSIS_HEARTBEAT_MS,
   STALE_AFTER_MS,
   failedSuggestions,
+  isAbandoned,
   suggestionsMayBeAskedFor,
   keptOf,
   refusedSuggestions,
@@ -67,19 +70,23 @@ export function failureOf(error: unknown): SuggestionsFailure | 'REFUSED' {
  * its own (suggestions.ts, the engine's /suggest-changes). It reads the school as it is NOW (the same fetch Generera makes), with the
  * run's rules; a week the school has changed since the run is analysed as it stands, and the page says when the analysis was made.
  *
- * ITS STATE IS ITS OWN COLUMN (OptimizationJobs."suggestions"), not the run's lease: the run is over. RUNNING carries the start, and a
- * RUNNING that has been so for longer than an analysis lasts is read as abandoned (suggestions.ts): a process that went away (a deploy
- * of the API happens at every merge) leaves nothing that finishes it, and that must read as what it is. A second press while one runs
- * is the same answer, not a second analysis.
+ * ITS STATE IS ITS OWN COLUMN (OptimizationJobs."suggestions"), not the run's lease: the run is over. RUNNING carries the start and a
+ * lease of its own (suggestions.ts ANALYSIS_LEASE_SECONDS) that the process renews every half minute, and a RUNNING whose lease has
+ * run out is read as abandoned: a process that went away (a deploy of the API happens at every merge) leaves nothing that finishes it,
+ * and that must read as what it is. A restart that can say so itself writes it at once (onModuleDestroy, as the staffing search does),
+ * and no sweep writes the rest: every reader and the claim judge the lease themselves, and nothing waits on the row (a Generera run's
+ * sweep is there because its row holds a unique index's place). A second press while one runs is the same answer, not a second analysis.
  *
  * IT WRITES NOTHING BUT THAT COLUMN. No timetable is placed, no setting changed, no row but the run's own touched: what a school does
  * with a suggestion it does on the page that owns the data.
  */
 @Injectable()
-export class SuggestionsService {
+export class SuggestionsService implements OnModuleDestroy {
   private readonly logger = new Logger(SuggestionsService.name);
   /** The analyses this process has in flight: what a test waits for, and nothing else reads. */
   private readonly inFlight = new Set<Promise<void>>();
+  /** The analyses this process holds a lease for: the heartbeat of each, and whom a restart writes the end under. */
+  private readonly leased = new Map<string, { jobId: string; user: AuthenticatedUser; startedAt: string; timer: NodeJS.Timeout }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -89,6 +96,20 @@ export class SuggestionsService {
   /** Resolves when every analysis this process started has ended. */
   async settled(): Promise<void> {
     await Promise.allSettled([...this.inFlight]);
+  }
+
+  /**
+   * A restart that can say so ends this process's analyses at once, under the administrator who asked, best effort: the page says it was
+   * interrupted at its next poll and the year is free for Generera, instead of after the lease. One this write misses (the process is
+   * killed, not asked to stop) is read as abandoned when its lease has run out.
+   */
+  async onModuleDestroy(): Promise<void> {
+    const ending = [...this.leased.values()];
+    this.leased.clear();
+    for (const run of ending) clearInterval(run.timer);
+    await Promise.allSettled(
+      ending.map((run) => this.write(run.jobId, run.user, run.startedAt, failedSuggestions(run.startedAt, 'ABANDONED', new Date()))),
+    );
   }
 
   /**
@@ -132,7 +153,7 @@ export class SuggestionsService {
       const held = suggestionsOf(job.suggestions);
       // A press over a finished analysis keeps it while the new one runs, and gets it back if the new one ends without a list (g385-L-5).
       const running = runningSuggestions(now, keptOf(held, now));
-      if (held !== null && held.state === 'RUNNING' && now.getTime() - Date.parse(held.startedAt) <= STALE_AFTER_MS) {
+      if (held !== null && held.state === 'RUNNING' && !isAbandoned(held, now)) {
         return { academicYearId: job.academicYearId, stored: held, started: false };
       }
       // The engine's cores are the school's own Generera's: an analysis does not start beside one. Under the year's solve-start lock, the
@@ -148,14 +169,16 @@ export class SuggestionsService {
           code: SUGGESTIONS_YEAR_BUSY,
         });
       }
-      // The claim is one statement, so that two presses at once are one analysis whatever the order they come in.
+      // The claim is one statement, so that two presses at once are one analysis whatever the order they come in. It takes a place that is
+      // free: no analysis, one that ended, or one whose lease has run out (with no lease, the old rule's six minutes from its start). The
+      // lease it writes is the database's clock, as every renewal's is.
       const claimed = await tx.$executeRaw(
         Prisma.sql`UPDATE "OptimizationJobs"
-                      SET "suggestions" = ${JSON.stringify(running)}::jsonb
+                      SET "suggestions" = jsonb_set(${JSON.stringify(running)}::jsonb, '{leaseUntil}', to_jsonb(${leaseEndSql()}))
                     WHERE id = ${job.id}::uuid
                       AND ("suggestions" IS NULL
                            OR "suggestions"->>'state' <> 'RUNNING'
-                           OR ("suggestions"->>'startedAt')::timestamptz < now() - make_interval(secs => ${STALE_AFTER_MS / 1000}))`,
+                           OR NOT ${analysisHoldsSql(STALE_AFTER_MS / 1000)})`,
       );
       if (claimed === 0) {
         const again = await tx.optimizationJob.findUnique({ where: { id: job.id }, select: { suggestions: true } });
@@ -178,6 +201,19 @@ export class SuggestionsService {
   private async run(jobId: string, academicYearId: string, user: AuthenticatedUser, startedAt: string): Promise<void> {
     const requestId = randomUUID();
     let outcome: SuggestionsStored;
+    // The lease is renewed while the analysis works, and the beat is dropped the moment it has an outcome: a write below must not be
+    // followed by a renewal. A beat is not started while the last one is still being written (a full pool must not pile them up).
+    const key = `${jobId}:${startedAt}`;
+    let beating = false;
+    const timer = setInterval(() => {
+      if (beating) return;
+      beating = true;
+      void this.renew(jobId, user, startedAt).finally(() => {
+        beating = false;
+      });
+    }, ANALYSIS_HEARTBEAT_MS);
+    timer.unref();
+    this.leased.set(key, { jobId, user, startedAt, timer });
     try {
       const prepared = await this.prisma.withRls(user, (tx) =>
         this.proxy.prepareSchedule(tx, academicYearId, user, { requestId }),
@@ -208,8 +244,33 @@ export class SuggestionsService {
       const failure = failureOf(error);
       this.logger.warn(`Suggestions ended without a list [job=${jobId}, failure=${failure}]: ${String(error)}`);
       outcome = failure === 'REFUSED' ? refusedSuggestions(startedAt, new Date()) : failedSuggestions(startedAt, failure, new Date());
+    } finally {
+      clearInterval(timer);
+      this.leased.delete(key);
     }
     await this.write(jobId, user, startedAt, outcome);
+  }
+
+  /**
+   * One renewal of the lease: to the database's now plus ANALYSIS_LEASE_SECONDS, over the analysis this call started and nothing else (a
+   * press that took the claim after this one was abandoned has another startedAt, and an analysis that has ended is not RUNNING). It
+   * never throws: three beats fit in a lease, so one that fails (a full pool, a dropped connection) costs nothing, and a lease that
+   * lapses because they all failed is the abandonment it reads as.
+   */
+  private async renew(jobId: string, user: AuthenticatedUser, startedAt: string): Promise<void> {
+    try {
+      await this.prisma.withRls(user, (tx: PrismaClient) =>
+        tx.$executeRaw(
+          Prisma.sql`UPDATE "OptimizationJobs"
+                        SET "suggestions" = jsonb_set("suggestions", '{leaseUntil}', to_jsonb(${leaseEndSql()}))
+                      WHERE id = ${jobId}::uuid
+                        AND "suggestions"->>'state' = 'RUNNING'
+                        AND "suggestions"->>'startedAt' = ${startedAt}`,
+        ),
+      );
+    } catch (error) {
+      this.logger.warn(`Suggestions lease not renewed [job=${jobId}]: ${String(error)}`);
+    }
   }
 
   /**
