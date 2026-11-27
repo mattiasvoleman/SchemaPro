@@ -91,12 +91,17 @@ export interface SuggestionsStored {
   verifySeconds: number | null;
   changes: StoredChange[];
   failure: SuggestionsFailure | null;
+  /**
+   * The finished analysis a RUNNING one was asked over (g385-L-5), kept so that a press never replaces a list with a failure: when the
+   * new analysis ends without one, this is what the column holds again. Only a RUNNING analysis has one, it is DONE, and it has none.
+   */
+  previous: SuggestionsStored | null;
 }
 
 /** What the page reads of a change: the stored one without the Users ids, with the teachers named. */
 export type SuggestionChangeView = Omit<StoredChange, 'teacherIds'> & { teacherNames: string[] };
 
-export type SuggestionsView = Omit<SuggestionsStored, 'changes'> & { changes: SuggestionChangeView[] };
+export type SuggestionsView = Omit<SuggestionsStored, 'changes' | 'previous'> & { changes: SuggestionChangeView[] };
 
 /** How the engine's anonymous ids are turned back into the school's own. */
 export interface Realiser {
@@ -180,7 +185,9 @@ function storedChangeOf(value: unknown): StoredChange | null {
   if (!requirementIds || !roomIds || !resourceIds || !teacherIds || !requirementNames || !roomNames) return null;
   if (typeof value.hidden !== 'boolean') return null;
   const hidden = value.hidden;
-  // The hidden form holds nothing but the rule, the price and the proof: a stored value that carries more is not shown.
+  // The hidden form holds nothing but the rule and the proof: a stored value that carries more is not shown. THE PRICE IS NOT KEPT
+  // (g385-L-8): it is the weight of a day times the days a post goes over, so `3600` says three days outside a part-timer's post to a reader
+  // who may not read HR. A value written before that carries one, and is read without it.
   if (
     hidden &&
     (rule !== 'TEACHER_WORK_DAYS' ||
@@ -201,7 +208,7 @@ function storedChangeOf(value: unknown): StoredChange | null {
   return {
     rule: rule as SuggestionRule,
     proof: proof as SuggestionProof,
-    cost,
+    cost: hidden ? 0 : cost,
     current,
     needed,
     weekdays: [...(weekdays as number[])].sort((a, b) => a - b),
@@ -258,6 +265,13 @@ export function suggestionsOf(value: unknown): SuggestionsStored | null {
   // A list the strict model did not accept holds MAY_HELP and nothing more: suggestionsFromEngine stores it so, and a column that says
   // SOLVED over an unverified list was written by something else (the review of #388, U-1).
   if (!value.verified && changes.some((change) => change.proof !== 'MAY_HELP')) return null;
+  // The analysis a RUNNING one was asked over: one level, and a finished one. Whatever else is there is not shown (nor is the analysis).
+  let previous: SuggestionsStored | null = null;
+  if (value.previous !== null && value.previous !== undefined) {
+    if (state !== 'RUNNING') return null;
+    previous = suggestionsOf(value.previous);
+    if (previous === null || previous.state !== 'DONE' || previous.previous !== null) return null;
+  }
   const stored: SuggestionsStored = {
     version: 1,
     state: state as SuggestionsState,
@@ -270,12 +284,18 @@ export function suggestionsOf(value: unknown): SuggestionsStored | null {
     verifySeconds,
     changes,
     failure: (failureValue ?? null) as SuggestionsFailure | null,
+    previous,
   };
-  return Buffer.byteLength(JSON.stringify(stored)) <= MAX_STORED_BYTES ? stored : null;
+  // The bound is on one analysis: the previous one is held to it on its own (above), and the column's own limit (8 KiB of jsonb text) has
+  // room for the two, MAX_STORED_BYTES being a fifth to a quarter below the half of it with the head of a RUNNING one.
+  return Buffer.byteLength(JSON.stringify({ ...stored, previous: null })) <= MAX_STORED_BYTES ? stored : null;
 }
 
-/** The analysis has been asked for and is running. */
-export function runningSuggestions(now: Date): SuggestionsStored {
+/**
+ * The analysis has been asked for and is running. `previous` is the finished analysis it was asked over, if there is one
+ * (`kept` makes it): it is what the column holds again if this one ends without a list.
+ */
+export function runningSuggestions(now: Date, previous: SuggestionsStored | null = null): SuggestionsStored {
   return {
     version: 1,
     state: 'RUNNING',
@@ -288,7 +308,32 @@ export function runningSuggestions(now: Date): SuggestionsStored {
     verifySeconds: null,
     changes: [],
     failure: null,
+    previous,
   };
+}
+
+/**
+ * The finished analysis a new press may be asked over, and a RUNNING one's own: a DONE analysis with something to say (a list of changes,
+ * or "solvable as it is"). One that found nothing, or refused the week, is not worth keeping against a new one, and a FAILED one is not
+ * an analysis. An abandoned RUNNING one hands on what it was asked over.
+ */
+export function keptOf(held: SuggestionsStored | null, now: Date): SuggestionsStored | null {
+  if (held === null) return null;
+  const settled = readAs(held, now);
+  if (settled.state !== 'DONE') return null;
+  return settled.verdict === 'CHANGES' || settled.verdict === 'SOLVABLE_AS_IS' ? { ...settled, previous: null } : null;
+}
+
+/**
+ * What the column holds when an analysis ends: its outcome, unless the outcome is no list (it failed, or it searched and found nothing) and
+ * the press was over a finished analysis with a list: that one stays (g385-L-5). A new press never replaces what the school can use with a
+ * failure, and a "found nothing in 60 s" is no better than the list it would have taken the place of; a refusal by a rule that never gives
+ * way (HARD_REFUSAL) and a list are answers, and replace it.
+ */
+export function settledAs(outcome: SuggestionsStored, previous: SuggestionsStored | null): SuggestionsStored {
+  if (previous === null) return outcome;
+  const noList = outcome.state === 'FAILED' || outcome.verdict === 'NOT_FOUND';
+  return noList ? previous : outcome;
 }
 
 /** The analysis ended without a list. */
@@ -326,9 +371,12 @@ export function isAbandoned(stored: SuggestionsStored, now: Date): boolean {
 export function readAs(stored: SuggestionsStored, now: Date): SuggestionsStored {
   // It ended when a read first has the right to say so, not when this read happens: the page polls, and a time that moved on every poll
   // would be a different answer each time for something that finished once.
-  return isAbandoned(stored, now)
-    ? failedSuggestions(stored.startedAt, 'ABANDONED', new Date(Date.parse(stored.startedAt) + STALE_AFTER_MS))
-    : stored;
+  if (!isAbandoned(stored, now)) return stored;
+  // A run that was asked over a finished analysis gives it back: the list is still the school's best answer, and nothing ran in its place.
+  return (
+    stored.previous ??
+    failedSuggestions(stored.startedAt, 'ABANDONED', new Date(Date.parse(stored.startedAt) + STALE_AFTER_MS))
+  );
 }
 
 const RULE_ORDER = new Map<string, number>(SUGGESTION_RULES.map((rule, index) => [rule, index]));
@@ -341,7 +389,7 @@ function realisedChange(change: AiEngineSuggestedChange, realiser: Realiser): St
   if (change.rule === 'TEACHER_WORK_DAYS') {
     // A part-timer's days: no post, no teacher, no figure, no weekday (work-days.ts).
     return {
-      rule: change.rule, proof, cost: price, current: null, needed: null, weekdays: [], requirementIds: [], requirementNames: [],
+      rule: change.rule, proof, cost: 0, current: null, needed: null, weekdays: [], requirementIds: [], requirementNames: [],
       roomIds: [], roomNames: [], resourceIds: [], teacherIds: [], hidden: true,
     };
   }
@@ -401,15 +449,16 @@ export function suggestionsFromEngine(
     const stored = realisedChange(change, realiser);
     return checked ? stored : { ...stored, proof: 'MAY_HELP' as const };
   });
-  // Two part-timers' days say nothing the first did not: one change, the prices added.
+  // Two part-timers' days say nothing the first did not: one change, and no price (g385-L-8): the price of a part-timer's days is a weight
+  // times the days a post goes over, and a reader who may not read HR would be told how many. NOR DOES ITS PLACE IN THE LIST SAY IT: ranked by
+  // the price it would have had, it stands between two changes whose prices the reader can read, which brackets the days. It stands after
+  // the others of its proof, whatever it would have cost.
   const days = mapped.filter((change) => change.hidden);
-  const merged: StoredChange[] = [
-    ...mapped.filter((change) => !change.hidden),
-    ...(days.length > 0 ? [{ ...days[0]!, cost: days.reduce((sum, change) => sum + change.cost, 0) }] : []),
-  ];
+  const merged: StoredChange[] = [...mapped.filter((change) => !change.hidden), ...(days.length > 0 ? [days[0]!] : [])];
   merged.sort(
     (a, b) =>
       SUGGESTION_PROOFS.indexOf(a.proof) - SUGGESTION_PROOFS.indexOf(b.proof) ||
+      Number(a.hidden) - Number(b.hidden) ||
       a.cost - b.cost ||
       (RULE_ORDER.get(a.rule) ?? 0) - (RULE_ORDER.get(b.rule) ?? 0),
   );
@@ -431,6 +480,7 @@ export function suggestionsFromEngine(
     verifySeconds: secondsOrNull(response.verifySeconds) ?? null,
     changes: kept,
     failure: null,
+    previous: null,
   };
   while (kept.length > 0 && Buffer.byteLength(JSON.stringify({ ...base, changes: kept })) > MAX_STORED_BYTES) {
     kept = kept.slice(0, -1);
@@ -440,8 +490,9 @@ export function suggestionsFromEngine(
 
 /** What the page reads: the stored value with each cap's teacher named, and the Users ids left behind. */
 export function viewOf(stored: SuggestionsStored, teacherNames: ReadonlyMap<string, string>): SuggestionsView {
+  const { previous: _previous, ...shown } = stored;
   return {
-    ...stored,
+    ...shown,
     changes: stored.changes.map(({ teacherIds, ...change }) => ({
       ...change,
       teacherNames: teacherIds.flatMap((id) => {
@@ -454,7 +505,10 @@ export function viewOf(stored: SuggestionsStored, teacherNames: ReadonlyMap<stri
 
 /** The Users ids a stored analysis names: whom the read has to look up. */
 export function teachersOfSuggestions(stored: SuggestionsStored | null): string[] {
-  return stored === null ? [] : [...new Set(stored.changes.flatMap((change) => change.teacherIds))];
+  // The analysis a RUNNING one was asked over is read in its place when the RUNNING one is abandoned (readAs), so its caps' teachers are named too.
+  return stored === null
+    ? []
+    : [...new Set([...stored.changes, ...(stored.previous?.changes ?? [])].flatMap((change) => change.teacherIds))];
 }
 
 /** The refusals of the engine's prechecks that a rule of the five gives (messages.py), by the families their codes are in. */
@@ -469,7 +523,23 @@ export interface RunOf {
   status: string;
   solverStatus: string | null;
   errorCode: string | null;
+  /** The summary code of the run's refusal, when it has one: the gateway's own pre-flight travels as an INFEASIBLE run. */
+  conflictSummaryCode?: string | null;
 }
+
+/**
+ * THE SUMMARY CODES OF THE GATEWAY'S OWN PRE-FLIGHT REFUSALS (optimization-proxy.service.ts `prepareSchedule`: an unstaffed post, a block with
+ * some of its lessons locked, a förläggning that no longer stands, more pairs than the engine takes). They travel as an INFEASIBLE run so
+ * that the history treats them like any refusal, but the engine was never asked, and no change of the five rules can give the week what these
+ * lack: an analysis would answer HARD_REFUSAL after a minute of the engine's cores, and the page would offer it at every visit (g393-L-4).
+ * Spelled out here because this file holds no import of the services; suggestions.spec.ts holds them to the constants they are.
+ */
+export const PREFLIGHT_REFUSAL_CODES: readonly string[] = [
+  'STAFF_UNSTAFFED_REQUIREMENTS',
+  'BLOCK_PARTLY_LOCKED_SUMMARY',
+  'PLACEMENTS_REFUSED_SUMMARY',
+  'GROUP_CONFLICTS_OVER_ENGINE_LIMIT',
+];
 
 /**
  * Whether the analysis may be asked for about a run: it ended with no timetable, and the end is one the five rules can have given.
@@ -481,6 +551,8 @@ export interface RunOf {
  */
 export function suggestionsMayBeAskedFor(run: RunOf): boolean {
   if (run.status === 'PENDING' || run.status === 'RUNNING') return false;
+  // A refusal the gateway made before the engine was asked: nothing for the analysis to find (PREFLIGHT_REFUSAL_CODES).
+  if (run.conflictSummaryCode != null && PREFLIGHT_REFUSAL_CODES.includes(run.conflictSummaryCode)) return false;
   if (run.solverStatus === 'INFEASIBLE' || run.solverStatus === 'TIMEOUT') return true;
   if (run.status !== 'FAILED' || run.errorCode === null) return false;
   return FIVE_RULE_REFUSALS.test(run.errorCode) || RAN_OUT_OF_TIME.has(run.errorCode);

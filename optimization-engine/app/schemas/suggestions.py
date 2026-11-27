@@ -37,7 +37,7 @@ from typing import Literal
 
 from pydantic import UUID4, Field
 
-from app.schemas.schedule import CamelModel, ConflictAnalysis
+from app.schemas.schedule import CamelModel, ConflictAnalysis, TimeoutReport
 
 #: The five rules that may give way (app/solver/relaxation.py RELAXABLE_RULES),
 #: by the same names, mildest first.
@@ -77,8 +77,16 @@ class SuggestedChange(CamelModel):
     #: subject's lessons a day, its days apart. None for a room lock, which has none.
     current: int | None = None
     #: The value the timetable needs: what the rule would have to be set to for this very
-    #: timetable to hold. Not the least value any timetable needs.
+    #: timetable to hold. After the engine has tried to lower it (suggestions.refine) it is the LEAST VALUE IT FOUND A TIMETABLE FOR, with
+    #: the other changes of the list as they then were: not the least value any timetable needs unless `needed_is_least` says it was
+    #: proved.
     needed: int | None = None
+    #: Whether the value below `needed` (one step: five minutes for a cap, one day or one lesson otherwise) was PROVED to hold no timetable
+    #: with the rest of the list as it is: the strict model answered INFEASIBLE for it. True says `needed` is the least; False that the
+    #: engine tried the lower value and did not finish; None that it did not try (a room lock has no number, the check had no time, the
+    #: list was not verified, or the value was already as low as it can go). A caller that reads only `needed` reads what it always did.
+    #: OMITTED WHERE IT IS NONE, so a change the engine did not try to lower is the bytes it always was.
+    needed_is_least: bool | None = Field(default=None, alias="neededIsLeast", exclude_if=lambda value: value is None)
     #: The ISO weekdays the change is about, where the engine can say them (the days a
     #: part-time post is asked to take, the days a subject goes over its cap).
     weekdays: list[int] = Field(default_factory=list)
@@ -110,3 +118,7 @@ class SuggestChangesResponse(CamelModel):
     elapsed_ms: int = Field(alias="elapsedMs", ge=0)
     #: The strict explanation, for HARD_REFUSAL only.
     conflicts: ConflictAnalysis | None = None
+    #: Where the search's time went and what each search had done (M2's account), for NOT_FOUND where the search itself ran out of its
+    #: time (G6b, g384-L-4): "found nothing in 60 s" does not say whether the minute was the builds or the search, and the account does.
+    #: OMITTED WHERE IT IS NONE, so every other answer is the bytes it always was.
+    report: TimeoutReport | None = Field(default=None, exclude_if=lambda value: value is None)

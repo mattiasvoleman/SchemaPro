@@ -13,13 +13,14 @@ import {
 } from "lucide-react";
 import { createClient } from "@/utils/supabase/server";
 import { getSession } from "@/lib/auth";
-import { READS_EVERY_PAGE, gateOfPath, profileOpens } from "@/lib/admin-areas";
+import { READS_EVERY_PAGE, gateOfPath, profileOpens, profileWrites } from "@/lib/admin-areas";
 import { toDateString } from "@/lib/utils";
 import { Link } from "@/i18n/navigation";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { DashboardKpis } from "./dashboard-kpis";
+import { InvitationChannelCard } from "./invitation-channel-card";
 
 export const dynamic = "force-dynamic";
 
@@ -126,6 +127,9 @@ export default async function AdminDashboardPage() {
         title={t("title")}
         subtitle={t("subtitle", { school: session?.school?.name ?? "" })}
       />
+
+      {/* Whether the invitations will arrive (Första veckan utan operatören): for the profiles that invite. */}
+      {profileWrites(profile, "PERSONAL") ? <InvitationChannelCard /> : null}
 
       <DashboardKpis server={server} serverFailed={serverFailed} since={weekAgo} />
 

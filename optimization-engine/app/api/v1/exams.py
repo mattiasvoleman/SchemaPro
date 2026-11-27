@@ -8,6 +8,7 @@ from app.config import Settings
 from app.dependencies import get_app_settings, verify_api_key
 from app.exceptions import SolverTimeoutError
 from app.logging_config import get_logger
+from app.solve_load import OTHER, SOLVE_LOAD
 from app.schemas.exams import ExamSearch, PlanExamsRequest, PlanExamsResponse
 from app.solver.exam_solver import ExamSolver, budget_seconds
 from app.timing import BUILD_HEADROOM_SECONDS, RouteLimits
@@ -34,8 +35,14 @@ async def run_exam_solver(payload: PlanExamsRequest, settings: Settings) -> Plan
     """Run the CPU-bound solve off the event loop with a hard ceiling."""
     solver = ExamSolver(settings)
     timeout = route_limits(settings, payload.search).ceiling_seconds
+
+    def counted() -> PlanExamsResponse:
+        # The thread's life is what is counted (app.solve_load), as the generator's is.
+        with SOLVE_LOAD.running(OTHER, str(payload.request_id)):
+            return solver.solve(payload)
+
     try:
-        return await asyncio.wait_for(asyncio.to_thread(solver.solve, payload), timeout=timeout)
+        return await asyncio.wait_for(asyncio.to_thread(counted), timeout=timeout)
     except asyncio.TimeoutError:
         logger.error("exam_plan_timed_out", request_id=str(payload.request_id))
         raise SolverTimeoutError(

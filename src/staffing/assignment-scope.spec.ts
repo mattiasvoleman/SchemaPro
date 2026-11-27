@@ -632,7 +632,8 @@ describe('the rektor\'s assessment the input carries (AssignmentScopeAssessments
     const hidden = hideScopeHr(of(scope({ scopeAssessments: assessed(600, 'OWN_INITIATIVE') })));
     expect(hidden.assessment).toEqual({ levelHours: null, exceptionKind: 'OWN_INITIATIVE', ownInitiativeOn: null, note: null, decidedAt: null });
     expect(hidden.highestHours).toBeNull();
-    expect(hidden.verdict).toBe('OVER_OWN');
+    // OVER_OWN would give the level back (g494): the hours at which it flips are the level times the share.
+    expect(hidden.verdict).toBe('INSIDE');
   });
 
   it('hides nothing of a teacher without an assessment, and adds no key', () => {

@@ -24,6 +24,10 @@
  *   (7) THE REMOVAL of a person with no address deletes the row and asks the provider for nothing: there is no login to delete;
  *   (8) AN ADDRESS CORRECTED WHILE THE INVITATION IS ON ITS WAY: the login minted for the old address is not put on the row (409), and
  *       the invitation sent again goes to the new one.
+ *   (9) THE MASS INVITATION TAKEN UP AGAIN invites nobody twice (Första veckan utan operatören): the project's mail limit is spent after two
+ *       of five, and the run stops there (`stopped`, `notTried`) with exactly those two marked invited and the rest not (the provider's
+ *       refusal is not read as "already registered"); the limit raised, a second run over all five invites the three and skips the two
+ *       (`alreadyInvited`), and a third invites nobody: the provider was asked five times in all.
  *
  * It makes a school of its own and drops it.
  */
@@ -37,7 +41,7 @@ import { createPgAdapter } from '../../src/database/pool-config';
 import { PrismaService } from '../../src/database/prisma.service';
 import { ImportService } from '../../src/import/import.service';
 import { SubjectAccessService } from '../../src/school-export/subject-access.service';
-import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
+import { InvitationRefused, type SupabaseAdminService } from '../../src/users/supabase-admin.service';
 import { UsersService } from '../../src/users/users.service';
 import type { NotificationsService } from '../../src/notifications/notifications.service';
 
@@ -80,10 +84,14 @@ async function main(): Promise<void> {
   const school = await owner.school.create({ data: { name: `Probe utan adress ${tag}`, slug, timezone: 'Europe/Stockholm' } });
 
   // The provider: counted, and never answers a login for anybody but the address it is asked about.
-  const provider = { invited: [] as string[], deleted: [] as string[], gate: undefined as Promise<void> | undefined, reached: undefined as (() => void) | undefined };
+  const provider = { invited: [] as string[], deleted: [] as string[], limit: Number.POSITIVE_INFINITY, gate: undefined as Promise<void> | undefined, reached: undefined as (() => void) | undefined };
   const supabaseAdmin = {
     isConfigured: true,
     inviteUser: async (email: string) => {
+      // The project's mail limit: the refusal the provider's own 429 is read as (SupabaseAdminService.inviteUser).
+      if (provider.invited.length >= provider.limit) {
+        throw new InvitationRefused('Supabase invite failed: email rate limit exceeded', 'RATE_LIMITED', 429, 'over_email_send_rate_limit');
+      }
       provider.invited.push(email);
       // A test can hold the provider's answer, as a slow mail server does, to change the row while the invitation is on its way.
       provider.reached?.();
@@ -274,6 +282,29 @@ async function main(): Promise<void> {
       const again = await users.invite(held.id, admin);
       assert.equal(again.emailSent, true);
       assert.equal(provider.invited.at(-1), email('vera-ratt'), 'the retry went to the corrected address');
+    });
+
+    await check('(9) a mass invitation stopped by the mail limit and taken up again invites nobody twice', async () => {
+      const five: string[] = [];
+      for (let n = 1; n <= 5; n += 1) {
+        five.push((await users.create({ role: 'STUDENT', firstName: `Mass${n}`, lastName: 'Inbjudan', email: email(`mass${n}`), studentGroupId: group.id }, admin)).id);
+      }
+      const asked = async () => (await owner.user.findMany({ where: { id: { in: five } }, select: { id: true, invitedAt: true } })).filter((row) => row.invitedAt !== null).length;
+      const before = provider.invited.length;
+      provider.limit = before + 2;
+
+      const first = await users.inviteMany(five, admin);
+      assert.deepEqual([first.sent, first.stopped, first.notTried, first.errors.length], [2, 'RATE_LIMITED', 3, 0]);
+      assert.equal(await asked(), 2, 'only the two the provider sent are marked invited: the refusal is not read as "already registered"');
+
+      provider.limit = Number.POSITIVE_INFINITY;
+      const second = await users.inviteMany(five, admin);
+      assert.deepEqual([second.sent, second.alreadyInvited, second.stopped], [3, 2, undefined]);
+      assert.equal(await asked(), 5);
+
+      const third = await users.inviteMany(five, admin);
+      assert.deepEqual([third.sent, third.alreadyInvited], [0, 5]);
+      assert.equal(provider.invited.length, before + 5, 'the provider was asked five times in all: one invitation each');
     });
   } finally {
     await owner.school.deleteMany({ where: { id: school.id } });

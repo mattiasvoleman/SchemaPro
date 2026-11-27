@@ -9,7 +9,8 @@ a Generera for another school: the Generera is what a school came for and the an
 refusal (review of #384).
 
 WHAT IT DECIDES. A Generera is never refused or queued by this count: it has no admission at all and gets none here.
-An analysis is refused (429, the gateway's ENGINE_BUSY) while any Generera runs, and answers "try again in a moment".
+An analysis is refused (429, the gateway's ENGINE_BUSY) while any Generera runs, and while a staffing proposal, an exam plan or a room
+proposal does (kind OTHER: they share the cores and are short), and answers "try again in a moment".
 The converse is not closed and is said here and not left to be found: a Generera that starts while an analysis is
 already running shares the cores with it until it ends, at most its workers' four and a minute and a half (up to the
 ceiling of 270 s at the largest `maxSeconds`). The count only makes that visible (a warning, `generation_beside_analysis`,
@@ -44,8 +45,12 @@ from contextlib import contextmanager
 GENERATION = "generation"
 #: An analysis of what to change after a refusal: /api/v1/suggest-changes.
 ANALYSIS = "analysis"
+#: The three short CP-SAT routes that share the cores and were not counted (G6b, g391-L-5): /api/v1/staff, /api/v1/plan-exams and
+#: /api/v1/optimize-rooms. Each is a solve of at most the 10 to 20 seconds its budget says, and an analysis yields to them as to a
+#: Generera: a 429 that says "in a moment" is the right answer for a wait that short.
+OTHER = "other"
 
-_KINDS = (GENERATION, ANALYSIS)
+_KINDS = (GENERATION, ANALYSIS, OTHER)
 
 
 class SolveLoad:

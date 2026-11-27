@@ -76,7 +76,7 @@ describe('BoardTrayService: Att lägga', () => {
 
   beforeEach(() => {
     tx = createTxMock();
-    service = new BoardTrayService(createPrismaMock(tx) as unknown as PrismaService);
+    service = new BoardTrayService(createPrismaMock(tx) as unknown as PrismaService, {} as never);
     posts = [post()];
     lessons = [];
     rows = [];

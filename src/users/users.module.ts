@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { InvitationChannelService } from './invitation-channel';
+import { InvitationThrottlerGuard } from './invitation-throttler.guard';
 import { MeController } from './me.controller';
 import { MySchoolsService } from './my-schools.service';
 import { PerLoginThrottlerGuard } from './per-login-throttler.guard';
@@ -20,6 +22,14 @@ import { SupabaseAdminService } from './supabase-admin.service';
 @Module({
   controllers: [UsersController, MeController, PersonProtectionsController],
   exports: [UsersService, SupabaseAdminService, PersonProtectionsService],
-  providers: [UsersService, SupabaseAdminService, MySchoolsService, PerLoginThrottlerGuard, PersonProtectionsService],
+  providers: [
+    UsersService,
+    SupabaseAdminService,
+    InvitationChannelService,
+    InvitationThrottlerGuard,
+    MySchoolsService,
+    PerLoginThrottlerGuard,
+    PersonProtectionsService,
+  ],
 })
 export class UsersModule {}

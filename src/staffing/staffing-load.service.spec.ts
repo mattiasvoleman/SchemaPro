@@ -1147,6 +1147,14 @@ describe('StaffingLoadService', () => {
         });
       });
 
+      it('tells a planner without HR-läs INSIDE where the teacher is over the rektor\'s level and not over the ordinance\'s: OVER_OWN flips at the level and would give it back', async () => {
+        inForce();
+        tx.assignmentScopeAssessment.findMany.mockResolvedValue([assessmentRow()]);
+        const planner = testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, userId: COLLEAGUE });
+        const row = scopeOf(await service.load(YEAR_ID, 'planned', planner));
+        expect(row).toMatchObject({ verdict: 'INSIDE', teachingHours: 430, highestHours: null, assessment: { levelHours: null } });
+      });
+
       it('carries a registered exception beside the verdict and leaves the verdict what it is', async () => {
         inForce();
         tx.teachingRequirement.findMany.mockResolvedValue([requirementRow({ lessonsPerWeek: 14 })]);

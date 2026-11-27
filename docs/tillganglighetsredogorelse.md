@@ -53,4 +53,6 @@ Vi har gjort en självskattning (intern testning) av Rastra Schema:
 
 Senaste bedömningen gjordes den 14 oktober 2026.
 
+Sidan Pseudonymisera en fil lades till efter det datumet och ingår inte i den bedömningen: för den finns bara den automatiska granskningen ovan, och inget test med skärmläsare.
+
 Redogörelsen uppdaterades senast den 24 november 2026.

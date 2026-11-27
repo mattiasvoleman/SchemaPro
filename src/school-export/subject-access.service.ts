@@ -71,7 +71,11 @@ class MemorySink implements ByteSink {
 export class SubjectAccessService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async extract(user: AuthenticatedUser, personId: string, withRelated: boolean): Promise<SubjectAccessAnswer> {
+  async extract(user: AuthenticatedUser, askedFor: string, withRelated: boolean): Promise<SubjectAccessAnswer> {
+    // The ids the database writes are lower case, and the extract compares them as text (the set of persons asked for, the marked
+    // persons): an upper-case id is the same uuid to the database and a stranger to those comparisons, which hid the person's own row
+    // of a table about a colleague and let a protected person's extract name the others. IsUUID accepts both spellings.
+    const personId = askedFor.toLowerCase();
     if (user.huvudman || !user.userId || !profileDecides(user.adminProfile)) {
       throw new ForbiddenException({
         message: 'Ett registerutdrag lämnas ut av rektor eller en fullständig administrator.',

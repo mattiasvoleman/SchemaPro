@@ -10016,8 +10016,8 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- 29e: a person's choice of what leaves SchemaPro is theirs alone
 -- (NotificationOptOuts, 20261013100000). Own rows for every role, no admin
--- arm, no UPDATE; never the unreported absence or a teacher's absence report
--- (CHECKs). The refusals are asserted as both roles: authenticated
+-- arm, no UPDATE; never the unreported absence (a CHECK; the one on a teacher's
+-- absence report was dropped in 20270311090000, K6). The refusals are asserted as both roles: authenticated
 -- (PostgREST) and app_authenticated (the API, a member of authenticated).
 -- ---------------------------------------------------------------------------
 
@@ -10045,11 +10045,10 @@ BEGIN
     RAISE EXCEPTION 'optout: the unreported absence was silenced';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
-  BEGIN
-    INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (me, school, 'TEACHER_ABSENCE_REPORTED');
-    RAISE EXCEPTION 'optout: a type that never leaves the inbox was stored';
-  EXCEPTION WHEN check_violation THEN NULL;
-  END;
+  -- A teacher's absence report leaves the inbox as a mail since K6 (never as a push), so an administrator may switch it off like any other type:
+  -- the database no longer refuses the row (20270311090000). Which roles are offered the switch is the gateway's list (TYPES_BY_ROLE).
+  INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (me, school, 'TEACHER_ABSENCE_REPORTED');
+  DELETE FROM "NotificationOptOuts" WHERE "userId" = me AND type = 'TEACHER_ABSENCE_REPORTED';
 END $$;
 
 -- The refusals, as each role.
