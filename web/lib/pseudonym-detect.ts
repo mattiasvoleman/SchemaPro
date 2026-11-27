@@ -350,6 +350,8 @@ const isMixedDotted = (candidate: string): boolean => {
   if (!/^\d[\d .\-/]*\d$/.test(candidate) || !candidate.includes(".") || !/[ \-/]/.test(candidate)) return false;
   const groups = candidate.split(/[ .\-/]+/);
   const country = groups[0] === "46";
+  // A list of times written with full stops and blanks (08.10 08.55 09.10 10.00): groups of two digits that read, in turn, as an hour and a minute. A number written in pairs does not read so (08.12 34 56 78: 34 is no hour).
+  if (groups.every((group) => group.length === 2) && groups.every((group, i) => Number(group) <= (i % 2 === 0 ? 23 : 59))) return false;
   return groups.length >= 4 && groups.every((group, i) => group.length >= 2 || (country && i === 1)) && candidate.replace(/\D/g, "").length >= 9;
 };
 
