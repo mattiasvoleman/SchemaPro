@@ -1021,6 +1021,30 @@ async function main(): Promise<void> {
       assert.ok(selfLines.join('\n').includes('Egen bedömning') && selfLines.join('\n').includes('540'), "the rektor's assessment of themself is whole");
     });
 
+    await check("(k-s2) a colleague asking for their own extract by an upper-case id (the API accepts both spellings) has the row whole", async () => {
+      const colleague = await owner.user.create({
+        data: { schoolId: a.schoolId, authId: randomUUID(), role: 'TEACHER', firstName: 'Versal', lastName: 'EfternamnB', email: `versal@${a.slug}.example.com` },
+      });
+      cleanup.push(async () => void (await owner.user.deleteMany({ where: { id: colleague.id } })));
+      const noteText = 'Egen anteckning om versalt id';
+      await api.withRls(a.admins.REKTOR, async (tx) => {
+        await tx.assignmentScopeAssessment.create({
+          data: { schoolId: a.schoolId, userId: colleague.id, academicYearId: a.yearId, teachingLevelHours: 561, note: noteText },
+        });
+      });
+      for (const id of [colleague.id, colleague.id.toUpperCase()]) {
+        const answer = await access.extract(a.admins.FULL, id, false);
+        const { dir, files } = unzip(Buffer.from(answer.contentBase64, 'base64'));
+        cleanup.push(async () => rmSync(dir, { recursive: true, force: true }));
+        const text = csvLines(files.get('data/person/assignmentscopeassessments.csv')).join('\n');
+        for (const token of ['561', noteText, colleague.id]) assert.ok(text.includes(token), `the row asked for as ${id} has ${token}`);
+      }
+      // The same id in capitals for a protected person: the extract is still the protected person's own and brings no one else.
+      const shielded = await access.extract(a.admins.FULL, protectedPupil.id.toUpperCase(), true);
+      assert.equal(shielded.subjectIsMarked, true, 'a protected person asked for in capitals is still protected');
+      assert.equal(shielded.relatedIncluded, 0, 'and brings no guardian');
+    });
+
     await check('(k-j) only those who decide ask for one, and only about their own school', async () => {
       for (const profile of ['SCHEMALAGGARE', 'EXPEDITION', 'LASARE'] as const) {
         await assert.rejects(() => access.extract(a.admins[profile], a.students[0]!.id, false), /lämnas ut av rektor/, `${profile} is refused`);
