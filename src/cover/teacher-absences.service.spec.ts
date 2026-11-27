@@ -177,6 +177,25 @@ describe('TeacherAbsencesService', () => {
       expect(mail).not.toMatch(/Karin|Ek\b|okt|2026/);
     });
 
+    it('mails the administrators once for a teacher’s reports within ten minutes, withdrawn ones included, and writes every inbox notice', async () => {
+      tx.coverSettings.findUnique.mockResolvedValue({ teacherSelfReport: true });
+      tx.user.findMany.mockResolvedValue([{ id: ADMIN }]);
+      tx.teacherAbsence.count.mockResolvedValue(0);
+      await service.create({ userId: ME, from: '2026-10-14', to: '2026-10-14' }, teacher);
+      expect(notifications.notifyUsers.mock.calls[0]![1]).toHaveProperty('email');
+      // The same teacher had reported (and may since have withdrawn) another within the ten minutes before: no second mail.
+      notifications.notifyUsers.mockClear();
+      tx.teacherAbsence.count.mockResolvedValue(1);
+      await service.create({ userId: ME, from: '2026-10-14', to: '2026-10-14' }, teacher);
+      expect(notifications.notifyUsers).toHaveBeenCalledTimes(1);
+      expect(notifications.notifyUsers.mock.calls[0]![1]).toMatchObject({ type: 'TEACHER_ABSENCE_REPORTED', userIds: [ADMIN] });
+      expect(notifications.notifyUsers.mock.calls[0]![1]).not.toHaveProperty('email');
+      // The question asks about this teacher's other reports in the ten minutes before this one, and nobody else's.
+      expect(tx.teacherAbsence.count).toHaveBeenLastCalledWith({
+        where: { userId: ME, id: { not: ABSENCE }, createdAt: { gte: new Date(NOW.getTime() - 600_000), lte: NOW } },
+      });
+    });
+
     it('an overlap is a 409 naming the other period — never its reason — under the person’s lock', async () => {
       tx.teacherAbsence.findFirst.mockResolvedValue({
         id: 'other',

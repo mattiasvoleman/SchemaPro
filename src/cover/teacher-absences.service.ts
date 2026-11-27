@@ -528,6 +528,15 @@ export class TeacherAbsencesService {
       .withRls(user, async (tx) => {
         const admins = await tx.user.findMany({ where: { role: 'SCHOOL_ADMIN', isActive: true }, select: { id: true } });
         const teacher = await tx.user.findUnique({ where: { id: row.userId }, select: { firstName: true, lastName: true } });
+        // One mail for a teacher's reports within ABSENCE_MAIL_QUIET_MS (withdrawn ones count: they stay as rows), so that
+        // reporting and withdrawing again does not mail every administrator every time. The inbox notice is written each time.
+        const earlier = await tx.teacherAbsence.count({
+          where: {
+            userId: row.userId,
+            id: { not: row.id },
+            createdAt: { gte: new Date(row.createdAt.getTime() - ABSENCE_MAIL_QUIET_MS), lte: row.createdAt },
+          },
+        });
         await this.notifications.notifyUsers(tx, {
           schoolId,
           userIds: admins.map((admin) => admin.id),
@@ -540,7 +549,7 @@ export class TeacherAbsencesService {
             endsAt: row.endsAt.toISOString(),
             wholeDays: row.wholeDays,
           },
-          email: { subject: ABSENCE_REPORTED_MAIL_SUBJECT, body: ABSENCE_REPORTED_MAIL_BODY },
+          ...(earlier > 0 ? {} : { email: { subject: ABSENCE_REPORTED_MAIL_SUBJECT, body: ABSENCE_REPORTED_MAIL_BODY } }),
         });
       })
       .catch(() => this.logger.warn(`Absence report notice failed [absence=${row.id}]`));
@@ -671,6 +680,9 @@ function paramsOf(
   const pass = passes[0]!;
   return { count: passes.length, lessons: 0, passes: passes.length, date: pass.date, decision: pass.decision };
 }
+
+/** How long after a teacher's report another of theirs goes to the administrators' inbox only (K6): ten minutes. */
+const ABSENCE_MAIL_QUIET_MS = 10 * 60_000;
 
 function selfReportOff(): ForbiddenException {
   return new ForbiddenException({
