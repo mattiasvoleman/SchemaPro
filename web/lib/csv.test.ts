@@ -19,6 +19,7 @@ import {
   mapSubjectRows,
   classesToCsv,
   membershipsToCsv,
+  membersWithoutAddress,
   requirementsToCsv,
   roomTypesToCsv,
   studentsToCsv,
@@ -572,6 +573,26 @@ describe("mapTeacherRows", () => {
 });
 
 describe("mapStudentRows", () => {
+  // Personer utan e-postadress (20270310090000): the address is not something a pupil's file must give.
+  it("reads an empty epost cell as a pupil with no address, posting email null and never an empty string", () => {
+    const csv = "fornamn;efternamn;epost;klass\r\nAlma;Berg;;7A\r\nNoah;Ek;noah@example.com;7A\r\n";
+    const result = mapStudentRows(parseCsv(csv));
+    expect(result.errors).toEqual([]);
+    expect(result.rows.map((row) => row.email)).toEqual([null, "noah@example.com"]);
+  });
+
+  it("takes a file with no epost column at all: every pupil is one with no address", () => {
+    const result = mapStudentRows(parseCsv("fornamn;efternamn;klass\r\nAlma;Berg;7A\r\nNoah;Ek;7B\r\n"));
+    expect(result.errors).toEqual([]);
+    expect(result.rows.map((row) => [row.firstName, row.email])).toEqual([["Alma", null], ["Noah", null]]);
+  });
+
+  it("still judges an address that is filled in: a typo is the row's error", () => {
+    const result = mapStudentRows(parseCsv("fornamn;efternamn;epost;klass\r\nAlma;Berg;alma@;7A\r\n"));
+    expect(result.rows).toEqual([]);
+    expect(result.errors).toEqual([{ row: 2, message: expect.stringContaining("epost") }]);
+  });
+
   it("requires klass and reports it when missing", () => {
     const csv = "fornamn;efternamn;epost\r\nAlma;Berg;a@example.com\r\n";
     const result = mapStudentRows(parseCsv(csv));
@@ -2241,6 +2262,25 @@ describe("export round trips", () => {
     );
 
     expect(exported.trimEnd().split("\r\n").at(-1)).toBe("Alma;Berg;alma@s.se;;");
+  });
+
+  it("counts the memberships a pupil with no address leaves out of the file, in the listed groups and among the active", () => {
+    const groups = [{ id: "g-ma71", name: "Ma71" }];
+    const people = [
+      { id: "st-1", email: "alma@s.se" },
+      { id: "st-2", email: null },
+      { id: "st-3", email: null, isActive: false },
+    ];
+    const memberships = [
+      { studentGroupId: "g-ma71", studentId: "st-1" },
+      { studentGroupId: "g-ma71", studentId: "st-2" },
+      { studentGroupId: "g-ma71", studentId: "st-3" },
+      { studentGroupId: "g-en74", studentId: "st-2" },
+    ];
+
+    expect(membersWithoutAddress(groups, people, memberships)).toBe(1);
+    // And the file has exactly the rest.
+    expect(parseCsv(membershipsToCsv(groups, people, memberships)).rows).toEqual([["Ma71", "alma@s.se"]]);
   });
 
   it("memberships survive as one row per membership", () => {

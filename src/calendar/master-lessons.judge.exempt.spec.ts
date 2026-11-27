@@ -90,7 +90,7 @@ describe('MasterLessonsService: ett undantag med flit', () => {
       return rows.filter((row) => row['dayOfWeek'] === where['dayOfWeek'] && row['isParked'] !== true && row['id'] !== where['id']?.not);
     });
     tx['academicYear']!['findUnique']!.mockResolvedValue({ gradeNumbering: 'NIOARIG', id: YEAR, schoolId: SCHOOL, isActive: true, predecessorId: null, _count: { teacherEmployments: 0 } });
-    tx['studentGroup']!['findMany']!.mockImplementation(async (query: { where: Row }) => (query.where['id']?.in ?? []).map((id: string) => ({ id, name: id === G7A ? '7A' : '8B', gradeLevel: id === G7A ? 7 : 8, halfOfId: null })));
+    tx['studentGroup']!['findMany']!.mockImplementation(async (query: { where: Row }) => (query.where['OR']?.[0]?.id?.in ?? query.where['id']?.in ?? []).map((id: string) => ({ id, name: id === G7A ? '7A' : '8B', gradeLevel: id === G7A ? 7 : 8, halfOfId: null })));
     tx['subject']!['findMany']!.mockResolvedValue([]);
     board();
   });

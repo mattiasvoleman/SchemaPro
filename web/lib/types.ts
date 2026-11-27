@@ -360,7 +360,11 @@ export interface Person {
   role: UserRole;
   firstName: string;
   lastName: string;
-  email: string;
+  /**
+   * null for a pupil or a guardian the school added without an address (Personer utan e-postadress): in the lists, attendance and
+   * timetable, with no login until an address is added and the person is invited. A gateway older than the web sends a string.
+   */
+  email: string | null;
   phone: string | null;
   isActive: boolean;
   /**
@@ -1163,7 +1167,7 @@ export interface RolloverPreview {
     endDate: string;
     proposedStart: string | null;
     proposedEnd: string | null;
-    anchor: "CHRISTMAS" | "EASTER" | "ISO_WEEK" | "NONE";
+    anchor: "CHRISTMAS" | "EASTER" | "FIXED_DATE" | "ISO_WEEK" | "NONE";
     fits: boolean;
     selected: boolean;
     startDateToWrite: string | null;

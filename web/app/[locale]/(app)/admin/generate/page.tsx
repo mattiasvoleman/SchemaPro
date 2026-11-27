@@ -135,6 +135,20 @@ function historyStatusKey(run: OptimizationJob): string {
   return run.solverStatus ?? run.status;
 }
 
+/**
+ * When the last run was made, beside the card's title (G6b, g393-L-2): since
+ * D9 the card shows the year's newest refusal whatever its age, so it can be
+ * weeks old, and nothing else on it said so. The same moment, in the same
+ * format, as the run's row in the history list under the card.
+ */
+function RunStamp({ at, format }: { at: string; format: Intl.DateTimeFormat }) {
+  return (
+    <time dateTime={at} className="text-sm font-normal text-muted-foreground">
+      {format.format(new Date(at))}
+    </time>
+  );
+}
+
 /** Placeringsregler: the LunchSettings field names of each rule, and the limits Salar och byggnader per dag holds to. */
 const PLACEMENT_KEY = { edge: "Edge", places: "Places", shared: "Shared" } as const;
 const LIMIT_KEYS = [
@@ -734,7 +748,7 @@ export default function GeneratePage() {
   const errorNames = job?.errorNames ?? [];
   const summaryNames = job?.conflictSummaryNames ?? [];
 
-  /** When a run was started, in the app's language — not the browser's. */
+  /** When a run was started, in the app's language — not the browser's: the history list's rows and the last run's card. */
   const runDate = useMemo(
     () =>
       new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", {
@@ -1143,6 +1157,7 @@ export default function GeneratePage() {
                 <CheckCircle2 className="size-4 shrink-0 text-success-strong" />
               )}
               {t("lastRun")}
+              <RunStamp at={job.createdAt} format={runDate} />
             </span>
           }
           description={
@@ -1370,6 +1385,7 @@ export default function GeneratePage() {
             <span className="flex items-center gap-2">
               <AlertTriangle className="size-4 shrink-0 text-warning-strong" />
               {t("lastRun")}
+              {newestInHistory ? <RunStamp at={newestInHistory.createdAt} format={runDate} /> : null}
             </span>
           }
           description={endingText("ENGINE_RUN_ABANDONED", newestInHistory?.errorParams ?? null)}

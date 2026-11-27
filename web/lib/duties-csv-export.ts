@@ -48,7 +48,7 @@ export function teacherDutiesToCsv(
     validTo: string | null;
     note: string | null;
   }[],
-  people: { id: string; email: string; isActive?: boolean }[],
+  people: { id: string; email: string | null; isActive?: boolean }[],
   subjects: { id: string; name: string; code: string | null }[],
   groups: { id: string; name: string }[],
 ): string {
@@ -87,7 +87,7 @@ export function teacherDutiesToCsv(
  */
 export async function teacherDutiesCsvFor(
   academicYearId: string,
-  people: { id: string; email: string; isActive?: boolean }[],
+  people: { id: string; email: string | null; isActive?: boolean }[],
   subjects: { id: string; name: string; code: string | null }[],
   groups: { id: string; name: string; academicYearId: string }[],
 ): Promise<string> {

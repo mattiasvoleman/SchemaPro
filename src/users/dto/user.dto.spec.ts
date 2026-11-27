@@ -60,3 +60,27 @@ describe('UpdateUserDto leftOn (sista arbetsdag)', () => {
     expect('leftOn' in plainToInstance(CreateUserDto, { role: 'TEACHER', firstName: 'A', lastName: 'B', email: 'a@b.se' })).toBe(false);
   });
 });
+
+describe('the address (Personer utan e-postadress)', () => {
+  const person = { role: 'STUDENT', firstName: 'Alva', lastName: 'Ek' };
+
+  it('is optional for a new person: left out or null is a pupil or a guardian with no address, and the service says who may', async () => {
+    await expect(failing(CreateUserDto, { ...person })).resolves.toEqual([]);
+    await expect(failing(CreateUserDto, { ...person, email: null })).resolves.toEqual([]);
+  });
+
+  it('is an address when it is given: an empty string is not one, and a typo is not either', async () => {
+    await expect(failing(CreateUserDto, { ...person, email: '' })).resolves.toEqual(['email']);
+    await expect(failing(CreateUserDto, { ...person, email: 'alva@' })).resolves.toEqual(['email']);
+    await expect(failing(CreateUserDto, { ...person, email: 'alva@skolan.se' })).resolves.toEqual([]);
+    await expect(failing(CreateUserDto, { ...person, email: `${'a'.repeat(250)}@b.se` })).resolves.toEqual(['email']);
+  });
+
+  it('can be set on a person, and is not taken away: null on an update is a 400, as is an empty string', async () => {
+    await expect(failing(UpdateUserDto, { email: 'alva@skolan.se' })).resolves.toEqual([]);
+    await expect(failing(UpdateUserDto, {})).resolves.toEqual([]);
+    await expect(failing(UpdateUserDto, { email: null })).resolves.toEqual(['email']);
+    await expect(failing(UpdateUserDto, { email: '' })).resolves.toEqual(['email']);
+    await expect(failing(UpdateUserDto, { email: 'not an address' })).resolves.toEqual(['email']);
+  });
+});

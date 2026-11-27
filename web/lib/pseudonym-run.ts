@@ -22,7 +22,7 @@
  */
 
 import { findPersonalData, type Finding } from "@/lib/pseudonym-detect";
-import { columnStats, headerGroup, proposalFor, type ColumnStats, type Proposal, type ProposalReason, type Treatment } from "@/lib/pseudonym-headers";
+import { columnStats, datesAsked, headerGroup, proposalFor, type ColumnStats, type DatesAsked, type Proposal, type ProposalReason, type Treatment } from "@/lib/pseudonym-headers";
 import type { Body, ParsedInput, InputFacts } from "@/lib/pseudonym-input";
 import { KnownNames, runningWords } from "@/lib/pseudonym-names";
 import { isMarker, keyOf, MarkerBook, MARKER_GLUED, MARKER_KINDS, personalNumberKind, type MarkerKind } from "@/lib/pseudonym-markers";
@@ -39,6 +39,8 @@ export interface ColumnPlan {
   header: string;
   stats: ColumnStats;
   proposal: Proposal | null;
+  /** Why the column is asked about when its dates are the reason (X1b): it spans years, a date in it is older than three years, or its cells are dates written as six or eight digits. Null otherwise. */
+  datesAsked: DatesAsked | null;
 }
 
 export interface FilePlan {
@@ -80,7 +82,13 @@ function isWholePersonalValue(cell: string): boolean {
   return found.length === 1 && found[0]!.start === 0 && found[0]!.end === trimmed.length;
 }
 
-export function planFile(input: ParsedInput, headerRow?: number | null): FilePlan {
+/** The day the file is looked at, as a UTC time: what the age of a date is counted from. A caller that must be repeatable gives its own. */
+export const todayOf = (): number => {
+  const now = new Date();
+  return Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+};
+
+export function planFile(input: ParsedInput, headerRow?: number | null, today: number = todayOf()): FilePlan {
   if (input.body.shape === "lines") return { shape: "lines", headerRow: null, headerCandidates: [], titleRows: 0, columns: [] };
   const { rows, rowNumbers } = input.body;
   const chosen = headerRow === undefined || (headerRow !== null && !rowNumbers.includes(headerRow)) ? defaultHeaderRow(rows, rowNumbers) : headerRow;
@@ -92,7 +100,7 @@ export function planFile(input: ParsedInput, headerRow?: number | null): FilePla
   for (let index = 0; index < width; index += 1) {
     const header = at === -1 ? "" : (rows[at]![index] ?? "").trim();
     const stats = columnStats(body.map((row) => row[index] ?? ""));
-    columns.push({ index, header, stats, proposal: proposalFor(header, stats) });
+    columns.push({ index, header, stats, proposal: proposalFor(header, stats, today), datesAsked: datesAsked(stats, today) });
   }
   return { shape: "table", headerRow: chosen, headerCandidates: rowNumbers.slice(0, CANDIDATES), titleRows: Math.max(0, at), columns };
 }

@@ -14,6 +14,12 @@
  *
  * AND ONLY WHERE THERE IS TEXT. A seam is bridged when there is something other than the number on at least one side of it (two letters in a row): "Elev 19000101 / TF01 ingår"
  * is, and "20261121 / 0810" in a list of dates on one line each and times on the next is not. The cost of the rule is a number cut in two with nothing else on either line.
+ *
+ * AND NOT INTO THE MIDDLE OF A WORD, AND NOT FOR A SHORT TELEPHONE NUMBER (X1b, the review of #403, M-1). Almost every row of a list has a word, so "text beside the number" says little, and a list of lessons
+ * with no delimiter ("0001 7A MAT 0815 0900" over "0002 7A ENG 0910 0955") had the end of one row and the start of the next read as a telephone number: the row's number and the first digit of a class were gone,
+ * and nothing leaked, but the safe file no longer showed the form of the file, which is what it is sent for. A number that ends in the middle of a word on the second side ("0002 7" before the A of 7A) is not
+ * one that was cut there; and a telephone number across a seam has nine digits or more (a Swedish number has nine or ten, a Stockholm one eight: eight digits across a line break are as often a time and a time).
+ * The cost: a Stockholm number cut in two, which is left as it stood, and the page says it.
  */
 
 import { findUnmerged, type Finding } from "@/lib/pseudonym-detect";
@@ -100,8 +106,8 @@ export function bridgeFlow(flow: Flow, take: (found: Finding) => string): string
     if (tail === "" || head === "") continue;
     const before = withoutMarkers(tail.slice(-REACH));
     const after = withoutMarkers(head.slice(0, REACH));
-    // Most seams have no number on either side of them: the cheap way out.
-    if (!hasDigit(before) || !hasDigit(after)) continue;
+    // Most seams have no number on either side of them: the cheap way out. A plus at the end of the first side is the start of a number cut right after it ("+" over "46 70 123 45 67").
+    if ((!hasDigit(before) && !/\+\s*$/.test(before)) || !hasDigit(after)) continue;
     // A line break is read as nothing and a delimiter as itself. Every separator a search takes is OPTIONAL (a blank, a hyphen, a full stop), so what a number is with a blank put where the
     // text was broken it is without one too, and a text cut at a fixed width, anywhere, is read as it was before it was cut.
     const join = flow.seams[i] === "\n" ? "" : flow.seams[i]!;
@@ -134,6 +140,8 @@ function across(before: string, join: string, after: string): Finding | undefine
   ];
   return found
     .filter((one) => NUMBERS.has(one.kind) && one.start < before.length && one.end > before.length)
+    // Not ended in the middle of a word on the second side, and a telephone number of nine digits or more (see the head of this file).
+    .filter((one) => !/^\p{L}/u.test(text.slice(one.end, one.end + 1)) && (one.kind !== "tel" || text.slice(one.start, one.end).replace(/\D/g, "").length >= 9))
     .filter((one) => others.every((other) => other.start >= one.end || other.end <= one.start || (one.start <= other.start && one.end >= other.end)))
     .sort((a, b) => Number(a.kind === "tel") - Number(b.kind === "tel") || b.end - b.start - (a.end - a.start))[0];
 }

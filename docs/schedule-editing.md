@@ -43,6 +43,17 @@ a Sunday (`SCHOOL_DAY`, the förläggning's own first question, in its words).
 - **Held in place by** `scripts/test/probe-domaren.ts` (the same drag through the hand edit's, a swap's and a förläggning's judge
   over real Postgres, with the cases in `src/calendar/__fixtures__/lesson-judge-cases.json` that the web's mirror is held to) and
   `src/calendar/lesson-judge.property.spec.ts` (the other schools' holds and the board's rules over random facts).
+  The file's first eighteen worlds have a class with no pupil in it, one class to a lesson, no window of dates and no other school;
+  the worlds from the nineteenth on (`generateRichWorlds`, their cases after the first eighteen's) carry pupils with a home class,
+  teaching groups of pupils from several classes (PUPILS), lessons with an extra class or with pupils named on them, lessons and
+  meals that run in a window of dates, and a room that a second school has borrowed for an hour (OTHER_SCHOOL). The förläggning's
+  judge is not asked to agree on a lesson that has an extra class or a named pupil: its row is a post's and has no word for them.
+  The board's painting (`probe-mojliga-tider.ts`) is held to the same file, so a time the board paints open or closed is the time
+  the judge lets through or refuses in every one of its worlds. After those come four richer worlds with no pupil named on a lesson
+  (the possible-times probe holds its prune exact only where none is, since it cannot see one) and six edge worlds
+  (`generateEdgeWorlds`), written by hand, that ask each turn of a comparison on both sides: a pupil named on two lessons, two windows
+  of dates that meet on one day, a window that touches a meal's first or last day, an extra class of the younger stage's ramtid, a
+  teaching group no pupil of which the ramtid reaches, and an hour lent to another school that a lesson touches without covering.
 
 ## Att lägga: grundschemats bricklåda (E4)
 
@@ -58,6 +69,24 @@ lektioner, lagda, svarade av en förläggning, kvar) och `groups` (kvar per klas
 Hålls av `scripts/test/probe-att-lagga.ts` (mot riktig Postgres: samma tal som Förlägg i veckan, fria och parkerade lektioner, en förläggning, en annan skolas år) och, för hand mot
 en riktig motor, `scripts/test/probe-att-lagga-motor.ts`: brickorna per post är det motorn sedan lägger, och facket är tomt efteråt.
 
+### Att lägga en bricka (E4, läggningen)
+
+`POST /api/v1/board-tray/lay` lägger en bricka på en tid. Brickan har en **bild** (`partKey`: hash av postens del — lärare, minuter, antal, låsta, lagda, kvar och id:na på de parkerade lektioner som är delens brickor; en lektion som flyttas i tid ändrar den inte), som läsningen
+ger och som skrivningen jämför med det den ser med låset taget. Två som läst samma bild och lägger varsin: den första skriver, den andra får `409 REQUIREMENT_PLACEMENTS_STALE` (samma kod som
+Förlägg i veckan) och ingenting skrivs för den. Läggningen tar årets lås (`enterGrundschemaWrite`, `lockYearForGrundschemaEdit`) och sedan postens (`lockPostForShares`) före läsningen, i samma
+ordning som alla andra skrivningar på grundschemat, och skriver sedan med `createIn`/`updateIn` i samma transaktion, så att domaren (`judgeLessons`) dömer lektionen som varje handläggning och
+ingenting läggs vid sidan av den.
+
+- En vanlig bricka blir en ny **låst** lektion (`isLocked: true`, `isGenerated: false`): Generera låter den stå och räknar den som lagd (`PRESERVED_FROM_REGENERATION`), så att ingenting läggs två gånger.
+- En **parkerad** lektion är en bricka, nämligen sig själv (`lessonId`), om den är postens egen (samma klass, ämne, lärare och längd) och, tillbakalagd, svarar posten (veckorna och datumen omsluter postens, som `lockCoversDemand` läser en stående lektion). Läggningen flyttar tillbaka den (`updateIn`, `isParked: false`), ingen ny lektion görs och den räknas inte två gånger. En läggning som inte nämner lektionen när delens alla brickor är parkerade lektioner nekas som en gammal bild (`409 REQUIREMENT_PLACEMENTS_STALE`): en ny lektion bredvid den parkerade vore en lektion för mycket.
+- En lektion Generera skrivit från en förläggning (`fromPlacement`) vars rad tagits bort står kvar och räknas som lagd; läsningen matchar den mot postens tider i stället för mot raden.
+- Utan sal läggs brickan som den är och svaret säger `noRoom: true` (Klart e: "Utan sal"). Salen väljer den som lägger, ur E3:s `room-choices` (rang 1 är den generatorn skulle ta). Läggningen frågar generatorns egen regel för salen (`roomAllowed`: platser, typ, årskurser) och nekar en sal den inte skulle ta med `409 BOARD_ROOM_NOT_ALLOWED` och skälet i `params.reason` (`SEATS`, `TYPE` eller `YEARS`); domaren vägrar dessutom en sal som är upptagen eller stängd, som vid varje handredigering.
+- Undantag med flit (`exempt: ['FRAME', 'LUNCH']`) bärs som vid en handredigering ("Lägg ändå"): domaren dömer det, och bara de två reglerna kan nämnas.
+- Ett block läggs inte här, och inte heller en bricka utan lärare (`cannotPlace` → `409 BOARD_BRICK_CANNOT_BE_LAID`, med skälet i `params.reason`); en bricka som inte finns kvar efter låset är samma `409 REQUIREMENT_PLACEMENTS_STALE` som en gammal bild.
+
+Hålls av `src/board-tray/board-tray.lay.spec.ts` och `board-tray.identity.spec.ts` (bild, parkerad, föräldralös, tvåa), samt `scripts/test/probe-att-lagga.ts` (al-e…al-g: mot riktig Postgres, två som lägger
+samtidigt och en parkerad lektion som läggs tillbaka) och `scripts/test/probe-att-lagga-skrivvagen.ts` (sk-a…sk-f: domaren dömer läggningen som en handredigering, salen, parkerade lektioner, sex samtidiga).
+
 ## Possible times (Möjliga tider, E3)
 
 `POST /api/v1/master-lessons/possible-times` answers "where can this lesson stand, and which time is best?" without writing anything. It
@@ -67,7 +96,9 @@ Optional: `days` (Monday to Friday), `from` and `to` (the board's visible day, 0
 
 - **Every start of the week gets one answer.** `STANDS` (where the lesson stands now), `CLOSED` (a rule shuts the stretch whatever else
   is there: `FRAME`, `LUNCH`, `GRADE_RULE`, `OTHER_SCHOOL` with the schools' names, or `AVAILABILITY` with the resource it closes),
-  `FREE` and `CHANGE` (the judge lets it through, `CHANGE` when the room had to be another), `IN_THE_WAY` (exactly one lesson that is free
+  `FREE` and `CHANGE` (the judge lets it through, `CHANGE` when the room had to be another: the run carries `rooms`, the room each
+  lesson of the unit that moves to another stands in as the judge let it through, and a run is cut where those rooms change, so the board can lay
+  the lesson on any square of it with the room that square was judged in), `IN_THE_WAY` (exactly one lesson that is free
   to move holds the stretch, named by class, subject, day and clock in `blockers`) and `CROWDED` (several, or a locked one, hold it; the run
   says how many). Starts are returned as runs of one answer per day.
 - **The order is the written cost.** Each time the judge accepts is costed with the swap search's own soft measure (the pupils' and the

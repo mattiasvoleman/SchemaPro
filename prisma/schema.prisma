@@ -388,7 +388,10 @@ model User {
   // --- PII (masked at the NestJS gateway, never sent to the AI engine) ---
   firstName String
   lastName  String
-  email     String
+  /// NULL for a pupil or a guardian the school added without an address (20270310090000): the person is in lists, attendance and
+  /// the timetable, and has no login until an address is added and invited. CHECK Users_a_person_with_no_address_has_no_login holds
+  /// it: no row has an invitedAt without an address. The key (schoolId, email) allows many NULLs, as Postgres reads a unique key.
+  email     String?
   phone     String?
   // ----------------------------------------------------------------------
 
@@ -1651,6 +1654,13 @@ model PublicationSettings {
   calendarFeedTeachers  Boolean      @default(false)
   calendarFeedStudents  Boolean      @default(false)
   calendarFeedGuardians Boolean      @default(false)
+  /// P5 (20270312090000): when an administrator answered "Fortsätt i Direkt" to
+  /// the question asked before the first change that reaches families in a
+  /// published period. Not null: answered, once; DraftService.switchMode writes
+  /// null, because a switch of mode is a new decision about who is reached.
+  /// The definer function app.direct_reach_facts reads it for administrators
+  /// who do not read this row (Schemaläggning without Publicering).
+  directReachAcknowledgedAt DateTime? @db.Timestamptz(6)
   createdAt          DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
 
@@ -3292,8 +3302,9 @@ model OptimizationJob {
   /// The changes that would let this refused or timed-out run's week be laid, and how well the engine showed each (omgång 13, G6
   /// Åtgärdsförslag vid vägran; 20270305090000): the engine's answer to /suggest-changes as the gateway whitelisted it
   /// (src/optimization/suggestions.ts), or the state of the analysis that makes it (RUNNING, FAILED). Null when nobody asked and for every
-  /// run before the column. No person's name and no figure of a post is in it (a part-timer's days are stored in their hidden form). DB CHECK:
-  /// a JSON object, at most 8 KiB.
+  /// run before the column. No person's name and no figure of a post is in it (a part-timer's days are stored in their hidden form). A
+  /// RUNNING analysis holds its place by `leaseUntil` inside it, renewed by its process (omgång 15, G6b; 20270313090000), and
+  /// app.optimization_jobs_sweep() writes one whose lease has run out as abandoned. DB CHECK: a JSON object, at most 8 KiB.
   suggestions           Json?
   /// The schedule a run was asked to start from and what became of its lessons (omgång 15, M9 Ett schema som start; 20270308090000):
   /// {source: CURRENT | PREVIOUS_YEAR | VERSION, versionName, engine: USED | OLDER, offered, used, held, moved, laid, dropped: {reason: count}},
@@ -3900,7 +3911,7 @@ model Notification {
 
 /// "Do not e-mail or push me this type" (20261013100000). No row = send; the
 /// in-app row is always written. Own rows only (RLS); never
-/// ABSENCE_UNREPORTED or TEACHER_ABSENCE_REPORTED (CHECKs). The (userId,
+/// ABSENCE_UNREPORTED (CHECK; TEACHER_ABSENCE_REPORTED's was dropped in 20270311090000). The (userId,
 /// schoolId) key to Users lives in the migration; the delivery reads the rows
 /// through app.delivery_opt_outs.
 model NotificationOptOut {

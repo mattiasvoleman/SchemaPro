@@ -246,7 +246,8 @@ describe("the wide search takes what the PR says it takes, and not one character
     ["a hyphen, a plus, a blank and a hyphen before TF", "19000101-+ -TF01"],
     ["four blanks after TF", "19000101TF    01"],
     ["blank, two hyphens and a blank after TF", "19000101TF -- 01"],
-    ["a Windows line break twice before TF (four blanks after the fold)", "19000101\r\n\r\nTF01"],
+    ["a Windows line break twice before TF", "19000101\r\n\r\nTF01"],
+    ["a Windows line break four times before TF (four blanks once the carriage returns are out)", "19000101\r\n\r\n\r\n\r\nTF01"],
     ["one blank between T and F", "19000101T F01"],
     ["one hyphen between T and F", "19000101T-F01"],
   ])("takes %s", (_name, text) => {
@@ -258,7 +259,8 @@ describe("the wide search takes what the PR says it takes, and not one character
     ["three blanks between month and day", "190001   01TF01"],
     ["five blanks before TF", "19000101     TF01"],
     ["five hyphens before TF", "19000101-----TF01"],
-    ["a Windows line break three times before TF", "19000101\r\n\r\n\r\nTF01"],
+    // A carriage return before a line feed is taken out of the cell (X1b: "8001\r\n011234" had two blanks where "8001\n011234" had one), so a Windows break counts as a Unix one: four of them are four blanks, five are not.
+    ["a Windows line break five times before TF", "19000101\r\n\r\n\r\n\r\n\r\nTF01"],
     ["five blanks after TF", "19000101TF     01"],
     ["two blanks between T and F", "19000101T  F01"],
     ["a plus after TF", "19000101TF+01"],

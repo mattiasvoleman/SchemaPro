@@ -241,6 +241,107 @@ describe('Publicering (e2e)', () => {
       expect(harness.tx.$queryRaw.mock.calls[0]![0].strings.join('?')).toContain('app.enter_publication');
     });
 
+    describe('the question before a change in Direkt that reaches families (P5)', () => {
+      /** What app.direct_reach_facts answers: the latest publication of the year that still holds, and whether the school has answered. */
+      const facts = (answered: boolean) => [
+        {
+          publishedAt: new Date('2026-10-01T08:00:00Z'),
+          validFrom: day('2026-10-01'),
+          validTo: day('2027-06-11'),
+          acknowledgedAt: answered ? new Date('2026-10-02T08:00:00Z') : null,
+          answered,
+        },
+      ];
+      const arrange = (mode: 'DIRECT' | 'DRAFT', rows: unknown[]) => {
+        harness.tx.academicYear.findFirst.mockResolvedValue({ id: YEAR_ID });
+        harness.tx.user.count.mockResolvedValue(412);
+        harness.tx.$queryRaw.mockImplementation(async (query: { sql?: string }) => {
+          const text = query.sql ?? '';
+          if (/direct_reach_facts/.test(text)) return rows;
+          if (/GuardianStudents/.test(text)) return [{ n: 689 }];
+          return [{ mode }];
+        });
+      };
+
+      // What these tests stub is theirs: the next test in the file reads the mode and the year as the file's own beforeEach leaves them.
+      afterEach(() => {
+        harness.tx.$queryRaw.mockReset();
+        harness.tx.$queryRaw.mockResolvedValue([]);
+        harness.tx.user.count.mockReset();
+        harness.tx.academicYear.findFirst.mockReset();
+      });
+
+      it('says to ask, which period it is about and how many can get a notice, to every administrator profile, the läsare included', async () => {
+        arrange('DIRECT', facts(false));
+        for (const adminProfile of ['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION', 'LASARE']) {
+          const response = await request(http())
+            .get('/api/v1/publication-settings/direct-reach')
+            .set('x-test-user', asUser({ role: 'SCHOOL_ADMIN' as never, adminProfile: adminProfile as never }))
+            .expect(200);
+          expect(response.body).toEqual({
+            academicYearId: YEAR_ID,
+            mode: 'DIRECT',
+            period: { from: '2026-10-01', to: '2027-06-11' },
+            acknowledgedAt: null,
+            ask: true,
+            audience: { pupils: 412, guardians: 689 },
+          });
+        }
+      });
+
+      it('asks nothing in utkast, or once the school has answered, and counts nobody then', async () => {
+        arrange('DRAFT', facts(false));
+        const draft = await request(http()).get('/api/v1/publication-settings/direct-reach').set('x-test-user', admin()).expect(200);
+        expect(draft.body).toMatchObject({ mode: 'DRAFT', ask: false, audience: null });
+        arrange('DIRECT', facts(true));
+        const answered = await request(http()).get('/api/v1/publication-settings/direct-reach').set('x-test-user', admin()).expect(200);
+        expect(answered.body).toMatchObject({ ask: false, audience: null, acknowledgedAt: '2026-10-02T08:00:00.000Z' });
+      });
+
+      it('takes a läsår of its own and refuses what is not an id', async () => {
+        arrange('DIRECT', facts(false));
+        await request(http()).get('/api/v1/publication-settings/direct-reach?academicYearId=not-an-id').set('x-test-user', admin()).expect(400);
+        harness.tx.academicYear.findUnique.mockResolvedValue({ id: YEAR_ID });
+        await request(http()).get(`/api/v1/publication-settings/direct-reach?academicYearId=${YEAR_ID}`).set('x-test-user', admin()).expect(200);
+      });
+
+      it('lets the profiles that write Publicering answer, writes the answer and answers with the view', async () => {
+        arrange('DIRECT', facts(true));
+        harness.tx.$queryRaw.mockImplementation(async (query: { sql?: string }) => {
+          const text = query.sql ?? '';
+          if (/direct_reach_facts/.test(text)) return facts(true);
+          if (/now\(\)/.test(text)) return [{ now: new Date('2026-10-02T08:00:00.000Z') }];
+          return [{ mode: 'DIRECT' }];
+        });
+        for (const adminProfile of ['FULL', 'REKTOR', 'SCHEMALAGGARE']) {
+          harness.tx.publicationSettings.upsert.mockClear();
+          const response = await request(http())
+            .post('/api/v1/publication-settings/direct-reach/acknowledge')
+            .set('x-test-user', asUser({ role: 'SCHOOL_ADMIN' as never, adminProfile: adminProfile as never }))
+            .send({})
+            .expect(200);
+          expect(response.body).toMatchObject({ ask: false });
+          expect(harness.tx.publicationSettings.upsert).toHaveBeenCalledWith(
+            expect.objectContaining({ update: { directReachAcknowledgedAt: new Date('2026-10-02T08:00:00.000Z') } }),
+          );
+        }
+      });
+
+      it('refuses an answer from a profile that does not write Publicering, by the area, before anything is written', async () => {
+        arrange('DIRECT', facts(false));
+        for (const adminProfile of ['EXPEDITION', 'LASARE']) {
+          harness.tx.publicationSettings.upsert.mockClear();
+          const response = await request(http())
+            .post('/api/v1/publication-settings/direct-reach/acknowledge')
+            .set('x-test-user', asUser({ role: 'SCHOOL_ADMIN' as never, adminProfile: adminProfile as never }))
+            .send({})
+            .expect(403);
+          expect(response.body.code).toBeDefined();
+          expect(harness.tx.publicationSettings.upsert).not.toHaveBeenCalled();
+        }
+      });
+    });
+
     it('refuses a mode that is not DIRECT or DRAFT', async () => {
       await request(http())
         .post('/api/v1/publication-settings/mode')
@@ -757,6 +858,8 @@ describe('Publicering (e2e)', () => {
       ['GET', '/api/v1/publication-settings'],
       ['PUT', '/api/v1/publication-settings'],
       ['POST', '/api/v1/publication-settings/mode'],
+      ['GET', '/api/v1/publication-settings/direct-reach'],
+      ['POST', '/api/v1/publication-settings/direct-reach/acknowledge'],
       ['GET', `/api/v1/publications?academicYearId=${YEAR_ID}`],
       ['GET', `/api/v1/publications/state?academicYearId=${YEAR_ID}`],
       ['POST', '/api/v1/publications/preview'],

@@ -90,6 +90,14 @@ const people = [
   { id: "a3", role: "SCHOOL_ADMIN", firstName: "Lena", lastName: "Borta", email: "lena@skola.se", phone: null, isActive: false, studentGroupId: null, teaches: true },
   { id: "a5", role: "SCHOOL_ADMIN", firstName: "Olof", lastName: "Utan", email: "olof@skola.se", phone: null, isActive: true, studentGroupId: null, teaches: false },
 ];
+// Personer utan e-postadress (20270310090000): a pupil and a guardian the school has no address for. Written with an empty address cell, and
+// left out of a file that names a pupil by address (the memberships), as the gateway's copy does.
+const peopleWithoutAddress = [
+  ...people,
+  { id: "p4", role: "STUDENT", firstName: "Alva", lastName: "Utan", email: null, phone: null, isActive: true, studentGroupId: "g1" },
+  { id: "p5", role: "STUDENT", firstName: "Bo", lastName: "Utan", email: null, phone: "070-111 22 33", isActive: true, studentGroupId: null },
+  { id: "g9", role: "GUARDIAN", firstName: "Vera", lastName: "Utan", email: null, phone: null, isActive: true, studentGroupId: null },
+];
 const groups = [
   { id: "g1", name: "7A", kind: "CLASS", gradeLevel: 7, halfOfId: null, replacesSubjectId: null },
   { id: "g2", name: "7A halva 1", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g1", replacesSubjectId: null },
@@ -224,7 +232,14 @@ function build(): Case[] {
   add("teachersToCsv: without posts", "teachersToCsv", [people, null], teachersToCsv(people));
   add("teacherQualificationsToCsv", "teacherQualificationsToCsv", [qualifications, people, subjects], teacherQualificationsToCsv(qualifications as never, people, subjects));
   add("studentsToCsv", "studentsToCsv", [people, classNames], studentsToCsv(people, className));
+  add("studentsToCsv: a pupil with no address is written with an empty address", "studentsToCsv", [peopleWithoutAddress, classNames], studentsToCsv(peopleWithoutAddress, className));
   add("membershipsToCsv", "membershipsToCsv", [groups, people, memberships], membershipsToCsv(groups, people, memberships));
+  add(
+    "membershipsToCsv: a pupil with no address is not named by it, and is left out",
+    "membershipsToCsv",
+    [groups, peopleWithoutAddress, [...memberships, { studentGroupId: "g2", studentId: "p4" }]],
+    membershipsToCsv(groups, peopleWithoutAddress, [...memberships, { studentGroupId: "g2", studentId: "p4" }]),
+  );
   add("teacherDutiesToCsv", "teacherDutiesToCsv", [duties, people, subjects, groups], teacherDutiesToCsv(duties as never, people, subjects, groups));
   add("requirementsToCsv", "requirementsToCsv", [requirements, groups, subjects, people], requirementsToCsv(requirements as never, groups, subjects, people));
   add("requirementsToCsv: a split post adds the column", "requirementsToCsv", [splitRequirements, groups, subjects, people], requirementsToCsv(splitRequirements as never, groups, subjects, people));

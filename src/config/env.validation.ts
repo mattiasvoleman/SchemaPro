@@ -427,6 +427,32 @@ export class EnvironmentVariables {
   @ValidateIf((env: EnvironmentVariables) => !isBlank(env.SS12000_ALLOW_INSECURE_LOCAL))
   @IsIn(['0', '1'])
   SS12000_ALLOW_INSECURE_LOCAL?: string;
+
+  /**
+   * OPTIONAL (Första veckan utan operatören): the operator's word that the Supabase Auth project sends its mail through its OWN SMTP
+   * (Authentication → SMTP). Every invitation and every password reset is a mail from Supabase Auth, and Supabase's own sender lets
+   * two an hour through, so the administrator's start page says whether anybody has said otherwise. The API cannot read the project's
+   * setting: the token that does is the operator's own (docs/DEPLOYMENT.md §7.1). `custom`, or nothing; blank is nothing. It changes
+   * what the page says and nothing the API does.
+   */
+  @ValidateIf((env: EnvironmentVariables) => !isBlank(env.AUTH_SMTP))
+  @IsIn(['custom'])
+  AUTH_SMTP?: string;
+
+  /**
+   * OPTIONAL: the project's mail limit an hour, as the operator read it under Authentication → Rate Limits (30 is what a project gets
+   * with its own SMTP). The administrator's page says how long a mass invitation takes at it. Blank is not set, as for
+   * AI_ENGINE_TIMEOUT_MS.
+   */
+  @Transform(({ value, obj, key }) => {
+    const raw = (obj as Record<string, unknown>)[key];
+    return isBlank(raw) || (typeof raw === 'string' && raw.trim() === '') ? undefined : value;
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100_000)
+  AUTH_EMAIL_LIMIT_PER_HOUR?: number;
 }
 
 export function validateEnv(

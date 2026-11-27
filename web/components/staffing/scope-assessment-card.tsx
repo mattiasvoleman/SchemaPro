@@ -14,6 +14,7 @@ import {
   SCOPE_EXCEPTIONS,
   SCOPE_LEVEL_MAX,
   SCOPE_NOTE_MAX,
+  schoolToday,
   scopeDraftToBody,
   scopeToDraft,
   validateScopeDraft,
@@ -74,7 +75,11 @@ export function ScopeAssessmentCard({ teacher, academicYearId, assessment, fullT
     setDraft(scopeToDraft(assessment));
     setEditing(true);
   };
-  const problem: ScopeAssessmentProblem | null = validateScopeDraft(draft);
+  // The day of an own initiative is one that has been: the school's own today is the last the form takes, as the gateway's is.
+  const today = schoolToday(timeZone);
+  const problem: ScopeAssessmentProblem | null = validateScopeDraft(draft, today);
+  const typedLevel = /^\d+$/.test(draft.level.trim()) ? Number(draft.level.trim()) : null;
+  const levelOverEdge = typedLevel !== null && fullTimeHighestHours !== null && typedLevel > fullTimeHighestHours;
   const problemText = (p: ScopeAssessmentProblem) => {
     const { reason, ...values } = p;
     return t(`problems.${reason}`, values as Record<string, number>);
@@ -160,6 +165,11 @@ export function ScopeAssessmentCard({ teacher, academicYearId, assessment, fullT
             <p id={id("level-hint")} className="text-xs text-muted-foreground">
               {fullTimeHighestHours === null ? t("levelHintNoEdge") : t("levelHint", { edge: formatFigure(fullTimeHighestHours, locale) })}
             </p>
+            {levelOverEdge ? (
+              // Not a refusal: the gateway holds the level to the highest edge of any stage and the teacher's stages change with the schedule, so a
+              // level above today's edge is kept. The report reads it as the edge (the review of #411, L-3), and the form says so before it is saved.
+              <p className="text-xs text-muted-foreground">{t("levelOverStageEdge", { edge: formatFigure(fullTimeHighestHours!, locale) })}</p>
+            ) : null}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor={id("exception")}>{t("exceptionLabel")}</Label>
@@ -188,7 +198,7 @@ export function ScopeAssessmentCard({ teacher, academicYearId, assessment, fullT
           {draft.exceptionKind === "OWN_INITIATIVE" ? (
             <div className="space-y-1.5">
               <Label htmlFor={id("day")}>{t("day")}</Label>
-              <Input id={id("day")} type="date" value={draft.ownInitiativeOn} onChange={(event) => patch({ ownInitiativeOn: event.target.value })} />
+              <Input id={id("day")} type="date" max={today} value={draft.ownInitiativeOn} onChange={(event) => patch({ ownInitiativeOn: event.target.value })} />
               <p className="text-xs text-muted-foreground">{t("dayHint")}</p>
             </div>
           ) : null}

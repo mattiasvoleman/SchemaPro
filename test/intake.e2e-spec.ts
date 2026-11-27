@@ -31,6 +31,10 @@ describe('/api/v1/intake (e2e)', () => {
     harness.tx['teachingRequirement']!['count']!.mockResolvedValue(30);
     harness.tx['teacherEmployment']!['count']!.mockResolvedValue(10);
     harness.tx['staffingPolicy']!['findUnique']!.mockResolvedValue(null);
+    // What the school has turned on and set up beyond what Generera asks: no row of any of them is "off", as it is for a school that never touched them.
+    for (const model of ['lunchSetting', 'absenceWatchSetting', 'ackSetting', 'publicationSettings', 'coverSettings']) {
+      harness.tx[model]!['findUnique']!.mockResolvedValue(null);
+    }
     harness.tx['frameTime']!['findMany']!.mockResolvedValue([{ minGradeLevel: 7, maxGradeLevel: 9 }]);
     harness.tx['studentGroup']!['findMany']!.mockResolvedValue([]);
     harness.tx['studentGroup']!['count']!.mockResolvedValue(0);
@@ -54,7 +58,7 @@ describe('/api/v1/intake (e2e)', () => {
     }
   });
 
-  it('answers one shape: eleven areas, each with what it found, whether it waits for a year and every gap it has, and the three counts', async () => {
+  it('answers one shape: fifteen areas, each with what it found, whether it waits for a year and every gap it has, and the three counts', async () => {
     const response = await http().get('/api/v1/intake').set('x-test-user', asUser({})).expect(200);
     expect(Object.keys(response.body).sort()).toEqual(['areas', 'hard', 'info', 'soft', 'year']);
     expect(response.body.areas.map((area: { area: string }) => area.area)).toEqual([
@@ -63,12 +67,16 @@ describe('/api/v1/intake (e2e)', () => {
       'ROOMS',
       'FRAME_TIMES',
       'RASTS',
+      'BREAKS',
+      'LUNCH',
+      'SUPERVISION',
       'CLASSES',
       'TEACHING_GROUPS',
       'PEOPLE',
       'TIMPLAN',
       'REQUIREMENTS',
       'STAFFING',
+      'SWITCHES',
     ]);
     for (const area of response.body.areas) {
       expect(Object.keys(area).sort()).toEqual(['area', 'found', 'gaps', 'waitsForYear']);

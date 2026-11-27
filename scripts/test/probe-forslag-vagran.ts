@@ -14,6 +14,10 @@
  *   ag-e  the whitelist holds across the database: a column a hand edited (a part-timer's days in the open) is shown as nothing;
  *   ag-f  the engine's cores are one stream at a time (D2): Generera's start is refused 409 SUGGESTIONS_RUNNING while an analysis of the year
  *         is alive, and an analysis is refused 409 SUGGESTIONS_YEAR_BUSY while a schemaförslag run of the year is alive;
+ *   ag-h  the analysis holds its place by a lease (G6b, 20270313090000): a press writes it from the database's clock and a renewal moves
+ *         it, over its own analysis only; a restart ends the analyses it holds at once (and gives back the finished one a press was asked
+ *         over); a lapsed lease is what Generera's start and every reader judge without any sweep, and the sweep, through its door, writes
+ *         it as abandoned or as the finished analysis (the web's whitelist accepts what SQL wrote), skipping a row another transaction holds
  *   ag-g  and 409 SUGGESTIONS_YEAR_BUSY for a press that queued behind a Generera's start for the year's lock: it read its run as the newest
  *         before the start inserted its job, and counts the job after it.
  */
@@ -27,6 +31,7 @@ import type { AiEngineSuggestChangesResponse } from '../../src/optimization/inte
 import { OptimizationJobsService } from '../../src/optimization/optimization-jobs.service';
 import type { OptimizationProxyService } from '../../src/optimization/optimization-proxy.service';
 import { SuggestionsService } from '../../src/optimization/suggestions.service';
+import { yearHasRunningSuggestions } from '../../src/optimization/suggestions-running';
 
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
 
@@ -79,7 +84,8 @@ export async function suggestionsChecks(owner: Client, api: PrismaService, marke
   const b = await schoolOf('b');
 
   // The engine, answered by hand: every call waits for the probe to say so.
-  const calls: Array<(response: AiEngineSuggestChangesResponse) => void> = [];
+  type Call = ((response: AiEngineSuggestChangesResponse) => void) & { reject: (error: unknown) => void };
+  const calls: Call[] = [];
   const RULE = '11111111-1111-4111-8111-111111111111';
   const proxy = {
     waitSeconds: 240,
@@ -94,7 +100,7 @@ export async function suggestionsChecks(owner: Client, api: PrismaService, marke
       nameOf: () => undefined,
       teacherOfRule: (id: string) => (id === RULE ? a.teacher : undefined),
     }),
-    callAiEngine: () => new Promise<AiEngineSuggestChangesResponse>((resolve) => calls.push(resolve)),
+    callAiEngine: () => new Promise<AiEngineSuggestChangesResponse>((resolve, reject) => calls.push(Object.assign(resolve, { reject }))),
   };
   const service = new SuggestionsService(api, proxy as unknown as OptimizationProxyService);
   const jobs = new OptimizationJobsService(proxy as unknown as OptimizationProxyService, api);
@@ -129,6 +135,31 @@ export async function suggestionsChecks(owner: Client, api: PrismaService, marke
     assert.fail(`never: ${what}`);
   };
   const codeOf = (error: unknown): string | undefined => (error instanceof HttpException ? (error.getResponse() as { code?: string }).code : undefined);
+  const ISO = `'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'`;
+  /** The analysis of a run as a process that went away left it: started ten minutes ago, its lease run out a minute ago. */
+  const lapse = async (id: string): Promise<void> => {
+    await owner.query(
+      `UPDATE "OptimizationJobs"
+          SET "suggestions" = jsonb_set(jsonb_set("suggestions", '{startedAt}', to_jsonb(to_char((now() - interval '10 minutes') AT TIME ZONE 'UTC', ${ISO}))),
+                                        '{leaseUntil}', to_jsonb(to_char((now() - interval '1 minute') AT TIME ZONE 'UTC', ${ISO})))
+        WHERE id = $1`,
+      [id],
+    );
+  };
+  /** Seconds from the database's now to the lease of an analysis (null: none), by the database's clock. */
+  const leaseLeft = async (id: string): Promise<number | null> => {
+    const row = await one<{ left: string | null }>(
+      `SELECT extract(epoch FROM ("suggestions"->>'leaseUntil')::timestamptz - now())::text AS "left" FROM "OptimizationJobs" WHERE id = $1`,
+      [id],
+    );
+    return row.left === null ? null : Number(row.left);
+  };
+  const renewOf = service as unknown as { renew(jobId: string, user: AuthenticatedUser, startedAt: string): Promise<void> };
+  const sweepDoor = async (): Promise<number> =>
+    Number((await api.withDeliveryService((tx) => tx.$queryRaw<{ changed: number }[]>`SELECT app.optimization_jobs_sweep() AS "changed"`))[0]!.changed);
+  let newer = 200_000;
+  /** A run of school b that is the year's newest, with nothing in the column. */
+  const newestRun = async (): Promise<string> => plantRun(b, { createdAt: new Date(Date.now() + (newer += 10_000)).toISOString() });
 
   try {
     let first = '';
@@ -171,13 +202,13 @@ export async function suggestionsChecks(owner: Client, api: PrismaService, marke
       await until('the engine was asked by the process that will be lost', async () => calls.length === 1);
       const lost = calls.shift()!;
       const startedAt = (await column(first)).startedAt!;
-      await owner.query(
-        `UPDATE "OptimizationJobs" SET "suggestions" = jsonb_set("suggestions", '{startedAt}', to_jsonb(to_char((now() - interval '10 minutes') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))) WHERE id = $1`,
-        [first],
-      );
+      await lapse(first);
+      // THE PRESS WAS OVER A FINISHED ANALYSIS (ag-a, ag-b: a list), so what is read of the abandoned one is that list and not a failure (G6b,
+      // g385-L-5): the school keeps what it could use, and the failure is only for a press that was asked over nothing (ag-c2).
       const read = await jobs.get(first, a.admin);
-      assert.equal(read.suggestions?.state, 'FAILED');
-      assert.equal(read.suggestions?.failure, 'ABANDONED');
+      assert.equal(read.suggestions?.state, 'DONE');
+      assert.equal(read.suggestions?.verdict, 'CHANGES');
+      assert.equal(read.suggestions?.changes[0]?.rule, 'TEACHER_DAILY_CAP');
       // A new press takes it over.
       const taken = await service.start(first, a.admin);
       assert.equal(taken.state, 'RUNNING');
@@ -191,6 +222,196 @@ export async function suggestionsChecks(owner: Client, api: PrismaService, marke
       assert.equal(held.startedAt, taken.startedAt);
       calls.shift()!(answer());
       await until('the one that took over is DONE', async () => (await column(first)).state === 'DONE');
+    });
+
+    await check('(ag-c2) an analysis asked over nothing, RUNNING for longer than any lasts, reads as abandoned: a failure, as it always did', async () => {
+      const fresh = await plantRun(b);
+      await service.start(fresh, b.admin);
+      await until('the engine was asked', async () => calls.length === 1);
+      const lost = calls.shift()!;
+      await lapse(fresh);
+      const read = await jobs.get(fresh, b.admin);
+      assert.equal(read.suggestions?.state, 'FAILED');
+      assert.equal(read.suggestions?.failure, 'ABANDONED');
+      lost(answer());
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+
+    await check('(ag-c3) a press over a finished analysis keeps it in the column while it runs (the column\'s own check accepts the two), and a failure gives it back (G6b)', async () => {
+      calls.length = 0;
+      const run = await plantRun(b, { createdAt: new Date(Date.now() + 120_000).toISOString() });
+      await service.start(run, b.admin);
+      await until('the engine was asked', async () => calls.length === 1);
+      calls.shift()!(answer());
+      await until('the column is DONE', async () => (await column(run)).state === 'DONE');
+      const finished = await column(run);
+      assert.equal(finished.verdict, 'CHANGES');
+      // The second press, over the list: RUNNING with the list inside it, through the column's CHECK.
+      await service.start(run, b.admin);
+      await until('the engine was asked again', async () => calls.length === 1);
+      const running = await one<{ state: string; kept: string | null }>(
+        `SELECT "suggestions"->>'state' AS state, "suggestions"->'previous'->>'verdict' AS kept FROM "OptimizationJobs" WHERE id = $1`,
+        [run],
+      );
+      assert.deepEqual(running, { state: 'RUNNING', kept: 'CHANGES' });
+      // What a reader is shown meanwhile is the running analysis, and never the list it was asked over.
+      assert.ok(!JSON.stringify((await jobs.get(run, b.admin)).suggestions).includes('previous'));
+      // The engine is busy: the failure does not replace the list.
+      calls.shift()!.reject(new HttpException({ message: 'one at a time' }, 429));
+      await until('the list is back', async () => (await column(run)).state === 'DONE');
+      assert.deepEqual(await column(run), finished, 'the very analysis it was before the press');
+      assert.equal((await jobs.get(run, b.admin)).suggestions?.state, 'DONE');
+    });
+
+    await check('(ag-h1) a press writes the lease from the database\'s clock, a renewal moves it over its own analysis only, and an analysis that has ended has none', async () => {
+      calls.length = 0;
+      const run = await newestRun();
+      await service.start(run, b.admin);
+      await until('the engine was asked', async () => calls.length === 1);
+      const startedAt = (await column(run)).startedAt!;
+      const claimed = await leaseLeft(run);
+      assert.ok(claimed !== null && claimed > 170 && claimed <= 180.5, `the lease is the database's now plus 180 s, not ${claimed}`);
+      // A renewal takes it to the database's now plus 180 s again, however near its end it was.
+      await owner.query(`UPDATE "OptimizationJobs" SET "suggestions" = jsonb_set("suggestions", '{leaseUntil}', to_jsonb(to_char((now() + interval '10 seconds') AT TIME ZONE 'UTC', ${ISO}))) WHERE id = $1`, [run]);
+      assert.ok((await leaseLeft(run))! < 11);
+      await renewOf.renew(run, b.admin, startedAt);
+      const renewed = await leaseLeft(run);
+      assert.ok(renewed !== null && renewed > 170 && renewed <= 180.5, `renewed to ${renewed}`);
+      // Over an analysis that is not its own it moves nothing.
+      await owner.query(`UPDATE "OptimizationJobs" SET "suggestions" = jsonb_set("suggestions", '{leaseUntil}', to_jsonb(to_char((now() + interval '10 seconds') AT TIME ZONE 'UTC', ${ISO}))) WHERE id = $1`, [run]);
+      await renewOf.renew(run, b.admin, '2000-01-01T00:00:00.000Z');
+      assert.ok((await leaseLeft(run))! < 11, 'another press\'s lease is not renewed by this one');
+      // The page is told RUNNING, not for how long.
+      const view = (await jobs.get(run, b.admin)).suggestions as unknown as Record<string, unknown>;
+      assert.equal(view.state, 'RUNNING');
+      assert.ok(!('leaseUntil' in view) && !('previous' in view));
+      // When it ends the column holds no lease, and a late renewal finds nothing to renew.
+      calls.shift()!(answer());
+      await until('the column is DONE', async () => (await column(run)).state === 'DONE');
+      assert.equal(await leaseLeft(run), null);
+      await renewOf.renew(run, b.admin, startedAt);
+      assert.equal((await column(run)).state, 'DONE');
+      assert.equal(await leaseLeft(run), null);
+    });
+
+    await check('(ag-h2) a restart ends an analysis at once, over nothing as a failure and over a finished analysis as that analysis; the engine\'s late answer lands nowhere', async () => {
+      calls.length = 0;
+      const bare = await newestRun();
+      await service.start(bare, b.admin);
+      await until('the engine was asked', async () => calls.length === 1);
+      await service.onModuleDestroy();
+      assert.equal((await column(bare)).state, 'FAILED');
+      assert.equal((await jobs.get(bare, b.admin)).suggestions?.failure, 'ABANDONED');
+      assert.equal(await leaseLeft(bare), null);
+      calls.shift()!(answer());
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert.equal((await column(bare)).state, 'FAILED', 'the late answer is not written over an analysis that has ended');
+
+      const asked = await newestRun();
+      await service.start(asked, b.admin);
+      await until('the engine was asked', async () => calls.length === 1);
+      calls.shift()!(answer());
+      await until('the column is DONE', async () => (await column(asked)).state === 'DONE');
+      const finished = await column(asked);
+      await service.start(asked, b.admin);
+      await until('the engine was asked again', async () => calls.length === 1);
+      assert.equal((await column(asked)).state, 'RUNNING');
+      await service.onModuleDestroy();
+      assert.deepEqual(await column(asked), finished, 'the list the press was asked over is back');
+      calls.shift()!(answer());
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Nothing is left to end.
+      await service.onModuleDestroy();
+    });
+
+    await check('(ag-h3) a lapsed lease is what Generera\'s start and every reader judge, with no sweep; one that holds still holds the year', async () => {
+      calls.length = 0;
+      const run = await newestRun();
+      await service.start(run, b.admin);
+      await until('the engine was asked', async () => calls.length === 1);
+      assert.equal(await api.withRls(b.admin, (tx) => yearHasRunningSuggestions(tx, b.year)), true, 'a held lease holds the year');
+      // The same analysis, whose start is old and whose lease is long: it still holds (a renewal, not the age, decides).
+      await owner.query(`UPDATE "OptimizationJobs" SET "suggestions" = jsonb_set("suggestions", '{startedAt}', to_jsonb(to_char((now() - interval '20 minutes') AT TIME ZONE 'UTC', ${ISO}))) WHERE id = $1`, [run]);
+      assert.equal(await api.withRls(b.admin, (tx) => yearHasRunningSuggestions(tx, b.year)), true);
+      assert.equal((await jobs.get(run, b.admin)).suggestions?.state, 'RUNNING');
+      await lapse(run);
+      assert.equal(await api.withRls(b.admin, (tx) => yearHasRunningSuggestions(tx, b.year)), false, 'a lapsed lease holds nobody off, and nothing swept it');
+      assert.equal((await column(run)).state, 'RUNNING', 'the column still says RUNNING: this is the reading, not the sweep');
+      assert.equal((await jobs.get(run, b.admin)).suggestions?.failure, 'ABANDONED');
+      // An analysis from before the lease (no key at all) is judged by its start, as it was.
+      await owner.query(`UPDATE "OptimizationJobs" SET "suggestions" = ("suggestions" - 'leaseUntil') || jsonb_build_object('startedAt', to_char((now() - interval '2 minutes') AT TIME ZONE 'UTC', ${ISO})) WHERE id = $1`, [run]);
+      assert.equal(await api.withRls(b.admin, (tx) => yearHasRunningSuggestions(tx, b.year)), true, 'two minutes old, no lease: alive');
+      await owner.query(`UPDATE "OptimizationJobs" SET "suggestions" = jsonb_set("suggestions", '{startedAt}', to_jsonb(to_char((now() - interval '5 minutes') AT TIME ZONE 'UTC', ${ISO}))) WHERE id = $1`, [run]);
+      assert.equal(await api.withRls(b.admin, (tx) => yearHasRunningSuggestions(tx, b.year)), false, 'five minutes old, no lease: past the four a start waits for');
+      assert.equal((await jobs.get(run, b.admin)).suggestions?.state, 'RUNNING', '... and not yet the six a read waits for');
+      // A press takes the place of a lapsed lease: the claim, not a sweep.
+      await lapse(run);
+      const again = await service.start(run, b.admin);
+      assert.equal(again.state, 'RUNNING');
+      await until('the engine was asked by the press that took the place', async () => calls.length === 2);
+      assert.ok((await leaseLeft(run))! > 170);
+      calls.splice(0).forEach((call) => call(answer()));
+      await until('the analysis that took over is DONE', async () => (await column(run)).state === 'DONE');
+    });
+
+    await check('(ag-h4) the sweep, through its door, writes a lapsed analysis as abandoned or as the finished analysis it was asked over, the web\'s whitelist accepts it, and it skips a row a transaction holds', async () => {
+      calls.length = 0;
+      const bare = await newestRun();
+      await service.start(bare, b.admin);
+      await until('the engine was asked', async () => calls.length === 1);
+      const lost = calls.shift()!;
+      await lapse(bare);
+      // Held by another transaction: skipped, not waited for (a hang here is the regression: the probe fails it after five seconds).
+      await owner.query('BEGIN');
+      try {
+        await owner.query(`SELECT 1 FROM "OptimizationJobs" WHERE id = $1 FOR UPDATE`, [bare]);
+        const swept = await Promise.race([sweepDoor(), new Promise<'waited'>((resolve) => setTimeout(() => resolve('waited'), 5000))]);
+        assert.notEqual(swept, 'waited', 'the sweep waited for a row another transaction holds');
+        assert.equal(swept, 0, 'an analysis is not a run it counts');
+        assert.equal((await column(bare)).state, 'RUNNING', 'the held row was skipped');
+      } finally {
+        await owner.query('ROLLBACK');
+      }
+      assert.equal(await sweepDoor(), 0);
+      const written = await one<{ s: Record<string, unknown> }>(`SELECT "suggestions" AS s FROM "OptimizationJobs" WHERE id = $1`, [bare]);
+      assert.equal(written.s.state, 'FAILED');
+      assert.equal(written.s.failure, 'ABANDONED');
+      assert.equal(written.s.leaseUntil, null);
+      assert.equal(typeof written.s.finishedAt, 'string');
+      // What SQL wrote is an analysis the service reads as one: through the whitelist, not as nothing.
+      const read = (await jobs.get(bare, b.admin)).suggestions;
+      assert.equal(read?.state, 'FAILED');
+      assert.equal(read?.failure, 'ABANDONED');
+      assert.equal(read?.finishedAt, written.s.finishedAt, 'it ended when its lease ran out, and every read says so');
+      lost(answer());
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert.equal((await column(bare)).state, 'FAILED', 'the lost process\'s late answer lands nowhere');
+
+      // Asked over a finished analysis: that analysis is back, and it is the one the whitelist reads.
+      const asked = await newestRun();
+      await service.start(asked, b.admin);
+      await until('the engine was asked', async () => calls.length === 1);
+      calls.shift()!(answer());
+      await until('the column is DONE', async () => (await column(asked)).state === 'DONE');
+      const finished = await one<{ s: unknown }>(`SELECT "suggestions" AS s FROM "OptimizationJobs" WHERE id = $1`, [asked]);
+      await service.start(asked, b.admin);
+      await until('the engine was asked again', async () => calls.length === 1);
+      const lostToo = calls.shift()!;
+      await lapse(asked);
+      assert.equal(await sweepDoor(), 0);
+      const restored = await one<{ s: unknown }>(`SELECT "suggestions" AS s FROM "OptimizationJobs" WHERE id = $1`, [asked]);
+      assert.deepEqual(restored.s, finished.s, 'the very analysis it was before the press');
+      assert.equal((await jobs.get(asked, b.admin)).suggestions?.verdict, 'CHANGES');
+      lostToo(answer());
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      // A lease that holds is left alone by the sweep.
+      const alive = await newestRun();
+      await service.start(alive, b.admin);
+      await until('the engine was asked', async () => calls.length === 1);
+      assert.equal(await sweepDoor(), 0);
+      assert.equal((await column(alive)).state, 'RUNNING');
+      calls.shift()!(answer());
+      await until('the column is DONE', async () => (await column(alive)).state === 'DONE');
     });
 
     await check('(ag-d) a run it may not be asked for is 409 with its code and wakes nothing; another school sees no such run', async () => {

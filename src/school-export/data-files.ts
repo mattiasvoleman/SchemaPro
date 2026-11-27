@@ -168,7 +168,7 @@ interface PersonRow {
   role: string;
   first: string;
   last: string;
-  email: string;
+  email: string | null;
   phone: string | null;
   active: boolean;
   klass: string | null;
@@ -220,7 +220,7 @@ export const PERSONER: DataFile = {
       env.named('PEOPLE', batch.map((row) => row.id));
       for (const row of batch) {
         yield [
-          row.id, row.role, row.first, row.last, row.email, text(row.phone), row.active ? 'ja' : 'nej', text(row.klass),
+          row.id, row.role, row.first, row.last, text(row.email), text(row.phone), row.active ? 'ja' : 'nej', text(row.klass),
           row.created, text(row.deactivated), text(row.pseudonymised), text(row.profile), row.hr ? 'ja' : 'nej',
         ];
       }
@@ -728,6 +728,7 @@ interface NoticeRow {
   type: string;
   content: string | null;
   mentionsMarked: boolean;
+  aboutColleague: boolean;
   readAt: string | null;
   emailedAt: string | null;
   created: string;
@@ -743,7 +744,7 @@ export const NOTISER: DataFile = {
     { name: 'mottagare_id', doc: 'Mottagarens id (personer.csv).' },
     { name: 'mottagare_epost', doc: 'Mottagarens e-postadress.' },
     { name: 'typ', doc: 'Notisens typ, till exempel LEAVE_DECIDED eller LESSON_CANCELLED.' },
-    { name: 'innehall', doc: 'Notisens innehåll som JSON-text. Tomt om innehållet nämner en person med skyddad identitet.' },
+    { name: 'innehall', doc: 'Notisens innehåll som JSON-text. Tomt om innehållet nämner en person med skyddad identitet, och i ett registerutdrag för en notis om en kollegas egen frånvaroanmälan (TEACHER_ABSENCE_REPORTED).' },
     { name: 'last', doc: 'När mottagaren läste notisen (UTC), tomt om den inte lästs.' },
     { name: 'epostad', doc: 'När notisen skickades som e-post (UTC), tomt om den inte gjorts.' },
     { name: 'skapad', doc: 'När notisen skapades (UTC).' },
@@ -753,12 +754,21 @@ export const NOTISER: DataFile = {
     let after: { at: string; id: string } | null = null;
     // No marked person, nothing to look for in a notice's content: the scan of every notice is for a school that has marks.
     const mentioned = mentions(env, Prisma.sql`n."meta"::text`);
+    // The notice every administrator gets when a teacher reports their own absence (TeacherAbsencesService.tellAdmins) names the teacher, the
+    // period and whether it was whole days: what the row of the absence says and the registerutdrag of the one who registered it does not
+    // (K7b). In a registerutdrag it is empty where the teacher is not one of the persons asked for, so that an administrator is not handed
+    // every colleague's absence in the notices; the school's own file is as it was.
+    const colleaguesAbsence =
+      env.scope.ids === null
+        ? Prisma.sql`false`
+        : Prisma.sql`(n."type" = 'TEACHER_ABSENCE_REPORTED' AND NOT (coalesce(n."meta"->>'userId', '') = ANY(${[...env.scope.ids]}::text[])))`;
     for (;;) {
       const batch: NoticeRow[] = await env.read((tx) =>
         tx.$queryRaw<NoticeRow[]>(Prisma.sql`
           SELECT n."id"::text AS id, n."userId"::text AS recipient, u."email" AS "recipientEmail", n."type"::text AS type,
                  n."meta"::text AS content,
                  ${mentioned} AS "mentionsMarked",
+                 ${colleaguesAbsence} AS "aboutColleague",
                  ${ISO(Prisma.sql`n."readAt"`)} AS "readAt", ${ISO(Prisma.sql`n."emailedAt"`)} AS "emailedAt", ${ISO(Prisma.sql`n."createdAt"`)} AS created,
                  to_char(n."createdAt", 'YYYY-MM-DD HH24:MI:SS.US+00') AS at
             FROM "Notifications" n JOIN "Users" u ON u."id" = n."userId"
@@ -773,9 +783,10 @@ export const NOTISER: DataFile = {
       env.named('PEOPLE', batch.map((row) => row.recipient));
       let blanked = 0;
       for (const row of batch) {
-        if (row.mentionsMarked) blanked += 1;
+        const empty = row.mentionsMarked || row.aboutColleague;
+        if (empty) blanked += 1;
         yield [
-          row.id, row.recipient, row.recipientEmail, row.type, row.mentionsMarked ? '' : text(row.content),
+          row.id, row.recipient, row.recipientEmail, row.type, empty ? '' : text(row.content),
           text(row.readAt), text(row.emailedAt), row.created,
         ];
       }

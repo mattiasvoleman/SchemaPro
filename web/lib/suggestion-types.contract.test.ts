@@ -80,7 +80,7 @@ describe("what this test reads (a parse that finds nothing would pass everything
     expect(gatewayList(GATEWAY, "SUGGESTION_FAILURES"), COUNT).toHaveLength(5);
     expect(webUnion("SuggestionRule"), COUNT).toHaveLength(5);
     expect(fields(GATEWAY, "StoredChange").size, COUNT).toBe(13);
-    expect(fields(GATEWAY, "SuggestionsStored").size, COUNT).toBe(11);
+    expect(fields(GATEWAY, "SuggestionsStored").size, COUNT).toBe(13);
     expect(fields(WEB, "SuggestionChange").size, COUNT).toBe(13);
     expect(fields(WEB, "Suggestions").size, COUNT).toBe(11);
   });
@@ -124,10 +124,26 @@ describe("the fields of a change", () => {
 });
 
 describe("the fields of the answer", () => {
-  const gateway = fields(GATEWAY, "SuggestionsStored");
+  // The view the page reads is the stored value without `previous` (the finished analysis a RUNNING one was asked over, G6b: the column's own, no
+  // view carries it) and without `leaseUntil` (until when a RUNNING one holds its place: the column's own too), and with its changes made views.
+  const gateway = new Map(fields(GATEWAY, "SuggestionsStored"));
+  gateway.delete("previous");
+  gateway.delete("leaseUntil");
 
-  it("says the gateway's view is the stored value with its changes made views (so that this reads the right interface)", () => {
-    expect(GATEWAY).toMatch(/export type SuggestionsView = Omit<SuggestionsStored, 'changes'> & \{ changes: SuggestionChangeView\[\] \};/);
+  it("says the gateway's view is the stored value without previous and leaseUntil and with its changes made views (so that this reads the right interface)", () => {
+    expect(GATEWAY).toMatch(
+      /export type SuggestionsView = Omit<SuggestionsStored, 'changes' \| 'previous' \| 'leaseUntil'> & \{ changes: SuggestionChangeView\[\] \};/,
+    );
+  });
+
+  it("keeps the lease out of the view: the page is told RUNNING, not for how long", () => {
+    expect([...fields(WEB, "Suggestions").keys()]).not.toContain("leaseUntil");
+    expect(fields(GATEWAY, "SuggestionsStored").get("leaseUntil")).toBe("string | null");
+  });
+
+  it("keeps the previous analysis out of the view: the page is never shown what a press was asked over", () => {
+    expect([...fields(WEB, "Suggestions").keys()]).not.toContain("previous");
+    expect(fields(GATEWAY, "SuggestionsStored").get("previous")).toBe("SuggestionsStored | null");
   });
 
   it("has the gateway's names, and no other", () => {

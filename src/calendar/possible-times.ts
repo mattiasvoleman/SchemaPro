@@ -342,6 +342,11 @@ export interface Run {
   kind: 'FREE' | 'CHANGE' | 'CLOSED' | 'IN_THE_WAY' | 'CROWDED' | 'STANDS';
   code?: ClosedCode;
   params?: Record<string, string | number>;
+  /**
+   * CHANGE: the room each lesson of the unit that has to stand in another than its own is free in, as the judge let it through. A run is cut
+   * where the rooms change, so the board can lay a lesson on any square of it with the room that square was judged in.
+   */
+  rooms?: Array<{ lessonId: string; roomId: string | null }>;
   /** IN_THE_WAY: the lesson that holds it. */
   blockerId?: string;
   /** CROWDED: how many units hold it, and whether one of them is locked. */
@@ -351,7 +356,8 @@ export interface Run {
 
 /** The final answer of one start, before runs are cut. */
 export type Settled =
-  | { kind: 'FREE' | 'CHANGE' | 'STANDS' }
+  | { kind: 'FREE' | 'STANDS' }
+  | { kind: 'CHANGE'; rooms: Array<{ lessonId: string; roomId: string | null }> }
   | { kind: 'CLOSED'; code: ClosedCode; params: Record<string, string | number> }
   | { kind: 'IN_THE_WAY'; blockerId: string }
   | { kind: 'CROWDED'; units: number; locked: boolean }
@@ -377,6 +383,8 @@ export function runsOf(settled: ReadonlyArray<{ dayOfWeek: number; startMinutes:
     if (answer.kind === 'CLOSED') {
       run.code = answer.code;
       run.params = answer.params;
+    } else if (answer.kind === 'CHANGE') {
+      run.rooms = answer.rooms;
     } else if (answer.kind === 'IN_THE_WAY') {
       run.blockerId = answer.blockerId;
     } else if (answer.kind === 'CROWDED') {

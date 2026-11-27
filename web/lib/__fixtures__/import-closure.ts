@@ -41,6 +41,33 @@ const BANNED_IDENTIFIERS = new Set([
 const BANNED_PROPERTIES = new Set(["cookie", "sendBeacon", "serviceWorker", "submit", "postMessage", "innerHTML", "outerHTML", "insertAdjacentHTML", "ping"]);
 /** The objects whose properties are the page's globals: `window["fetch"]` and `globalThis[name]` reach what the identifier list names, by a string. */
 const GLOBAL_OBJECT = /\b(window|globalThis|self|top|parent)\b/;
+/**
+ * The names of the objects a page reaches its own window by, and the places it can navigate from (X1b, the review of #398 L-4). `const w: any = window; w.location.assign(url)` passed every rule above: none of them sees a
+ * navigation reached through a name of its own. Nothing the pseudonymiser does needs one of these: its only use of the browser's objects is `document.createElement("a")` for a download, so they are banned as REFERENCES, wherever they
+ * stand and however they are renamed, and a way out by an alias has nothing to start from.
+ */
+const GLOBAL_REFERENCES = new Set(["window", "globalThis", "self", "top", "parent", "frames", "opener", "location", "history", "navigator"]);
+/** The ONE thing the code does with `document`: `document.createElement("a")`. Any other use is a finding (document.location, document.body, document.defaultView, and a document handed to something else). */
+const ALLOWED_DOCUMENT_USE = "createElement";
+
+/** True where an identifier is a NAME and not a reference: `x.top`, `{ top: 1 }`, `interface A { top: number }`, a parameter or a variable being declared (a local called `name` is a local). */
+function isNameOnly(node: ts.Identifier): boolean {
+  const parent = node.parent;
+  return (
+    (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+    (ts.isPropertyAssignment(parent) && parent.name === node) ||
+    (ts.isPropertySignature(parent) && parent.name === node) ||
+    (ts.isPropertyDeclaration(parent) && parent.name === node) ||
+    (ts.isMethodDeclaration(parent) && parent.name === node) ||
+    (ts.isBindingElement(parent) && parent.propertyName === node) ||
+    (ts.isParameter(parent) && parent.name === node) ||
+    (ts.isVariableDeclaration(parent) && parent.name === node) ||
+    (ts.isJsxAttribute(parent) && parent.name === node) ||
+    ts.isTypeReferenceNode(parent) ||
+    ts.isQualifiedName(parent)
+  );
+}
+
 /** Elements that createElement makes which load or send something; only an anchor (the download) is let through. */
 const ALLOWED_ELEMENT = "a";
 /** Navigating away with data in the address: location.href = …, location.assign(…), location.replace(…). (`anchor.href = blobUrl`, the download, is not this, and `string.replace` is not.) */
@@ -107,6 +134,10 @@ export function closureOf(entries: readonly string[]): Closure {
       } else if (ts.isIdentifier(node) && BANNED_IDENTIFIERS.has(node.text)) {
         // A property of that name (`x.fetch`) is the property rule's; a declaration of that name is a local. Both are still reported: nothing here has a reason to use the names.
         findings.push({ file: rel, what: `identifier ${node.text}` });
+      } else if (ts.isIdentifier(node) && node.text === "document" && !isNameOnly(node) && !(ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node && node.parent.name.text === ALLOWED_DOCUMENT_USE)) {
+        findings.push({ file: rel, what: `reference to document (${node.parent.getText(source).slice(0, 40)})` });
+      } else if (ts.isIdentifier(node) && GLOBAL_REFERENCES.has(node.text) && !isNameOnly(node)) {
+        findings.push({ file: rel, what: `reference to ${node.text}` });
       } else if (ts.isPropertyAccessExpression(node) && BANNED_PROPERTIES.has(node.name.text)) {
         findings.push({ file: rel, what: `property .${node.name.text}` });
       } else if (ts.isPropertyAccessExpression(node) && node.name.text === "open" && /^(window|globalThis|self|top|parent)$/.test(node.expression.getText(source))) {

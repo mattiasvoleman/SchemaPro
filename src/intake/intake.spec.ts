@@ -21,8 +21,14 @@ function healthy(overrides: Partial<IntakeFacts> = {}): IntakeFacts {
     subjectsWithoutPost: none,
     subjectsNeedingMissingRoomType: none,
     rooms: 7,
+    roomTypes: 3,
     frameTimes: [{ minGradeLevel: 7, maxGradeLevel: 9 }],
     rasts: 2,
+    breaks: 6,
+    lunchOn: true,
+    lunchServings: 2,
+    supervisionAreas: 3,
+    supervisionShifts: 20,
     classes: 3,
     classGrades: [7, 8, 9],
     classesWithoutGrade: none,
@@ -43,6 +49,7 @@ function healthy(overrides: Partial<IntakeFacts> = {}): IntakeFacts {
     posts: 12,
     postsWithoutSignature: 0,
     teachersWithoutPost: 0,
+    switches: { absenceWatch: true, ack: true, viewer: true, sickReport: true },
     ...overrides,
   };
 }
@@ -85,8 +92,15 @@ describe('an empty school', () => {
         years: 0,
         subjects: 0,
         rooms: 0,
+        roomTypes: 0,
         frameTimes: [],
         rasts: 0,
+        breaks: 0,
+        lunchOn: false,
+        lunchServings: 0,
+        supervisionAreas: 0,
+        supervisionShifts: 0,
+        switches: { absenceWatch: false, ack: false, viewer: false, sickReport: false },
         classes: 0,
         classGrades: [],
         teachingGroups: 0,
@@ -97,13 +111,27 @@ describe('an empty school', () => {
         posts: 0,
       }),
     );
-    expect(there(view)).toEqual(['NO_YEAR', 'NO_SUBJECTS', 'NO_ROOMS', 'NO_RASTS', 'NO_TEACHERS', 'NO_STUDENTS']);
-    expect(view).toMatchObject({ hard: 4, soft: 1, info: 1, year: null });
+    // The lov and the rastvakt of a year wait with the year; room types, lunch and the four switches are the school's, and are said at once.
+    expect(there(view)).toEqual([
+      'NO_YEAR',
+      'NO_SUBJECTS',
+      'NO_ROOMS',
+      'NO_ROOM_TYPES',
+      'NO_RASTS',
+      'LUNCH_OFF',
+      'NO_TEACHERS',
+      'NO_STUDENTS',
+      'ABSENCE_WATCH_OFF',
+      'ACK_OFF',
+      'VIEWER_OFF',
+      'SICK_REPORT_OFF',
+    ]);
+    expect(view).toMatchObject({ hard: 4, soft: 1, info: 7, year: null });
   });
 
   it('says the year-bound areas wait for the year, and no other area does', () => {
     const waiting = (view: IntakeView) => view.areas.filter((area) => area.waitsForYear).map((area) => area.area);
-    expect(waiting(assess(healthy({ year: null })))).toEqual(['CLASSES', 'TEACHING_GROUPS', 'TIMPLAN', 'REQUIREMENTS', 'STAFFING']);
+    expect(waiting(assess(healthy({ year: null })))).toEqual(['BREAKS', 'SUPERVISION', 'CLASSES', 'TEACHING_GROUPS', 'TIMPLAN', 'REQUIREMENTS', 'STAFFING']);
     expect([...YEAR_BOUND_AREAS]).toEqual(waiting(assess(healthy({ year: null }))));
     // With a year nothing waits, whatever the school holds: an empty year is a gap, not a wait.
     expect(waiting(assess(healthy()))).toEqual([]);
@@ -118,6 +146,8 @@ describe('an empty school', () => {
     expect(found('STAFFING')).toEqual({ posts: 0 });
     expect(found('TEACHING_GROUPS')).toEqual({ teachingGroups: 0 });
     expect(found('TIMPLAN')).toEqual({ gradesWithTimplan: 0 });
+    expect(found('BREAKS')).toEqual({ breaks: 0 });
+    expect(found('SUPERVISION')).toEqual({ supervisionAreas: 3, supervisionShifts: 0 });
   });
 });
 
@@ -257,6 +287,65 @@ describe('the names a gap lists', () => {
   it('count more than the list holds when the service read only the first names', () => {
     const gap = gapOf(assess(healthy({ classesWithoutGrade: { count: 20, names: ['A', 'B', 'C'] } })), 'CLASSES_WITHOUT_GRADE');
     expect(gap).toMatchObject({ count: 20, items: ['A', 'B', 'C'], more: 17 });
+  });
+});
+
+describe('what the school has not set up or turned on (P5, Förvalen en ny skola möter)', () => {
+  it.each([
+    ['NO_ROOM_TYPES', { roomTypes: 0 }],
+    ['NO_BREAKS', { breaks: 0 }],
+    ['LUNCH_OFF', { lunchOn: false }],
+    ['NO_SUPERVISION', { supervisionShifts: 0 }],
+    ['ABSENCE_WATCH_OFF', { switches: { absenceWatch: false, ack: true, viewer: true, sickReport: true } }],
+    ['ACK_OFF', { switches: { absenceWatch: true, ack: false, viewer: true, sickReport: true } }],
+    ['VIEWER_OFF', { switches: { absenceWatch: true, ack: true, viewer: false, sickReport: true } }],
+    ['SICK_REPORT_OFF', { switches: { absenceWatch: true, ack: true, viewer: true, sickReport: false } }],
+  ] as Array<[IntakeGapCode, Partial<IntakeFacts>]>)('is %s, one gap, INFO, and no other', (code, overrides) => {
+    const view = assess(healthy(overrides));
+    expect(there(view)).toEqual([code]);
+    expect(gapOf(view, code)).toEqual({ code, level: 'INFO', count: 1, items: [], more: 0 });
+    // Nothing a school has not turned on stops Generera, makes its timetable worse or is anything but a row that says it is off.
+    expect(view).toMatchObject({ hard: 0, soft: 0, info: 1 });
+  });
+
+  // The boundary is one: a school with a single room type, a single lov or a single pass has set the thing up.
+  it.each([
+    ['NO_ROOM_TYPES', { roomTypes: 1 }],
+    ['NO_BREAKS', { breaks: 1 }],
+    ['NO_SUPERVISION', { supervisionShifts: 1 }],
+  ] as Array<[IntakeGapCode, Partial<IntakeFacts>]>)('is not %s with exactly one row', (code, overrides) => {
+    expect(gapOf(assess(healthy(overrides)), code).count).toBe(0);
+    expect(there(assess(healthy(overrides)))).toEqual([]);
+  });
+
+  it('is none of them when the school has set everything up', () => {
+    expect(there(assess(healthy()))).toEqual([]);
+  });
+
+  it('says the four switches each, and counts how many are on', () => {
+    const view = assess(healthy({ switches: { absenceWatch: false, ack: true, viewer: false, sickReport: true } }));
+    expect(there(view)).toEqual(['ABSENCE_WATCH_OFF', 'VIEWER_OFF']);
+    expect(view.areas.find((area) => area.area === 'SWITCHES')!.found).toEqual({ switchesOn: 2 });
+  });
+
+  it('counts the room types beside the rooms, the serving rows beside lunch and the areas and passes of rastvakt', () => {
+    const found = (area: string) => assess(healthy()).areas.find((entry) => entry.area === area)!.found;
+    expect(found('ROOMS')).toEqual({ rooms: 7, roomTypes: 3 });
+    expect(found('LUNCH')).toEqual({ lunchServings: 2 });
+    expect(found('SUPERVISION')).toEqual({ supervisionAreas: 3, supervisionShifts: 20 });
+    expect(found('BREAKS')).toEqual({ breaks: 6 });
+  });
+
+  it('does not say the year has no lov or no rastvakt while there is no year to read: the area waits', () => {
+    const view = assess(healthy({ year: null, breaks: 0, supervisionShifts: 0 }));
+    expect(gapOf(view, 'NO_BREAKS').count).toBe(0);
+    expect(gapOf(view, 'NO_SUPERVISION').count).toBe(0);
+    expect(view.areas.filter((area) => area.waitsForYear).map((area) => area.area)).toEqual(expect.arrayContaining(['BREAKS', 'SUPERVISION']));
+  });
+
+  it('is a presence gap that lists no name', () => {
+    const view = assess(healthy({ roomTypes: 0, lunchOn: false, switches: { absenceWatch: false, ack: false, viewer: false, sickReport: false } }));
+    for (const gap of view.areas.flatMap((area) => area.gaps).filter((entry) => entry.count > 0)) expect(gap).toMatchObject({ items: [], more: 0 });
   });
 });
 

@@ -51,7 +51,7 @@ export async function attLaggaChecks(owner: Client, api: PrismaService, check: C
   const realtime = { notifyMasterTimetableChanged: () => undefined };
   const notifications = { recipientsForLessons: async () => [], notifyUsers: async () => undefined };
   const masters = new MasterLessonsService(api, realtime as never, notifications as never);
-  const tray = new BoardTrayService(api);
+  const tray = new BoardTrayService(api, masters);
   const week = new RequirementPlacementsService(api, masters);
   const slugs = [`${SLUG}-0`, `${SLUG}-1`, `${SLUG}-2`];
   const cleanup = async () => {
@@ -109,6 +109,71 @@ export async function attLaggaChecks(owner: Client, api: PrismaService, check: C
       assert.equal(only7B.bricks.length, 0);
       assert.deepEqual(only7B.tally, after.tally);
       assert.deepEqual(after.groups.find((entry) => entry.studentGroupId === a.classId.get('7A')), { studentGroupId: a.classId.get('7A'), left: 3 });
+    });
+
+    await check('(al-e) a lesson on the tray is a brick, namely itself; a lesson Generera wrote from a förläggning answers by its row, and by itself when the row is gone', async () => {
+      // The Kemi lesson Generera laid (al-b) is parked: its brick is the lesson, not a new lesson.
+      const kemiLesson = (await owner.query<{ id: string }>(`SELECT id FROM "MasterLessons" WHERE "academicYearId" = $1 AND "subjectId" = $2`, [a.year, a.subjectId.get('Kemi')])).rows[0]!.id;
+      await owner.query(`UPDATE "MasterLessons" SET "isParked" = true WHERE id = $1`, [kemiLesson]);
+      const parked = await tray.trayOfYear(a.year, undefined, a.caller);
+      const kemiBricks = parked.bricks.filter((brick) => brick.postId === pKem);
+      assert.deepEqual(kemiBricks.map((brick) => brick.lessonId).sort(), [null, kemiLesson].sort());
+      assert.equal(new Set(kemiBricks.map((brick) => brick.partKey)).size, 1, 'the bricks of one part carry one key');
+      await owner.query(`UPDATE "MasterLessons" SET "isParked" = false WHERE id = $1`, [kemiLesson]);
+      assert.ok((await tray.trayOfYear(a.year, undefined, a.caller)).bricks.filter((brick) => brick.postId === pKem).every((brick) => brick.lessonId === null));
+      // Musik 7B has a förläggning (al-b) and Generera has written its lesson: counted once, by the row.
+      await owner.query(
+        `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "isLocked", "isGenerated", "fromPlacement", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, 4, '11:00', '11:40', true, true, true, now())`,
+        [a.school, a.year, a.subjectId.get('Musik'), a.classId.get('7B'), a.teacherId.get('T2')],
+      );
+      const withRow = await tray.trayOfYear(a.year, undefined, a.caller);
+      assert.deepEqual([leftOf(withRow, pMusik), withRow.tally.placedByRow], [0, 1]);
+      // The row is taken away: the lesson stays until the next Generera and answers the lesson itself: still no brick, and it is laid and not a row.
+      await owner.query(`DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1`, [pMusik]);
+      const orphan = await tray.trayOfYear(a.year, undefined, a.caller);
+      assert.deepEqual([leftOf(orphan, pMusik), orphan.tally.placedByRow, orphan.tally.laid], [0, 0, withRow.tally.laid + 1]);
+    });
+
+    await check('(al-f) a brick is laid as a locked lesson, and what is laid is not laid twice: the second of two who laid the same picture is refused, and nothing is written for it', async () => {
+      const lessonsOf = async (subject: string) => Number((await owner.query<{ n: string }>(`SELECT count(*) AS n FROM "MasterLessons" WHERE "academicYearId" = $1 AND "subjectId" = $2`, [a.year, a.subjectId.get(subject)])).rows[0]!.n);
+      const keyOf = async () => (await tray.trayOfYear(a.year, undefined, a.caller)).bricks.find((brick) => brick.postId === pMath)!.partKey;
+      const request = (partKey: string, dayOfWeek: number, extra: Record<string, unknown> = {}) =>
+        ({ academicYearId: a.year, postId: pMath, teacherId: a.teacherId.get('T1')!, minutes: 60, partKey, dayOfWeek, startTime: '13:00', roomId: a.roomId.get('R1')!, ...extra }) as never;
+      const key = await keyOf();
+      const before = await lessonsOf('Matematik');
+      // Two administrators read the same picture and both press Lägg: exactly one lesson is laid.
+      const both = await Promise.allSettled([tray.lay(request(key, 3), a.caller), tray.lay(request(key, 4), a.caller)]);
+      assert.deepEqual(both.map((outcome) => outcome.status).sort(), ['fulfilled', 'rejected']);
+      const refused = both.find((outcome) => outcome.status === 'rejected') as PromiseRejectedResult;
+      assert.equal(refused.reason?.getStatus?.(), 409);
+      assert.equal(refused.reason?.getResponse?.().code, 'REQUIREMENT_PLACEMENTS_STALE');
+      assert.equal(await lessonsOf('Matematik'), before + 1, 'one lesson was written');
+      const laid = (await owner.query<{ locked: boolean; generated: boolean; room: string | null; teacher: string | null }>(
+        `SELECT "isLocked" AS locked, "isGenerated" AS generated, "roomId" AS room, "teacherId" AS teacher FROM "MasterLessons" WHERE "academicYearId" = $1 AND "subjectId" = $2 AND "dayOfWeek" IN (3, 4)`,
+        [a.year, a.subjectId.get('Matematik')],
+      )).rows;
+      assert.deepEqual(laid, [{ locked: true, generated: false, room: a.roomId.get('R1')!, teacher: a.teacherId.get('T1')! }]);
+      assert.notEqual(await keyOf(), key, 'the part is another picture now');
+      // A brick without a room is laid as it is, and says so.
+      const noRoom = await tray.lay(request(await keyOf(), 5, { roomId: null }), a.caller);
+      assert.equal(noRoom.noRoom, true);
+      assert.equal((await tray.trayOfYear(a.year, undefined, a.caller)).bricks.filter((brick) => brick.postId === pMath).length, 0, 'the post has no brick left');
+    });
+
+    await check('(al-g) a lesson on the tray is laid by being moved back: the lesson is the brick, and no lesson is made', async () => {
+      const kemiLesson = (await owner.query<{ id: string }>(`SELECT id FROM "MasterLessons" WHERE "academicYearId" = $1 AND "subjectId" = $2`, [a.year, a.subjectId.get('Kemi')])).rows[0]!.id;
+      await owner.query(`UPDATE "MasterLessons" SET "isParked" = true, "isLocked" = false WHERE id = $1`, [kemiLesson]);
+      const brick = (await tray.trayOfYear(a.year, undefined, a.caller)).bricks.find((entry) => entry.lessonId === kemiLesson)!;
+      const count = async () => Number((await owner.query<{ n: string }>(`SELECT count(*) AS n FROM "MasterLessons" WHERE "academicYearId" = $1`, [a.year])).rows[0]!.n);
+      const before = await count();
+      const moved = await tray.lay(
+        { academicYearId: a.year, postId: pKem, teacherId: a.teacherId.get('T2')!, minutes: 45, partKey: brick.partKey, lessonId: kemiLesson, dayOfWeek: 2, startTime: '13:00', roomId: null } as never,
+        a.caller,
+      );
+      assert.equal((moved.lesson as { id: string }).id, kemiLesson);
+      assert.equal(await count(), before, 'no lesson was made');
+      assert.deepEqual((await owner.query(`SELECT "isParked" AS parked, "isLocked" AS locked, "dayOfWeek" AS day, to_char("startTime", 'HH24:MI') AS start FROM "MasterLessons" WHERE id = $1`, [kemiLesson])).rows[0], { parked: false, locked: true, day: 2, start: '13:00' });
     });
 
     await check('(al-c) another school\'s year is no year of this school, and the tray names nobody', async () => {

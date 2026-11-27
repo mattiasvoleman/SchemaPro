@@ -12,7 +12,8 @@
  *
  *   am-a  a school with three posts and one lesson laid by hand: the tray says how many lessons each post has left, Generera places exactly that many
  *         for each post (the engine's own answer, per post), and the tray is then empty: every lesson of every post stands on the grundschema;
- *   am-b  one generated lesson taken away: the tray has that one brick again, and nothing else.
+ *   am-b  one generated lesson taken away: the tray has that one brick again, and nothing else;
+ *   am-c  a brick laid by hand (Lägg) stays through Generera and the engine places only what is left: nothing is laid twice.
  *
  * A step that fails prints its FAIL line and the run goes on. The exit code is 1 for any FAIL. A school of its own, in the year 2095/96.
  */
@@ -87,7 +88,6 @@ async function run(owner: Client, app: import('@nestjs/common').INestApplication
   const tray = resolve(BoardTrayService);
 
   const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
-  const all = async <T extends object>(sql: string, params: unknown[] = []): Promise<T[]> => (await owner.query<T>(sql, params)).rows;
 
   const s = (await one<{ id: string }>(`INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('Probe att lägga', $1, 'Europe/Stockholm', now()) RETURNING id`, [SLUG])).id;
   const year = (
@@ -161,7 +161,26 @@ async function run(owner: Client, app: import('@nestjs/common').INestApplication
     await owner.query(`DELETE FROM "MasterLessons" WHERE id = (SELECT id FROM "MasterLessons" WHERE "academicYearId" = $1 AND "subjectId" = $2 AND "isGenerated" = true LIMIT 1)`, [year, svenska]);
     const counts = await left();
     assert.deepEqual([counts.get(pMatte), counts.get(pSvenska), counts.get(pKemi)], [0, 1, 0]);
-    void all;
+  });
+
+  await check('(am-c) a brick laid by hand stays through Generera, and the post is not laid twice: the engine places only what is left', async () => {
+    await owner.query(`DELETE FROM "MasterLessons" WHERE "academicYearId" = $1 AND "isGenerated" = true`, [year]);
+    const before = await left();
+    assert.deepEqual([before.get(pMatte), before.get(pSvenska), before.get(pKemi)], [2, 2, 2]);
+    const brick = (await tray.trayOfYear(year, undefined, admin)).bricks.find((entry) => entry.postId === pKemi)!;
+    const room = (await one<{ id: string }>(`SELECT id FROM "Rooms" WHERE "schoolId" = $1 ORDER BY name LIMIT 1`, [s])).id;
+    const laid = await tray.lay({ academicYearId: year, postId: pKemi, teacherId: tKemi.id, minutes: 60, partKey: brick.partKey, dayOfWeek: 2, startTime: '10:00', roomId: room } as never, admin);
+    const laidId = (laid.lesson as { id: string }).id;
+    assert.equal((await left()).get(pKemi), 1, 'one Kemi brick is left on the tray');
+    await proxy.triggerScheduling(year, admin);
+    assert.equal(await generatedOf(kemi), 1, 'the engine placed the one that was left, and no more');
+    const kept = await one<{ locked: boolean; generated: boolean; day: number; start: string; room: string | null }>(
+      `SELECT "isLocked" AS locked, "isGenerated" AS generated, "dayOfWeek" AS day, to_char("startTime", 'HH24:MI') AS start, "roomId" AS room FROM "MasterLessons" WHERE id = $1`,
+      [laidId],
+    );
+    assert.deepEqual(kept, { locked: true, generated: false, day: 2, start: '10:00', room }, 'the laid lesson is as it was laid');
+    assert.equal(Number((await one<{ n: string }>(`SELECT count(*) AS n FROM "MasterLessons" WHERE "academicYearId" = $1 AND "subjectId" = $2`, [year, kemi])).n), 2, 'Kemi has its two lessons, not three');
+    assert.deepEqual([...(await left()).values()], [0, 0, 0]);
   });
 }
 

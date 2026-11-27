@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { NEVER_EXTERNAL, NOTIFICATION_TYPES, TYPES_BY_ROLE } from './notification-types';
+import { NEVER_PUSHED, NOTIFICATION_TYPES, TYPES_BY_ROLE } from './notification-types';
 import type { NotificationKind } from './notifications.service';
 import { PUSH_TEMPLATES, pushKindOf } from './push-messages';
 
@@ -41,9 +41,9 @@ describe('notification types across the gateway, the web and the app', () => {
     for (const type of ENUM) expect([type, migrations.includes(`'${type}'`)]).toEqual([type, true]);
   });
 
-  it.each(ENUM)('%s has a push text in Swedish and English, unless it never leaves the inbox', (type) => {
+  it.each(ENUM)('%s has a push text in Swedish and English, unless it is never pushed', (type) => {
     const kind = type as NotificationKind;
-    if (NEVER_EXTERNAL.has(kind)) {
+    if (NEVER_PUSHED.has(kind)) {
       expect(pushKindOf(kind, {})).toBeNull();
       return;
     }

@@ -130,10 +130,10 @@ describe.each([
 });
 
 describe("the manual says what the page says it cannot judge (the review of #403)", () => {
-  it("has the sentence about a colon, a comma or an apostrophe anywhere but between the date and the last four, as report.limit3 has it", () => {
+  it("has the sentence about a colon, a comma, an apostrophe or a symbol anywhere but between the date and the last four, as report.limit3 has it", () => {
     const manual = readFileSync(resolve(process.cwd(), "../docs/manual/anvandarmanual.html"), "utf8").replace(/\s+/g, " ");
-    expect(manual).toContain("personnummer med kolon, komma eller apostrof på annat ställe än mellan datum och de fyra sista siffrorna");
-    expect(SV["report.limit3"]).toContain("Personnummer med kolon, komma eller apostrof på annat ställe än mellan datum och de fyra sista siffrorna");
+    expect(manual).toContain("personnummer med kolon, komma, apostrof eller en symbol på annat ställe än mellan datum och de fyra sista siffrorna");
+    expect(SV["report.limit3"]).toContain("Personnummer med kolon, komma, apostrof eller en symbol på annat ställe än mellan datum och de fyra sista siffrorna");
   });
 });
 

@@ -3511,6 +3511,62 @@
         ]
       }
     },
+    "/api/v1/board-tray/lay": {
+      "post": {
+        "tags": [
+          "BoardTray"
+        ],
+        "operationId": "BoardTrayController_lay",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LayBrickDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
     "/api/v1/calendar-feeds": {
       "get": {
         "tags": [
@@ -17147,6 +17203,110 @@
         }
       }
     },
+    "/api/v1/publication-settings/direct-reach": {
+      "get": {
+        "tags": [
+          "Publications"
+        ],
+        "operationId": "PublicationsController_directReachQuestion",
+        "parameters": [
+          {
+            "name": "academicYearId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/publication-settings/direct-reach/acknowledge": {
+      "post": {
+        "tags": [
+          "Publications"
+        ],
+        "operationId": "PublicationsController_acknowledgeDirectReach",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectReachQueryDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PUBLICERING"
+          ]
+        }
+      }
+    },
     "/api/v1/publication-settings/mode": {
       "post": {
         "tags": [
@@ -20984,6 +21144,62 @@
         "responses": {
           "201": {
             "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PLANERING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/school-breaks/calendar": {
+      "post": {
+        "tags": [
+          "SchoolBreaks"
+        ],
+        "operationId": "SchoolBreaksController_applyCalendar",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplySchoolCalendarDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
@@ -28125,6 +28341,46 @@
         ]
       }
     },
+    "/api/v1/users/invitation-channel": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "operationId": "UsersController_invitationChannel",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
     "/api/v1/users/invitations": {
       "post": {
         "tags": [
@@ -28179,7 +28435,7 @@
           ]
         },
         "x-rate-limit": {
-          "limit": 5,
+          "limit": 1200,
           "ttlSeconds": 60
         }
       }
@@ -29217,6 +29473,29 @@
           "basisHash"
         ]
       },
+      "ApplySchoolCalendarDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "breaks": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/CalendarBreakDto"
+            }
+          },
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "academicYearId",
+          "breaks"
+        ]
+      },
       "ApplyStaffingDto": {
         "type": "object",
         "properties": {
@@ -29562,6 +29841,50 @@
           "changes",
           "ids",
           "dryRun"
+        ]
+      },
+      "CalendarBreakDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "HOLIDAY",
+              "STAFF_DAY"
+            ]
+          },
+          "startDate": {
+            "type": "string"
+          },
+          "endDate": {
+            "type": "string"
+          },
+          "minGradeLevel": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 12
+          },
+          "maxGradeLevel": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 12
+          }
+        },
+        "required": [
+          "name",
+          "startDate",
+          "endDate"
         ]
       },
       "CancelLessonDto": {
@@ -31831,6 +32154,7 @@
           "email": {
             "type": "string",
             "format": "email",
+            "nullable": true,
             "maxLength": 254
           },
           "phone": {
@@ -31863,8 +32187,7 @@
         "required": [
           "role",
           "firstName",
-          "lastName",
-          "email"
+          "lastName"
         ]
       },
       "DecideLeaveRequestDto": {
@@ -31982,6 +32305,15 @@
         "required": [
           "token"
         ]
+      },
+      "DirectReachQueryDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
       },
       "DiscardDraftDto": {
         "type": "object",
@@ -32819,6 +33151,7 @@
           "email": {
             "type": "string",
             "format": "email",
+            "nullable": true,
             "maxLength": 254
           },
           "phone": {
@@ -32834,8 +33167,7 @@
         },
         "required": [
           "firstName",
-          "lastName",
-          "email"
+          "lastName"
         ]
       },
       "ImportStudentsDto": {
@@ -33317,6 +33649,9 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          "resend": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -33420,6 +33755,68 @@
         },
         "required": [
           "lessonId"
+        ]
+      },
+      "LayBrickDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "postId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "teacherId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "minutes": {
+            "type": "number",
+            "minimum": 5,
+            "maximum": 600
+          },
+          "partKey": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$"
+          },
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 7
+          },
+          "startTime": {
+            "type": "string"
+          },
+          "roomId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "exempt": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FRAME",
+                "LUNCH"
+              ]
+            }
+          }
+        },
+        "required": [
+          "academicYearId",
+          "postId",
+          "minutes",
+          "partKey",
+          "dayOfWeek",
+          "startTime"
         ]
       },
       "LeftLessonDto": {
@@ -37269,6 +37666,11 @@
           "lastName": {
             "type": "string",
             "maxLength": 120
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
           },
           "phone": {
             "type": "string",

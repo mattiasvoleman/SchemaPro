@@ -1310,7 +1310,28 @@ guardian reported) the pupil's id and address, the leave's reason, the
 absence's kind and the notes are empty, and what stays is the person's own
 act. The same holds for the tables of `data/person/` that are about a pupil
 (`PersonDump.pupil`: the crisis tables, where a teacher marks a pupil found in a
-drill): the pupil and the pupil's state are empty and the act stays. A note the
+drill): the pupil and the pupil's state are empty and the act stays. The same
+mechanism holds for the five tables where a member of staff decides or registers
+something about a colleague (`PersonDump.pupil` with a colleague as its column):
+`AssignmentScopeAssessments`, the rektor's assessment of a teacher's level and
+exception; `TeacherEmploymentLogs`, the history of a post; and, for a teacher's
+absence, `TeacherAbsences`, `TeacherAbsenceCovers` and `SupervisionCovers`. In
+the extract of the one who decided or registered, the colleague and what was
+decided about them (the level, the exception, the day, the note, the post before
+and after; the absence's period, whether it was whole days and its category,
+which is health data; who was away, the absence, the teachers a decision took
+off a lesson and the lesson's own note as it was; the pass and the absence of a
+break duty) are empty and what stays is that the person decided, which row, and
+when, and what was decided (the lesson, the kind of decision, the substitute;
+for a substitute the occurrence of the pass, which is their own duty). Where
+the colleague stands in another person column of the same row (a teacher who
+reported or took back their own absence) that cell is empty too. The colleague's
+own extract has the row whole. A column added to any of the five tables fails
+`person-tables.spec.ts` until it is said to be the act or the colleague's. The
+other tables where a member of staff acts against a colleague (`UserRoleChanges`,
+`SubstitutePoolMembers`, `ClassTeacherAppointments`, `PublicTimetableLinks`) hold
+no HR figure, health category or free text about the colleague, are what every
+administrator reads, and are the extract's whole; the same spec pins that. A note the
 person wrote that names another pupil or guardian by full name (either order) or
 address is empty too (`TermIndex`, `free-text.ts`); in the extract of a protected
 person, so is a note that names any other user. **An extract about a protected

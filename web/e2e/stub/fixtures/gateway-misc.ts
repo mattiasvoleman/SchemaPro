@@ -119,6 +119,15 @@ export const miscRoutes: GatewayRoute[] = [
 
   // --- Publicering ----------------------------------------------------------------------
   route("GET", "/api/v1/publication-settings", () => PUBLICATION_SETTINGS),
+  // The question before a change in Direkt that reaches families (P5): the stub school is in utkast, where nothing reaches anybody.
+  route("GET", "/api/v1/publication-settings/direct-reach", ({ query }) => ({
+    academicYearId: query.get("academicYearId"),
+    mode: PUBLICATION_SETTINGS.publishMode,
+    period: null,
+    acknowledgedAt: null,
+    ask: false,
+    audience: null,
+  })),
   route("GET", "/api/v1/publications", ({ query }) => {
     const year = yearOf(query.get("academicYearId"));
     return year ? publicationTimeline(year) : notFound(NO_YEAR);

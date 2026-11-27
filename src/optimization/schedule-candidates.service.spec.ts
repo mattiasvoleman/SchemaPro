@@ -4,6 +4,7 @@ import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock 
 import { recordedReads } from '../../test/utils/recorded-reads';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { ScheduleVersionsService } from '../calendar/schedule-versions.service';
+import { DATABASE_BUSY, DATABASE_BUSY_DETAIL } from '../database/pool-wait';
 import type { PrismaService } from '../database/prisma.service';
 import type { JobRunner } from '../jobs/job-runner';
 import type { RealtimeService } from '../realtime/realtime.service';
@@ -2236,6 +2237,23 @@ describe('the pieces', () => {
     expect(storedLunchesOf([meal])).toEqual([meal]);
     expect(storedLunchesOf([{ ...meal, periods: [true, 'no'] }])).toBeNull();
     expect(storedLunchesOf([{ ...meal, periods: 'AB' }])).toBeNull();
+  });
+
+  it('says a full pool as DATABASE_BUSY, in the sentence the page can word, and not as the driver\'s English (g424-L-4)', () => {
+    // Prisma's wait for a connection ending (P2028 that never started a transaction), and pg's own wait ending first.
+    const prismaWait = new Prisma.PrismaClientKnownRequestError(
+      'Transaction API error: Unable to start a transaction in the given time.',
+      { code: 'P2028', clientVersion: 'test' },
+    );
+    const pgWait = new Error('timeout exceeded when trying to connect');
+    for (const error of [prismaWait, pgWait]) {
+      expect(engineFailureOf(error)).toEqual({ message: DATABASE_BUSY_DETAIL, code: DATABASE_BUSY, params: null });
+    }
+    // A P2028 that started and then expired is a transaction that ran too long, not a busy server: its message stays as it was.
+    const expired = new Prisma.PrismaClientKnownRequestError('Transaction already closed: A query cannot be executed on an expired transaction.', {
+      code: 'P2028', clientVersion: 'test',
+    });
+    expect(engineFailureOf(expired)).toMatchObject({ code: null });
   });
 
   it('reads a failure that is not an HttpException as its message with no code', () => {

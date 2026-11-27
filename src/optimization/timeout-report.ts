@@ -15,7 +15,7 @@
  * A NAME THE GATEWAY DOES NOT KNOW IS NOT A MALFORMED REPORT. The engine deploys with every merge, ahead of the
  * gateway, and a step it adds (M8's YEARS and START, the second year of the design note's drivers) used to turn
  * every report into null until the gateway followed: the whole account gone for a name (g425, L-2). A step whose
- * name is well formed (a word in capitals) but not in TIMEOUT_STAGES is skipped, and the others are kept in
+ * name is well formed (a word in capitals) but not in TIMEOUT_STAGES is skipped (START and YEARS were, until the page had words for them: G6b), and the others are kept in
  * their order. The steps then add up to less than `totalSeconds`, by the skipped steps' seconds, and the total
  * is still the engine's. What was left out is not lost: its seconds are carried as `otherSeconds`, so that the
  * page can say that part of the run went to steps it has no words for. A step it cannot name may be a search
@@ -33,7 +33,16 @@
  * have more: a step it names that is not here is skipped on the way in (see the head of this file), and
  * timeout-report.spec.ts holds this list to being the engine's, in its order, with nothing the engine has dropped.
  */
-export const TIMEOUT_STAGES = ['PRECHECKS', 'BUILD', 'SITES', 'SEARCH_CLEAN', 'SEARCH_CLONE', 'PROBE'] as const;
+export const TIMEOUT_STAGES = [
+  'PRECHECKS',
+  'START',
+  'BUILD',
+  'SITES',
+  'SEARCH_CLEAN',
+  'YEARS',
+  'SEARCH_CLONE',
+  'PROBE',
+] as const;
 export type TimeoutStage = (typeof TIMEOUT_STAGES)[number];
 
 /** The satisfaction searches that report their effort (TimeoutPhaseName). */

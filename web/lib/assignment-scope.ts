@@ -48,6 +48,11 @@ export interface TeacherScope {
   stages: ScopeStageHours[];
   /** Förskoleklass, or a year the lydelse has no band for. */
   unregulatedHours: number;
+  /**
+   * Of unregulatedHours, the part that is förskoleklass (årskurs 0 and nothing else): present exactly when unregulatedHours is above 0, from a
+   * gateway that tells the two apart. Absent from an older one, and every unregulated hour is then said as förskoleklass, as it was.
+   */
+  preschoolHours?: number;
   /** Groups with no derivable årskurs. */
   unknownGradeHours: number;
   /** The span's edges for a full-time teacher, blended over the stages by hours. */
@@ -87,12 +92,19 @@ export interface ScopeInterpretation {
   section: string;
   note: string;
   cause?: "UNREGULATED_HOURS";
+  /**
+   * The stages (årskurs spans) of the bands whose note this is: the card of a teacher with no hours in any of them does not carry it. Absent on
+   * a row with a `cause`, and from a gateway older than the field, where every card carries the note as it did.
+   */
+  grades?: Array<{ from: number; to: number }>;
 }
 
 export interface ScopeReport {
   /** The lydelse the year was judged against; null when none holds on the year's first day. */
   version: ScopeVersionInfo | null;
   yearReason: ScopeYearReason | null;
+  /** For a year that begins before every lydelse: the first one that holds after it, so that the page can say from when. */
+  upcoming?: { sfs: string; validFrom: string };
   /** What the bands rest on beyond the ordinance's own words. */
   interpretations: ScopeInterpretation[];
   teachers: TeacherScope[];
@@ -118,9 +130,71 @@ export function scopeCardOf(report: WithScope, userId: string): ScopeCardData | 
   if (!scope || scope.version === null) return null;
   const teacher = scope.teachers.find((row) => row.userId === userId);
   if (!teacher || (teacher.notJudged === "NO_TEACHING" && teacher.teachingHours === 0)) return null;
-  // The interpretation of the hours outside the stages explains one kind of row: the card of a teacher without it does not carry it.
-  const interpretations = scope.interpretations.filter((one) => one.cause !== "UNREGULATED_HOURS" || teacher.overOnlyWithUnregulated === true);
+  // The interpretation of the hours outside the stages explains one kind of row: the card of a teacher without it does not carry it. And an
+  // interpretation of a band (5 §, årskurs 7-9) is the card of a teacher with hours in that band's stage, not of every teacher of the school
+  // (the review of #387, L-2, and of #397, L-4). One with no stages named is every card's, as it was.
+  const interpretations = scope.interpretations.filter((one) => {
+    if (one.cause === "UNREGULATED_HOURS") return teacher.overOnlyWithUnregulated === true;
+    return one.grades === undefined || teacherHasHoursIn(teacher, one.grades);
+  });
   return { teacher, version: scope.version, yearReason: scope.yearReason, interpretations };
+}
+
+/**
+ * Whether a teacher has hours in a stage that overlaps one of `grades`. The report lists a stage only where a row of the teacher runs in it
+ * (the gateway adds a stage with its first hour), so a stage in the list is a stage with hours, however few the one decimal rounds to.
+ */
+function teacherHasHoursIn(teacher: TeacherScope, grades: ReadonlyArray<{ from: number; to: number }>): boolean {
+  return teacher.stages.some((stage) => grades.some((span) => stage.gradeFrom <= span.to && stage.gradeTo >= span.from));
+}
+
+/**
+ * The two notes the gateway's data holds today, by their Swedish text (the band note of årskurs 7-9, written by migration 20270301090000,
+ * and T7, a constant of the gateway), with the key of their English in the catalogue. The notes are data and are kept in Swedish; a card in
+ * English shows the English only for a note that IS one of these, word for word, so that a note the school's database changes tomorrow is
+ * shown as recorded and never under a translation of the old one (the review of #397, L-4). src/staffing/scope-interpretations.contract.spec.ts
+ * holds the Swedish here to the migration and to the constant.
+ */
+export const KNOWN_INTERPRETATIONS: ReadonlyArray<{ key: "band7to9" | "unregulated"; sv: string }> = [
+  {
+    key: "band7to9",
+    sv: "Tolkning: 5 § säger \"Utöver den tid som anges i 4 §\" men 4 § räknar inte upp årskurs 7-9. Läst som 100 % (4 §) och ytterligare minst 10 % (5 §), vilket är utredningens egen sammanfattning (prop. 2025/26:196 bilaga 1 s. 125).",
+  },
+  {
+    key: "unregulated",
+    sv: "Tolkning (T7): timmar i förskoleklass och i grupper utan årskurs ligger utanför förordningens stadier (3 § nämner årskurs 1-6 och 7-9, och propositionen säger att förskoleklassen inte omfattas) men är undervisningstid enligt 2 §. Räknas de med är undervisningstiden över högsta nivån, och räknas de inte med är den det inte. Rastra Schema säger över högsta nivån bara när timmarna i stadierna ensamma går över, och visar annars den här orsaken.",
+  },
+];
+
+/** The key of the English text of a note, when the note is one of the known ones as recorded; null otherwise. */
+export function knownInterpretationKey(note: string): "band7to9" | "unregulated" | null {
+  return KNOWN_INTERPRETATIONS.find((known) => known.sv === note)?.key ?? null;
+}
+
+/** A day a lydelse holds from (yyyy-mm-dd), as the reader's language writes it: "1 juli 2027", "1 July 2027". What is not a day is returned as it came. */
+export function scopeDayText(day: string, locale: string): string {
+  const at = new Date(`${day}T00:00:00.000Z`);
+  if (Number.isNaN(at.getTime())) return day;
+  return new Intl.DateTimeFormat(locale === "sv" ? "sv-SE" : "en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(at);
+}
+
+/** What a page says once, over every teacher, about a läsår the ordinance does not judge. */
+export type ScopeYearNote =
+  | { kind: "NOT_IN_FORCE"; sfs: string | null; from: string | null }
+  | { kind: "NUMBERING_NOT_COVERED" };
+
+/**
+ * Why nothing on the page is judged against the ordinance, once, for the page and not for each teacher: a läsår that begins before the ordinance
+ * holds (every one before 2027-07-01) has no card, and a page that said nothing of it left a rektor to wonder whether the ordinance had been
+ * forgotten (the review of #387, L-8, and of #397, L-1; the assignment said a year that is not judged says why). Null for a year the ordinance
+ * reaches, from a gateway with no block, and where the report names no reason. `from` is the day the lydelse that follows holds from, where the
+ * table has one.
+ */
+export function scopeYearNote(report: WithScope): ScopeYearNote | null {
+  const scope = report?.scope;
+  if (!scope || scope.yearReason === null) return null;
+  if (scope.yearReason === "NUMBERING_NOT_COVERED") return { kind: "NUMBERING_NOT_COVERED" };
+  return { kind: "NOT_IN_FORCE", sfs: scope.upcoming?.sfs ?? null, from: scope.upcoming?.validFrom ?? null };
 }
 
 /** What the rektor's assessment card is drawn from: the teacher's row of the report (where the assessment is, if one is written) and the span's edge. */
