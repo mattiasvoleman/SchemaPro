@@ -563,15 +563,19 @@ export function findUnmerged(original: string): Finding[] {
   if (original.length < 4) return [];
   const all = searchIn(foldSpellings(original));
   // A text with a character that shows nothing is looked through again without it, and what is found there is carried back to the text as it was (see INVISIBLE).
-  if (hasInvisible(original)) {
-    const squeezed = squeeze(original);
+  const squeezed = hasInvisible(original) ? squeeze(original) : null;
+  if (squeezed !== null) {
     for (const found of searchIn(squeezed.text)) all.push({ ...found, start: squeezed.origin[found.start]!, end: squeezed.origin[found.end - 1]! + 1 });
   }
   // A whole number written in exponent form (8.001011234E9) is looked at as the digits it stands for, and what is found is carried back to the number as it was written (lib/pseudonym-exponent.ts).
-  const expanded = expandExponents(original);
-  if (expanded !== null) {
+  // It is looked for in the text as the search folds it (a full-width digit is a digit) and in the text without the characters that show nothing (8.001011234<ZWSP>E9), like every other number (the review of #496).
+  const exponentViews: { text: string; start: (at: number) => number; end: (at: number) => number }[] = [{ text: foldSpellings(original), start: (at) => at, end: (at) => at }];
+  if (squeezed !== null) exponentViews.push({ text: squeezed.text, start: (at) => squeezed.origin[at]!, end: (at) => squeezed.origin[at - 1]! + 1 });
+  for (const view of exponentViews) {
+    const expanded = expandExponents(view.text);
+    if (expanded === null) continue;
     for (const found of searchIn(foldSpellings(expanded.text))) {
-      all.push({ ...found, start: expanded.startAt[found.start]!, end: expanded.endAt[found.end - 1]!, ...(found.spelling === undefined ? {} : { spelling: `${found.spelling} (tal med exponent)` }) });
+      all.push({ ...found, start: view.start(expanded.startAt[found.start]!), end: view.end(expanded.endAt[found.end - 1]!), ...(found.spelling === undefined ? {} : { spelling: `${found.spelling} (tal med exponent)` }) });
     }
   }
   all.sort((a, b) => a.start - b.start || b.end - a.end);

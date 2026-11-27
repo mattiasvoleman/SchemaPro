@@ -12,8 +12,8 @@
  * digits it has: those are not whole numbers of this length and are left as they were.
  */
 
-/** The number as the text writes it: one digit, an optional fraction after a full stop or a comma, E and an exponent of one or two digits. No sign: a negative number is nobody's personnummer. */
-const TOKEN = /(?<![\w.,+-])(\d)(?:[.,](\d{1,17}))?[eE]\+?(\d{1,2})(?![\w])/g;
+/** The number as the text writes it: one digit, an optional fraction after a full stop or a comma, E and an exponent of one to three digits (.NET writes E+009). No sign: a negative number is nobody's personnummer. */
+const TOKEN = /(?<![\w.,+-])(\d)(?:[.,](\d{1,17}))?[eE]\+?(\d{1,3})(?![\w])/g;
 
 /** A cheap look before the expression is tried at each place of a long cell: a digit, an E and a digit, in that order and next to each other. */
 const MAYBE = /\d[.,]?\d*[eE]\+?\d/;
@@ -28,7 +28,7 @@ export interface ExponentView {
 
 /** The digits of a whole number written with an exponent, or null when it is not one of ten to twelve digits. "8.001011234E9" is 8001011234 and "8,00101E+09" is 8001010000. */
 export function wholeNumberOf(token: string): string | null {
-  const match = /^(\d)(?:[.,](\d{1,17}))?[eE]\+?(\d{1,2})$/.exec(token);
+  const match = /^(\d)(?:[.,](\d{1,17}))?[eE]\+?(\d{1,3})$/.exec(token);
   if (match === null) return null;
   return digitsOf(match[1]!, match[2] ?? "", Number(match[3]));
 }
