@@ -31,12 +31,15 @@ export function SuggestionTime({ report }: { report: TimeoutReport }) {
   // Steps the gateway has no name for (an engine newer than it): their seconds are said, and no search is said not to have begun for them.
   const other = report.otherSeconds ?? 0;
   const searched = searchesOf(report);
+  // The engine lists the explanation (PROBE) of a search that found nothing, and an analysis never makes one (it searches with probes off):
+  // the step is there at 0 s, and a line that says "the explanation of why no timetable was found: 0 s" says one was tried (g510).
+  const steps = report.stages.filter((stage) => !(stage.stage === "PROBE" && stage.seconds === 0));
 
   return (
     <div className="space-y-1.5" data-testid="suggestion-time">
       <h4 className="text-sm font-medium">{tCard("time.title")}</h4>
       <ul className="space-y-0.5 text-sm">
-        {report.stages.map((stage) => (
+        {steps.map((stage) => (
           <li key={stage.stage} className="max-w-prose">
             {t("stage", { stage: stage.stage, seconds: stage.seconds })}
           </li>

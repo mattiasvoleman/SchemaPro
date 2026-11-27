@@ -145,6 +145,20 @@ describe("the card says where a search's time went", () => {
     expect(screen.getByText(`${TA}.budget(60)`)).toBeInTheDocument();
   });
 
+  it("does not list the explanation (PROBE) at 0 s: the analysis never makes one, though the engine names the step in every report it sends (g510)", () => {
+    // The shape of a real NOT_FOUND of the engine's /suggest-changes (a six-second search that found nothing).
+    const stages = [{ stage: "PRECHECKS", seconds: 0.1 }, { stage: "BUILD", seconds: 0.3 }, { stage: "SEARCH_CLEAN", seconds: 5.6 }, { stage: "PROBE", seconds: 0 }] as TimeoutReport["stages"];
+    render(notFound({ report: report({ stages, totalSeconds: 6, budgetSeconds: 6, configuredBudgetSeconds: 6 }) }));
+    expect(screen.getByText(`${TA}.stage(SEARCH_CLEAN|5.6)`)).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(`${TA}.stage\\(PROBE`))).toBeNull();
+  });
+
+  it("lists the explanation where it took time", () => {
+    const stages = [{ stage: "PRECHECKS", seconds: 0.1 }, { stage: "SEARCH_CLEAN", seconds: 5.6 }, { stage: "PROBE", seconds: 3.2 }] as TimeoutReport["stages"];
+    render(notFound({ report: report({ stages, totalSeconds: 9, budgetSeconds: 6, configuredBudgetSeconds: 6 }) }));
+    expect(screen.getByText(`${TA}.stage(PROBE|3.2)`)).toBeInTheDocument();
+  });
+
   it("names the steps of a start from an earlier timetable (START) and of a search year by year (YEARS), and counts YEARS as a search but START as none", () => {
     const stages = [{ stage: "PRECHECKS", seconds: 0.2 }, { stage: "START", seconds: 4.1 }, { stage: "BUILD", seconds: 6 }, { stage: "YEARS", seconds: 40 }, { stage: "SEARCH_CLEAN", seconds: 9.7 }] as TimeoutReport["stages"];
     render(notFound({ report: report({ stages, totalSeconds: 60 }) }));
