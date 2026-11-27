@@ -63,6 +63,9 @@ export interface PlanningYear {
 export function writeYearToAddress(yearId: string | null): void {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
+  // The rollover's offer (?year=<the new year>&start=PREVIOUS_YEAR, StartFromCard) belongs to the year the link names: left behind beside
+  // another year, or beside none (the active year), a reload would offer last year's schedule as the start for a year it was not made for.
+  if (url.searchParams.get("year") !== yearId) url.searchParams.delete("start");
   if (yearId === null) url.searchParams.delete("year");
   else url.searchParams.set("year", yearId);
   window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);

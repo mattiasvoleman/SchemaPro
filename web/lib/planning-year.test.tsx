@@ -54,6 +54,21 @@ describe("writeYearToAddress", () => {
     expect(address()).toBe("/sv/admin/generate");
   });
 
+  it("takes the rollover's start=PREVIOUS_YEAR away with the year it was offered for, so that a reload does not offer it for another", () => {
+    window.history.replaceState(null, "", "/sv/admin/generate?year=y-next&start=PREVIOUS_YEAR");
+    writeYearToAddress(null);
+    expect(address()).toBe("/sv/admin/generate");
+    window.history.replaceState(null, "", "/sv/admin/generate?year=y-next&start=PREVIOUS_YEAR");
+    writeYearToAddress("y-old");
+    expect(address()).toBe("/sv/admin/generate?year=y-old");
+  });
+
+  it("keeps start=PREVIOUS_YEAR while the year it names is the one chosen", () => {
+    window.history.replaceState(null, "", "/sv/admin/generate?year=y-next&start=PREVIOUS_YEAR");
+    writeYearToAddress("y-next");
+    expect(address()).toBe("/sv/admin/generate?year=y-next&start=PREVIOUS_YEAR");
+  });
+
   it("replaces the entry: choosing a year adds no step to go back through", () => {
     const before = window.history.length;
     writeYearToAddress("y-next");
