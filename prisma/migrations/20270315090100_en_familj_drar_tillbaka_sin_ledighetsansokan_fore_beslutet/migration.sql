@@ -44,7 +44,8 @@
 --
 -- API:t före detta känner inte statusen och anropar inte funktionen. En ansökan som dras tillbaka av API:t efter migreringen och som den gamla
 -- instansen läser får en status den inte känner (Prismas enum läser den som ett fel för en modelläsning av raden: se DEPLOYMENT 18.1 om
--- GUARDIAN_DECLINED, samma sak). Släpp därför gatewayen i samma veva som migreringen, och dra inte tillbaka gatewayen utan att läsa DEPLOYMENT avsnitt 42.
+-- GUARDIAN_DECLINED, samma sak). Släpp därför gatewayen i samma veva som migreringen, och dra inte tillbaka gatewayen utan att läsa avsnittet "A family takes back a leave request" i DEPLOYMENT
+-- (Rolling back). Avsnittets nummer står inte här: parallella pull requests numrerar om sina, och en tillämpad migrering ändras inte.
 
 DO $$
 DECLARE
