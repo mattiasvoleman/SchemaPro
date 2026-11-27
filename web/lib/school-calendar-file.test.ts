@@ -42,6 +42,31 @@ describe("an ICS file", () => {
     ]);
   });
 
+  it("reads a time in UTC on the school's day: a whole day written as Stockholm's midnight in UTC is that day, not the one before", () => {
+    const file = readCalendarFile(
+      ics(
+        // Midnight 26 October to midnight 31 October in Stockholm (CET, UTC+1): höstlov 26-30 October.
+        event("DTSTART:20261025T230000Z", "DTEND:20261030T230000Z", "SUMMARY:Höstlov"),
+        // One day, 26 March 2027 (CET): Thursday 25 March is a school day and must not be in it.
+        event("DTSTART:20270325T230000Z", "DTEND:20270326T230000Z", "SUMMARY:Lov fredag"),
+        // One day in summer time (CEST, UTC+2): midnight 26 August is 22:00Z on the 25th.
+        event("DTSTART:20260825T220000Z", "DTEND:20260826T220000Z", "SUMMARY:Studiedag"),
+        // The night the clock goes forward (28 March 2027): 29 March starts at 22:00Z on the 28th.
+        event("DTSTART:20270328T220000Z", "DTEND:20270329T220000Z", "SUMMARY:Annandag påsk"),
+        // A time in the evening of the day before in UTC is still the day it says in Stockholm only when it is.
+        event("DTSTART:20270301T080000Z", "DTEND:20270301T160000Z", "SUMMARY:Utvecklingsdag"),
+      ),
+      "x.ics",
+    );
+    expect(file.entries.map((entry) => [entry.name, entry.startDate, entry.endDate])).toEqual([
+      ["Höstlov", "2026-10-26", "2026-10-30"],
+      ["Lov fredag", "2027-03-26", "2027-03-26"],
+      ["Studiedag", "2026-08-26", "2026-08-26"],
+      ["Annandag påsk", "2027-03-29", "2027-03-29"],
+      ["Utvecklingsdag", "2027-03-01", "2027-03-01"],
+    ]);
+  });
+
   it("unfolds long lines and unescapes the text of a summary", () => {
     const file = readCalendarFile(ics(event("DTSTART;VALUE=DATE:20261224", "SUMMARY:Jullov\\, jul-\r\n afton\; stängt", "DTEND;VALUE=DATE:20261225")), "x.ics");
     expect(file.entries[0]!.name).toBe("Jullov, jul-afton; stängt");

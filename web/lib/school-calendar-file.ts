@@ -112,14 +112,45 @@ function readProperty(line: string): IcsProperty | null {
   return { name: name!.toUpperCase(), params, value: line.slice(colon + 1) };
 }
 
-/** 20261026 or 20261026T000000(Z): the day it names, and whether it names a time of the day. */
+/** The zone a school's days are counted in, which a time written in UTC (…Z) is read in. */
+const SCHOOL_ZONE = "Europe/Stockholm";
+const schoolClock = new Intl.DateTimeFormat("en-GB", {
+  timeZone: SCHOOL_ZONE,
+  hourCycle: "h23",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
+
+/** A UTC instant as the school's wall clock reads it: 25 October 23:00Z is midnight of 26 October in Stockholm. */
+function onSchoolClock(year: number, month: number, day: number, hour: number, minute: number, second: number) {
+  const parts: Record<string, number> = {};
+  for (const part of schoolClock.formatToParts(new Date(Date.UTC(year, month - 1, day, hour, minute, second)))) {
+    if (part.type !== "literal") parts[part.type] = Number(part.value);
+  }
+  return { year: parts["year"]!, month: parts["month"]!, day: parts["day"]!, hour: parts["hour"]!, minute: parts["minute"]!, second: parts["second"]! };
+}
+
+/**
+ * 20261026 or 20261026T000000(Z): the day it names, and whether it names a time of the day. A time with a Z is an
+ * instant in UTC, and the day it names is the school's: a whole-day event a calendar program wrote as midnight of
+ * Stockholm in UTC (20261025T230000Z) is the 26th, not the 25th. A time with no Z, or with a TZID, is read as written.
+ */
 function icsDate(value: string): { day: string; hasTime: boolean; midnight: boolean } | null {
-  const match = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})Z?)?$/.exec(value.trim());
+  const match = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/.exec(value.trim());
   if (!match) return null;
-  const day = realDay(Number(match[1]), Number(match[2]), Number(match[3]));
-  if (!day) return null;
+  let [year, month, dayOfMonth] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  let [hour, minute, second] = [Number(match[4] ?? 0), Number(match[5] ?? 0), Number(match[6] ?? 0)];
   const hasTime = match[4] !== undefined;
-  return { day, hasTime, midnight: hasTime && match[4] === "00" && match[5] === "00" && match[6] === "00" };
+  if (hasTime && match[7] === "Z" && realDay(year, month, dayOfMonth) && hour < 24 && minute < 60 && second < 61) {
+    ({ year, month, day: dayOfMonth, hour, minute, second } = onSchoolClock(year, month, dayOfMonth, hour, minute, second));
+  }
+  const day = realDay(year, month, dayOfMonth);
+  if (!day) return null;
+  return { day, hasTime, midnight: hasTime && hour === 0 && minute === 0 && second === 0 };
 }
 
 function readIcs(text: string): CalendarFile {
