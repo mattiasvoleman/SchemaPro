@@ -3761,6 +3761,39 @@ describe("a parallel block (Block i schemat)", () => {
     );
   });
 
+  it("takes the lock off the block when a card's move is undone, for exactly the lessons the move locked: the block the gateway locks whole is not left locked (Låset vid en flytt, E4)", async () => {
+    const answer = (extra: Record<string, unknown> = {}) => ({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [], ...extra });
+    blockApi.patch.mockResolvedValue(answer({ lockedByMove: true, lockedLessonIds: ["l-sv1", "l-sv2", "l-sv9"] }));
+    showPage();
+    await card();
+    dragToTuesday("Språkval åk 4");
+    await screen.findByText("timetable.sharedCardTitle");
+    await confirmClasses();
+    await waitFor(() => expect(blockApi.patch).toHaveBeenCalledTimes(1));
+
+    // The way back moves the card where it stood (that move locks nothing: the block is locked), and then the block is unlocked, by the lessons the first move locked.
+    blockApi.patch.mockClear();
+    blockApi.patch.mockResolvedValueOnce(answer({ lockedLessonIds: [] })).mockResolvedValueOnce({ blockId: "b-sv", isLocked: false, lessonIds: ["l-sv1", "l-sv2", "l-sv9"], parked: 0 });
+    await userEvent.setup().click(screen.getByRole("button", { name: /timetable\.undo/ }));
+    await waitFor(() => expect(blockApi.patch).toHaveBeenCalledTimes(2));
+    expect(blockApi.patch.mock.calls[0]![0]).toBe("/api/v1/master-lessons/block-card");
+    expect(blockApi.patch.mock.calls[1]).toEqual(["/api/v1/master-lessons/block-lock", { blockId: "b-sv", isLocked: false, lessonIds: ["l-sv1", "l-sv2", "l-sv9"] }]);
+  });
+
+  it("asks nothing of the block's lock when an undone card's move locked nothing", async () => {
+    blockApi.patch.mockResolvedValue({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [], lockedLessonIds: [] });
+    showPage();
+    await card();
+    dragToTuesday("Språkval åk 4");
+    await screen.findByText("timetable.sharedCardTitle");
+    await confirmClasses();
+    await waitFor(() => expect(blockApi.patch).toHaveBeenCalledTimes(1));
+    await userEvent.setup().click(screen.getByRole("button", { name: /timetable\.undo/ }));
+    await waitFor(() => expect(blockApi.patch).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(blockApi.patch.mock.calls.map((call) => call[0])).toEqual(["/api/v1/master-lessons/block-card", "/api/v1/master-lessons/block-card"]);
+  });
+
   it("asks before one member is moved out of its block, and moves only it when told", async () => {
     noMutation.mutateAsync.mockResolvedValueOnce({
       id: "l-sv2",
