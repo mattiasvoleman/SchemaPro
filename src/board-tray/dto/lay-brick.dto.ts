@@ -1,4 +1,5 @@
-import { IsInt, IsOptional, IsString, IsUUID, Matches, Max, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, Min } from 'class-validator';
+import { EXEMPTABLE_RULES, type ExemptableRule } from '../../calendar/lesson-exemption';
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -46,4 +47,15 @@ export class LayBrickDto {
   @IsOptional()
   @IsUUID('4')
   roomId?: string | null;
+
+  /**
+   * UNDANTAG MED FLIT, as on a hand edit (CreateMasterLessonDto.exempt): the rules of the board the administrator answers yes to ("Lägg ändå") for THIS
+   * time, by name: `FRAME` (the stage's ramtid) and `LUNCH` (the class's meal), and no other. The judge asks it of the lay as of every hand edit; a rule
+   * named that the time does not break is saved on nothing, and a saved exemption locks the lesson (it is locked by the lay already).
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(EXEMPTABLE_RULES.length)
+  @IsIn(EXEMPTABLE_RULES, { each: true })
+  exempt?: ExemptableRule[];
 }

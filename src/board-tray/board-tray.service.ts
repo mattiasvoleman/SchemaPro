@@ -173,7 +173,7 @@ export class BoardTrayService {
         const lesson = await this.masters.updateIn(
           tx,
           dto.lessonId,
-          { isParked: false, dayOfWeek: dto.dayOfWeek, startTime: dto.startTime, endTime, roomId, isLocked: true },
+          { isParked: false, dayOfWeek: dto.dayOfWeek, startTime: dto.startTime, endTime, roomId, isLocked: true, exempt: dto.exempt },
           user,
         );
         return { lesson, noRoom: roomId === null };
@@ -194,6 +194,7 @@ export class BoardTrayService {
           recurrence: brick.recurrence,
           startDate: brick.startDate,
           endDate: brick.endDate,
+          exempt: dto.exempt,
         },
         user,
       );

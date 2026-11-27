@@ -33423,6 +33423,16 @@
             "type": "string",
             "format": "uuid",
             "nullable": true
+          },
+          "exempt": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FRAME",
+                "LUNCH"
+              ]
+            }
           }
         },
         "required": [
