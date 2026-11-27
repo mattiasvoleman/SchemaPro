@@ -2276,9 +2276,9 @@
         "ROOM_LOCK_UNNAMED": "Låt {post} också få använda en sal till."
       },
       "least": {
-        "PROVED": "Mindre räcker inte: motorn har prövat ett steg lägre, och veckan går då inte att lägga.",
-        "PROVED_TOGETHER": "Mindre räcker inte med de andra ändringarna i listan som de är: motorn har prövat ett steg lägre, och veckan går då inte att lägga.",
-        "UNDECIDED": "Motorn prövade också ett steg lägre men hann inte avgöra om det räcker. Värdet här är det lägsta den hittade en vecka för, inte säkert det lägsta som går."
+        "PROVED": "Mindre räcker inte: motorn har prövat en ändring som är ett steg mindre, och veckan går då inte att lägga.",
+        "PROVED_TOGETHER": "Mindre räcker inte med de andra ändringarna i listan som de är: motorn har prövat en ändring som är ett steg mindre, och veckan går då inte att lägga.",
+        "UNDECIDED": "Motorn prövade också mindre ändringar men hann inte avgöra om en som är mindre än den här räcker. Siffran här är den minsta ändring den hittade en vecka för, inte säkert den minsta som går."
       },
       "time": {
         "title": "Så gick analysens tid"

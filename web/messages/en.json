@@ -2276,9 +2276,9 @@
         "ROOM_LOCK_UNNAMED": "Let {post} also use one more room."
       },
       "least": {
-        "PROVED": "Less will not do: the engine tried one step lower, and the week cannot be laid then.",
-        "PROVED_TOGETHER": "Less will not do with the other changes of the list as they are: the engine tried one step lower, and the week cannot be laid then.",
-        "UNDECIDED": "The engine also tried one step lower but did not get to decide whether it is enough. The value here is the lowest it found a week for, not necessarily the lowest that works."
+        "PROVED": "Less will not do: the engine tried a change one step smaller, and the week cannot be laid then.",
+        "PROVED_TOGETHER": "Less will not do with the other changes of the list as they are: the engine tried a change one step smaller, and the week cannot be laid then.",
+        "UNDECIDED": "The engine also tried smaller changes but did not get to decide whether one smaller than this will do. The figure here is the smallest change it found a week for, not necessarily the smallest that works."
       },
       "time": {
         "title": "Where the analysis' time went"

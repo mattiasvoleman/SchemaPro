@@ -176,8 +176,8 @@ describe("what a list may promise, and what it does not", () => {
 describe("what the card says of how far a number is known, and how long an analysis takes (G6b)", () => {
   it("says 'less will not do' only where the engine proved it, and says a step it did not decide as that", () => {
     for (const [messages, locale, proved, undecided] of [
-      [sv, "sv", /Mindre räcker inte.*prövat ett steg lägre/, /hann inte avgöra/],
-      [en, "en", /Less will not do.*tried one step lower/, /did not get to decide/],
+      [sv, "sv", /Mindre räcker inte.*prövat en ändring som är ett steg mindre/, /hann inte avgöra/],
+      [en, "en", /Less will not do.*tried a change one step smaller/, /did not get to decide/],
     ] as const) {
       expect(say(messages, locale, "least.PROVED")).toMatch(proved);
       expect(say(messages, locale, "least.PROVED_TOGETHER")).toMatch(proved);
@@ -188,9 +188,22 @@ describe("what the card says of how far a number is known, and how long an analy
     expect(say(sv, "sv", "least.PROVED_TOGETHER")).toMatch(/med de andra ändringarna i listan som de är/);
     expect(say(en, "en", "least.PROVED_TOGETHER")).toMatch(/with the other changes of the list as they are/);
     expect(say(sv, "sv", "least.PROVED")).not.toMatch(/de andra ändringarna/);
-    // An undecided step is the lowest FOUND, not the lowest there is.
-    expect(say(sv, "sv", "least.UNDECIDED")).toMatch(/inte säkert det lägsta som går/);
-    expect(say(en, "en", "least.UNDECIDED")).toMatch(/not necessarily the lowest that works/);
+    // An undecided step is the smallest change FOUND, not the smallest there is.
+    expect(say(sv, "sv", "least.UNDECIDED")).toMatch(/inte säkert den minsta som går/);
+    expect(say(en, "en", "least.UNDECIDED")).toMatch(/not necessarily the smallest that works/);
+  });
+
+  it("names no direction of the number it tried, and does not say it tried one step where it may have tried several (g510)", () => {
+    // A cap, a post's days and a subject's lessons a day are tightened by LOWERING the number, and the days apart of a subject by RAISING it
+    // (`_values_back`): "ett steg lägre" under "Sänk antalet dagar emellan från 3 till 1" says 0, and what the engine tried is 2. The step is a
+    // smaller CHANGE, in every rule. `neededIsLeast: false` is also a change that was lowered by halving and then ran out of checks: it tried
+    // several values, and not "one step lower".
+    for (const key of ["least.PROVED", "least.PROVED_TOGETHER", "least.UNDECIDED"]) {
+      expect(say(sv, "sv", key), `sv ${key}`).not.toMatch(/lägre|högre|lägsta|högsta/);
+      expect(say(en, "en", key), `en ${key}`).not.toMatch(/lower|higher|lowest|highest/);
+    }
+    expect(say(sv, "sv", "least.UNDECIDED")).not.toMatch(/ett steg/);
+    expect(say(en, "en", "least.UNDECIDED")).not.toMatch(/one step/);
   });
 
   it("says an analysis takes about two minutes, in the offer, the offer after a timeout and the running text (g493-L-3)", () => {
