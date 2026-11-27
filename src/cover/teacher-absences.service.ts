@@ -38,13 +38,13 @@ export const ABSENCE_WITHDRAWN = 'ABSENCE_WITHDRAWN';
 export const ABSENCE_WITHDRAW_TOO_LATE = 'ABSENCE_WITHDRAW_TOO_LATE';
 export const ABSENCE_END = 'ABSENCE_END';
 
-/** Half a year of school-local days, inclusive (the CHECK allows the DST hour on top). */
 /** The e-mail to the school's administrators when a teacher reports an absence (K6): that it happened, and nothing about it. */
 export const ABSENCE_REPORTED_MAIL_SUBJECT = 'A teacher has reported an absence / En lärare har anmält frånvaro';
 export const ABSENCE_REPORTED_MAIL_BODY =
   'A teacher has reported an absence. Log in to Rastra timetable to see who it is and whether lessons need cover.\n\n' +
   'En lärare har anmält frånvaro. Logga in i Rastra Schema för att se vem det är och om lektioner behöver täckas.';
 
+/** Half a year of school-local days, inclusive (the CHECK allows the DST hour on top). */
 export const MAX_ABSENCE_DAYS = 186;
 /** How far back an admin may register an absence. */
 export const ADMIN_BACKDATE_DAYS = 30;

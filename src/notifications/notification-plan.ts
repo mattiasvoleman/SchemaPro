@@ -88,7 +88,7 @@ export async function planNotice(row: QueuedNotice, channels: Channels, sources:
 /**
  * The mail of each entry: its caller's subject and body, unchanged, to the people the entry names who have an address,
  * minus the recipients who opted out of the type (NotificationOptOuts) — except for the notices the school must deliver
- * (deliveredRegardless) — in packets of EMAIL_BCC_CHUNK addresses. TEACHER_ABSENCE_REPORTED never leaves the inbox.
+ * (deliveredRegardless) — in packets of EMAIL_BCC_CHUNK addresses. TEACHER_ABSENCE_REPORTED goes as a mail and never as a push (K6).
  */
 async function planMail(schoolId: string, entries: ReturnType<typeof entriesOf>, sources: PlanSources): Promise<PlannedMail[]> {
   const packets: PlannedMail[] = [];

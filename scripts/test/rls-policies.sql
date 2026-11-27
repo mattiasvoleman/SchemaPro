@@ -10016,8 +10016,8 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- 29e: a person's choice of what leaves SchemaPro is theirs alone
 -- (NotificationOptOuts, 20261013100000). Own rows for every role, no admin
--- arm, no UPDATE; never the unreported absence or a teacher's absence report
--- (CHECKs). The refusals are asserted as both roles: authenticated
+-- arm, no UPDATE; never the unreported absence (a CHECK; the one on a teacher's
+-- absence report was dropped in 20270311090000, K6). The refusals are asserted as both roles: authenticated
 -- (PostgREST) and app_authenticated (the API, a member of authenticated).
 -- ---------------------------------------------------------------------------
 

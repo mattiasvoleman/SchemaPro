@@ -135,8 +135,8 @@ class Watch {
  * uses it to say "Skickad" only when the mail went.
  *
  * Configured with `RESEND_API_KEY` + `EMAIL_FROM` (mail) and PUSH_NOTIFICATIONS=expo (push); with neither, nothing is
- * queued, and a process that has neither takes no row (a row waits for one that has). TEACHER_ABSENCE_REPORTED never
- * leaves the inbox. Counts of errors are logged by code; never an address, a token or a text.
+ * queued, and a process that has neither takes no row (a row waits for one that has). TEACHER_ABSENCE_REPORTED goes as a
+ * mail only, never as a push (NEVER_PUSHED, K6). Counts of errors are logged by code; never an address, a token or a text.
  */
 @Injectable()
 export class NotificationDeliveryService implements OnModuleInit, OnModuleDestroy {
