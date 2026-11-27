@@ -5153,3 +5153,16 @@ END $$;
 \pset tuples_only on
 \pset format unaligned
 SELECT id FROM "Schools" WHERE slug <> 'rls-fixture-school' ORDER BY "createdAt" LIMIT 1;
+
+-- The matrix school's row for the optimization profile (20270313090000), so that the role matrix (section 116) has a row of the table to
+-- probe: the defaults, written by the owner, once. A school with no row is the defaults too; section 601 makes the other school's.
+DO $$
+DECLARE
+  m uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "OptimizationProfiles" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (m);
+END $$;
