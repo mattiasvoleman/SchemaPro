@@ -43,6 +43,7 @@ export type ScopeAssessmentProblem =
   | { reason: "initiativeNeedsDay" }
   | { reason: "dayNeedsInitiative" }
   | { reason: "dayInvalid" }
+  | { reason: "dayInFuture" }
   | { reason: "noteLong"; max: number };
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -52,6 +53,18 @@ export function isIsoDay(value: string): boolean {
   if (!ISO_DAY.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+/**
+ * The school's own day (yyyy-mm-dd) at an instant, in its own time zone, as the gateway reads it (todayInZone): a rektor at half past
+ * midnight on the 2nd in Sweden is on the 2nd, whatever UTC says. A zone Intl does not know is the UTC day.
+ */
+export function schoolToday(timeZone: string, now: Date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  } catch {
+    return now.toISOString().slice(0, 10);
+  }
 }
 
 /** The draft a stored assessment opens as: the level in whole hours, the day as written, the note as it is. */
@@ -66,8 +79,12 @@ export function scopeToDraft(stored: ScopeAssessmentShape | null | undefined): S
   };
 }
 
-/** The first thing wrong with the draft, or null. In the order a person would fix them. */
-export function validateScopeDraft(draft: ScopeAssessmentDraft): ScopeAssessmentProblem | null {
+/**
+ * The first thing wrong with the draft, or null. In the order a person would fix them. `today` is the school's day (schoolToday): the day of
+ * an own initiative is the day it was taken, and one after today has not come (the gateway says the same, scopeDayInFuture). Without it
+ * the day is held to nothing but being a day, as before.
+ */
+export function validateScopeDraft(draft: ScopeAssessmentDraft, today?: string): ScopeAssessmentProblem | null {
   const level = draft.level.trim();
   if (level === "" && draft.exceptionKind === "") return { reason: "empty" };
   if (level !== "") {
@@ -79,6 +96,7 @@ export function validateScopeDraft(draft: ScopeAssessmentDraft): ScopeAssessment
   if (draft.exceptionKind === "OWN_INITIATIVE" && day === "") return { reason: "initiativeNeedsDay" };
   if (draft.exceptionKind !== "OWN_INITIATIVE" && day !== "") return { reason: "dayNeedsInitiative" };
   if (day !== "" && !isIsoDay(day)) return { reason: "dayInvalid" };
+  if (day !== "" && today !== undefined && day > today) return { reason: "dayInFuture" };
   if (draft.note.trim().length > SCOPE_NOTE_MAX) return { reason: "noteLong", max: SCOPE_NOTE_MAX };
   return null;
 }

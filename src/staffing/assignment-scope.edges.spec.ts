@@ -152,7 +152,8 @@ describe('what the report says about its own reading', () => {
   it('names an interpretation once, however many bands rest on it', () => {
     const note = 'Tolkning: ett skäl.';
     const report = scope({}, [version([{ ...LOW, note }, { ...HIGH, note }])]);
-    expect(report.interpretations).toEqual([{ section: '4 § p. 1', note }]);
+    // With the stages it belongs to: both bands rest on it, and a card shows it to a teacher with hours in either.
+    expect(report.interpretations).toEqual([{ section: '4 § p. 1', note, grades: [{ from: 1, to: 6 }, { from: 7, to: 9 }] }]);
   });
 
   it('lists the teachers in the order of their ids, whatever order the rows came in', () => {

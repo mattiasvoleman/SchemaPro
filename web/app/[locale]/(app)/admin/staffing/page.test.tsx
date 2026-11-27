@@ -525,6 +525,33 @@ describe("StaffingPage", () => {
       expect(screen.queryByText(/scopeNoticeTitle/)).not.toBeInTheDocument();
     });
 
+    it("says once, over the page, why nothing is judged in a year that begins before the ordinance, with the day it holds from (the review of #387, L-8)", () => {
+      withScope("INSIDE", { version: null, yearReason: "NOT_IN_FORCE", upcoming: { sfs: "SFS 2026:1487", validFrom: "2027-07-01" }, teachers: [{ ...bo("INSIDE"), verdict: "NOT_JUDGED" }] });
+      render(<StaffingPage />);
+      expect(screen.getAllByText("scopeYearNotInForce(SFS 2026:1487|1 juli 2027)")).toHaveLength(1);
+      expect(screen.queryByText(/scopeNoticeTitle/)).not.toBeInTheDocument();
+    });
+
+    it("says it without a day when the gateway names none, and says the ten-year numbering has no levels", () => {
+      withScope("INSIDE", { version: null, yearReason: "NOT_IN_FORCE", teachers: [] });
+      const { unmount } = render(<StaffingPage />);
+      expect(screen.getByText("scopeYearNotInForceNoDate")).toBeInTheDocument();
+      unmount();
+      withScope("INSIDE", { yearReason: "NUMBERING_NOT_COVERED" });
+      render(<StaffingPage />);
+      expect(screen.getByText("scopeYearNumbering")).toBeInTheDocument();
+    });
+
+    it("says nothing of the year when the ordinance judges it, and from a gateway with no such block", () => {
+      withScope("INSIDE");
+      const { unmount } = render(<StaffingPage />);
+      expect(screen.queryByText(/scopeYear/)).not.toBeInTheDocument();
+      unmount();
+      state.report = report;
+      render(<StaffingPage />);
+      expect(screen.queryByText(/scopeYear/)).not.toBeInTheDocument();
+    });
+
     it("draws the card in the teacher's drawer from the same block, and none for a year the ordinance does not reach", async () => {
       const user = userEvent.setup();
       assessmentProps.length = 0;

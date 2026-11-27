@@ -5305,7 +5305,10 @@
     <span class="ui">Omfattning enligt förordningen</span> i lärarlådan ställer
     lärarens undervisningstid bredvid förordningens spann för hens stadium.
     Kortet finns bara för läsår som börjar 1 juli 2027 eller senare: ett tidigare
-    läsår har ingen förordning att pröva mot, och då visas inget.
+    läsår har ingen förordning att pröva mot, och då visas inget kort. I stället
+    säger en rad högst upp på <span class="ui">Tjänstefördelning</span>, en enda
+    gång för hela sidan, att läsåret inte prövas och från vilken dag förordningen
+    gäller. Samma rad står på <span class="ui">Min tjänst</span> för läraren.
   </p>
   <table>
     <thead><tr><th>Stadium</th><th>Högsta undervisningstid vid heltid</th><th>Planering och uppföljning</th></tr></thead>
@@ -5342,7 +5345,12 @@
     raden för undervisning per läsår på kortet <span class="ui">Årsarbetstid</span>, som
     räknas med procent och faktor: den här siffran är lektionernas egen tid. Båda
     räknar skoldagarna, så ett läsår som börjar en lördag får inte med en vecka
-    lektioner som aldrig hålls.
+    lektioner som aldrig hålls. Skoldagar är måndag till fredag: inget i skolans
+    uppgifter säger vilka veckodagar skolan undervisar, och en lektion kostar
+    samma minuter vilken dag den ligger på. Timplanssidornas timmar per läsår
+    räknar däremot hela veckor, som timplanen planeras i (en vecka med minst en
+    skoldag i läsåret räknas hel), så samma lektion kan vara en vecka mer där i ett
+    läsår som börjar eller slutar mitt i en vecka, och sidan säger det.
   </p>
   <p>
     <strong>Deltid.</strong> Förhållandet mellan undervisningstid och arbetstid
@@ -5359,7 +5367,10 @@
     En grupp som spänner över årskurs 6 och 7 räknas i det strängare stadiet.
     Förskoleklassen omfattas inte av förordningen, men dess timmar räknas i
     lärarens totala undervisningstid, och raden ”Förskoleklass (omfattas inte)”
-    har en mening bredvid som säger det. Timmar i en grupp utan årskurs räknas men
+    har en mening bredvid som säger det. Timmar i en årskurs som ingen nivå i
+    förordningens lydelse gäller (en lydelse med färre stadier än skolans
+    årskurser) står på en rad för sig, <em>Årskurser utan nivå i förordningen</em>,
+    och är inte förskoleklass. Timmar i en grupp utan årskurs räknas men
     kan inte placeras i ett stadium, och kortet säger det. <strong>De timmarna
     gör aldrig att kortet säger över förordningens högsta nivå.</strong> Bara
     timmarna i stadierna ensamma gör det: en lärare som är över kanten först när
@@ -5410,7 +5421,11 @@
     nivå under förordningens kant ger utlåtandet <em>över den nivå som är satt</em>
     när läraren går över den, och det vägras aldrig: det är rektorns bedömning att
     visa. Nivån räknas om efter tjänstens omfattning som spannet, och kan inte
-    vara högre än förordningens högsta nivå i läsårets lydelse. En bedömning kan
+    vara högre än förordningens högsta nivå i läsårets lydelse. Rastra Schema vet
+    inte vilket stadium läraren undervisar i senare under läsåret, så nivån
+    sparas upp till den högsta kanten av alla stadier, men räknas som högst
+    kanten för lärarens eget stadium: ligger nivån över den säger formuläret det
+    innan du sparar, och kortet säger det efteråt. En bedömning kan
     bara skrivas för ett läsår förordningen gäller (1 juli 2027 eller senare, nio
     år i grundskolan).
   </p>
@@ -5419,9 +5434,10 @@
     och då anges dagen läraren tog initiativet, eftersom förordningen säger att
     det <em>endast</em> får ske på lärarens eget initiativ) och <strong>en enskild
     elev eller en mindre grupp</strong> (p. 3). Dagen får ligga i läsåret eller
-    högst ett år före dess första dag; en dag utanför, till exempel ett
-    skrivfel som 2072 i stället för 2027, vägras med läsårets gränser i
-    meddelandet. Enstaka vikarietimmar (p. 2) ligger
+    högst ett år före dess första dag, men inte efter dagens datum (skolans
+    egen dag): undantaget registreras när initiativet har tagits. En dag utanför,
+    till exempel ett skrivfel som 2072 i stället för 2027, vägras med läsårets
+    gränser i meddelandet, och en dag som inte har kommit vägras med dagens datum. Enstaka vikarietimmar (p. 2) ligger
     aldrig i den planerade tiden och behöver ingen registrering. Förordningen
     säger att undantag ska ske restriktivt, och Rastra Schema registrerar bara
     vad rektorn har bestämt. <strong>Ett undantag tystar inte utlåtandet:</strong>
