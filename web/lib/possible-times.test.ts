@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TIMES } from "./possible-times.fixture";
-import { askPossibleTimes, NUMBERED, optionAt, optionNumbered, roomAt, runAt } from "./possible-times";
+import { askPossibleTimes, NUMBERED, optionAt, optionNumbered, roomAt, runAt, type PossibleTimes } from "./possible-times";
 import { possibleOf, possibleStore } from "./possible-store";
 
 const post = vi.hoisted(() => vi.fn());
@@ -65,6 +65,23 @@ describe("the room a start was judged in", () => {
     expect(roomAt(bare, "a", 3, 630)).toBeUndefined();
     // A lesson the run does not name gets no room from it.
     expect(roomAt(TIMES, "b", 3, 630)).toBeUndefined();
+  });
+
+  it("is found for a brick under the empty id the gateway gives it, asked with the brick's own id", () => {
+    // A brick is not a lesson yet: the answer has `subject.lessonId` null and names its room under "" (src/calendar/possible-times.service.ts).
+    const brick: PossibleTimes = {
+      ...TIMES,
+      subject: { ...TIMES.subject, lessonId: null, lessonIds: [], unplaced: true, current: null },
+      options: TIMES.options.map((option) => ({ ...option, lessons: option.lessons.map((entry) => ({ ...entry, lessonId: "" })) })),
+      days: TIMES.days.map((day) => ({ ...day, runs: day.runs.map((run) => (run.rooms ? { ...run, rooms: run.rooms.map((entry) => ({ ...entry, lessonId: "" })) } : run)) })),
+    };
+    // The numbered time in room r2 and the stretch of another room round it, as for a lesson.
+    expect(roomAt(brick, "tray-1", 3, 600)).toBe("r2");
+    expect(roomAt(brick, "tray-1", 3, 630)).toBe("r2");
+    // And a time in the brick's own room has none.
+    expect(roomAt(brick, "tray-1", 2, 480)).toBeUndefined();
+    // The same answer asked for a lesson of the answer's own id finds nothing under it: it is not that lesson's.
+    expect(roomAt({ ...brick, subject: { ...brick.subject, lessonId: "a" } }, "a", 3, 630)).toBeUndefined();
   });
 });
 

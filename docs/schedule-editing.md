@@ -99,7 +99,8 @@ Optional: `days` (Monday to Friday), `from` and `to` (the board's visible day, 0
   is there: `FRAME`, `LUNCH`, `GRADE_RULE`, `OTHER_SCHOOL` with the schools' names, or `AVAILABILITY` with the resource it closes),
   `FREE` and `CHANGE` (the judge lets it through, `CHANGE` when the room had to be another: the run carries `rooms`, the room each
   lesson of the unit that moves to another stands in as the judge let it through, and a run is cut where those rooms change, so the board can lay
-  the lesson on any square of it with the room that square was judged in), `IN_THE_WAY` (exactly one lesson that is free
+  the lesson on any square of it with the room that square was judged in; for a `brick` the `lessonId` of `rooms` and of `options[].lessons` is `''`,
+  as `subject.lessonId` is null, and `roomAt` of the web asks for it so), `IN_THE_WAY` (exactly one lesson that is free
   to move holds the stretch, named by class, subject, day and clock in `blockers`) and `CROWDED` (several, or a locked one, hold it; the run
   says how many). Starts are returned as runs of one answer per day.
 - **The order is the written cost.** Each time the judge accepts is costed with the swap search's own soft measure (the pupils' and the

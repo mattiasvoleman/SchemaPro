@@ -107,11 +107,21 @@ export function optionAt(times: PossibleTimes, dayOfWeek: number, startMinutes: 
  * Laying the lesson with this room is what lets a square that is free only in another room be laid at all.
  */
 export function roomAt(times: PossibleTimes, lessonId: string, dayOfWeek: number, startMinutes: number): string | null | undefined {
+  const key = ownKey(times, lessonId);
   const option = optionAt(times, dayOfWeek, startMinutes);
-  if (option) return option.roomChanged ? (option.lessons.find((entry) => entry.lessonId === lessonId)?.roomId ?? null) : undefined;
+  if (option) return option.roomChanged ? (option.lessons.find((entry) => entry.lessonId === key)?.roomId ?? null) : undefined;
   const run = runAt(times, dayOfWeek, startMinutes);
   if (run?.kind !== "CHANGE") return undefined;
-  return run.rooms?.find((entry) => entry.lessonId === lessonId)?.roomId ?? undefined;
+  return run.rooms?.find((entry) => entry.lessonId === key)?.roomId ?? undefined;
+}
+
+/**
+ * What the answer calls the lesson in hand: its id, or the empty string for a brick. A brick is a lesson that does not exist yet (the
+ * tray's, E4), so the answer has no id for it (`subject.lessonId` is null) and names its room in `options[].lessons` and `rooms` under "".
+ * Asked with the brick's own id (the tray's), `roomAt` finds it all the same: the answer is for one unit and the unit is the brick.
+ */
+function ownKey(times: PossibleTimes, lessonId: string): string {
+  return times.subject.lessonId === null ? "" : lessonId;
 }
 
 /** The time that key 1 to 9 stands for. */
