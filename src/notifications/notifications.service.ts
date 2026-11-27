@@ -176,7 +176,8 @@ export class NotificationsService {
       const { email, ...rest } = entry;
       return [email && this.delivery.emailConfigured() ? { ...rest, email } : rest];
     });
-    this.delivery.enqueue(batch, settled);
+    // Written to the queue on a later turn, and told by the listener when this process has worked it through.
+    void this.delivery.enqueue(batch, settled);
   }
 
   /** The transaction's outbox, delivered by one hook after its commit; undefined outside withRls. */

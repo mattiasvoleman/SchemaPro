@@ -293,7 +293,39 @@ export class WhatFitsService {
       const unit = context.unitOf.get(found.lesson.lesson.id);
       if (!unit) throw new NotFoundException('The lesson is not in the year read.');
       const world = await this.possible.worldOf(tx, data, context, unit.members);
-      const rooms = roomChoicesOf(world, { unit, lesson: found.lesson.lesson, unplaced: found.lesson.unplaced }, dto.dayOfWeek, startMinutes);
+      const subject: PossibleSubject = { unit, lesson: found.lesson.lesson, unplaced: found.lesson.unplaced };
+      // The rooms the school lets several lessons share are free to the prune whoever sits in them; the judge counts the pupils, so it is
+      // asked of each of them, and one it refuses for its seats is a room a lesson sits in, not a free one.
+      const full = new Map<string, SwapLesson[]>();
+      const shared = world.rooms.filter((room) => context.isSharedRoom(room.id));
+      if (shared.length > 0) {
+        const reads = new SwapReads(data.lessons);
+        await reads.warm(tx, data);
+        const verdicts = await this.possible.judgeVerdicts(
+          tx,
+          data,
+          shared.map((room) => ({
+            subject,
+            candidate: { dayOfWeek: dto.dayOfWeek, startMinutes, rooms: new Map(unit.members.map((member) => [member.id, member.id === found.lesson.lesson.id ? room.id : member.roomId])) },
+          })),
+          reads,
+        );
+        const length = found.lesson.lesson.endMinutes - found.lesson.lesson.startMinutes;
+        shared.forEach((room, at) => {
+          const own = unit.members.findIndex((member) => member.id === found.lesson.lesson.id);
+          if (!verdicts[at]![own]!.refusals.some((refusal) => refusal.reason === 'ROOM')) return;
+          const sitting = data.lessons.filter(
+            (other) =>
+              other.roomId === room.id &&
+              other.dayOfWeek === dto.dayOfWeek &&
+              !unit.members.some((member) => member.id === other.id) &&
+              other.startMinutes < startMinutes + length &&
+              startMinutes < other.endMinutes,
+          );
+          if (sitting.length > 0) full.set(room.id, sitting);
+        });
+      }
+      const rooms = roomChoicesOf(world, subject, dto.dayOfWeek, startMinutes, full);
       return { ...base, rooms, stats: { rooms: rooms.length, free: rooms.filter((room) => room.state === 'FREE').length, elapsedMs: Date.now() - started } };
     });
   }

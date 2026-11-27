@@ -341,6 +341,7 @@ Run it with:
 | `ALLOWED_ORIGINS` | the API's origin, e.g. `https://api.yourschool.example` |
 | `SOLVER_MAX_TIME_SECONDS` | `60` (the engine's own default, `optimization-engine/app/config.py`, and the one both compose files give): the solve budget in seconds (raise for very large schools). **Production runs 540** (the engine logged that budget by 2026-11-23), and since 2026-11-24 the API reaches the engine over Railway's private network (§5.3); on a public https address a budget above 235 cannot be given its whole time, because the road closes a silent request at 300 s (§5.3). The 180 s of §5.1's first column and of the corpus measurements (§35) is the budget those were measured at, not the default and not production's. A solve that times out answers after this plus `SOLVER_PROBE_SECONDS` (default `20`). The engine keeps **one clock per request** (§5.1): the search has this budget, counted from the end of its model builds (from the request's arrival for Bästa möjliga schema and for a week that keeps Restid); the probe's seconds count from where the search *ended*, and nothing after it passes the instant the answer is due, 13 s before the engine's ceiling. The ceiling, after which the engine answers 503 (`ENGINE_TIMED_OUT` on the page) instead of waiting for its solve, is the budget, the probe and 30 s for the builds; a request that asks for no probes (every Schemaförslag call after the first) has the budget and the 30 s; and a request that carries its caller's deadline has the shorter of that and the deadline less 5 s. The engine says all of this on `GET /api/v1/timing` and the API reads it from there: there is no second number to set. The old `SOLVER_TIMEOUT_SECONDS` is gone: nothing read it. |
 | `SOLVER_EXPLAIN_SHARP_SECONDS` | `10` (default, must be above 0 and a finite number; the engine does not start on `0`, a negative value or `inf`): the share of the 15 s explanation cap that a LARGE refused week (50 lessons or more) gets for its first try, on the model without the objective, before the model with it is tried as the reserve. Raise it if the first try does not finish on this processor (section 23). |
+| `SOLVER_GROUP_CLIQUES` | `true` (default): the full model of a strict solve (phase 1b's clone and phase 2's search) writes the pairs of groups that share a pupil as rows over cliques of them, the same rule in fewer rows (§35.10). `false` gives one row per pair everywhere again, as the model was before M8 PR 6. Read at the engine's start: a changed value is an engine restart, not a deploy of code. |
 | `EXAM_SOLVER_MAX_TIME_SECONDS` | `20` (default): the budget of the exam planner (`POST /api/v1/plan-exams`, Provplanering), apart from the generator's. A short budget never refuses: a greedy plan is the floor and the answer from the first instant, so less time means fewer exams placed or a clumsier plan. A request can ask for less and never for more. The API waits for the engine's ceiling for it (50 s at the default, `GET /api/v1/timing`) and never less than 90 s. |
 
 The solver needs no database and no PII ever reaches it. Keep it on a private
@@ -449,7 +450,7 @@ A run that ends without a timetable because time ran out says where the time wen
 
 | What | Where | When |
 | --- | --- | --- |
-| `report` on the response (`TimeoutReport`): the seconds of each step (`PRECHECKS`, `BUILD`, `SITES`, `SEARCH_CLEAN`, `SEARCH_CLONE`, `PROBE`), what the search was given (`budgetSeconds`) against what the engine is set to (`configuredBudgetSeconds`), the caller's wait (`callerWaitSeconds`), what CP-SAT counted in each satisfaction search (`conflicts`, `branches`: effort, not progress, and no bound, since a satisfaction search has no objective), and `weekLoadCut` | `POST /api/v1/optimize` | on a `TIMEOUT` answer only, strict and best-effort alike; every other response is byte for byte what it was |
+| `report` on the response (`TimeoutReport`): the seconds of each step (`PRECHECKS`, `START`, `BUILD`, `SITES`, `SEARCH_CLEAN`, `YEARS`, `SEARCH_CLONE`, `PROBE`; a step the gateway does not know is skipped and its seconds are carried as `otherSeconds`, §35.8 and §35.9), what the search was given (`budgetSeconds`) against what the engine is set to (`configuredBudgetSeconds`), the caller's wait (`callerWaitSeconds`), what CP-SAT counted in each satisfaction search (`conflicts`, `branches`: effort, not progress, and no bound, since a satisfaction search has no objective), and `weekLoadCut` | `POST /api/v1/optimize` | on a `TIMEOUT` answer only, strict and best-effort alike; every other response is byte for byte what it was |
 | The row `WEEK_LOAD_NOT_COUNTED` among a TIMEOUT's conflicts | the same answer | when the year's week load stopped at its seconds before every year was counted (four at most; fewer when the request's own clock cut the count short, and the row says the seconds it had, in tenths when they are not whole): a year with no line is then **not counted**, which is not the same as being under 85 % |
 | `stage`, `stageSeconds` and `elapsedSeconds` in the 503's `details` (beside `route` and `ceilingSeconds`) | the generation route's 503 `SOLVER_TIMEOUT` | when the solve the ceiling gave up on was in a step; absent from the other three routes, and from a 503 whose solve had closed its last step |
 
@@ -513,51 +514,84 @@ and no `Set-Cookie`.
 
 ## 7. Bootstrap the first school and admin
 
-There is intentionally no public signup. One-time, in the Supabase dashboard:
+There is intentionally no public signup and no button that makes a school: the operator makes each school once, with a script, from
+their own machine, as the migrations are run (step 2). It replaces the two SQL statements this section used to hand out, and the
+gap between them (a school with nobody in it, which `npm run db:seed` takes for no school at all).
 
-1. **Create the auth user**: Authentication → Users → *Add user* → email +
-   temporary password (or *Send invitation*). Copy the user's **UUID**.
-2. **Create the tenant and profile** (SQL editor, as owner):
-
-```sql
-insert into "Schools" (name, slug, timezone, "updatedAt")
-values ('Demo School', 'demo-school', 'Europe/Stockholm', now());
-
-insert into "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "invitedAt", "updatedAt")
-values (
-  (select id from "Schools" where slug = 'demo-school'),
-  '<AUTH_USER_UUID>',
-  'SCHOOL_ADMIN',
-  'Anna', 'Andersson', '<same email as the auth user>',
-  now(), now()
-);
+```bash
+DIRECT_URL="postgresql://postgres:<DB_PASSWORD>@db.<ref>.supabase.co:5432/postgres?sslmode=require&uselibpqcompat=true" \
+SUPABASE_URL="https://<ref>.supabase.co" \
+SUPABASE_SERVICE_ROLE_KEY="<service role key>" \
+npm run operator:new-school -- \
+  --name "Ekeby skola" --slug ekeby-skola \
+  --admin-email rektor@ekeby.example --admin-first-name Anna --admin-last-name Andersson \
+  --web-url https://app.ekeby.example
 ```
 
-`"invitedAt"` says the person has a login. Without it the row reads as a
-catalogue entry nobody invited: when gallring pseudonymises the person after
-they have left it would leave their login behind, and the school-account
-domain checks (§11) would not count them.
+Run it as written and it only **reads**: it says which database it would write in, checks the Supabase Auth project (below) and
+says what it would make. Nothing is written and no mail is sent. Add `--apply --expect-host db.<ref>.supabase.co` to do it. The
+host is compared with the one `DIRECT_URL` names before anything is written, so that a stale variable in the shell cannot pick the
+database; `--apply` without `--expect-host` is refused.
 
-The two statements are two statements: between the `Schools` row and the
-administrator the school has nobody in it, and `npm run db:seed` (§37) takes a
-school with nobody in it for no school at all and will add the demo school
-beside it. Run the two together (paste both into the SQL editor and run them
-as one), and do not run a seed against this database in between.
+It reads **no `.env` file** and no variable but `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, the two named below for
+the project's settings, and the one `--password-env` names. A spec holds that (`src/operator/operator-reads-no-env.spec.ts`). It
+never prints a key, a password or the database password.
 
-`"updatedAt"` is mapped with Prisma's `@updatedAt`, which is maintained in the
-application layer and creates **no database default** — every hand-written
-`insert` against these tables must supply it, on all 12 models that carry it.
-`"createdAt"` does default, so only `"updatedAt"` errors. Keep the double
-quotes: unquoted, PostgreSQL folds the identifier to `updatedat`.
+What `--apply` does, in this order:
 
-`"authId"` is the only link between the Supabase Auth user and this profile —
-`JwtStrategy` resolves the account by it alone. A wrong UUID produces a
-successful sign-in followed by *"No active user profile is linked to this
-account."*
+1. **The school and its administrator, in one transaction.** The administrator is a `SCHOOL_ADMIN` with the `FULL` profile, with no
+   login yet. A failure leaves neither.
+2. **The login, at Supabase Auth**, with the same admin calls the API's invitations use, tagged with the administrator's row so
+   that a later invitation can move the login as the row's own. By default it is an **invitation mail**: the person sets their own
+   password, and the mail arriving is the proof that the project can send. With `--password-env ADMIN_PASSWORD` (a variable of at
+   least 12 characters, never an argument) it makes a confirmed login with that password instead and sends nothing, for a project
+   that has no sender yet. An address Supabase already has a login for (made by hand in the dashboard, as this section used to
+   say) is adopted, and the script says that no mail went out.
+3. **`"invitedAt"` and the login on the row.** `"invitedAt"` says the person has a login. Without it the row reads as a catalogue
+   entry nobody invited: when gallring pseudonymises the person after they have left it would leave their login behind, and the
+   school-account domain checks (§11) would not count them. The login is attached last, and the row is the one that was written
+   first, as `UsersService` does for every other person.
 
-3. Sign in on the web app — you land on the admin dashboard. Every subsequent
-   user is invited through **Admin → People** (the API sends the Supabase
-   invite email automatically).
+It is safe to run twice. A school and an administrator that exist are found by the slug and the address and are not made again:
+a run that stopped before the login (the sender refused, the network went) continues from the login when the same command is run
+again, and one that is done says so and does nothing. A slug that holds anything else (another administrator, other people) is
+refused. A login that **another school's person already holds** is not taken: a person joins a second school by that school's own
+invitation (`Users_a_login_joins_another_school_by_invitation`), and the row stays un-invited with the sentence to say why.
+
+If the script cannot be run, the rows are two: a `"Schools"` row and a `"Users"` row with role `SCHOOL_ADMIN`, the person's real
+address, the Supabase user's UUID as `"authId"` and `"invitedAt"` set, written in one transaction by whoever has the owner
+connection. `"updatedAt"` has no database default (Prisma maintains it in the application), so every hand-written `insert` supplies
+it, with the camelCase columns in double quotes.
+
+`"authId"` is the only link between the Supabase Auth user and this profile: `JwtStrategy` resolves the account by it alone. A
+wrong UUID produces a successful sign-in followed by *"No active user profile is linked to this account."*
+
+Then sign in on the web app: you land on the admin dashboard. Every subsequent user is invited through **Admin → People** (the API
+sends the Supabase invite email automatically).
+
+### 7.1 The project's sender: check it before the first invitation
+
+Every invitation and every password reset is a mail from Supabase Auth, not from Resend (the notification mail of §10 is another
+road). On Supabase's own sender that is **2 mails an hour**; once the project sets its own SMTP (Authentication → SMTP) the default
+becomes **30 an hour**, and the limit is changed under Authentication → Rate Limits (`rate_limit_email_sent`). Past it Supabase
+answers **HTTP 429, `over_email_send_rate_limit`**. A school of 300 people therefore takes 10 hours to invite at the default, and
+the first administrator's own invitation is refused on a project that already sent two. (Source: Supabase's documentation of
+custom SMTP and of Auth rate limits.)
+
+The script reads what it can before it writes anything, and says it plainly:
+
+| Line | Where it comes from | When it says "not read" |
+|---|---|---|
+| Public signups | `GET <SUPABASE_URL>/auth/v1/settings`, with the service-role key as `apikey` | the project did not answer. Look at Authentication → Providers → Email: *Allow new users to sign up* must be off (§1) |
+| Sender (SMTP) | Supabase's Management API, `GET https://api.supabase.com/v1/projects/<ref>/config/auth`: `smtp_host` says whether the project sends through its own SMTP, `rate_limit_email_sent` how many an hour | `SUPABASE_ACCESS_TOKEN` (an access token from Supabase's account page) and `SUPABASE_PROJECT_REF` (the reference in the dashboard's address) are not both set. The token is **yours**, never the API's: give it on the one command line and it is gone with the shell |
+
+Only the host, port, sender and the hourly limit are read out of the answer; the SMTP user and password are not kept or printed.
+`--require-smtp` makes the script refuse to write anything unless the project's own SMTP is verified this way.
+
+**What the script cannot check is that mail really arrives.** The invitation to the first administrator is that check: a project
+whose SMTP server refuses the mail answers the script with HTTP 500, and the script says to look at host, port, user and the
+sender address under Authentication → SMTP. The same mail is what the first administrator signs in from, so a mail that does not
+arrive is found on day one and not when the school invites its teachers.
 
 ## 8. Mobile app
 
@@ -1226,10 +1260,11 @@ Walk the full product loop once, in order:
   attendance after a period shorter than a limit's window (a 1-month period and a
   60-day window) is counted over what is left: the count cannot see what gallring
   took, and the finding still names the window.
-  **Known limit:** the e-mail and the push go to the delivery's in-memory queue
-  after the commit, as every other notice does, so a process that stops between
-  the commit and the send loses them for that period: the inbox notice is
-  written, and the digest's ledger row keeps it from being written again.
+  **Known limit, mended by §40:** the e-mail and the push used to go to the
+  delivery's in-memory queue after the commit, so a process that stopped between
+  the commit and the send lost them for that period. They now go to the database
+  (§40), and a deploy no longer loses them; what is left is the moment between
+  the commit and the queue's write (§40.8).
   **Clients from before the release:** the web and the app before it draw the
   digest notice with their fallback text ("Ny notis" / "Notis") and list it in
   Settings under its catalogue key, switchable. The digest's e-mail and push
@@ -1531,10 +1566,10 @@ Walk the full product loop once, in order:
   held; a year activated before the old year ends closes the class history that day, so
   the unregistered lessons of the weeks that are left drop out of the days; a teacher who
   is deactivated loses the stored days of the last 90 days at the next night while older
-  days stay; a register saved more than 90 days after its lesson does not move the stored day; the e-mail and the push go to the delivery's in-memory queue after the
-  commit, as every other notice does, so a process that stops between the commit and the
-  send loses them for that night, and the ledger keeps the reminder from being written
-  again.
+  days stay; a register saved more than 90 days after its lesson does not move the stored day; the e-mail and the push go to the delivery's queue after the
+  commit, as every other notice does (in the database since §40: a deploy no longer loses
+  them, only a process that dies between the commit and the queue's write does), and the
+  ledger keeps the reminder from being written again.
   **Clients from before the release:** the web and the app before it draw the two
   notices with their fallback text ("Ny notis" / "Notis") and list them in Settings under
   their catalogue keys, switchable.
@@ -2059,19 +2094,21 @@ Walk the full product loop once, in order:
   it never comes, the gateway calls the reminder `WRITTEN` and the staff's list says
   *Lagd i inkorgen* (the notices are in the inboxes, and nothing more is known)
   where it said *Skickad*; the detail page says what is and is not known. **Known
-  limit:** the e-mail and the push of a reminder go to the delivery's in-memory
-  queue after the commit, as every other notice does, so a process that stops
-  between the commit and the send loses them: the inbox notices are written, the
-  request reads *Lagd i inkorgen* for good, and nothing sends the reminder again.
-  A whole-school wave is some 41 s of mail and 8 s of push, so **do not release
-  while one is going** (`SELECT count(*), min("remindAt") FROM "AckRequests" WHERE
-  "remindAt" <= now() AND "reminderOutcome" IS NULL` is empty, and the last
-  `JobRuns` row of `ack-reminders` is a few minutes old at most, when the pass has
-  just finished), and read the requests that stayed `WRITTEN` afterwards (`SELECT
+  limit, as it was before §40:** the e-mail and the push of a reminder used to go to
+  the delivery's in-memory queue, so a process that stopped between the commit and
+  the send lost them, and the request read *Lagd i inkorgen* for good. They now go to
+  the database queue (§40), which a deploy does not empty, so **a release no longer has
+  to wait for a wave to end**. What stays: the word *Skickad* is said only by the
+  process that wrote the batch, when it has worked the batch through. A request whose
+  mail was delivered by another process, after a restart or in a deploy, still reads
+  `WRITTEN` though the mail went (the closure that would say it is gone with the
+  process; §40.8). Read the requests that stayed `WRITTEN` afterwards (`SELECT
   count(*) FROM "AckRequests" WHERE "reminderOutcome" = 'SENT' AND
   "reminderMirroredAt" IS NULL AND "reminderSentAt" < now() - interval '15
-  minutes'`). A refused batch (Resend or Expo answering with an error) leaves the
-  request `WRITTEN` the same way.
+  minutes'`) as "not known", not as "not sent". A batch the channel refused for good
+  (Resend answering 4xx, Expo refusing our credentials) leaves the request `WRITTEN`
+  the same way; a mail the provider asks to be asked about again later is asked about
+  again (§40.3), and says its word when it has gone.
   *(4) A sender cannot use up the school's day.* The school's 20 000 rows were
   shared by all senders: two mentor accounts, each writing the ten requests an hour
   for a class of 30 (66 rows each), reach 15 840 rows a day each. Each sender now has
@@ -7464,15 +7501,14 @@ What the numbers say, in order of weight:
 
 ### 35.3 The nightly gate: this tree against a floor, in work and not in seconds
 
-Job `solver-corpus` in `quality-gates.yml`, 30 minutes at most, about **12 to 18 minutes of runner time a night**: each of the two trees measures the gate's 13 weeks at **three seeds** (one seed took 1 to 3 minutes a tree on this Mac at loads of 23 to 57 with four searches
-at a time, so three seeds take three times that), plus about 1.5 minutes for the install and the checkouts. The nightly `solver-benchmark` takes 2.4 minutes and the
-latency job about 6. A change that makes every week time out at every seed would take the 30-minute ceiling, and the job is red then anyway. The repository is public, so a standard runner is not billed; the figure is
-runtime. The job has not run on a runner yet (it cannot before merge): the first night, or a dispatch, shows the minutes.
+Job `solver-corpus` in `quality-gates.yml`, 40 minutes at most (30 until the two weeks of the years' road were added, M8 PR 7). **On a runner it took 21 to 25 minutes on the nights of 2026-11-23 to 25**, with the gate's 13 weeks: each of the two trees measures them at **three seeds**, four weeks at a time on the four vCPUs, and a tree took 10 to 12 minutes, plus about 1 minute for the install and the checkouts (the 12 to 18 minutes this section had said were an estimate from this Mac). The two weeks of the years' road make it 15 weeks, and they are the longest of the pool: in a tree without the road each is a TIMEOUT of two whole searches at every seed (8 and 11 minutes for the three seeds, which are one worker's task, by the rows of M8 PR 7's measurement on this Mac), and in a tree with it 7 and 12. Given to the pool last they would add about 8 minutes to a tree without the road and about 5 to one with it, which puts the job at 37 to 40 of its 40 minutes (an estimate from those rows, which gives the 21 minutes the runner took for the 13 weeks, not a measurement of the new weeks); `LONGEST_FIRST` in `corpus_measure.py` gives the four longest weeks to the pool first, and then they add about 2 minutes. The first night with the two weeks, or a dispatch with `corpus_only`, shows the minutes. The nightly `solver-benchmark` takes 2.4 minutes and the
+latency job about 6. A change that makes every week time out at every seed would take the 40-minute ceiling, and the job is red then anyway. The repository is public, so a standard runner is not billed; the figure is
+runtime.
 
 - **Why not seconds.** ubuntu-latest is a mixed-CPU pool (the same tree's health throughput varied 2.6x between its machines; `scripts/bench/latency-gate.mjs` has the numbers), and a search
   takes as many seconds as the machine it drew. In count mode one worker with a fixed seed makes CP-SAT repeat the same search, so the operations it counts are the same everywhere.
 - **The floor** is `main` as it was a week ago (`git rev-list -1 --before='7 days ago' origin/main`), checked out as a second tree in the same job, or the ref a dispatch input `corpus_floor` names.
-  Nothing is stored and nothing is moved by hand. The same script and the same 13 weeks (`GATE_WEEKS`) run against both engines through `ENGINE_ROOT`, with one OR-Tools for both.
+  Nothing is stored and nothing is moved by hand. The same script and the same 15 weeks (`GATE_WEEKS`) run against both engines through `ENGINE_ROOT`, with one OR-Tools for both.
   **Dispatched on a branch with `corpus_floor=main` and `corpus_only=true` it is an A/B of the branch against main, and the only job that starts**
   (`gh workflow run quality-gates.yml --ref <branch> -f corpus_floor=main -f corpus_only=true`; without `corpus_only` a dispatch also starts the screenshot, mutation, Lighthouse, solver and latency jobs).
 - **Three seeds, and the middle one.** A shape searched at another seed is another search, and that is what any change to how the model is built does to it: the same week, the same engine, another seed took from 0.11 to
@@ -7488,6 +7524,7 @@ runtime. The job has not run on a runner yet (it cannot before merge): the first
 - **What it cannot see.** A regression that shows only with several workers (the portfolio production runs); the Python time of the build (wall time: printed per step, not gated); and **a change of OR-Tools' pin**,
   because both trees run on this tree's OR-Tools: a step prints a warning when the pin has moved since the floor, so that a green verdict is not read as "the upgrade is harmless". A floor older than the hook
   (`_generation_solver`, 2026-10-18) or than terms in the engine (2026-11-12) answers `ERROR` for what it does not support, which is a gain and not a failure.
+- **The years' road's two weeks** (M8 PR 7): `n9-g6-m0-s1` and `n12-g6-m0-s1-e1645` (a cliff week, §35.7, its day ending at 16:45), which were TIMEOUT before the road between phase 1a and 1b (§35.9) and are laid at every one of three seeds with it: work **4.6 to 6.1** (phase 1a's 4.0 that gave up, the steps, phase 1b's finish from the hint), the middle seed 5.39 and 5.74. They are rows because a change that breaks the road is then **two weeks lost at once, which the verdict fails on** (two lost weeks fail whatever the floor was, above); one alone could not, since the floor's work of 5 to 6 is not "clearly inside" the two searches' 8. Until the floor has the road (a week after PR 5 merged) the rows read as weeks that gained a timetable and decide nothing. A week of a few more than two years with terms is not among them (the gate does not cover terms). The runner time they add is an estimate from this Mac, and so is what the road lays: **their work was measured on a Mac (arm64), and the runner is not that machine**. "The same everywhere" (*Why not seconds*, above) holds for the runner's nights and not for a Mac: the gate's 13 weeks needed 0.75 to 2.1 times the work there that they did on the Mac (three nights alike to the last digit, and the terms week a TIMEOUT where the Mac laid it at 4.7). So what the road lays on a runner at three seeds is not known until a night, or a dispatch with `corpus_only` on a branch that has the road, has run it. If the two read `gained` that night they are laid there, and the minutes are shown. If they read `same: TIMEOUT` the verdict names them as guarding nothing, and they have to be chosen again from a runner's rows.
 - **Terms are barely in it.** The only gate week with term subjects is an edge week (it gets a timetable at three of seven seeds), and the sweep's other term weeks (the second seed at three term subjects, both seeds at five, the production's form) do not get one at a budget of 4 deterministic seconds. **Decided: no (the user, 2026-11-22).** The nightly gate does not cover terms. What covering them would take is a budget of 8 for the gate's weeks, which doubles the cost. The gate keeps the one edge week it has, and no more.
 - **Quiet when the model is not touched.** The gate's weeks measured on `main` at five points in time (2026-10-25, 11-01, 11-08, 11-14 and 11-22, 76 changes to the engine between them, among them M1, M2, M3 and
   the time chain): **the work for the weeks that solve is identical to the last digit at all five** (measured at one seed). So changes that do not move how the model is built are silent; the first change that does is a new throw of the dice for
@@ -7588,6 +7625,106 @@ node scripts/bench/solve-corpus-calibrate.mjs convert prod.json trajectory.json
 
 What the table says, and what it does not. Where the plain solve finds a timetable the one from a schedule is the same kind of timetable with 3 to 24 requirements moved instead of 107 or 137 (the plain solve has no reason to resemble anything), and on `n12-g5-m0-s2`, a week that is TIMEOUT today, one is laid that keeps five requirements in six where the schedule had them. `n9-g6-m0-s2` sits on the cliff of §35.7: it was TIMEOUT in two runs on the tree before the corpus' second version and FEASIBLE in this one, so the table does not show it as a week the road lays and the plain solve does not. **A FEASIBLE at the budget says that phase 2 ran on until it was stopped, and its seconds say nothing of when the first timetable came** (the same is true of the plain FEASIBLE rows); a run of `n9-g6-m0-s2` with the log on shows what the attempts are: the first was refused 1.6 s after the start (13 requirements clash with the week, 37 let go), the second after 4.2 s (67 let go), and the third held 41 and ran to the budget. The overrun past 60 s (up to 11 s) is phase 2's stop lag with the schedule as its disruption term, and the attempts share one deadline. **The schedule was laid by the engine or by a road of §35.7 on a week of the same school form; a schedule a school's own planner made, or one read in from another program, is not measured**, and neither is a week that resembles the schedule less than a sibling seed does (a school changing a year's groups between years). The weeks are the corpus's, one run each: it says that the road works on them and not how often.
 
+### 35.8a Starting from a schedule: the gateway's side (M9, "Ett schema som start")
+
+**What it is.** Generera takes an optional `startFrom` (`POST /api/v1/optimization/jobs` and `/trigger`): `{ "source": "CURRENT" | "PREVIOUS_YEAR" | "VERSION", "versionId"? }`. Absent it, Generera is what it was, byte for byte: the request to the engine has no `startLessons`, the job row has no `startedFrom`, and the controller and the jobs service call the proxy with the arguments they always did. With it, the gateway reads the schedule the school chose, maps its lessons to the posts of THIS week and sends them as `startLessons` (§35.8): the engine holds each lesson where it was, lets go of what clashes with the week and lays the rest. It is not a lock: nothing is written as locked, and nothing the school locked is ever given as a start (a lock is already in the payload as `fixedLessons`).
+
+**The three sources** (`src/optimization/start-sources.ts`; the mapping is `start-schedule.ts`, pure and with no database):
+
+| `source` | Reads | Notes |
+|---|---|---|
+| `CURRENT` | the year's draft: the lessons the next Generera replaces (the machine-owned masters the fetch has already read), not parked | A first Generera has none, and is refused (below). |
+| `PREVIOUS_YEAR` | the masters of `AcademicYear.predecessorId` under the successor of each class (`StudentGroup.predecessorId`), not parked | A class with no successor (the leaving 9th grade, a new intake) is counted `NO_SUCCESSOR`. A lesson of several classes or of named pupils is `NOT_STARTABLE`. The dates of a lesson that ran in part of the year move as the rollover moved its post (`mapPeriod`, the whole-week shift), and a lesson whose period no longer fits is `OTHER_WEEKS`. Odd and even weeks are matched as they are: the rollover copies a post's parity unchanged (the preview already says that ISO week 53 swaps them), so a lesson and its post still agree. |
+| `VERSION` | a saved version (`ScheduleVersion`) **of this year** | The machine's lessons only: a locked lesson, a lesson placed by hand, a parked lesson and a lesson written from a förläggning are left out (they are in the week as they stand). A snapshot from before `isGenerated` is read as the machine's. A file read in from Skola24, Untis or aSc is saved as a version (`schedule-exchange`), and is then started from like any other. |
+
+A lesson is matched to a post by group, subject and the weeks it ran (parity and dates); a lesson that matches no post, a post that is not in the week (every lesson of it is locked), two posts that the lesson could belong to, and a post the engine does not start (split lessons, pinned lessons) are left out and counted by reason: `NO_SUCCESSOR`, `NO_POST`, `NOT_IN_WEEK`, `OTHER_WEEKS`, `AMBIGUOUS`, `NOT_STARTABLE`, `MORE_THAN_ASKED`. No more entries are given for a post than the week asks of it.
+
+**An older engine never blocks Generera.** The gateway asks the engine what it can take (`GET /api/v1/timing`, `capabilities`): an engine that lists `startLessons` is sent it; one that has said what it can take and does not list it is not sent it and the schedule is not even read; one that has said nothing (it was not up when the API started, or it is older than `/timing` itself) is sent it once and answers 422 `extra_forbidden` at `['body','startLessons']`, which `callAiEngine` answers by sending the same week again without it (as it does for `placements` and `deadlineSeconds`). In both cases the week is laid as Generera lays it with no start, and the run says so: `startedFrom.engine` is `OLDER` and the counts are null, which the page puts in a sentence so that a school does not believe a schedule was held that was not. The 422 was read from a real older engine (`ed3f1db39`, the tree before PR #460): its body names `['body','startLessons']` as `extra_forbidden` among the other errors, which is what `refusesField` reads.
+
+**What is refused, and when.** At the click (no job row): a `versionId` that is not one of this year's, `404 START_VERSION_NOT_FOUND`; `PREVIOUS_YEAR` for a year that was not rolled over from another, `409 START_NO_PREVIOUS_YEAR`. In the run, before the engine is woken and with nothing written: a schedule none of whose lessons belong to a post of the week (a first Generera that asks to start from the draft, a version of other classes), `409 START_NOTHING_TO_START_FROM`, with flat params that say why (`offered`, and `noPost`, `noSuccessor` … for each reason that left some out). A week laid from nothing is not what the school asked for. A week with nothing left to lay (every post locked) has nothing to start, and is not refused.
+
+**What the run stores.** `OptimizationJobs."startedFrom"` (migration `20270308090000`, one nullable `jsonb` column and a CHECK for an object of at most 2 KiB, taken NOWAIT with retries as `20270228090000` was): `{ source, versionName, engine: USED | OLDER, offered, used, held, moved, laid, dropped }`, read back through a whitelist (`startedFromOf`). `held`, `moved` and `laid` are counted from the engine's answer set against the entries given, post by post: a lesson of the answer at the very time an entry of its post had is HELD (the end is part of the time), of the rest as many as the shorter side are MOVED, and what is left of the answer is LAID with nothing to replace. They sum to the lessons the answer holds, and they are the database's own count: the probe checks `held` against the lessons that stand where the saved baseline had them. No lesson and no person is in the column. Null for a run that started from nothing.
+
+**What it does, in the probe** (`scripts/test/probe-schema-som-start-motor.ts`: a real engine of this tree on a real database, a school of six classes in three grades, ten subjects, eighteen teachers, a school day of 08:00 to 16:00, 180 lessons a week, 75 % of the week; the engine's own budget is 60 s; three runs of the whole probe on one shared Mac, with the host's load beside each because it was 40 to 100 and changed during the runs, so no row is a production second. Run A failed one step: the probe then asserted that a start moves no more lessons than the hint does (10 against 9), which is not what a start is for in a world this easy, and the assertion became a loose bound; B and C ran clean):
+
+| Step | Result | Wall clock, run A / B / C (fetch, engine, write) |
+|---|---|---|
+| laid from nothing (the baseline) | 180 lessons, no clash | 17.6 / 1.1 / 1.6 s |
+| the same week started from its own schedule | 180 held, 0 moved, 0 laid, the same lessons written | 2.1 / 0.4 / 1.1 s |
+| two teachers lose a morning each (8 of their lessons clash): laid from nothing with the schedule as a hint, as Generera has always done | 9 of 180 not where they were | 63.8 / 61.5 / 27.9 s |
+| the same week started from its own schedule | 171 held, 9 moved, 0 laid; the two teachers teach nothing in their mornings; no clash | 9.2 / 7.8 / 1.0 s |
+| the same, from a saved version of the year | 171 held, 9 moved, 0 laid | 12.7 / 4.8 / 1.1 s |
+| the year after: 4 classes continue, the leaving 9th grade has no successor, a new 7th grade continues nothing, from last year's schedule | 117 held, 3 moved, 60 laid (the new classes); the 60 lessons of the leaving classes counted `NO_SUCCESSOR`; no clash | 1.3 / 5.6 / 0.6 s |
+| an engine from before `startLessons` (`ed3f1db39`) asked to start | laid as before, 180 lessons, no clash, `startedFrom.engine` `OLDER`, none moved or held counted | 2.8 s (one run) |
+
+Load averages (`uptime`, 1 / 5 / 15 minutes) at the start and the end of each run: A 100.8 / 102.2 / 59.0 and 42.4 / 74.5 / 55.7; B 38.5 / 67.9 / 54.5 and 71.4 / 70.3 / 56.8; C 65.5 / 69.3 / 57.2 and 71.7 / 71.0 / 58.8. What to read is the ratio on the changed week, which is the same in the three: the week started from its schedule took a seventh to a twenty-eighth of the time the same week took from nothing (9.2 against 63.8 s, 7.8 against 61.5 s, 1.0 against 27.9 s), because the engine does not search for 180 lessons but for the 8 that clash and what they push. The hint (`previousLessons`, which Generera has always sent) already keeps most lessons where they were in a world this easy to keep, so the number that moved is the same with and without a start (9 and 9): what a start changes is time, and that the lessons that stay are exactly the school's own and are held, not rewarded. The corpus weeks that are TIMEOUT from nothing and are laid from a schedule are §35.8's, which this changes only by sending the field.
+
+**Merge and deploy.** The migration is run in production **before** the merge (DEPLOYMENT §2): the API after this PR names `startedFrom` only for a run that asked for a start, so the API before it is not affected, and a run before the column has null. The migration takes its one lock (ACCESS EXCLUSIVE on `OptimizationJobs`) NOWAIT in a loop: if the table is not free once in 30 s it stops with nothing changed, and `prisma migrate deploy` then refuses (P3009) until `prisma migrate resolve --rolled-back 20270308090000_en_korning_sparar_vilket_schema_den_utgick_ifran` has been run; then deploy again. The engine is not changed by this PR; it already says `startLessons` among its `capabilities` (§35.8) and the gateway sends the field only to an engine that does, or to one that has said nothing and answers its own 422.
+
+**Not done (and where it goes).** The page's choice of start and its sentences (the next PR of M9), the rollover's offer of last year's schedule (the third), and a file read in from Skola24, Untis or aSc as a saved version. A new class with no predecessor (an intake) has no schedule to start from, though its posts are copies of an older class's: the rollover knows which (`intake:<sourceId>`) and the database does not, so it is laid from nothing. A schemaförslag run does not start from a schedule; E7b builds on this.
+
+### 35.9 Laying a week a year at a time: the road between phase 1a and 1b (M8, PR 5)
+
+**What it is.** A strict solve that phase 1a gave up on no longer goes straight to phase 1b. A week of two or more *years* is first laid one year at a time (`app/solver/years.py`, `SchedulerSolver._lay_by_years`), and what that finds is a complete timetable of starts that phase 1b is then **hinted** with: phase 1b starts in a solution of the week and finishes it (the rooms and the meals), where it would have searched for one. Nothing is proved and nothing is refused on this road: a step that does not come (it ran out of its time, it is INFEASIBLE with the years above it held, or the model refused to build it) ends the road, and phase 1b goes on as it always did on what is left of the budget. A request carries no new field and the response none: a week that phase 1a lays is laid exactly as before, and so is every answer that is not a TIMEOUT-bound week of two years or more without the walk.
+
+**The years.** `units_of` joins the requirements that share a pupil key (a group and the classes it draws on, `groupConflicts`), a block, or a year (`minGradeLevel`): each set is one *unit*, and the unit with the most pairs of groups is laid first (the design note's `hardest`; the measurement found the order matters less than which year is laid second, and every order laid the weeks it was tried on). A week of fewer than two units, or of more than `MAX_UNITS` (12), is not laid this way, and a week that keeps the walk between sites (Restid i generatorn) is not either: its sites are planned first, as they always were.
+
+**A step** is the engine's own satisfaction model (`_build_model(include_objective=False)`, the model of phase 1a) of the units laid so far: the ones already laid pinned where they were laid (`pinnedLessons`, a place per lesson, rooms left free; a requirement the school pinned in part is held whole, with the school's own pins as they were), the unit being laid free, every later unit left out. The last step is the whole week with every year but the last held, so what it finds keeps every rule of the week. Each step is searched with `_years_solver`, which is the generation solver under a name of its own (a measurement of the first timetable must not take a year's solution for the week's), with the request's seed and workers. **The steps are given no lunch hints**: phase 1a's model is hinted with the meals the lunch stage settled and the steps were first too, and that was measured, five weeks at three seeds and three ways (the week's hints, the step's own lunch stage, none): the first two gave the same result and laid 6 of 15, none laid 11 of 15 (n9-g10 0 of 3 against 2, n12-g6 0 of 3 against 3; n12-g5 laid 2 of 3 with hints and 1 of 3 without it).
+
+**The time.** The road gets a third of what is left of the budget when phase 1a has given up, at most `YEARS_CAP_SECONDS` (90 s), builds included; phase 1b has the rest. The road is **between** the two searches and not before phase 1a, on purpose: a week phase 1a lays takes exactly the road it took, the nightly gate (which stops at the first timetable any search finds) measures the same search it always did, and what the road costs is phase 1a's whole slice on a week the road then lays (at most 60 s, of a budget of many times that) and, on a week phase 1b would have laid by itself in a moment, the steps' time first (below, `n9-g8-m0-s1-e1630` at seed 1).
+
+**The step in the report.** A TIMEOUT's account says the road as one step, `YEARS`, between `SEARCH_CLEAN` and `SEARCH_CLONE`, with the seconds of all its steps (`StageClock` sums a step that comes back). It is a step and not a search phase (`TimeoutPhaseName` is unchanged, since a gateway that does not know a phase drops the whole report). The gateway on main skips a step it does not know (#458: the seconds are carried as `otherSeconds`), and `YEARS` stands in `src/optimization/timeout-report.spec.ts` `SKIPPED_FOR_NOW` beside `START` until a gateway PR gives the card a text for both (g460, L-1). No order of merge is needed.
+
+**What it does on the corpus.** Count mode (one worker, a fixed seed: the same work on every machine), a budget of 4 deterministic seconds for each search, the seven cliff weeks (§35.7: weeks laid by a witness at the day end in their names), seeds 1 to 3, the work to the first timetable in deterministic seconds. "Main" is the engine as it was before this PR (`0bf1210ee`), measured by the same script (`ENGINE_ROOT`); `None` is no timetable in the budget. The host's load was 13 to 101 beside the runs, which a count does not feel.
+
+| Week | Pairs of groups | Main, seeds 1 / 2 / 3 | This tree, seeds 1 / 2 / 3 |
+|---|---|---|---|
+| `n9-g6-m0-s1` | 735 | None / None / None | 6.14 / 5.39 / 4.56 |
+| `n9-g8-m0-s1-e1630` | 1 191 | 4.32 / 1.14 / 3.18 | 5.36 / 1.14 / 3.18 |
+| `n9-g10-m0-s1-e1630` | 1 758 | None / None / None | 6.61 / 6.09 / None |
+| `n12-g4-m0-s1-e1530` | 623 | None / None / None | 5.88 / None / 6.96 |
+| `n12-g5-m0-s1` | 886 | None / None / None | None / None / 5.69 |
+| `n12-g6-m0-s1-e1645` | 1 196 | None / None / None | 5.74 / 5.07 / 5.97 |
+| `n12-g10-m0-s1-e1700` | 2 956 | 3.85 / None / 7.31 | 3.85 / None / 4.58 |
+
+What the table says. Main lays 5 of the 21 (week, seed) cases and this tree 16; of the seven weeks, six have a timetable at two seeds or more (main: two). The work of a case the road lays is 4.0 (phase 1a's, which gave up) plus the steps and phase 1b's finish from the hint (0.06 to 0.09): 0.6 to 3.0 in all. **What the road costs is in the same table:** `n9-g8-m0-s1-e1630` at seed 1 takes 5.36 against main's 4.32, because phase 1b alone found it in 0.32 after phase 1a and the road's steps (1.0) ran first. It is the one case of the 21 where the road is dearer than main on a week main lays. On a case that is TIMEOUT on both, this tree has spent more work before giving up (a step that gives up is up to 4.0 on its own; the rows' `searches` say which); in production the road has a third of what is left, at most 90 s, so what it takes from phase 1b is bounded, and `n12-g10-m0-s1-e1700` at seed 3 is the other way round (4.58 against 7.31: the road laid it, and phase 1b alone needed 3.3 after phase 1a). Every step that failed in these runs gave up (its search ran out of work); none was INFEASIBLE with the years above it held, so **no repair is built** (letting go of the held years a refusal names, as `_solve_from_start` does). It would be the next step if a school's week shows such a refusal.
+
+**What it does not say.** Nothing in seconds on the production processor (the user's step, §35.5): the numbers are "better on the same machine", and the road's real budget is 90 s of every core against four deterministic seconds of one. **The school's own form is not laid by it**: a year of the production form (three classes, ten subjects, half groups, terms) is TIMEOUT on its own even at a day that ends at 18:00 (§35.7, "The school's form is not known"), so the first step does not come; the road is for the weeks of the corpus's middle (five to ten subjects in groups across nine to twelve classes), and the school's form waits for a better first step. And a week whose last year cannot be laid beside the others is laid by luck, which the table says: `n12-g5-m0-s1`'s third step gave up at two seeds of three.
+
+**The nightly gate**, this tree against main with `solve-corpus-gate.mjs` (the thirteen weeks, three seeds, count mode, the host's load 9 to 54 beside the runs): **PASS**, 12 weeks identical to the last digit (ratio 1.00), `n12-g3-m0-s1-t3` (the gate's one week with terms, on the edge: phase 1a gives up at its median seed) **4.68 on main, 7.93 here (1.70)**, because the road's steps ran before the phase 1b that lays it in 0.7 after phase 1a, the geometric mean of the thirteen 1.04 against the limit 1.25, none lost, none refused, none gained. It is not touched by the road for a week that phase 1a lays, and counts the road's work for a week it lays (the recording solver counts a year's step as work, and a step's solution is not the week's first timetable: `corpus_measure.py` `_years_solver`, `tests/test_corpus_measure.py`). A week that was TIMEOUT in `GATE_WEEKS` and is laid now is printed as "gained" and decides nothing. A measurement fix came with it: a TIMEOUT was read as `ERROR (WALL_LIMIT_BEFORE_BUDGET)` as soon as any search ended before its budget, and a step that was solved in a fraction of its own is a search that finished; only a search that gave up can have been cut by the wall clock.
+
+### 35.10 The pairs of groups as cliques in the full model (M8, PR 6)
+
+**What it is.** `groupConflicts` lists the pairs of groups that share a pupil, and the model posts one NoOverlap over the lessons of the two for each pair: a school whose pupils are cut into groups across its classes has 2 000 to 4 000 pairs, and the same lessons stand in hundreds of those rows. Three groups that pair two and two (A–B, B–C, A–C) say exactly what one NoOverlap over the lessons of all three says: a **clique** of the pair graph. `app/solver/cliques.py` covers the pairs by cliques (greedy and deterministic: the same pairs give the same rows in the same order on every machine), and `_add_group_no_overlap(by_cliques=True)` posts one row for each clique instead of one for each pair. **The same rule, in fewer rows**: a clique is a set of groups that ALL pair, and a path (A–B, B–C, A and C sharing no pupil) is two rows, since A and C may sit at once.
+
+**Where.** Only the **full model of a strict solve** (`_solve_strict`'s first build: phase 1b's clone and phase 2's search) and only while `SOLVER_GROUP_CLIQUES` is on (the default; `false` gives one row per pair everywhere again, at an engine restart and with no deploy of code). Phase 1a's satisfaction model, the years' steps (§35.9), the explanation's and the probe's builds and Bästa möjliga schema keep one row per pair: `tests/test_group_cliques_model.py` holds that exactly ONE call of `_add_group_no_overlap` of a whole `solve()`, the first, posts cliques (on a week that is laid and on one the search refuses), and that the satisfaction model CP-SAT is given is the same with the setting on and off. **The nightly gate measures phase 1a, and phase 1b where phase 1a gives up** (`corpus_measure.py`), and phase 1b is now the clique model: in the stored sweep (seed 1) every solved week is solved in phase 1a, so no row moves at that seed, but the gate runs three seeds and a week on the edge that phase 1a gives up on at one of them is searched with the cliques in its second search. That can make a week "gained" (printed, deciding nothing) or one that main lays in phase 1b and the cliques do not a lost week. **That measurement is not made** (the review of #484, L-4): `python benchmarks/corpus_measure.py --mode count --det-budget 4 --profile gate --seeds 3 --jobs 1 --json` on a tree of main and one of this branch, compared by `seedWork`, when the host's load is under 40. A request carries no new field, the response no new one, and `app.openapi()` is byte for byte what it was.
+
+**The proof that it is the same rule** (not a solve; the rows themselves): the model's own NoOverlap rows are read through a spy on the pupils' padded intervals, and the set of lesson pairs that share a row is **equal** for the cover and for the pairs on a small week of the corpus at three seeds (`test_the_rows_of_the_cover_forbid_exactly_the_pairs_of_lessons_the_rows_of_the_pairs_forbid`); on a path of three groups no lesson of A is held apart from one of C; and `tests/test_m8_paths_rows.py` holds that the rows the engine now posts are `m8_paths.py`'s `cliques` encoding row for row (the encoding the design note's measurement 4.2 was made with). A mutant that lets a clique take a group that does not pair with its second group falls on five tests.
+
+**What it does to the model** (`benchmarks/m8_cliques.py size`, rows of the pupils' families in the full model, build CPU seconds in Python, which are the same to within the cover's 0.05 s):
+
+| Week | Pairs of groups | Pupils' rows, pairs → cliques | Their intervals |
+|---|---|---|---|
+| `n12-g3-m0-s1` (gate) | 404 | 685 → 343 | 6 172 → 3 898 |
+| `n12-g4-m0-s2` (gate) | 620 | 937 → 387 | 7 304 → 4 262 |
+| `n9-g6-m0-s1` | 735 | 1 001 → 318 | 6 456 → 3 540 |
+| `n12-g5-m0-s1` | 886 | 1 248 → 438 | 8 613 → 4 646 |
+| `n9-g10-m0-s1-t5-h` | 2 326 | 3 099 → 748 | 13 642 → 7 274 |
+| `n12-g10-m0-s1` | 2 956 | 3 597 → 744 | 15 702 → 6 689 |
+| `n30-g10-m0-s1-t5-y0.0.0.3.10.10-h` (a whole school) | 4 154 | 5 512 → 1 431 | 29 242 → 16 507 |
+
+A week with no groups across the classes (`n18`, `n24`) has no pairs between groups to cover and is the same model.
+
+**What it does to the search, and what it does not say.** Count mode, one worker, a fixed seed (the same work on every machine), phase 1 as the gate runs it (the same search in both) and then phase 2 from its timetable (`m8_cliques.py quality`):
+
+- **The objective phase 2 reaches is a coin flip, and nothing here says the schedule is better.** After 4 deterministic seconds the 13 gate weeks at two seeds have the same objective with the pairs and with the cliques in all 26 rows. After 30, seed 1: `n12-g3-m0-s1` 10 575 with the pairs and **7 455** with the cliques (a better schedule), `n12-g4-m0-s2` **9 428** with the pairs and 11 904 with the cliques (a worse one), `n9-g4-m0-s1` 1 779 and 1 894 (worse), the term week the same 11 154. Lower is better.
+- **The same work is a little less wall time.** `n12-g4-m0-s2` and `n12-g3-m0-s1`, 8 deterministic seconds of phase 2 in the order pairs, cliques, cliques, pairs in one process (load 5 to 39 before the runs): 92 and 110 s against 78 and 88 s, and 97 and 69 s against 83 and 58 s, so **16 to 18 % less wall time** for the same deterministic work (and the same objective at that point).
+- **The presolve of the full model** (`stop_after_presolve`, one worker, ABBA, load 5 to 7): `n12-g10-m0-s1` 1.5 s with the pairs and 1.0 to 1.1 with the cliques; the whole school's week 15.9 and 16.2 s against 15.5 and 15.8 (2 %): the rows of the pupils are not what its presolve spends its time on.
+
+So what the clique rows buy is a smaller model and a search that does a little more in the same wall time. They do not make the schedule better, and the one week of the corpus with the school's form (`n30`) is not solved by either. No seconds on the production processor (§35.5).
+
+**Not done.** The default **on** is not measured with several workers (production runs the portfolio), on the production processor and budget (§35.5), or at more than one seed for the longer phase 2 (the 30-second rows above are seed 1 and go both ways): it is the decision of the coordinator, with the user's mandate, and `SOLVER_GROUP_CLIQUES=false` is the way back (an engine restart). Bästa möjliga schema's model and the explanation's keep one row per pair. The cover is computed for each build of the full model (0.05 s on the densest week of the gate; the model's own build is seconds on a school's week).
+
 ## 36. What the school's base data holds, and what is missing ("Vad kom in", P1 Pilotkit, part 2)
 
 A page, `/admin/intake` (menu: Grunddata › Vad kom in), and one route behind it, `GET /api/v1/intake`. It counts the active läsår's base data (the year, subjects, rooms, frame times, rasts, classes, teaching groups, teachers and pupils, the lokal timplan, the posts, the staffing) against what Generera and the steps after it ask for, and names each gap at one of three levels (stops Generera, gives a worse timetable, only another step reads). The rules are `src/intake/intake.ts`; the page gives each gap its words and the page that owns it. It writes nothing and holds no migration.
@@ -7677,6 +7814,81 @@ The ordinance (SFS 2026:1487, in force 2027-07-01, grundskola only) gives a span
 
 - RLS sections 566 (the catalogue), 567 (what a decider writes and what the trigger and the checks do), 568 (who reads) and 569 (what a removal does), and a row in the matrix school's fixtures; 21 mutants of the table are each killed by them, and section 494 records the teacher's own arm as STAYS. The adapter probe (`scripts/test/prisma-adapter-probe.ts`) holds the statement budgets of the writes E asks about (`'give a timplanspost a teacher'` 29 statements, two more than before E) and reads the ordinance's wording on the real database, a läsår it does not reach included.
 - `src/staffing/assignment-scope.ts` is the one place the level is worked out (`scopeOfTeacher`); the write check, the import, Föreslå bemanning, the search and the report all go through it, and the figures a school sees are the same on every page. `teaching-weeks.contract.spec.ts` and the web's `teaching-hours.contract.test.ts` replay one fixture for the week arithmetic.
+
+
+## 40. Outgoing e-mail and push wait in the database ("Mejlen överlever en omstart", omgång 15, H3)
+
+The delivery (`src/notifications/notification-delivery.service.ts`) used to keep what a committed transaction wanted sent in an array in the process. The API is deployed at every merge, so a reminder to a whole school (some 82 mails and 4 000 pushes, a minute or so of queue) could be lost half-sent: the inbox rows were there, the mail and the push never came, and nothing tried again. The queue is now two tables, **`OutboundNotices`** and **`OutboundPace`** (migration `20270309090000`), and the process only works through it.
+
+### 40.1 What the migration is
+
+- **`OutboundNotices`**: one row per lane (alarm or ordinary) and school of one committed transaction's notices. It holds the notices' types and meta, the mail's subject and text (which for three letter types names a child, `docs/dataskydd-sakbeskrivning.md` 4.3), and the recipients' ids. **Never an address, a token or a push text**: those are read when a row is first taken and kept on the row, as its *plan*, until it is finished.
+- **`OutboundPace`**: up to two rows, `EMAIL` and `PUSH` (each is made when it is first used), with the time the next request may go. See §40.2.
+- **Row security is on and there is no arm and no grant**, for `anon`, `authenticated`, `service_role` and the API's own role alike (a check at the end of the migration, `OUTBOUND_REACH`, and RLS sections 590, 591 and 590o hold it). The gateway reaches the tables only through nine `SECURITY DEFINER` job doors, `app.outbound_enqueue`, `_claim`, `_plan`, `_advance`, `_finish`, `_release`, `_slot`, `_sweep` and `_addresses`. Each refuses (`OB403`) a session that carries any login, as the doors of `20270220090000` do, and only the API's role may run them.
+- **The keys.** The row has a foreign key to `Schools` (cascade), the only table of the school it names. It names people only by id in two arrays, so there is no key to `Users` to convert to a composite one; a person who is removed before the row is planned is not found (the address is read from `Users`, the token from `DevicePushTokens`) and gets nothing. A row that is planned already carries the address and the tokens in its plan, so that a retry sends the same packets, and a person removed or opted out after that is still mailed by the retry for as long as the row waits (20 hours at most; see §40.8).
+- **The registerutdrag** leaves the table out, with the reason (`src/school-export/person-tables.ts`, `WITHOUT_KEY` and `SUBJECT_ACCESS`): it holds what `notiser.csv` already shows and is emptied when the notice is sent or given up.
+- **Locks.** The migration creates tables and functions and takes one lock on a live table: `SHARE ROW EXCLUSIVE` on `Schools` for the foreign key, `NOWAIT` in a loop of 50 ms for 30 s with `lock_timeout` 5 s (nothing is held between tries; after 30 s it stops with nothing changed and can be run again). Reads of `Schools` are not blocked.
+
+### 40.2 How a notice goes through it
+
+1. **Written after the commit**, as before (`PrismaService.onCommit`), in one statement per lane and school (`app.outbound_enqueue`). Nothing in the caller's transaction changed, so the statement budgets of the hot paths are the same. A write that fails is tried twice more (after 200 ms and 1 s); a queue that holds 5 000 rows waiting refuses (`OB429`) and the delivery logs it and says `false` to a listener.
+2. **Taken with a lease** (`app.outbound_claim`): the oldest row of the lane that waits and is due, or whose lease has run out, `FOR UPDATE SKIP LOCKED`, with a claim (the process's name and a random number) that every later step has to show. Two API instances, or an old and a new one in a deploy, never hold the same row; a process that stood still past its lease is told no at its next step and lets go. The lease is **two minutes** and every step renews it. This is Generera's pattern (`20270222090000`), per row.
+3. **Planned once** (`app.outbound_plan`): the addresses of the people who are still active and have not opted out (`app.outbound_addresses`, `app.delivery_opt_outs`), in packets of 49 on BCC, and the devices (`app.push_targets`) with their text, in packets of 100. Frozen on the row, so that a retry sends the same packets.
+4. **Sent a packet at a time**, mail first and then push, and **counted**: a mail packet *after* Resend took it, a push packet *before* the request. Every mail goes under an `Idempotency-Key` of the row and the packet (`notice/<row>/mail/<n>`), so a packet that was on its way when a process died is sent again by the next under the same key and **Resend does not send it twice** (it answers a repeated key as it answered the first request, for 24 hours; a row gives up after 20). Expo has no such key, so a push packet that was on its way is **not sent again**: a push arrives at most once.
+5. **Paced for the whole fleet** (`app.outbound_slot`): one mail at most every 500 ms and one push request at most every 200 ms, whichever instance sends it, as the database hands out the slots from its own clock. This is the pace the delivery has always kept, now shared between the instances of a deploy. (Resend's own page says 10 requests a second for a team; the code keeps the two a second it has always kept. Where the database cannot give a slot, the process keeps the pace by its own clock.)
+6. **Finished** (`app.outbound_finish`): the row is emptied of the notices, the recipients and the plan (a `CHECK` makes a finished row unable to hold them) and is left as a few counts for **seven days** (`app.outbound_sweep`, every five minutes).
+
+The lanes are two serial consumers in each process, one for the alarm types (`CRISIS_ALARM`, `CRISIS_ENDED`) and one for the rest, which run beside each other, so an alarm does not wait behind a whole school's wave. A job in the runner (`notice-delivery`, every 10 s, counts in `JobRuns`: `claimed`, `done`, `released`, `lost`, `failed`, `gaveUp`, `deleted`) looks at the queue for what another process left or what was handed back for a retry; a process that has just written a notice takes it at once. A process that is stopped (`SIGTERM`) finishes the packet in hand and hands the row back, so the next one does not wait for the lease.
+
+### 40.3 What goes wrong, and what the queue does about it
+
+- **Resend does not answer, or answers 5xx, 408 or 429** (a rate limit or a quota): the row is handed back after the wait Resend names (`retry-after`, an hour at most) or, if it names none, half a minute doubling to a quarter of an hour; a quota (`daily_quota_exceeded`, `monthly_quota_exceeded`) is asked again after half an hour. **A mail that must wait never keeps the same row's push from going**: the push goes and the row is handed back for the mail alone.
+- **Resend refuses our key (401, 403)**: the row waits a quarter of an hour at a time. A key that is wrong is mended by a right one, and the mails of the last 20 hours are then sent; after that they give up.
+- **Resend will not take a packet at all** (400, 404, 422; one address that is not an address is enough): the packet is counted failed and is not sent again, and the rest of the row goes. The log names the status and Resend's error name, never an address.
+- **A row that has waited 20 hours, or been tried 30 times, gives up** (`GAVE_UP`, `STALE` or `ATTEMPTS`) and is emptied. 20 is less than the 24 hours a key lives, so a retry can never duplicate a mail.
+- **A process dies.** The row's lease runs out in at most two minutes, and the next process to ask (any instance; every 10 s) takes it up from the packet it was at. Every packet that had gone has gone once.
+- **A process has no channel** (no `RESEND_API_KEY`, `PUSH_NOTIFICATIONS` off): it takes no row at all. A row with mail in it that reaches a process with push alone is handed back at once (30 s) for one that has the key.
+
+#### What happens to e-mail when `RESEND_API_KEY` is missing (production today)
+
+- **Nothing is sent, and nothing is queued.** `NotificationDeliveryService.wants` is false for a notice whose only way out is a mail, `rowsOf` makes no row for it, no process starts a lane and the tables are never written. The `notice-delivery` job is registered all the same: with no channel its pass takes no row and only sweeps, so that rows left by a key that is gone are given up and emptied after 20 hours. The in-app inbox rows are written as always. `docs/dataskydd-sakbeskrivning.md` flow 9 says the same.
+- **Setting the key does not send what went unsent.** Nothing recorded the mails that were never made; notices from the moment the instances that have the key start are queued. Set `RESEND_API_KEY` (and `EMAIL_FROM`, §0) on every instance of the API in one change; a deploy that gives it to some first is safe (the instances that have it send, and a row that reaches one that has not is left for one that has).
+- **Taking the key away again** leaves the rows that wait where they are: a process with no key does not take them, and they give up after 20 hours.
+- **Push stays as it was**: `PUSH_NOTIFICATIONS=off` queues nothing for push either (§8.1 turns it on, §15.6 tries it first).
+
+### 40.4 Deploy order
+
+- **Run the migration before the API is merged, as every migration (§20.2)**, from a tree that has every migration applied. It adds two tables and nine functions and changes nothing that exists, so the API before it is unaffected; the API after it needs the tables, and an API deployed before the migration would have every write to the queue fail and log `Delivery enqueue failed`, with the inbox rows written and no mail.
+- **During the deploy both generations run for a minute.** The old instance still queues in memory and sends what it has; the new queues in the database. A notice is queued by the instance whose transaction wrote it, so none is sent twice. **An old instance that is stopped with a wave in its memory still loses it**; release when `SELECT count(*) FROM "AckRequests" WHERE "remindAt" <= now() AND "reminderOutcome" IS NULL` is empty, once, for this release. The release after it needs no such care.
+- **Nothing to set.** No variable is new.
+
+### 40.5 Rolling back
+
+- Roll the gateway back **only when the queue is empty**: `SELECT count(*) FROM "OutboundNotices" WHERE status IN ('PENDING', 'CLAIMED')` is 0 (the previous gateway does not read the table, and what waits there would wait for good). A queue that is not empty drains in minutes when the API is up, so wait for it.
+- Then, if the tables are to go: `DROP TABLE "OutboundNotices", "OutboundPace"; DROP FUNCTION app.outbound_enqueue(uuid, boolean, jsonb, uuid[], uuid[]), app.outbound_claim(text, boolean, interval), app.outbound_plan(uuid, text, jsonb, interval), app.outbound_advance(uuid, text, interval, integer, integer, integer, integer, integer, integer), app.outbound_finish(uuid, text, text, text), app.outbound_release(uuid, text, interval), app.outbound_slot(text, integer), app.outbound_sweep(), app.outbound_addresses(uuid, uuid[]);`. They can also stay: nothing reads them.
+
+### 40.6 Looking at it (read-only)
+
+- What waits and for how long: `SELECT urgent, status, count(*), min("createdAt") FROM "OutboundNotices" WHERE status IN ('PENDING', 'CLAIMED') GROUP BY 1, 2`. A healthy queue is empty or minutes old; a row older than an hour is a provider that is down or a key that is wrong (`SELECT attempts, "mailDone", "pushDone", "notBefore" FROM "OutboundNotices" WHERE status = 'PENDING' ORDER BY "createdAt" LIMIT 5`, and the log's `Email dispatch failed [status=…, will be tried again]`).
+- What went: `SELECT date("finishedAt"), status, count(*), sum("mailsSent") AS mails, sum("mailsFailed") AS mails_failed, sum("pushSent") AS pushes, sum("pushFailed") AS push_failed FROM "OutboundNotices" WHERE "finishedAt" IS NOT NULL GROUP BY 1, 2 ORDER BY 1 DESC` (seven days). `GAVE_UP` rows carry their reason (`STALE`, `ATTEMPTS`).
+- The job: `SELECT day, runs, failures, counts, "lastError" FROM "JobRuns" WHERE job = 'notice-delivery' ORDER BY day DESC LIMIT 3`.
+- The log lines: `Email dispatch failed [timeout 10000 ms, will be tried again]`, `[status=429, will be tried again]`, `[status=422, validation_error]`, `Notice delivery failed [<error name>, attempt=<n>]`, `Notice queue gave up rows that had waited too long [rows=<n>]`, `Delivery queue full`. Never an address, a token or a text.
+- To empty a row by hand, never `DELETE`: run `SELECT * FROM app.outbound_sweep()` as the owner after setting its `createdAt` back, or let it give up at 20 hours.
+
+### 40.7 The proofs
+
+- **The suite.** RLS sections 590, 591 and 592 (as the API's role: nobody who is signed in reaches the tables or the doors; the job takes a row through every door with no login) and 590o–594o (as the owner: the catalogue and the rights of four roles; what a row may carry and what a queue of 5 000 answers; the lease, the lanes and the old claim told no; the counters, the plan once, the release, the finish that leaves no person, the pace; the sweep, the addresses and the guard of every door), and section 520's guard text for the nine doors.
+- **`scripts/test/probe-utkorg.ts`** (CI's Database job): (a) a child process is killed with `SIGKILL` while a mail is on its way to a Resend of the probe's own; the next takes the queue up, and every mail reached Resend once (the one on its way was asked for twice under one key), every device got every notice once, the rows are finished and hold nothing about a person; (a2) the same for a push packet, which is not sent again; (b) two processes at once take one queue, no row twice, no mail asked for twice, no device twice, and the mails come a step apart whoever sent them; (c) twelve connections ask for five rows, ten rounds, five rows each taken by one.
+- **The unit specs** (`notification-delivery.service.spec.ts`, with the queue in memory, `test/utils/outbound-memory.ts`) hold the delivery's rules: what is planned, the keys, every answer of Resend and what the row then does, the lease, a stop, a death, two processes, what the listener is told.
+
+### 40.8 What is not done
+
+- **The moment between the commit and the queue's write** is a few milliseconds in the process: a process killed in it (an out-of-memory kill, a node that goes) still loses the notice, as it did before. A stop with `SIGTERM` waits for the writes in flight. Closing it would mean writing the row inside the caller's transaction, which changes every hot path's statements; it was left.
+- **A planned row is not planned again**: a person removed, deactivated or opted out after the plan was frozen is still mailed by a retry while the row waits (20 hours at most), and their address stays on the row until it is finished. Planning again would change the packet under its key (Resend answers 409 to a key that comes back with other content).
+- **A push that was on its way when its process died is lost, not sent again** (§40.2). A mail is never lost that way, as long as Resend is up within the 20 hours.
+- **Kvittens' word** (*Skickad*) is said by the process that wrote the batch and is gone with it (§ Kvittens, known limit above).
+- **`notifyUsers` still reads the recipients' addresses inside the caller's transaction** when a key is set, and the delivery now reads them again when it plans (from `Users`, so that an address changed or a person removed in between counts). The first read is no longer needed and can go in a change of `notifications.service.ts`, which this one did not touch.
+- **The kitchen's letter (`sendLetter`) is not queued**: it is one mail a day and its job keeps its own claim and asks again. It takes its place in the same pace and goes under a key that is the letter's own fingerprint, so asking again after an answer that never came does not send it twice within the day.
 
 ## 39. A lesson left over the ramtid or the class's lunch on purpose ("Undantag med flit", E1b)
 

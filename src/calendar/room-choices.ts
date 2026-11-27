@@ -64,8 +64,20 @@ export interface RoomChoice {
 
 const lengthOf = (lesson: Pick<SwapLesson, 'startMinutes' | 'endMinutes'>): number => lesson.endMinutes - lesson.startMinutes;
 
-/** The rooms for `subject.lesson` laid at a start, in the order described above. */
-export function roomChoicesOf(world: PossibleWorld, subject: PossibleSubject, dayOfWeek: number, startMinutes: number): RoomChoice[] {
+/**
+ * The rooms for `subject.lesson` laid at a start, in the order described above.
+ *
+ * `full` names the rooms the school lets several lessons share and that have no seats left for this lesson at this time, with the
+ * lessons that sit in them: the prune does not count pupils (the judge does, and the service asks it), so without this a room whose
+ * seats are taken would be called free, ranked among the rooms the lesson can have, and refused by the judge when it is chosen.
+ */
+export function roomChoicesOf(
+  world: PossibleWorld,
+  subject: PossibleSubject,
+  dayOfWeek: number,
+  startMinutes: number,
+  full: ReadonlyMap<string, readonly SwapLesson[]> = new Map(),
+): RoomChoice[] {
   const { context } = world;
   const member = subject.lesson;
   const vacating = new Set(subject.unit.members.map((entry) => entry.id));
@@ -80,8 +92,9 @@ export function roomChoicesOf(world: PossibleWorld, subject: PossibleSubject, da
     const landing: Landing = { lesson: { ...member, teacherId: null, coTeacherId: null, studentGroupId: '', extraGroupIds: [], roomId: room.id }, to };
     const way = context.inTheWay(landing, vacating);
     const hold = context.boardRefusal(landing) === 'OTHER_SCHOOL';
-    const state: RoomChoice['state'] = way.closures.length > 0 || hold ? 'CLOSED' : way.lessons.length > 0 ? 'BUSY' : 'FREE';
-    const occupants = [...way.lessons].sort((a, b) => a.startMinutes - b.startMinutes || (a.id < b.id ? -1 : 1));
+    const seated = full.get(room.id) ?? [];
+    const state: RoomChoice['state'] = way.closures.length > 0 || hold ? 'CLOSED' : way.lessons.length > 0 || seated.length > 0 ? 'BUSY' : 'FREE';
+    const occupants = [...new Map([...way.lessons, ...seated].map((lesson) => [lesson.id, lesson])).values()].sort((a, b) => a.startMinutes - b.startMinutes || (a.id < b.id ? -1 : 1));
     const first = occupants[0];
     return {
       roomId: room.id,

@@ -57,6 +57,16 @@ export class ScheduleExchangeController {
     return this.exchange.preview({ ...dto, files: filesOf(dto.files) }, user);
   }
 
+  /**
+   * `POST /schedule-exchange/import/as-version` - the file saved as a version of the year to start Generera from (Ett schema som start).
+   * Writes one version and nothing of the school's lessons, posts or blocks, so it asks for Schemaläggning, as saving a version does.
+   */
+  @Post('import/as-version')
+  @Area('SCHEMALAGGNING')
+  asVersion(@Body() dto: PreviewImportDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.exchange.saveAsVersion({ ...dto, files: filesOf(dto.files) }, user);
+  }
+
   /** `POST /schedule-exchange/import/apply` - the previewed plan, all of it or none. */
   @Post('import/apply')
   @Area('SCHEMALAGGNING', 'PLANERING')

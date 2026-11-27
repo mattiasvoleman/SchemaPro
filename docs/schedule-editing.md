@@ -44,6 +44,20 @@ a Sunday (`SCHOOL_DAY`, the förläggning's own first question, in its words).
   over real Postgres, with the cases in `src/calendar/__fixtures__/lesson-judge-cases.json` that the web's mirror is held to) and
   `src/calendar/lesson-judge.property.spec.ts` (the other schools' holds and the board's rules over random facts).
 
+## Att lägga: grundschemats bricklåda (E4)
+
+`GET /api/v1/board-tray?academicYearId=…[&groupId=…]` (`src/board-tray/`) svarar med en **bricka** för varje lektion en timplanspost har kvar, räknad som Generera räknar:
+samma funktion (`demandLeftOf`, `post-demand.ts`) genom samma läsning som Förlägg i veckan ritar sina poster med (`boardPostOf`), så att talet på brädet och talet Generera
+skickar är ett. En skillnad, och den är brädets: det som redan står på grundschemat svarar en lektion, också det Generera lagt och ingen låst (Generera raderar det fria före
+sin räkning, brädet visar det stående). En förläggning svarar en lektion och sägs för sig, en parkerad lektion svarar ingen, och en post i ett parallellt block läggs med
+blocket (`blockId`, `cannotPlace: 'BLOCK'`). Ingen person nämns, bara id.
+
+Svaret har `bricks` (den valda klassens, eller årets; längsta lektionerna först i fast ordning, `possibleTimes: null` tills E3:s fråga finns), huvudets tal (`tally`:
+lektioner, lagda, svarade av en förläggning, kvar) och `groups` (kvar per klass, för klassväljaren). En läsning varje administratör får göra.
+
+Hålls av `scripts/test/probe-att-lagga.ts` (mot riktig Postgres: samma tal som Förlägg i veckan, fria och parkerade lektioner, en förläggning, en annan skolas år) och, för hand mot
+en riktig motor, `scripts/test/probe-att-lagga-motor.ts`: brickorna per post är det motorn sedan lägger, och facket är tomt efteråt.
+
 ## Possible times (Möjliga tider, E3)
 
 `POST /api/v1/master-lessons/possible-times` answers "where can this lesson stand, and which time is best?" without writing anything. It
@@ -122,6 +136,22 @@ whatever the request names (decision 5: no forced clash).
 - **Held in place by** `scripts/test/probe-undantag.ts` (the table and its trigger, the PATCH over real Postgres, a version, a
   discarded draft, the schedule file in and out), `src/calendar/lesson-judge.exempt.property.spec.ts` (the same drag with and without a
   name gets the same verdict on every rule but the one named) and `src/calendar/master-lessons.judge.exempt.spec.ts`.
+
+## Brickorna och ägandet (E4)
+
+- **Ett lås vid en flytt.** En olåst lektion som flyttas för hand (en annan dag, ett annat klockslag, andra veckor, eller tillbaka från parkeringen) låses av
+  `PATCH /api/v1/master-lessons/:id`, och svaret säger det (`lockedByMove: true`): annars lägger nästa Generera om det handen just flyttat. Det gäller inte ett lås som
+  begäran själv satte eller tog bort (en låst lektion som flyttas med `isLocked: false` låses upp), inte en lektion som redan är låst, inte en ny sal eller lärare
+  (det flyttar ingenting av var lektionen står) och inte en lektion i ett parallellt block, vars lås är blockets (Lås blocket). Sidan säger "Flyttad och låst" och
+  ger Lås upp; ett ångrat flyttande tar låset med sig, eftersom ögonblicksbilden bär lektionens lås.
+- **Att låsa eller låsa upp frågar inte klashregeln** (granskaren g461, L-5). Ett PATCH som inte ändrar något domaren läser (dag, klockslag, veckor, lärare, sal,
+  klasser, elever) och inte namnger `exempt` flyttar ingenting och krockar inte med något nytt, så en lektion som redan är dubbelbokad kan låsas och låsas upp.
+  En ny sal, en flytt och en ny lärare frågas som förut.
+- **Ett undantag ges inte åt en lektion på parkeringen** (granskaren g467, L-3): `exempt` på en lektion som redan ligger på parkeringen är 400, och den läsande
+  frågan svarar inget undantag för en sådan. Det PATCH som parkerar lektionen får bära `exempt` (webbens Gör om skickar lektionens ögonblicksbild, undantaget med):
+  parkeringen frågas inget och tar undantaget, så inget sparas och inget nekas.
+- **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, och en dubbelbokad
+  lektion kan låsas) och `src/calendar/master-lessons.lock-at-move.spec.ts`.
 
 ## Tier 3
 

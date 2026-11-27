@@ -32,6 +32,7 @@ import { OptimizationModule } from './optimization/optimization.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { LessonMovesModule } from './lesson-moves/lesson-moves.module';
 import { ResourcesModule } from './resources/resources.module';
+import { BoardTrayModule } from './board-tray/board-tray.module';
 import { RequirementPlacementsModule } from './requirement-placements/requirement-placements.module';
 import { UsersModule } from './users/users.module';
 import { CalendarModule } from './calendar/calendar.module';
@@ -153,6 +154,7 @@ import type { ThrottleConfig } from './config/configuration';
     LessonMovesModule,
     ResourcesModule,
     RequirementPlacementsModule,
+    BoardTrayModule,
     UsersModule,
     CalendarModule,
     SwapsModule,

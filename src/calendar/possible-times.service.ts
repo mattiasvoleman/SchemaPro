@@ -9,7 +9,7 @@ import { SwapContext } from '../swaps/swap-context';
 import { dayLessonOf, SwapReads } from '../swaps/swap-reads';
 import { readSwapData, type SwapData } from '../swaps/swap-snapshot';
 import type { SoftCost, SwapLesson } from '../swaps/swap-types';
-import { judgeLessons, type JudgeItem, type JudgedCandidate } from './lesson-judge';
+import { judgeLessons, type JudgeItem, type JudgedCandidate, type LessonVerdict } from './lesson-judge';
 import {
   byScore,
   costOf,
@@ -575,6 +575,16 @@ export class PossibleTimesService {
     pairs: ReadonlyArray<{ subject: PossibleSubject; candidate: CostedStart }>,
     reads: SwapReads,
   ): Promise<boolean[]> {
+    return (await this.judgeVerdicts(tx, data, pairs, reads)).map((members) => members.every((verdict) => verdict.ok));
+  }
+
+  /** The judge's whole verdict on each member of each pair's unit, in the unit's order: what judgePairs reads `ok` from, and the room chooser reads the reasons of. */
+  async judgeVerdicts(
+    tx: PrismaClient,
+    data: SwapData,
+    pairs: ReadonlyArray<{ subject: PossibleSubject; candidate: Pick<CostedStart, 'dayOfWeek' | 'startMinutes' | 'rooms'> }>,
+    reads: SwapReads,
+  ): Promise<LessonVerdict[][]> {
     const items: JudgeItem[] = [];
     for (const { subject, candidate } of pairs) {
       const members = subject.unit.members;
@@ -630,15 +640,10 @@ export class PossibleTimesService {
       items,
       { reads },
     );
-    const out: boolean[] = [];
+    const out: LessonVerdict[][] = [];
     let at = 0;
     for (const { subject } of pairs) {
-      let ok = true;
-      for (let member = 0; member < subject.unit.members.length; member += 1) {
-        if (!verdicts[at]!.ok) ok = false;
-        at += 1;
-      }
-      out.push(ok);
+      out.push(subject.unit.members.map(() => verdicts[at++]!));
     }
     return out;
   }

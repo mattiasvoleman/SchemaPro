@@ -282,6 +282,9 @@ def test_the_gate_s_weeks_are_in_the_sweep_with_sizes_and_kinds_to_see_a_change_
     names = [shape.name() for shape in shapes]
     assert names == list(corpus.GATE_WEEKS) and len(set(names)) == len(names)
     assert 12 <= len(shapes) <= 20
+    # The years' road's two weeks (M8 PR 7): one of the sweep's own, one a cliff week at the day end its name says.
+    assert {"n9-g6-m0-s1", "n12-g6-m0-s1-e1645"} <= set(names)
+    assert not any(shape.term_subjects for shape in shapes if shape.name() in {"n9-g6-m0-s1", "n12-g6-m0-s1-e1645"}), "no terms"
     assert {shape.classes for shape in shapes} >= {9, 12, 18, 24}
     assert any(shape.term_subjects for shape in shapes) and any(shape.language_block for shape in shapes)
     assert any(shape.group_subjects == 0 for shape in shapes) and any(shape.group_subjects >= 4 for shape in shapes)

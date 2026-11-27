@@ -23,6 +23,7 @@ describe('Schedule exchange (e2e)', () => {
     summary: jest.fn(),
     export: jest.fn(),
     preview: jest.fn(),
+    saveAsVersion: jest.fn(),
     apply: jest.fn(),
   };
   const as = (adminProfile: string) => asUser({ adminProfile } as never);
@@ -41,6 +42,7 @@ describe('Schedule exchange (e2e)', () => {
     service.export.mockResolvedValue({ filename: 'a.csv', contentType: 'text/csv; charset=utf-8', body: Buffer.from('Á;B', 'utf8'), notes: ['Signaturen ”A,B” skrevs som ”A B”.'] });
     service.preview.mockResolvedValue({ canApply: true, fingerprint: FINGERPRINT });
     service.apply.mockResolvedValue({ created: 2 });
+    service.saveAsVersion.mockResolvedValue({ versionId: 'v-1', name: 'Inläst ur fil: schema.csv', lessonCount: 2, read: 3, unreadable: 0, unresolved: { UNKNOWN_GROUP: 1 } });
   });
 
   describe('summary', () => {
@@ -103,6 +105,38 @@ describe('Schedule exchange (e2e)', () => {
       await request(http()).post('/api/v1/schedule-exchange/import/preview').set('x-test-user', asUser({})).send({ ...body, format: 'DOCX' }).expect(400);
       await request(http()).post('/api/v1/schedule-exchange/import/preview').set('x-test-user', asUser({})).send({ ...body, extra: 1 }).expect(400);
       expect(service.preview).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('as-version (Ett schema som start, M9)', () => {
+    const body = { academicYearId: YEAR_ID, format: 'TABLE_CSV', files: [file('a')] };
+
+    it('saves the uploaded file as a version for an administrator who changes Schemaläggning, and passes the bytes, decoded, on', async () => {
+      for (const profile of ['FULL', 'SCHEMALAGGARE']) {
+        const response = await request(http()).post('/api/v1/schedule-exchange/import/as-version').set('x-test-user', as(profile)).send(body).expect(201);
+        expect(response.body).toMatchObject({ versionId: 'v-1', lessonCount: 2, unresolved: { UNKNOWN_GROUP: 1 } });
+      }
+      const sent = service.saveAsVersion.mock.calls[0]![0] as { files: { name: string; bytes: Buffer }[]; format: string; academicYearId: string };
+      expect([sent.academicYearId, sent.format, sent.files.map((f) => [f.name, f.bytes.toString('utf8')])]).toEqual([YEAR_ID, 'TABLE_CSV', [['schema.csv', 'a']]]);
+    });
+
+    it('is refused, naming the area, to the läsare and the expedition, who change no schedule, and to a teacher; and writes nothing', async () => {
+      for (const profile of ['EXPEDITION', 'LASARE']) {
+        const response = await request(http()).post('/api/v1/schedule-exchange/import/as-version').set('x-test-user', as(profile)).send(body).expect(403);
+        expect(response.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
+      }
+      await request(http()).post('/api/v1/schedule-exchange/import/as-version').set('x-test-user', asUser({ role: Role.TEACHER })).send(body).expect(403);
+      expect(service.saveAsVersion).not.toHaveBeenCalled();
+    });
+
+    it('refuses what is not a file, a format or a year, as the preview does, and a fingerprint it has no use for', async () => {
+      const post = (extra: object) => request(http()).post('/api/v1/schedule-exchange/import/as-version').set('x-test-user', asUser({})).send({ ...body, ...extra });
+      await post({ files: [] }).expect(400);
+      await post({ files: [{ name: 'a.csv', contentBase64: '***' }] }).expect(400);
+      await post({ format: 'DOCX' }).expect(400);
+      await post({ academicYearId: 'nope' }).expect(400);
+      await post({ fingerprint: FINGERPRINT }).expect(400);
+      expect(service.saveAsVersion).not.toHaveBeenCalled();
     });
   });
 

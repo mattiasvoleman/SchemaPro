@@ -156,6 +156,141 @@ beforeEach(() => {
   (publishModeOf as jest.Mock).mockResolvedValue('DIRECT');
 });
 
+describe('ScheduleExchangeService.saveAsVersion (Ett schema som start, M9)', () => {
+  /** The world, with the version a save creates. */
+  function saving(over: Parameters<typeof world>[0] = {}) {
+    const w = world(over);
+    (w.tx as unknown as Record<string, unknown>)['scheduleVersion'] = {
+      create: jest.fn().mockImplementation(({ data }: { data: { name: string } }) => Promise.resolve({ id: 'v-new', name: data.name })),
+    };
+    return w as typeof w & { tx: typeof w.tx & { scheduleVersion: { create: jest.Mock } } };
+  }
+  const save = (service: ScheduleExchangeService, lessons: ExchangeLesson[], name = 'schema.csv') =>
+    service.saveAsVersion({ academicYearId: YEAR, format: 'TABLE_CSV', files: csv(lessons).map((file) => ({ ...file, name })) }, user);
+
+  it('saves the lessons of the file as a version of the machine’s own lessons, not locked, and names it after the file', async () => {
+    const { service, tx } = saving();
+
+    const saved = await save(service, [base(), base({ day: 3, start: '10:00', end: '11:00' })], 'Untis 2026.csv');
+
+    expect(saved).toEqual({ versionId: 'v-new', name: 'Inläst ur fil: Untis 2026.csv', lessonCount: 2, read: 2, unreadable: 0, unresolved: {} });
+    const data = tx.scheduleVersion.create.mock.calls[0]![0].data as { schoolId: string; academicYearId: string; createdById: string; lessonCount: number; lessons: Record<string, unknown>[] };
+    expect(data).toMatchObject({ schoolId: SCHOOL, academicYearId: YEAR, createdById: 'u-admin', lessonCount: 2 });
+    expect(data.lessons).toHaveLength(2);
+    expect(data.lessons[0]).toMatchObject({
+      subjectId: 's-ma',
+      studentGroupId: 'g-7a',
+      teacherId: 't-abe',
+      roomId: 'r-101',
+      dayOfWeek: 1,
+      startTime: '08:10',
+      endTime: '09:10',
+      isLocked: false,
+      isGenerated: true,
+      isParked: false,
+      recurrence: 'ALL_WEEKS',
+    });
+  });
+
+  it('writes nothing of the school’s: no lesson, no post, no block, no change log, no lock, and no clash scan', async () => {
+    const { service, tx, masterLessons, realtime } = saving();
+
+    await save(service, [base(), base({ day: 3 })]);
+
+    expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+    expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+    expect(tx.teachingRequirement.createMany).not.toHaveBeenCalled();
+    expect(tx.teachingBlock.create).not.toHaveBeenCalled();
+    expect(tx.scheduleChangeLog.createMany).not.toHaveBeenCalled();
+    expect(masterLessons.findConflicts).not.toHaveBeenCalled();
+    expect(enterGrundschemaWrite).not.toHaveBeenCalled();
+    expect(lockYearForRegeneration).not.toHaveBeenCalled();
+    expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
+  });
+
+  it('leaves out, and counts by the refusal’s code, a row that names what the year does not have', async () => {
+    const { service, tx } = saving();
+
+    const saved = await save(service, [base(), base({ group: '9Z', day: 2 }), base({ subject: 'Slöjd', day: 3 }), base({ day: 4 })]);
+
+    expect(saved.lessonCount).toBe(2);
+    expect(saved.read).toBe(4);
+    expect(saved.unresolved).toEqual({ UNKNOWN_GROUP: 1, UNKNOWN_SUBJECT: 1 });
+    expect((tx.scheduleVersion.create.mock.calls[0]![0].data as { lessons: unknown[] }).lessons).toHaveLength(2);
+  });
+
+  it('carries the weeks a lesson ran, and a lesson of several classes with its classes, which a start leaves to the week as it stands', async () => {
+    const { service, tx } = saving();
+
+    await save(service, [
+      base({ weeks: 'ODD', from: '2026-08-17', to: '2026-12-18' }),
+      base({ day: 2, extraGroups: ['7B'] }),
+    ]);
+
+    const lessons = (tx.scheduleVersion.create.mock.calls[0]![0].data as { lessons: Record<string, unknown>[] }).lessons;
+    expect(lessons[0]).toMatchObject({ recurrence: 'ODD_WEEKS', startDate: '2026-08-17', endDate: '2026-12-18' });
+    expect(lessons[1]).toMatchObject({ extraGroupIds: ['g-7b'] });
+  });
+
+  it('saves a lesson that runs from the year’s first day to its last as a lesson with no dates, the way a post of every week has none, and keeps any other dates', async () => {
+    const { service, tx } = saving();
+
+    await save(service, [
+      base({ from: '2026-08-17', to: '2027-06-11' }),
+      base({ day: 2, from: '2026-08-17', to: '2026-12-18' }),
+      base({ day: 3, from: '2027-01-11', to: '2027-06-11' }),
+    ]);
+
+    const lessons = (tx.scheduleVersion.create.mock.calls[0]![0].data as { lessons: Record<string, unknown>[] }).lessons;
+    expect(lessons[0]).toMatchObject({ startDate: null, endDate: null });
+    expect(lessons[1]).toMatchObject({ startDate: '2026-08-17', endDate: '2026-12-18' });
+    expect(lessons[2]).toMatchObject({ startDate: '2027-01-11', endDate: '2027-06-11' });
+  });
+
+  it('records the read of the teachers it matched, as a preview does', async () => {
+    const { service, tx } = saving();
+
+    await save(service, [base()]);
+
+    expect(recordRead).toHaveBeenCalledWith(tx, 'PEOPLE', new Set(['t-abe']), 'WEB');
+  });
+
+  it('keeps a file name to one short line with no personnummer in it', async () => {
+    const { service } = saving();
+
+    const saved = await save(service, [base()], `schema   ${'x'.repeat(200)} 19121212-1212.csv`);
+
+    expect(saved.name.length).toBeLessThanOrEqual(120);
+    expect(saved.name).not.toMatch(/\s{2}/);
+    expect(hasPersonalNumber(saved.name)).toBe(false);
+  });
+
+  it('refuses a file none of whose rows fits the year, with how many it read and why, and saves no version of no lesson', async () => {
+    const { service, tx } = saving();
+
+    const thrown = await save(service, [base({ group: '9Z' }), base({ group: '9Y', day: 2 })]).catch((error: unknown) => error);
+
+    expect(thrown).toBeInstanceOf(BadRequestException);
+    expect((thrown as BadRequestException).getResponse()).toMatchObject({
+      code: 'IMPORT_NO_ROW_FITS_THE_YEAR',
+      params: { read: 2, unreadable: 0, UNKNOWN_GROUP: 2 },
+    });
+    expect(tx.scheduleVersion.create).not.toHaveBeenCalled();
+    expect(recordRead).not.toHaveBeenCalled();
+  });
+
+  it('refuses a file that cannot be read with the same 400 and code a preview gives, before it reads the school', async () => {
+    const { service, tx } = saving();
+
+    const thrown = await service
+      .saveAsVersion({ academicYearId: YEAR, format: 'TABLE_CSV', files: [{ name: 'x.csv', bytes: Buffer.from([0xff, 0xfe, 0x00]) }] }, user)
+      .catch((error: unknown) => error);
+
+    expect(thrown).toBeInstanceOf(BadRequestException);
+    expect(tx.scheduleVersion.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('ScheduleExchangeService.preview', () => {
   it('plans a new lesson, derives its post, and writes nothing', async () => {
     const { service, tx, masterLessons } = world();

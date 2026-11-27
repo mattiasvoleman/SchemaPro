@@ -851,6 +851,48 @@ async function roleChecks(owner: Owner, exchange: ScheduleExchangeService, schoo
     for (const teacher of teachers) assert.ok(logged.has(teacher.userId), `teacher ${teacher.signature} is not in the läslogg`);
   });
 
+  // Ett schema som start (M9): a file saved as a version of the year, which Generera can start from. The school's own table, read back
+  // as a version: the same lessons, as the machine's (not locked), and not one row of the school's written.
+  await check('(x-g) a file saved as a version holds the file’s lessons as the machine’s own and writes nothing else, and a läsare is refused by the database', async () => {
+    const files = await bytesOf('TABLE_CSV', exchange, school.yearId, school.admin);
+    const countsOf = async () => ({
+      lessons: await owner.masterLesson.count({ where: { academicYearId: school.yearId } }),
+      posts: await owner.teachingRequirement.count({ where: { academicYearId: school.yearId } }),
+      blocks: await owner.teachingBlock.count({ where: { academicYearId: school.yearId } }),
+      changes: await owner.scheduleChangeLog.count({ where: { academicYearId: school.yearId } }),
+      versions: await owner.scheduleVersion.count({ where: { academicYearId: school.yearId } }),
+    });
+    const before = await countsOf();
+    const saved = await exchange.saveAsVersion({ academicYearId: school.yearId, format: 'TABLE_CSV', files }, school.admin);
+    try {
+      assert.equal(saved.read, before.lessons, 'every lesson of the file was read');
+      assert.equal(saved.lessonCount, before.lessons, `${saved.lessonCount} lessons in the version, ${JSON.stringify(saved.unresolved)} left out`);
+      assert.deepEqual(saved.unresolved, {});
+      assert.match(saved.name, /^Inläst ur fil: /);
+      const row = await owner.scheduleVersion.findUniqueOrThrow({ where: { id: saved.versionId } });
+      assert.equal(row.academicYearId, school.yearId);
+      assert.equal(row.createdById, school.admin.userId);
+      assert.equal(row.lessonCount, before.lessons);
+      const stored = row.lessons as unknown as Array<{ studentGroupId: string; subjectId: string; dayOfWeek: number; startTime: string; endTime: string; isLocked: boolean; isGenerated: boolean }>;
+      assert.ok(stored.every((lesson) => lesson.isLocked === false && lesson.isGenerated === true), 'the version holds the machine’s lessons, none locked');
+      const clock = (value: Date): string => value.toISOString().slice(11, 16);
+      const key = (lesson: { studentGroupId: string; subjectId: string; dayOfWeek: number; startTime: string; endTime: string }): string =>
+        `${lesson.studentGroupId}|${lesson.subjectId}|${lesson.dayOfWeek}|${lesson.startTime}|${lesson.endTime}`;
+      const school_ = (await owner.masterLesson.findMany({ where: { academicYearId: school.yearId } })).map((lesson) =>
+        key({ studentGroupId: lesson.studentGroupId, subjectId: lesson.subjectId, dayOfWeek: lesson.dayOfWeek, startTime: clock(lesson.startTime), endTime: clock(lesson.endTime) }),
+      );
+      assert.deepEqual(stored.map(key).sort(), school_.sort(), 'the version is the school’s lessons, read back from the file');
+      assert.deepEqual({ ...(await countsOf()), versions: 0 }, { ...before, versions: 0 }, 'nothing of the school’s was written');
+      assert.equal((await countsOf()).versions, before.versions + 1);
+
+      const lasare = await adminOf(owner, school.schoolId, 'LASARE');
+      await assert.rejects(exchange.saveAsVersion({ academicYearId: school.yearId, format: 'TABLE_CSV', files }, lasare));
+      assert.equal((await countsOf()).versions, before.versions + 1, 'the refused save left no version');
+    } finally {
+      await owner.scheduleVersion.delete({ where: { id: saved.versionId } });
+    }
+  });
+
   // The readers are exercised end to end by the format specs; one cross-check here that
   // the same bytes read the same through the service's own reader.
   await check('(x-d) the readers agree with the service on what a file holds', async () => {

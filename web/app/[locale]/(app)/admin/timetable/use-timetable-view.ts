@@ -19,7 +19,7 @@ type Translator = ReturnType<typeof useTranslations>;
  * What the grid shows: the filtered lessons, their labels, the lunch and rast bands behind them, the
  * tray and the resource boards of the "group by" view.
  */
-export function useTimetableView(inputs: Pick<TimetableReads, "lunchSittings" | "rasts" | "lessons" | "rooms" | "groups"> & Pick<ScheduleEngine, "yearGroups" | "gradeSpanOf" | "rosterIndex" | "groupById" | "pupilBuffers" | "subjectById" | "teacherById" | "roomById" | "conflictMap" | "remoteEditors" | "validateChange" | "teachers"> & {
+export function useTimetableView(inputs: Pick<TimetableReads, "lunchSittings" | "rasts" | "lessons" | "rooms" | "groups"> & Pick<ScheduleEngine, "yearGroups" | "gradeSpanOf" | "rosterIndex" | "groupById" | "pupilBuffers" | "subjectById" | "teacherById" | "roomById" | "conflictMap" | "exemptionMap" | "exemptionStanding" | "remoteEditors" | "validateChange" | "teachers"> & {
   /** What each clashing card says, in words (use-conflict-notes.ts): absent until the module that makes them has come. */
   conflictNotes?: ReadonlyMap<string, string>;
   t: Translator;
@@ -32,7 +32,7 @@ export function useTimetableView(inputs: Pick<TimetableReads, "lunchSittings" | 
   blockKit: BlockKit | null;
   groupBy: GroupBy;
 }) {
-  const { lunchSittings, rasts, lessons, rooms, groups, yearGroups, gradeSpanOf, rosterIndex, groupById, pupilBuffers, subjectById, teacherById, roomById, conflictMap, remoteEditors, validateChange, teachers, conflictNotes, t, locale, tLunch, onlyGroup, groupFilters, teacherFilters, roomFilters, blockKit, groupBy } = inputs;
+  const { lunchSittings, rasts, lessons, rooms, groups, yearGroups, gradeSpanOf, rosterIndex, groupById, pupilBuffers, subjectById, teacherById, roomById, conflictMap, exemptionMap, exemptionStanding, remoteEditors, validateChange, teachers, conflictNotes, t, locale, tLunch, onlyGroup, groupFilters, teacherFilters, roomFilters, blockKit, groupBy } = inputs;
   const groupSections = useMemo(() => {
     const named = (group: { id: string; name: string }) => ({ id: group.id, name: group.name });
     // The schedule on screen is one year's, so its groups are the filter's:
@@ -281,6 +281,23 @@ export function useTimetableView(inputs: Pick<TimetableReads, "lunchSittings" | 
         recurrenceNote: recurrenceBadge(lesson, t) ?? undefined,
         conflicted: conflictMap.has(lesson.id),
         conflictNote: conflictNotes?.get(lesson.id),
+        // UNDANTAG MED FLIT: a lesson the school has given an exemption stands there on purpose, in a word on its card and in the
+        // words a screen reader is told after the lesson's name (the grid's slot for a mark). What it stands against NOW is said, rule by rule
+        // (the list does the same): a lesson given both the ramtid and the class's meal, whose meal Generera has laid elsewhere, still stands
+        // against the ramtid and not against the meal. A rule nothing stands against is still the lesson's, and the card says so.
+        ...((given) => {
+          if (!given) return {};
+          const standing = exemptionStanding.get(lesson.id) ?? [];
+          const idle = given.filter((rule) => !standing.includes(rule));
+          const said = (key: "exemptMarkLabel" | "exemptMarkIdleLabel", rules: readonly string[]) =>
+            t(key, { rules: rules.map((rule) => t(`exemptRule${rule}`)).join(t("exemptAnd")) });
+          return {
+            mark: t("exemptMark"),
+            markLabel: [standing.length > 0 ? said("exemptMarkLabel", standing) : null, idle.length > 0 ? said("exemptMarkIdleLabel", idle) : null]
+              .filter(Boolean)
+              .join(" "),
+          };
+        })(exemptionMap.get(lesson.id)),
         // Hover text only — the rectangle keeps showing the teaching time. A
         // buffer the grid shows nowhere makes the refusal of the next slot look
         // like a bug in the grid.
@@ -309,6 +326,8 @@ export function useTimetableView(inputs: Pick<TimetableReads, "lunchSittings" | 
       roomById,
       conflictMap,
       conflictNotes,
+      exemptionMap,
+      exemptionStanding,
       remoteEditors,
       audienceByLesson,
       onlyGroup,

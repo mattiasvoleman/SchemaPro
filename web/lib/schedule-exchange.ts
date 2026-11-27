@@ -71,6 +71,19 @@ export interface ImportResultDto {
   blocksCreated: number;
 }
 
+/** A file saved as a version to start Generera from (POST /schedule-exchange/import/as-version): what the version holds and why the rest of the file does not. */
+export interface SavedStartDto {
+  versionId: string;
+  name: string;
+  lessonCount: number;
+  /** Rows the file held that were read as lessons. */
+  read: number;
+  /** Lines of the file that could not be read as a lesson at all. */
+  unreadable: number;
+  /** Rows left out because they name something the year does not have, by the refusal's code. */
+  unresolved: Record<string, number>;
+}
+
 export interface UploadedFileBody {
   name: string;
   contentBase64: string;
