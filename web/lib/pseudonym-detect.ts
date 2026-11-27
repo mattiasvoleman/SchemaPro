@@ -502,8 +502,23 @@ const PRIORITY: Readonly<Record<FindingKind, number>> = { epost: 0, pnr: 1, sam:
  */
 const NUMBER_AFTER_DATE = new RegExp(`(?<!\\d)((?:\\d ?){7}\\d|(?:\\d ?){5}\\d|\\d{4}-\\d{2}-\\d{2}|\\d{2}-\\d{2}-\\d{2})( {0,2})[${MARKS}]( {0,2})(?=\\d{4}(?!\\d))`, "g");
 // A blank or two on either side of the mark are as the shape takes them beside a hyphen (hyphen and blanks together make up to eight characters): "800101: 1234" and "800101 ,1234" were left standing (the review of #403). One character to one. A blank INSIDE the last four is not taken: "20261116, 1 250 kr" is an amount.
+/**
+ * The symbols a person puts between a date and the last four who has masked or struck a number out (* | bullet, middle dot, ~ # = ;). Unlike a colon, a comma or an apostrophe, most of them are what a table is written with
+ * (a bar or a semicolon between a date and a time in a file the page does not read as a table: "20261126|0900|7A"), and a date and a time are a personnummer's shape and no more. Only where the check digit holds is the symbol
+ * taken for the separator of a number: about one pair in ten of a date and a time, and every real number, which has one.
+ */
+const SYMBOL_MARKS = "*|\u2022\u00b7~#=;";
 const foldMarksAfterDate = (text: string): string =>
-  MARK.test(text) ? text.replace(NUMBER_AFTER_DATE, (_all, date: string, before: string, after: string) => `${date}${before}-${after}`) : text;
+  MARK.test(text)
+    ? text.replace(NUMBER_AFTER_DATE, (all: string, date: string, before: string, after: string, offset: number) => {
+        const mark = all.slice(date.length + before.length, all.length - after.length);
+        if (SYMBOL_MARKS.includes(mark)) {
+          const ten = `${date.replace(/\D/g, "").slice(-6)}${text.slice(offset + all.length, offset + all.length + 4)}`;
+          if (!luhnHolds(ten)) return all;
+        }
+        return `${date}${before}-${after}`;
+      })
+    : text;
 
 /** Everything personal in ONE view of the text (foldSpellings' or squeeze's), in that view's places, not merged and not in order. */
 function searchIn(text: string): Finding[] {

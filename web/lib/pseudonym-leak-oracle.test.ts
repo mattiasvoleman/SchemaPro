@@ -90,11 +90,28 @@ const PNR_SEPARATORS_SYMBOLS = ["*", "|", "\u2022", "\u00b7", "~", "#", "=", ";"
 interface PnrOptions {
   separators: readonly string[];
   invisibles: boolean;
+  /** The last digit is the number's check digit, as a real personnummer has it (a symbol between the date and the last four is taken for a separator only then). */
+  luhn?: boolean;
+}
+
+/** The check digit of the first nine digits of a personnummer, made by the rule and not by the page's search. */
+function luhnCheckDigit(nine: string): string {
+  let sum = 0;
+  for (let i = 0; i < 9; i += 1) {
+    let digit = Number(nine[i]);
+    if (i % 2 === 0) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+  }
+  return String((10 - (sum % 10)) % 10);
 }
 
 function personnummer(rand: Rng, options: PnrOptions): Spelled {
   const date = pad2(rand.int(100)) + pad2(1 + rand.int(12)) + pad2(1 + rand.int(28) + (rand.bool(0.15) ? 60 : 0));
-  const last = digits(rand, 4);
+  const drawn = digits(rand, 4);
+  const last = options.luhn === true ? drawn.slice(0, 3) + luhnCheckDigit(date + drawn.slice(0, 3)) : drawn;
   const century = rand.pick(["", "", "19", "20"]);
   let head = century + date;
   // The shape the page already takes: one blank between two digits of the date.
@@ -290,11 +307,11 @@ describe("no personnummer is left, however it was written", () => {
 
 describe("no personnummer is left that is written with a symbol, a control character or an exponent (X1b)", () => {
   it("a symbol between the date and the last four: * | \u2022 \u00b7 ~ # = ;", () => {
-    expect(leaksOf("pnr symbols", ROUNDS, 14, (rand) => personnummer(rand, { separators: PNR_SEPARATORS_SYMBOLS, invisibles: false }))).toEqual([]);
+    expect(leaksOf("pnr symbols", ROUNDS, 14, (rand) => personnummer(rand, { separators: PNR_SEPARATORS_SYMBOLS, invisibles: false, luhn: true }))).toEqual([]);
   });
 
   it("control characters between the digits, with every separator and the symbols too", () => {
-    expect(leaksOf("pnr controls", ROUNDS, 15, (rand) => personnummer(rand, { separators: [...PNR_SEPARATORS_KNOWN, ...PNR_SEPARATORS_NEW, ...PNR_SEPARATORS_SYMBOLS], invisibles: true }))).toEqual([]);
+    expect(leaksOf("pnr controls", ROUNDS, 15, (rand) => personnummer(rand, { separators: [...PNR_SEPARATORS_KNOWN, ...PNR_SEPARATORS_NEW, ...PNR_SEPARATORS_SYMBOLS], invisibles: true, luhn: true }))).toEqual([]);
   });
 
   it("a number written with an exponent, as a spreadsheet or an exporter writes a long number, in every place a number can stand (a column a header calls an id, running text, the header row)", () => {

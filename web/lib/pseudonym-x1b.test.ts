@@ -155,16 +155,16 @@ describe("a control character between the digits (the review of #403, L-6 c)", (
 
 describe("a symbol between the date and the last four (the review of #403, L-6 a)", () => {
   it.each(["*", "|", "\u2022", "\u00b7", "~", "#", "=", ";"])("%s is taken as a colon is", (symbol) => {
-    const text = `Elev 800101${symbol}1234 saknas`;
-    expect(found(text), text).toEqual([["pnr", `800101${symbol}1234`]]);
-    expect(findPersonalData(text)[0]!.key).toBe("8001011234");
+    const text = `Elev 800101${symbol}1231 saknas`;
+    expect(found(text), text).toEqual([["pnr", `800101${symbol}1231`]]);
+    expect(findPersonalData(text)[0]!.key).toBe("8001011231");
     expect(findPersonalData(text)[0]!.spelling).toBe(`ÅÅMMDD${symbol}NNNN`);
   });
 
   it("is taken with a century, with the date written with hyphens, and with a blank on each side", () => {
-    expect(found("Elev 19800101*1234").map(([kind]) => kind)).toEqual(["pnr"]);
-    expect(found("Elev 1980-01-01|1234").map(([kind]) => kind)).toEqual(["pnr"]);
-    expect(found("Elev 800101 * 1234").map(([kind]) => kind)).toEqual(["pnr"]);
+    expect(found("Elev 19800101*1231").map(([kind]) => kind)).toEqual(["pnr"]);
+    expect(found("Elev 1980-01-01|1231").map(([kind]) => kind)).toEqual(["pnr"]);
+    expect(found("Elev 800101 * 1231").map(([kind]) => kind)).toEqual(["pnr"]);
   });
 
   it("is not taken anywhere but between a date and four digits that nothing follows: a time, an amount, a sum", () => {
