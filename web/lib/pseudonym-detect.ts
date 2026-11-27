@@ -13,8 +13,9 @@
  * folds. Those are said in the page, the report and the manual, not hidden. (A number cut by a line break is found by lib/pseudonym-seams.ts, where there is text beside it.)
  *
  * WHAT THIS SEARCH TAKES THAT THE DOOR DOES NOT (the review of #398; lib/personal-number.ts and the gateway's file-safety.ts are unchanged, and hold each other equal): a colon, a comma or an
- * apostrophe between the date and the last four of a personnummer; any number of characters that show nothing between the digits; a telephone number written with 46 and no plus, or with full stops
- * only; an address with its local part in quotes or its domain in brackets; the wide TF search. For a door a missed number is a cell read as text, for the pseudonymiser it is a number left in a file that is
+ * apostrophe (and, since X1b, an asterisk, a bar, a bullet, a middle dot, a tilde, a number sign, an equals sign or a semicolon) between the date and the last four of a personnummer; any number of
+ * characters that show nothing between the digits, a control character among them, and the carriage return of a line break inside a quoted cell; a telephone number written with 46 and no plus, with full stops
+ * only, or with full stops and blanks mixed; a number written in exponent form (lib/pseudonym-exponent.ts); an address with its local part in quotes or its domain in brackets; the wide TF search. For a door a missed number is a cell read as text, for the pseudonymiser it is a number left in a file that is
  * sent on, and what it costs to take too much is a marker.
  *
  * ONE VALUE, ONE KEY. Two spellings of one number or address have one `key`, so that the same person is the same marker
@@ -23,6 +24,7 @@
  */
 
 import { findPersonalNumbers, foldForShape } from "@/lib/personal-number";
+import { expandExponents } from "@/lib/pseudonym-exponent";
 
 export type FindingKind = "pnr" | "sam" | "tf" | "epost" | "tel";
 
@@ -126,18 +128,19 @@ function findGluedPersonalNumbers(text: string): Finding[] {
 
 /**
  * What may stand between the date of a personnummer and its last four, besides the blanks and hyphens the shared shape takes: a colon, a comma or an apostrophe (the
- * straight one and the typographic ones a word processor makes of it). THE DOOR DOES NOT TAKE THESE and stays as it is (lib/personal-number.ts: the review of #377 left
+ * straight one and the typographic ones a word processor makes of it), and the symbols a person puts there who has masked or struck a number out: an asterisk, a bar, a bullet, a middle dot, a tilde, a number sign, an
+ * equals sign, a semicolon (the review of #403, L-6). THE DOOR DOES NOT TAKE THESE and stays as it is (lib/personal-number.ts: the review of #377 left
  * the shape one list for both sides); this search does, and the report says how the number was written.
  */
-const MARKS = ":,'\u2019\u2018\u00b4`\u02bc\u2032";
+const MARKS = ":,'\u2019\u2018\u00b4`\u02bc\u2032*|\u2022\u00b7~#=;";
 const MARK = new RegExp(`[${MARKS}]`);
 
 const SPELLING_ISO = new RegExp(`^\\d{2,4}-\\d{2}-\\d{2}([- ${MARKS}])\\d{4}$`);
 const SPELLING_TAIL = new RegExp(`[ +\\-${MARKS}]{1,8}\\d{4}$`);
 const SPELLING_SEPARATOR = new RegExp(`([ +\\-${MARKS}]{1,8})\\d{4}$`);
 
-/** How a separator of MARKS is written in a pattern: a colon, a comma, or an apostrophe, whichever of the apostrophes it was. */
-const markWritten = (mark: string): string => (mark === ":" || mark === "," ? mark : "'");
+/** How a separator of MARKS is written in a pattern: a colon, a comma or one of the symbols as it stood, or an apostrophe, whichever of the apostrophes it was. */
+const markWritten = (mark: string): string => (":,*|\u2022\u00b7~#=;".includes(mark) ? mark : "'");
 
 /**
  * How a personnummer was written, as a pattern: the century or not, the separator, and whether blanks stood between digits.
@@ -182,11 +185,15 @@ function foldSpellings(text: string): string {
  * review of #398). The text is therefore searched TWICE when it holds one: as foldSpellings leaves it (each is a blank, which is what keeps "0701234567<ZWSP>0812345678" two
  * numbers) and with every one taken out (which is what makes "8<ZWSP><SHY><WJ>0" two digits side by side); the findings of the second are carried back to the text as it was.
  */
-const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\u0085]/gu;
-const HAS_INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\u0085]/u;
-/** Nothing from U+0000 to U+02FF shows nothing but the soft hyphen and the next-line character (U+0085, which is no format character but is listed as one that shows nothing: any number of them, as of the others): a text of Swedish, English and digits is told so by one cheap test, and the property test is for the rest. */
-const MAYBE_INVISIBLE = /[^\u0000-\u0084\u0086-\u00ac\u00ae-\u02ff]/;
-const hasInvisible = (text: string): boolean => MAYBE_INVISIBLE.test(text) && HAS_INVISIBLE.test(text);
+const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\u0000-\u0008\u000e-\u001f\u007f-\u009f]|\r(?=\n)/gu;
+const HAS_INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\u0000-\u0008\u000e-\u001f\u007f-\u009f]|\r(?=\n)/u;
+/**
+ * Nothing from U+0020 to U+02FF shows nothing but the soft hyphen, and the controls below U+0020 and from U+007F to U+009F are the ones that do (a reader sees nothing between two digits of "8001<SOH>011234"; the review of #403, L-6;
+ * the next-line character U+0085 is one of them, as it was before): a text of Swedish, English and digits is told so by one cheap test, and the property test is for the rest. The carriage return of a line break
+ * inside a quoted cell is one too, where a line feed follows it: "8001\r\n011234" had two blanks between its digits and the shape takes one, and "8001\n011234" was found (the same review, L-5 b).
+ */
+const MAYBE_INVISIBLE = /[^\u0009-\u000d\u0020-\u007e\u00a0-\u00ac\u00ae-\u02ff]/;
+const hasInvisible = (text: string): boolean => (MAYBE_INVISIBLE.test(text) || text.includes("\r\n")) && HAS_INVISIBLE.test(text);
 
 /** The text with the invisible characters taken out, folded, and where each of its characters stood in the text as it was. */
 function squeeze(original: string): { text: string; origin: Int32Array } {
@@ -335,6 +342,20 @@ const isDotted = (candidate: string): boolean => {
 };
 
 /**
+ * Written with full stops AND blanks, hyphens or slashes among them (070.123 45 67, 070-123.45.67, 46.31 333 29 00): a number copied from two sources, or typed by a hand that used what was nearest (the review of #403, L-6 b).
+ * The same demands as a number with full stops alone: at least four groups, each of at least two digits (the one after the country code may be a single), nine digits or more. "08.10-09.00" and "07.45 12 30" are
+ * eight digits and are not one.
+ */
+const isMixedDotted = (candidate: string): boolean => {
+  if (!/^\d[\d .\-/]*\d$/.test(candidate) || !candidate.includes(".") || !/[ \-/]/.test(candidate)) return false;
+  const groups = candidate.split(/[ .\-/]+/);
+  const country = groups[0] === "46";
+  // A list of times written with full stops and blanks (08.10 08.55 09.10 10.00): groups of two digits that read, in turn, as an hour and a minute. A number written in pairs does not read so (08.12 34 56 78: 34 is no hour).
+  if (groups.every((group) => group.length === 2) && groups.every((group, i) => Number(group) <= (i % 2 === 0 ? 23 : 59))) return false;
+  return groups.length >= 4 && groups.every((group, i) => group.length >= 2 || (country && i === 1)) && candidate.replace(/\D/g, "").length >= 9;
+};
+
+/**
  * The key of a candidate that is a telephone number, or null. A number begins with 0 (the national form: 070-123 45 67,
  * 08-123 456 78), with + or 00 (the international) or with 46 and no plus, has between seven and fifteen digits, and is not a date. A full stop
  * separates the groups of an international number (+46.70.123.45.67) and of a number written with full stops alone (070.123.45.67); "0.1234567" and "07.08.2026" are not telephone numbers.
@@ -345,7 +366,7 @@ function telephoneKey(candidate: string): string | null {
   const international = candidate.startsWith("+") || digits.startsWith("00") || bare;
   if (!international && !digits.startsWith("0")) return null;
   if (DATE_LIKE.test(candidate) || TIME_RANGE.test(candidate)) return null;
-  if (!candidate.startsWith("+") && !digits.startsWith("00") && candidate.includes(".") && !isDotted(candidate)) return null;
+  if (!candidate.startsWith("+") && !digits.startsWith("00") && candidate.includes(".") && !isDotted(candidate) && !isMixedDotted(candidate)) return null;
   const national = international ? digits.replace(/^00/, "") : digits;
   if (international ? national.length < 8 || national.length > 15 : national.length < 7 || national.length > 11) return null;
   return normaliseTelephone(candidate);
@@ -483,8 +504,23 @@ const PRIORITY: Readonly<Record<FindingKind, number>> = { epost: 0, pnr: 1, sam:
  */
 const NUMBER_AFTER_DATE = new RegExp(`(?<!\\d)((?:\\d ?){7}\\d|(?:\\d ?){5}\\d|\\d{4}-\\d{2}-\\d{2}|\\d{2}-\\d{2}-\\d{2})( {0,2})[${MARKS}]( {0,2})(?=\\d{4}(?!\\d))`, "g");
 // A blank or two on either side of the mark are as the shape takes them beside a hyphen (hyphen and blanks together make up to eight characters): "800101: 1234" and "800101 ,1234" were left standing (the review of #403). One character to one. A blank INSIDE the last four is not taken: "20261116, 1 250 kr" is an amount.
+/**
+ * The symbols a person puts between a date and the last four who has masked or struck a number out (* | bullet, middle dot, ~ # = ;). Unlike a colon, a comma or an apostrophe, most of them are what a table is written with
+ * (a bar or a semicolon between a date and a time in a file the page does not read as a table: "20261126|0900|7A"), and a date and a time are a personnummer's shape and no more. Only where the check digit holds is the symbol
+ * taken for the separator of a number: about one pair in ten of a date and a time, and every real number, which has one.
+ */
+const SYMBOL_MARKS = "*|\u2022\u00b7~#=;";
 const foldMarksAfterDate = (text: string): string =>
-  MARK.test(text) ? text.replace(NUMBER_AFTER_DATE, (_all, date: string, before: string, after: string) => `${date}${before}-${after}`) : text;
+  MARK.test(text)
+    ? text.replace(NUMBER_AFTER_DATE, (all: string, date: string, before: string, after: string, offset: number) => {
+        const mark = all.slice(date.length + before.length, all.length - after.length);
+        if (SYMBOL_MARKS.includes(mark)) {
+          const ten = `${date.replace(/\D/g, "").slice(-6)}${text.slice(offset + all.length, offset + all.length + 4)}`;
+          if (!luhnHolds(ten)) return all;
+        }
+        return `${date}${before}-${after}`;
+      })
+    : text;
 
 /** Everything personal in ONE view of the text (foldSpellings' or squeeze's), in that view's places, not merged and not in order. */
 function searchIn(text: string): Finding[] {
@@ -529,9 +565,20 @@ export function findUnmerged(original: string): Finding[] {
   if (original.length < 4) return [];
   const all = searchIn(foldSpellings(original));
   // A text with a character that shows nothing is looked through again without it, and what is found there is carried back to the text as it was (see INVISIBLE).
-  if (hasInvisible(original)) {
-    const squeezed = squeeze(original);
+  const squeezed = hasInvisible(original) ? squeeze(original) : null;
+  if (squeezed !== null) {
     for (const found of searchIn(squeezed.text)) all.push({ ...found, start: squeezed.origin[found.start]!, end: squeezed.origin[found.end - 1]! + 1 });
+  }
+  // A whole number written in exponent form (8.001011234E9) is looked at as the digits it stands for, and what is found is carried back to the number as it was written (lib/pseudonym-exponent.ts).
+  // It is looked for in the text as the search folds it (a full-width digit is a digit) and in the text without the characters that show nothing (8.001011234<ZWSP>E9), like every other number (the review of #496).
+  const exponentViews: { text: string; start: (at: number) => number; end: (at: number) => number }[] = [{ text: foldSpellings(original), start: (at) => at, end: (at) => at }];
+  if (squeezed !== null) exponentViews.push({ text: squeezed.text, start: (at) => squeezed.origin[at]!, end: (at) => squeezed.origin[at - 1]! + 1 });
+  for (const view of exponentViews) {
+    const expanded = expandExponents(view.text);
+    if (expanded === null) continue;
+    for (const found of searchIn(foldSpellings(expanded.text))) {
+      all.push({ ...found, start: view.start(expanded.startAt[found.start]!), end: view.end(expanded.endAt[found.end - 1]!), ...(found.spelling === undefined ? {} : { spelling: `${found.spelling} (tal med exponent)` }) });
+    }
   }
   all.sort((a, b) => a.start - b.start || b.end - a.end);
   return all;

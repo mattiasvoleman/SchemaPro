@@ -1310,7 +1310,15 @@ guardian reported) the pupil's id and address, the leave's reason, the
 absence's kind and the notes are empty, and what stays is the person's own
 act. The same holds for the tables of `data/person/` that are about a pupil
 (`PersonDump.pupil`: the crisis tables, where a teacher marks a pupil found in a
-drill): the pupil and the pupil's state are empty and the act stays. A note the
+drill): the pupil and the pupil's state are empty and the act stays. The same
+mechanism holds for the two tables where a member of staff decides about a
+colleague (`AssignmentScopeAssessments`, the rektor's assessment of a teacher's
+level and exception, and `TeacherEmploymentLogs`, the history of a post): in the
+extract of the one who decided, the colleague and what was decided about them
+(the level, the exception, the day, the note, the post before and after) are
+empty and what stays is that the person decided, which row, and when; the
+colleague's own extract has the row whole. A column added to either table fails
+`person-tables.spec.ts` until it is said to be the act or the colleague's. A note the
 person wrote that names another pupil or guardian by full name (either order) or
 address is empty too (`TermIndex`, `free-text.ts`); in the extract of a protected
 person, so is a note that names any other user. **An extract about a protected

@@ -71,7 +71,11 @@ class MemorySink implements ByteSink {
 export class SubjectAccessService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async extract(user: AuthenticatedUser, personId: string, withRelated: boolean): Promise<SubjectAccessAnswer> {
+  async extract(user: AuthenticatedUser, askedFor: string, withRelated: boolean): Promise<SubjectAccessAnswer> {
+    // The ids the database writes are lower case, and the extract compares them as text (the set of persons asked for, the marked
+    // persons): an upper-case id is the same uuid to the database and a stranger to those comparisons, which hid the person's own row
+    // of a table about a colleague and let a protected person's extract name the others. IsUUID accepts both spellings.
+    const personId = askedFor.toLowerCase();
     if (user.huvudman || !user.userId || !profileDecides(user.adminProfile)) {
       throw new ForbiddenException({
         message: 'Ett registerutdrag lämnas ut av rektor eller en fullständig administrator.',
@@ -83,7 +87,7 @@ export class SubjectAccessService {
       const person = await tx.user.findUnique({ where: { id: personId }, select: { id: true } });
       if (!person) throw new NotFoundException('Personen finns inte.');
       const school = await tx.school.findUniqueOrThrow({ where: { id: schoolId }, select: { name: true } });
-      const marks = await tx.$queryRaw<Array<{ id: string; first: string; last: string; email: string }>>`
+      const marks = await tx.$queryRaw<Array<{ id: string; first: string; last: string; email: string | null }>>`
         SELECT DISTINCT u."id"::text AS id, u."firstName" AS first, u."lastName" AS last, u."email" AS email
           FROM "PersonProtections" p JOIN "Users" u ON u."id" = p."userId" AND u."schoolId" = p."schoolId"
          WHERE p."schoolId" = ${schoolId}::uuid`;

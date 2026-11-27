@@ -19,7 +19,7 @@ describe("an engine ceiling that fell (ENGINE_TIMED_OUT)", () => {
     });
   });
 
-  it.each(["PRECHECKS", "BUILD", "SITES", "SEARCH_CLEAN", "SEARCH_CLONE", "PROBE"])("knows the step %s", (stage) => {
+  it.each(["PRECHECKS", "START", "BUILD", "SITES", "SEARCH_CLEAN", "YEARS", "SEARCH_CLONE", "PROBE"])("knows the step %s", (stage) => {
     expect(runEnding("ENGINE_TIMED_OUT", { ceilingSeconds: 40, stage, stageSeconds: 1, elapsedSeconds: 2 })?.key).toBe(
       "ENGINE_TIMED_OUT_AT",
     );

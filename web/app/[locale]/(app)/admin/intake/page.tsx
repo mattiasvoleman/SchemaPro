@@ -115,7 +115,8 @@ function AreaCard({ area }: { area: IntakeArea }) {
     .join(", ");
   const id = `intake-${area.area.toLowerCase().replace(/_/g, "-")}`;
   return (
-    <SectionCard id={id} title={t(`areas.${area.area}`)} description={area.waitsForYear ? undefined : `${t("foundHeading")}: ${found}`}>
+    // An area a newer gateway has and this build has no words for is named by its code, as a gap is: never by the key.
+    <SectionCard id={id} title={t.has(`areas.${area.area}`) ? t(`areas.${area.area}`) : area.area} description={area.waitsForYear ? undefined : `${t("foundHeading")}: ${found}`}>
       {area.waitsForYear ? (
         // Nothing is counted for a läsår that is not there, and "nothing is missing" would be said over an area that has not been looked at.
         <p className="text-sm text-muted-foreground">{t("waitsForYear")}</p>

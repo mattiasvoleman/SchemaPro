@@ -721,6 +721,22 @@ describe("/admin/integrations — the register", () => {
     );
     expect(await screen.findByText("1 skickade, 0 hade redan konto, 0 misslyckades.")).toBeInTheDocument();
   });
+
+  it("says that the project's mail limit stopped it, and how many were not invited, instead of reporting only the ones that went", async () => {
+    const user = userEvent.setup();
+    server.source = { ...SOURCE };
+    server.provisioning = [
+      { id: "33333333-3333-4333-8333-333333333333", role: "STUDENT", firstName: "Cia", lastName: "Holm", email: "cia@skola.se", studentGroup: null },
+      { id: "44444444-4444-4444-8444-444444444444", role: "GUARDIAN", firstName: "Gun", lastName: "Berg", email: "gun@hem.se", studentGroup: null },
+    ];
+    post.mockResolvedValueOnce({ sent: 1, alreadyRegistered: 0, alreadyInvited: 0, noAddress: 0, errors: [], stopped: "RATE_LIMITED", notTried: 1 });
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Välj alla (2)" }));
+    await user.click(screen.getByRole("button", { name: "Bjud in valda (2)" }));
+    expect(await screen.findByText(/Supabase har nått sin gräns för mejl, så 1 person har inte bjudits in/)).toBeInTheDocument();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith("Supabase har nått sin gräns för mejl: 1 person har inte bjudits in.");
+  });
 });
 
 describe("/admin/integrations — API keys", () => {

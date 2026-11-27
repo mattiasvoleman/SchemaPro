@@ -23,6 +23,8 @@ type Answer = { data: unknown } | { error: string };
 const state = vi.hoisted(() => ({
   people: { data: null } as Answer,
   attendance: { data: null } as Answer,
+  /** GET /users/invitation-channel (Första veckan utan operatören). */
+  channel: { data: null } as Answer,
   serverError: false,
 }));
 const from = vi.hoisted(() => vi.fn());
@@ -80,8 +82,8 @@ async function renderPage() {
 const figure = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
 const percent = (share: number) =>
   new Intl.NumberFormat("sv", { style: "percent", maximumFractionDigits: 0 }).format(share);
-/** Waits for both gateway reads to have settled. */
-const settled = () => waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+/** Waits for the three gateway reads to have settled: the people, the week's attendance and how an invitation reaches a person. */
+const settled = (reads = 3) => waitFor(() => expect(get).toHaveBeenCalledTimes(reads));
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -90,12 +92,20 @@ beforeEach(() => {
   from.mockImplementation(() => headCount(7));
   get.mockReset();
   get.mockImplementation(async (path: string) => {
-    const answer = path === "/api/v1/users/counts" ? state.people : path.startsWith("/api/v1/attendance/summary") ? state.attendance : null;
+    const answer =
+      path === "/api/v1/users/counts"
+        ? state.people
+        : path === "/api/v1/users/invitation-channel"
+          ? state.channel
+          : path.startsWith("/api/v1/attendance/summary")
+            ? state.attendance
+            : null;
     if (!answer || "error" in answer) throw new Error(answer ? answer.error : `unexpected ${path}`);
     return answer.data;
   });
   state.people = { data: { byRole: { STUDENT: 412, TEACHER: 38, GUARDIAN: 690, SCHOOL_ADMIN: 2 } } };
   state.attendance = { data: { recorded: 200, present: 180 } };
+  state.channel = { data: { configured: true, smtp: "NOT_STATED", perHour: null } };
   state.serverError = false;
   me.adminProfile = undefined;
 });
@@ -187,7 +197,7 @@ describe("the admin dashboard's quick actions (Roller i skolan)", () => {
   it("offers the läsare what it comes to read, as an unnumbered list (Läsbehörighet)", async () => {
     me.adminProfile = "LASARE";
     await renderPage();
-    await settled();
+    await settled(2); // a läsare does not invite, and the page does not ask how an invitation reaches a person
     expect(tiles()).toEqual(["/admin/timetable", "/admin/requirements", "/admin/staffing", "/admin/reports"]);
     expect(screen.getByRole("list").tagName).toBe("UL");
   });
@@ -200,5 +210,59 @@ describe("the admin dashboard's quick actions (Roller i skolan)", () => {
     // Not steps of one chain: not an ordered list, and no tile numbered.
     expect(screen.getByRole("list").tagName).toBe("UL");
     for (const item of screen.getAllByRole("listitem")) expect(item).not.toHaveTextContent(/\d/);
+  });
+});
+
+// Första veckan utan operatören: the start page says whether the invitations will arrive, since every invitation and every password reset
+// is a mail from Supabase Auth, and Supabase's own sender lets two an hour through.
+describe("the start page's word on the invitations", () => {
+  it("warns, in words that name what to do, when nobody has said that the project sends through its own SMTP", async () => {
+    state.channel = { data: { configured: true, smtp: "NOT_STATED", perHour: null } };
+    await renderPage();
+
+    expect(await screen.findByText(sv.dashboard.channelNotStatedTitle)).toBeInTheDocument();
+    expect(screen.getByText(/Supabases egen avsändare släpper bara igenom två mejl i timmen/)).toBeInTheDocument();
+    expect(get).toHaveBeenCalledWith("/api/v1/users/invitation-channel");
+  });
+
+  it("says that the project sends through its own SMTP, and at what limit, when the operator has said so", async () => {
+    state.channel = { data: { configured: true, smtp: "CUSTOM", perHour: 30 } };
+    await renderPage();
+
+    expect(await screen.findByText(sv.dashboard.channelCustomTitle)).toBeInTheDocument();
+    expect(screen.getByText(/gränsen är 30 mejl i timmen/)).toBeInTheDocument();
+    expect(screen.queryByText(sv.dashboard.channelNotStatedTitle)).not.toBeInTheDocument();
+  });
+
+  it("says no word of a limit nobody has stated", async () => {
+    state.channel = { data: { configured: true, smtp: "CUSTOM", perHour: null } };
+    await renderPage();
+
+    expect(await screen.findByText(sv.dashboard.channelCustom)).toBeInTheDocument();
+  });
+
+  it("says that nobody can be invited where the API cannot make a login", async () => {
+    state.channel = { data: { configured: false, smtp: "NOT_STATED", perHour: null } };
+    await renderPage();
+
+    expect(await screen.findByText(sv.dashboard.channelOffTitle)).toBeInTheDocument();
+  });
+
+  it("says nothing when it could not be read: a warning that the gateway was busy would be a false alarm", async () => {
+    state.channel = { error: "HTTP 503" };
+    await renderPage();
+    await settled();
+
+    expect(screen.queryByText(sv.dashboard.channelNotStatedTitle)).not.toBeInTheDocument();
+    expect(screen.queryByText(sv.dashboard.channelOffTitle)).not.toBeInTheDocument();
+  });
+
+  it("is for the profiles that invite, and not for a läsare, who changes nothing", async () => {
+    me.adminProfile = "LASARE";
+    await renderPage();
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/api/v1/users/counts"));
+
+    expect(screen.queryByText(sv.dashboard.channelNotStatedTitle)).not.toBeInTheDocument();
+    expect(get).not.toHaveBeenCalledWith("/api/v1/users/invitation-channel");
   });
 });

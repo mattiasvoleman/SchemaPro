@@ -466,7 +466,7 @@ describe('OptimizationJobsService', () => {
           engineResponse({
             status: 'TIMEOUT',
             lessons: [],
-            report: { ...report, stages: [{ stage: 'PRECHECKS', seconds: 0.4 }, { stage: 'YEARS', seconds: 30 }, ...report.stages.slice(1)] },
+            report: { ...report, stages: [{ stage: 'PRECHECKS', seconds: 0.4 }, { stage: 'REFINEMENT', seconds: 30 }, ...report.stages.slice(1)] },
           }),
         );
 

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock } from '../../../test/utils/prisma-mock';
 import { recordedReads } from '../../../test/utils/recorded-reads';
+import { checkSchema } from '../../../test/utils/s1-contract';
 import { lessonNamed, PUPIL_LIST, pupilNamed, WITH_SVA, WITHOUT } from '../../../test/utils/pupil-list';
 import { ALL_V2_SCOPES, ProviderWorld, W } from '../../../test/utils/ss12000-provider-world';
 import type { PrismaService } from '../../database/prisma.service';
@@ -355,6 +356,20 @@ describe('persons', () => {
     await expect(service.listPersons(caller(['groups.read']), {})).rejects.toMatchObject({ code: 'SCOPE_MISSING' });
     await expect(service.listPersons(caller(['persons.read']), { expand: 'duties' })).rejects.toMatchObject({ code: 'SCOPE_MISSING' });
     await expect(service.listPersons(caller(['persons.read']), { expand: 'groupMemberships' })).rejects.toMatchObject({ code: 'SCOPE_MISSING' });
+  });
+
+  it('a pupil and a guardian the school has no address for (Personer utan e-postadress) have an empty emails, and the answer is S1-shaped', async () => {
+    const { world, service } = setup();
+    for (const id of [W.p2, W.g1]) world.users.find((row) => row['id'] === id)!['email'] = null;
+    const page = await service.listPersons(caller(), {});
+    expect(page.data.flatMap((person) => checkSchema(person, 'Person'))).toEqual([]);
+    for (const id of [W.p2, W.g1]) {
+      const person = await service.getPerson(caller(), id, {});
+      expect(person['emails']).toEqual([]);
+      expect(checkSchema(person, 'Person')).toEqual([]);
+    }
+    // The people who have one are as before.
+    expect((await service.getPerson(caller(), W.p1Source, {}))['emails']).toEqual([{ value: 'palle@elev.ekskolan.se', type: 'Skola elev' }]);
   });
 
   it('a guardian\'s responsibleFor and a pupil\'s empty one', async () => {

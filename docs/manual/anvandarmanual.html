@@ -894,6 +894,44 @@
     har ett blir därför inaktivt om du inte själv slår på
     <span class="ui">Aktivt</span>.
   </p>
+  <h4>Röda dagar och lov: Skolans kalender</h4>
+  <p>
+    Läsårets röda dagar och lov skrivs inte för hand. Under
+    <span class="path">Planering › Lov och studiedagar</span> öppnar
+    <span class="ui">Skolans kalender</span> en förhandsvisning av tre källor,
+    och inget sparas förrän du trycker <span class="ui">Lägg till</span>:
+  </p>
+  <ul>
+    <li><strong>Röda dagar</strong> räknas fram för läsåret: nyårsdagen,
+      trettondedag jul, långfredagen, annandag påsk, första maj, Kristi
+      himmelsfärdsdag, nationaldagen, juldagen och annandag jul, samt julafton,
+      midsommarafton och nyårsafton, eftersom skolan är stängd de dagarna.
+      Påsk, Kristi himmelsfärd och midsommar beräknas för varje år. En röd dag
+      på en lördag eller söndag blir inget lov.</li>
+    <li><strong>Förslag på lov</strong>: höstlov vecka 44, jullov från 21–23
+      december till trettondedagen, sportlov vecka 9 och påsklov veckan med
+      annandag påsk. Det är förslag av samma slag som årsrullningen ger för
+      nästa år. Din kommun kan ha en annan vecka för sportlovet, och då gäller
+      kommunens fil. Studiedagar föreslås inte: de är skolans egna.</li>
+    <li><strong>Kommunens läsårstider</strong> läses in som en kalenderfil
+      (<em>.ics</em>) eller som en CSV med kolumnerna <em>namn</em>,
+      <em>start</em> och <em>slut</em> och gärna <em>typ</em>, <em>från
+      årskurs</em> och <em>till årskurs</em>. Datum skrivs ÅÅÅÅ-MM-DD (eller
+      dag först: 22.2.2027). Filen läses i webbläsaren och skickas ingenstans
+      förrän du sparar. Terminsstart och terminsslut i filen är avbockade, eftersom
+      de inte är lov, och en återkommande händelse hoppas över. Programmet
+      har ingen lista över Sveriges kommuner: filen är kommunens egen.</li>
+  </ul>
+  <p>
+    Varje rad i förhandsvisningen säger vad den gör mot de lov skolan redan
+    har: <em>Läggs till</em>, <em>Finns redan</em>, <em>Flyttas från</em> (samma
+    namn på andra dagar, och raden flyttar lovet när den är ibockad),
+    <em>Ligger inom</em> (annandag påsk inom påsklovet), <em>Utanför läsåret</em>
+    eller <em>Bara helg</em>. Lov som skolan har men filen saknar tas aldrig bort.
+    Under tabellen står hur många publicerade lektioner som tas bort ur
+    kalendern när lovet sparas, räknat av servern innan något skrivs. De kommer
+    inte tillbaka.
+  </p>
 
   <h3 id="s32"><span class="num">3.2</span>Ämnen</h3>
   <p>
@@ -1438,6 +1476,18 @@
     klass. Personer loggar in med sin e-postadress.
   </p>
   <p>
+    <strong>En elev eller en vårdnadshavare kan läggas upp utan e-postadress.</strong>
+    Yngre elever har sällan en skoladress, och en skola ska inte behöva hitta
+    på en. Personen syns då i listor, i klassen, i närvaron och i schemat, men
+    har ingen inloggning, och kan inte bjudas in förrän en adress finns. I
+    listan står <em>Ingen adress</em> där adressen skulle stå och <em>Ingen
+    inloggning</em> i kolumnen <span class="ui">Inbjudan</span>. När du får
+    adressen öppnar du personen, skriver in den och kan bjuda in direkt, eller
+    läser in en fil med adresserna (3.6). En adress ändras inte på någon som
+    redan är inbjuden: hens inloggning har den adress den har. Lärare och
+    administratörer behöver alltid en adress.
+  </p>
+  <p>
     <strong>Att lägga upp någon skickar inget e-postmeddelande.</strong> Du
     bygger alltså upp hela listan i lugn och ro — gärna veckor före
     terminsstart — utan att någon får en inbjudan hen inte väntar sig. I
@@ -1467,6 +1517,19 @@
     lösenord, och först då kan hen logga in. Vill du bjuda in direkt när du
     lägger upp någon finns reglaget <span class="ui">Skicka inbjudan</span> i
     dialogen.
+  </p>
+  <p>
+    <strong>Att bjuda in många går i delar, och kan tas om.</strong> Knappen
+    öppnar en ruta som skickar inbjudningarna tjugo i taget och visar hur långt
+    det har kommit. Du kan <em>stoppa</em> när som helst och <em>ta om</em>
+    efteråt, också efter att fönstret har stängts: <em>Ta om</em> frågar
+    registret vilka som fortfarande saknar inbjudan och skickar bara till dem,
+    så ingen får två. Mejlen skickas av Supabase Auth, och Supabases egen
+    avsändare släpper bara igenom två i timmen; med skolans egen SMTP är gränsen
+    som förval 30 i timmen, vilket för 300 personer är ungefär tio timmar. Når
+    gränsen stannar inbjudan och rutan säger hur många som återstår: vänta, eller
+    be den som sköter driften höja gränsen. Administratörens startsida säger om
+    någon har uppgett att skolan har egen SMTP.
   </p>
   <div class="note">
     <span class="label">Om någon redan har ett konto</span>
@@ -1636,7 +1699,7 @@
       <tr><td class="k">salar.csv</td><td>namn; kod; salstyp; kapacitet; lagsta_arskurs; hogsta_arskurs; byggnad; vaning</td><td>Under <span class="path">Grunddata › Salar</span>. Endast namnet krävs. Salstypen anges med namn och måste finnas — importera salstyperna först. En våning under mark skrivs med minus, t.ex. <em>-1</em>. Skolområde och om salen kräver godkännande ställs in på salen.</td></tr>
       <tr><td class="k">klasser.csv</td><td>namn; arskurs; typ; halvklass_av; ersatter_amne</td><td>Läsårets grupper. <em>typ</em> är <em>klass</em> eller <em>undervisningsgrupp</em>, tom betyder klass. <em>halvklass_av</em> är klassen en halvklass hör till (3.4). En klass som redan är delad får inga fler halvor från en fil. <em>ersatter_amne</em> är ämnet en undervisningsgrupp ersätter, med kod eller namn. En fil med bara namn och årskurs läses som förut. Importeras före eleverna — de hänvisar till klassnamnen.</td></tr>
       <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost; telefon; tjanst_procent; nedsattning_procent; avtal; signatur</td><td>Ingen inbjudan skickas vid importen — du bjuder in när du vill, se 3.5. De fyra sista kolumnerna är tjänsten för det aktiva läsåret och får lämnas tomma. Procent skrivs med decimalkomma, t.ex. <em>66,667</em>. Saknar du HR-läs exporteras tjänsten tom, eftersom procenten inte visas för dig. En administratör som undervisar (2.6) och är aktiv står med som lärare, med sin tjänst och utan markering.</td></tr>
-      <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; telefon; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas. Lämna cellen tom för en elev som inte har någon klass än; förhandsvisningen och rapporten säger hur många som skapas utan klass, eftersom importen inte kan ge dem en klass i efterhand.</td></tr>
+      <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; telefon; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas. Lämna cellen tom för en elev som inte har någon klass än; förhandsvisningen och rapporten säger hur många som skapas utan klass, eftersom importen inte kan ge dem en klass i efterhand. Lämna <em>epost</em> tom, eller utelämna kolumnen, för en elev som inte har någon adress: eleven läggs upp utan inloggning, och en senare fil med adressen lägger den på eleven med samma förnamn, efternamn och klass.</td></tr>
       <tr><td class="k">vardnadshavare.csv</td><td>fornamn; efternamn; epost; telefon; elev_epost</td><td>En rad per koppling mellan en vårdnadshavare och en elev: har en vårdnadshavare två barn blir det två rader med samma fyra första kolumner. <em>elev_epost</em> är elevens egen adress. Eleven måste finnas i skolan och vara aktiv, annars avvisas raden med rad och kolumn, och ingen vårdnadshavare skapas för den raden. En vårdnadshavare som inte finns skapas utan inbjudan (3.5). En som redan finns, även om adressen är skriven med andra versaler, får bara kopplingen: namn och telefon ändras inte. En koppling som redan finns hoppas över. Står samma adress på flera rader gäller den första raden, och förhandsvisningen varnar när en senare rad har andra uppgifter. Importeras efter eleverna, under <span class="path">Grunddata › Personer</span>. I en skola som hämtar från registret, se 7.2.</td></tr>
       <tr><td class="k">undervisningsgrupper.csv</td><td>grupp; epost</td><td>En rad per medlem. Gruppen skapas automatiskt om den saknas. En halvklass (3.4) tar bara klassens egna elever och varje elev i en halva i taget. En rad som bryter mot det avvisas med elevens och halvans namn, och de andra raderna läses ändå in.</td></tr>
       <tr><td class="k">uppdrag.csv</td><td>larare_epost; typ; benamning; minuter_per_vecka; raknas_som_undervisning; amne; grupp; fran; till; anteckning</td><td>Importeras under <span class="path">Grunddata › Personer</span>, till det aktiva läsåret. Samma lärare, typ och benämning en gång till uppdaterar uppdraget i stället för att dubblera det. <em>fran</em> och <em>till</em> är uppdragets datum (åååå-mm-dd, inom läsåret); tomt betyder läsårets egen gräns. Tid i schemat blockeras inte via fil — det görs på uppdraget, se 4.3.</td></tr>
@@ -1704,10 +1767,12 @@
       rubrikerna. Skiljer sig din fil, välj <em>Ingen av dem</em> och peka ut
       kolumnerna själv.</li>
     <li><strong>Det Skola24:s filer inte har.</strong> Skola24:s elevfil har
-      ingen e-postadress, och Rastras elevimport kräver en. Vårdnadshavarfilen
-      anger eleven med personnummer, och Rastras import vill ha elevens
-      e-postadress. De filerna går därför inte att läsa in som de är: rutan
-      nämner fälten, och du pekar ut en kolumn själv eller kompletterar filen.
+      ingen e-postadress. Eleverna läggs då upp utan en (3.5): de syns i
+      listor, närvaro och schema, och får ingen inloggning förrän en adress
+      finns. Vårdnadshavarfilen anger eleven med personnummer, och Rastras
+      import vill ha elevens e-postadress. Den filen går därför inte att
+      läsa in som den är: rutan nämner fältet, och du pekar ut en kolumn själv
+      eller kompletterar filen.
       Personalfilen har namn och e-postadress och går in. Dess
       <em>signatur</em> läses inte som standard: Rastra sparar signaturen på
       lärarens tjänst och vägrar en signatur utan tjänstgöringsgrad, som filen
@@ -1871,9 +1936,10 @@
   <p>
     <span class="path">Grunddata › Vad kom in</span> räknar det som finns i
     skolan och ändrar ingenting. Varje område (läsår, ämnen, salar, ramtider,
-    raster, klasser, undervisningsgrupper, personer, lokal timplan,
-    timplansposter och tjänstefördelning) har ett kort som säger vad som kom in
-    och vad som saknas, och varje lucka länkar till sidan som äger den. Sidan
+    raster, lov, lunch, rastvakt, klasser, undervisningsgrupper, personer,
+    lokal timplan, timplansposter, tjänstefördelning och inställningar som är
+    av) har ett kort som säger vad som kom in och vad som saknas, och varje
+    lucka länkar till sidan som äger den. Sidan
     läser det aktiva läsåret, och alla administratörer kan öppna den, också
     läsaren. Den visar aldrig en person: inga namn, ingen tjänstgöringsgrad
     och inga signaturer, bara antal och namnen på klasser, ämnen och
@@ -1888,6 +1954,16 @@
     att Generera går att köra, men att resultatet blir sämre eller att en varning
     följer. <span class="ui">För andra steg</span> är sådant som något annat steg
     läser och Generera inte gör.
+  </p>
+  <p>
+    Sidan säger också vad skolan <em>inte har satt upp eller slagit på</em>:
+    salstyper, lov och studiedagar, lunch, rastvakt och de fyra inställningar
+    som når familjer och personal (frånvarobevakning, kvittens,
+    Schemavisaren och lärarnas egen sjukanmälan). Var och en är en rad med
+    märket <span class="ui">För andra steg</span> som säger att den är av eller
+    saknas, och en länk till sidan där den slås på. Ingen av dem stoppar
+    Generera, och ingen är en rekommendation: en skola som inte vill ha kvittens
+    läser <em>Kvittens är av</em> och har rätt.
   </p>
   <div class="warn">
     <span class="label">Inget märke betyder inte att veckan går att lägga</span>
@@ -1907,8 +1983,12 @@
       <tr data-gap="SUBJECTS_WITHOUT_POSTS" data-level="INFO"><td class="k">Ämnen utan timplansposter</td><td>För andra steg</td><td>Ämnen som inte har en enda post i läsåret. Lektioner i ämnet läggs inte i schemat.</td></tr>
       <tr data-gap="ROOM_TYPE_WITHOUT_ROOM" data-level="HARD"><td class="k">Ämne som kräver en salstyp utan sal</td><td>Stoppar Generera</td><td>Ett ämne med en post i läsåret kräver en salstyp som ingen sal har. Motorn vägrar veckan med ett namngivet skäl. Samma vägran kommer också när ingen sal är stor nog för gruppen eller tar gruppens årskurser: det räknar sidan inte, men <span class="ui">Kontrollera veckan</span> gör det (5.2).</td></tr>
       <tr data-gap="NO_ROOMS" data-level="HARD"><td class="k">Inga salar</td><td>Stoppar Generera</td><td>Skolan har ingen sal. Motorn vägrar en vecka utan salar.</td></tr>
+      <tr data-gap="NO_ROOM_TYPES" data-level="INFO"><td class="k">Inga salstyper</td><td>För andra steg</td><td>Skolan har inga salstyper. Ett ämne kan peka ut en salstyp (Gymnastiksal, Slöjdsal) så att motorn bara lägger det i en sal av den typen; utan salstyper läggs ämnena i vilken sal som helst. En skola som startat för hand börjar utan dem.</td></tr>
       <tr data-gap="FRAME_TIMES_MISSING" data-level="SOFT"><td class="k">Ramtid saknas för en årskurs</td><td>Ger ett sämre schema</td><td>Årskurser med en klass som ingen ramtid täcker. Motorn lägger årskursen var som helst i sin standarddag. Ramtiderna gäller hela skolan och anges i den nioåriga numreringen, så ett tioårigt läsårs årskurs läses om innan den jämförs.</td></tr>
       <tr data-gap="NO_RASTS" data-level="INFO"><td class="k">Inga raster</td><td>För andra steg</td><td>Skolan har inga raster inlagda. Har skolan inga är det riktigt.</td></tr>
+      <tr data-gap="NO_BREAKS" data-level="INFO"><td class="k">Läsåret har inga lov</td><td>För andra steg</td><td>Lov och studiedagar hoppas över när schemat publiceras. Utan dem publiceras lektioner också på höstlovet, jullovet och studiedagarna.</td></tr>
+      <tr data-gap="LUNCH_OFF" data-level="INFO"><td class="k">Lunchen är av</td><td>För andra steg</td><td>Utan en lunchregel planerar motorn ingen måltid för klasserna och ger ingen lunchsittning. Fönstret, längden och matsalens platser läggs in under <span class="path">Planering › Tillgänglighet</span>.</td></tr>
+      <tr data-gap="NO_SUPERVISION" data-level="INFO"><td class="k">Ingen rastvakt är lagd i läsåret</td><td>För andra steg</td><td>Rastvaktsschemat är områdena skolan vaktar och vem som vaktar när. Det påverkar inte Generera: en lärares pass syns i hens schema.</td></tr>
       <tr data-gap="NO_CLASSES" data-level="SOFT"><td class="k">Inga klasser</td><td>Ger ett sämre schema</td><td>Läsåret har inga klasser. Generera kräver ingen klass, eftersom en timplanspost hör till en klass eller en undervisningsgrupp, men utan klasser har ingen elev ett hem och ingen klass binds av ramtider och raster.</td></tr>
       <tr data-gap="CLASSES_WITHOUT_GRADE" data-level="SOFT"><td class="k">Klass utan årskurs</td><td>Ger ett sämre schema</td><td>En klass utan årskurs binds inte av ramtider och raster (5.2).</td></tr>
       <tr data-gap="CLASSES_WITHOUT_POSTS" data-level="SOFT"><td class="k">Klass som ingen post når</td><td>Ger ett sämre schema</td><td>Klassen har ingen post, ingen halva av den har en, och ingen av dess elever går i en undervisningsgrupp som har en. Ett högstadium som lägger nästan alla ämnen i grupper har klasser utan egna poster, och de räknas inte hit. Visas inte alls om skolan inte har någon post, eftersom <em>Läsåret har inga timplansposter</em> då säger det en gång.</td></tr>
@@ -1922,6 +2002,10 @@
       <tr data-gap="UNSTAFFED_POSTS" data-level="SOFT"><td class="k">Poster utan lärare</td><td>Ger ett sämre schema</td><td>Posterna läggs utan lärare. Har skolan valt <em>Generering utan lärare: Vägra</em> (4.3) är det i stället <span class="ui">Stoppar Generera</span>, eftersom knappen är avstängd tills varje post har en lärare.</td></tr>
       <tr data-gap="TEACHERS_WITHOUT_POST" data-level="INFO"><td class="k">Lärare utan tjänst</td><td>För andra steg</td><td>Aktiva lärare som inte har någon tjänst i läsåret. Sidan räknar att en tjänst finns, aldrig dess omfattning.</td></tr>
       <tr data-gap="POSTS_WITHOUT_SIGNATURE" data-level="INFO"><td class="k">Tjänster utan signatur</td><td>För andra steg</td><td>Ett schema från Untis eller aSc hittar läraren på signatur eller e-postadress (3.8).</td></tr>
+      <tr data-gap="ABSENCE_WATCH_OFF" data-level="INFO"><td class="k">Frånvarobevakningen är av</td><td>För andra steg</td><td>Bevakningen räknar elevernas frånvaro mot skolans gränser och skickar sammanställningar till mentor, rektor, expedition och vårdnadshavare. Den är av tills skolan slår på den.</td></tr>
+      <tr data-gap="ACK_OFF" data-level="INFO"><td class="k">Kvittens är av</td><td>För andra steg</td><td>Med kvittens ber en lärare vårdnadshavare bekräfta ett meddelande, och de som inte svarat får en påminnelse. Den är av tills skolan slår på den.</td></tr>
+      <tr data-gap="VIEWER_OFF" data-level="INFO"><td class="k">Schemavisaren är av</td><td>För andra steg</td><td>Schemavisaren visar klassens, gruppens, lärarens eller salens schema för dem skolan väljer. Inget visas förrän skolan väljer vilka slag av schema som visas och vem som får titta.</td></tr>
+      <tr data-gap="SICK_REPORT_OFF" data-level="INFO"><td class="k">Lärarnas egen sjukanmälan är av</td><td>För andra steg</td><td>En lärare kan inte sjukanmäla sig själv i appen: frånvaron läggs in av en administratör. Den slås på bland inställningarna under <span class="path">Drift › Lärarfrånvaro</span>.</td></tr>
     </tbody>
   </table>
 
@@ -1986,7 +2070,7 @@
     <thead><tr><th style="width:26%">Fil i Skola24</th><th>Så läses den</th><th style="width:28%">Det du gör</th></tr></thead>
     <tbody>
       <tr data-source="skola24-personal-csv" data-reads="reads"><td class="k">Importera personal (CSV, utan rubrikrad)</td><td>Läses: namn och e-postadress. En rad utan e-postadress läses inte: Skola24 låter cellen vara tom, men Rastra Schemas import gör det inte. Signaturen läses inte som standard, eftersom en signatur kräver en tjänstgöringsgrad och filen har ingen. Skolans namn och avdelning läses inte.</td><td>Välj <span class="ui">Filen kommer från Skola24</span> i importen av lärare (3.6). Lägg in e-postadressen på raderna som saknar den, eller lägg upp de personerna för hand (3.5).</td></tr>
-      <tr data-source="skola24-elever-klass" data-reads="incomplete"><td class="k">Importera elever till klasser (kopierad ur Excel, med rubrikrad)</td><td>Går inte in som den är: filen har ingen e-postadress, och Rastras elevimport kräver en.</td><td>Lägg till en kolumn med e-postadress i filen och peka ut den.</td></tr>
+      <tr data-source="skola24-elever-klass" data-reads="reads"><td class="k">Importera elever till klasser (kopierad ur Excel, med rubrikrad)</td><td>Läses: namn och klass. Filen har ingen e-postadress, och eleverna läggs då upp utan en: de syns i listor, närvaro och schema, men har ingen inloggning förrän en adress finns.</td><td>Lägg till adresserna under Personer när du har dem, eller läs in en fil med dem senare: den lägger adressen på eleven med samma förnamn, efternamn och klass.</td></tr>
       <tr data-source="skola24-foraldrar-csv" data-reads="incomplete"><td class="k">Importera föräldrar CSV</td><td>Går inte in som den är: filen pekar ut eleven med personnummer, och Rastras import vill ha elevens e-postadress. En rad utan vårdnadshavarens egen e-postadress läses inte heller: Skola24 låter den vara tom, och i Skola24:s egna exempelfiler är den tom på många rader, men Rastra Schemas import kräver den.</td><td>Komplettera filen med elevens e-postadress och, där den saknas, vårdnadshavarens.</td></tr>
       <tr data-source="skola24-grupp-elev" data-reads="unknown"><td class="k">Importera elever till grupper (Grupp/Elev)</td><td>Läses inte: filen har två lägen och pekar ut eleven med personnummer, som Rastra Schema aldrig tar emot.</td><td>Gruppmedlemmar kommer in genom filen undervisningsgrupper.csv (3.6), som pekar ut eleven med e-postadress.</td></tr>
       <tr data-source="skola24-textfil" data-reads="unknown"><td class="k">Textfil Gr, Gy eller Vux (.txt)</td><td>Läses inte: ingen offentlig sida beskriver var fälten ligger.</td><td>Skicka oss en exempelfil utan personuppgifter (7.8), så att vi kan lära oss läsa den.</td></tr>
@@ -7909,7 +7993,8 @@
     återkalla en anmälan innan den börjar, eller inom en timme om inget har
     bestämts. Orsaken kan läraren inte ändra efteråt; det gör en administratör.
     Administratörerna får notisen <em>En lärare har anmält frånvaro</em>, utan
-    orsak.
+    orsak, och där skolan har e-post ett mejl som bara säger att en lärare har
+    anmält frånvaro, utan namn och dag (6.10).
   </p>
   <div class="note">
     <span class="label">Välj rätt verktyg</span>
@@ -8822,7 +8907,7 @@
     <tbody>
       <tr><td class="k">Vårdnadshavare</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet, sammanställning av frånvaro (6.12)</td><td>Oanmäld frånvaro</td></tr>
       <tr><td class="k">Elev</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet</td><td>—</td></tr>
-      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarier på mina lektioner, självstudier, bytt sal, beslut om lokalbokning, sammanställning av frånvaro (6.12), och för lärare ledighetsansökningar att besluta om som mentor, påminnelse om lektioner utan sparat register (lärare) och veckobesked om rapporteringsgrad (rektor och fullständig administratör) (6.13)</td><td>Egna vikariepass och avbokade vikariepass, rastvaktspass som vikarie och avbokade rastvaktspass</td></tr>
+      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarier på mina lektioner, självstudier, bytt sal, beslut om lokalbokning, sammanställning av frånvaro (6.12), för administratör mejlet om att en lärare har anmält frånvaro (6.2), och för lärare ledighetsansökningar att besluta om som mentor, påminnelse om lektioner utan sparat register (lärare) och veckobesked om rapporteringsgrad (rektor och fullständig administratör) (6.13)</td><td>Egna vikariepass och avbokade vikariepass, rastvaktspass som vikarie och avbokade rastvaktspass</td></tr>
     </tbody>
   </table>
   <p>
@@ -8830,8 +8915,10 @@
     vårdnadshavarna samma dag. En lärares egna vikariepass och rastvaktspass
     som vikarie, och avbokningarna av dem, skickas alltid, eftersom
     vikarietavlan (6.3) räknar med att den inbokade får veta. Pushen om ett
-    rastvaktspass säger när men inte var. Notisen <em>En lärare har anmält frånvaro</em> lämnar aldrig
-    Rastra Schema: den mejlas inte och skickas inte som push.
+    rastvaktspass säger när men inte var. Notisen <em>En lärare har anmält frånvaro</em> skickas aldrig som
+    push. Den kan mejlas till skolans administratörer, men mejlet säger bara att en lärare har anmält frånvaro
+    och att man loggar in för att se vem: aldrig namn, dag eller orsak. En administratör kan stänga av mejlet
+    här, och notisen står kvar i Rastra Schema.
   </p>
   <div class="warn">
     <span class="label">Push är avstängt tills skolan har gjort klart</span>
@@ -11141,7 +11228,12 @@
     som finns kvar är personens egen handling: datum, status och beslut. Samma
     gäller filerna för övriga tabeller: i en rad om en elev som utdraget inte
     gäller, till exempel en elev läraren angav som hittad i en övning, är elevens
-    id och status tomma. Anteckningar som personen själv skrivit (larmets
+    id och status tomma. Det gäller också en kollega: en rektors utdrag har inte
+    nivån, undantaget, dagen och anteckningen i bedömningarna av andra lärare,
+    och inte heller före och efter i tjänsternas historik, för dem som
+    administratören ändrat. Kvar står att rektorn beslutade, vilken sorts rad det
+    gällde och när; kollegan får sin egen rad hel i sitt eget utdrag.
+    Anteckningar som personen själv skrivit (larmets
     slutanteckning, lektionsloggar) finns kvar, utom där de nämner en annan elev
     eller vårdnadshavare med fullständigt namn eller e-postadress; ett förnamn
     ensamt hittas inte, så läs dem innan du lämnar ut utdraget. Vill du ha
@@ -11605,10 +11697,7 @@
       placerar får inget förslag</strong>, och du väljer: <em>Behåll</em>,
       <em>Ersätt med märke</em> (namn, förnamn, efternamn, signatur, e-post, telefon, personnummer
       eller TF-nummer, eller övrig text) eller <em>Töm</em> (kolumnen och rubriken finns kvar,
-      cellerna är tomma). Verktyget gissar aldrig vilken kolumn som har namn. En kolumn av långa tal
-      (ett telefonnummer utan inledande 0 sparas som tal) och en kolumn av datum som
-      sträcker sig över mer än ett år (födelsedatum ser ut som lektionsdatum) får
-      heller inget förslag. Står det en titel
+      cellerna är tomma). Verktyget gissar aldrig vilken kolumn som har namn. En kolumn av långa tal (ett telefonnummer utan inledande 0 sparas som tal) och en kolumn av datum får heller inget förslag, om datumen sträcker sig över mer än ett år, om något av dem är äldre än tre år räknat från i dag (en klass är född samma år, så sex födelsedatum sträcker sig inte över ett år; datum skrivna <em>ÅÅÅÅ-MM-DD</em>, <em>14/2/2013</em>, <em>14.02.2013</em> och <em>14-02-2013</em> räknas) eller om de flesta värdena är datum skrivna med sex eller åtta siffror (<em>130214</em>, <em>20130214</em>: ett kalkylprogram sparar dem som tal), eller om något värde ser ut som ett datum men verktyget inte kan läsa det (<em>14.02.13</em>, <em>13-02-14</em>, <em>2/14/2013</em>: årtalet på två siffror, eller månaden före en dag över tolv). Födelsedatum ser ut som lektionsdatum: en kolumn med datum från de senaste tre åren, inom ett år, behålls utan fråga som lektionsdatum, och allt annat frågas. Står det en titel
       ovanför tabellen väljer du vilken rad rubrikerna står på; innehåller rubrikraden
       namn (en matris med en lärare per kolumn) kryssar du i det.</li>
     <li><strong>Namn och ord som alltid ska bort.</strong> Valfritt. Namn i kolumner
@@ -11634,10 +11723,10 @@
   <table>
     <thead><tr><th style="width:24%">Slag</th><th style="width:22%">Märke</th><th>Hur det hittas</th></tr></thead>
     <tbody>
-      <tr><td class="k">Personnummer, samordningsnummer</td><td>PNR-0001, SAM-0001</td><td>På hur de ser ut, i varje cell, rubrik och rad ovanför rubriken: tio eller tolv siffror, med eller utan sekel, med bindestreck, plus eller blanksteg. Verktyget letar vidare än importen gör: det tar också kolon, komma eller apostrof (också de typografiska) mellan datum och de fyra sista siffrorna (<em>800101:1234</em>), och tecken som inte syns (nollbreddsmellanrum, mjukt bindestreck, riktningstecken) mellan siffrorna, hur många de än är. Ett datum och fyra siffror med kolon eller komma emellan (<em>2026-11-21:0810</em>) tas därför för ett personnummer, som med blanksteg. Kontrollsiffran avgör inte vad som tas bort, bara hur det räknas i rapporten (&rdquo;stämmer&rdquo; eller &rdquo;stämmer inte, ersatt ändå&rdquo;): ett felskrivet nummer är ändå någons nummer. Allt som har formen tas bort, också ett id-nummer som råkar se ut som ett datum.</td></tr>
+      <tr><td class="k">Personnummer, samordningsnummer</td><td>PNR-0001, SAM-0001</td><td>På hur de ser ut, i varje cell, rubrik och rad ovanför rubriken: tio eller tolv siffror, med eller utan sekel, med bindestreck, plus eller blanksteg. Verktyget letar vidare än importen gör: det tar också kolon, komma eller apostrof (också de typografiska) mellan datum och de fyra sista siffrorna (<em>800101:1234</em>), de symboler någon sätter dit som maskerar eller stryker (<em>800101*1234</em>: stjärna, lodstreck, punkt i mitten, tilde, fyrkant, likhetstecken och semikolon, när numrets kontrollsiffra stämmer), och tecken som inte syns (nollbreddsmellanrum, mjukt bindestreck, riktningstecken, styrtecken) mellan siffrorna, hur många de än är, också en radbrytning mitt i ett nummer i en citerad cell. Ett tal skrivet med exponent (<em>9.5E9</em> eller <em>9,5E+09</em>, som några program sparar ett långt tal) skrivs ut och söks som de siffror det står för, och byts hel om det är ett personnummer. Ett datum och fyra siffror med kolon eller komma emellan (<em>2026-11-21:0810</em>) tas därför för ett personnummer, som med blanksteg. Kontrollsiffran avgör inte vad som tas bort, bara hur det räknas i rapporten (&rdquo;stämmer&rdquo; eller &rdquo;stämmer inte, ersatt ändå&rdquo;): ett felskrivet nummer är ändå någons nummer. Allt som har formen tas bort, också ett id-nummer som råkar se ut som ett datum.</td></tr>
       <tr><td class="k">TF-nummer</td><td>TF-0001</td><td>Skola24:s eget nummer i kursfilernas id-kolumner: åtta siffror, <em>TF</em> och två siffror (<em>ÅÅÅÅMMDDTFnn</em>), med stora eller små bokstäver. Verktyget letar vidare än importen gör, eftersom ett nummer som blir kvar i en fil som skickas vidare kostar mer än ett märke för mycket: det tar också blanksteg, bindestreck, punkt, snedstreck, plus eller radbrytning före <em>TF</em> (upp till fyra tecken), blanksteg eller bindestreck mellan <em>TF</em> och siffrorna, och ett datum skrivet <em>ÅÅÅÅ-MM-DD</em> eller med blanksteg mellan år, månad och dag. Ett datum följt av <em>TF</em> och två siffror (<em>Prov 20261121 TF 15</em>) räknas därför också, och byts mot ett märke. Numret har ingen kontrollsiffra och är inget personnummer, så det räknas på en egen rad i rapporten och bland sättet de skrevs på. Andra former känns inte igen, till exempel sex siffror i datumet eller fler blanksteg än verktyget tar: titta i förhandsvisningen.</td></tr>
       <tr><td class="k">E-post</td><td>epost-0001@exempel.invalid</td><td>På hur de ser ut: allt som är <em>text@text</em>, också när den lokala delen står inom citattecken (<em>&rdquo;anna.svensson&rdquo;@skola.se</em>) eller domänen är en adress i hakparentes (<em>anna@[10.0.0.1]</em>).</td></tr>
-      <tr><td class="k">Telefon</td><td>TEL-0001</td><td>På hur de ser ut: <em>070-123 45 67</em>, <em>08-123 456 78</em>, <em>+46 70 123 45 67</em>, också utan plus (<em>46 70 123 45 67</em>, <em>46701234567</em>) och med punkter mellan alla grupper (<em>070.123.45.67</em>). Datum och tider tas inte för telefonnummer, med ett undantag som är priset för att <em>46</em> utan plus räknas: ett tal som börjar på 46 och har tio till tolv siffror med det som står intill tas för ett telefonnummer, också ett veckonummer följt av ett datum utan streck (<em>Vecka 46 20261116</em>) och ett id som börjar på 46 (<em>4612345678</em>).</td></tr>
+      <tr><td class="k">Telefon</td><td>TEL-0001</td><td>På hur de ser ut: <em>070-123 45 67</em>, <em>08-123 456 78</em>, <em>+46 70 123 45 67</em>, också utan plus (<em>46 70 123 45 67</em>, <em>46701234567</em>) och med punkter mellan alla grupper (<em>070.123.45.67</em>) eller punkter blandade med blanksteg och bindestreck (<em>070.123 45 67</em>). Datum och tider tas inte för telefonnummer, med ett undantag som är priset för att <em>46</em> utan plus räknas: ett tal som börjar på 46 och har tio till tolv siffror med det som står intill tas för ett telefonnummer, också ett veckonummer följt av ett datum utan streck (<em>Vecka 46 20261116</em>) och ett id som börjar på 46 (<em>4612345678</em>).</td></tr>
       <tr><td class="k">Namn</td><td>NAMN-0001, FORNAMN-0001, EFTERNAMN-0001</td><td>Genom rubriken (<em>Namn</em>, <em>Förnamn</em>, <em>Efternamn</em>, <em>Lärare</em>, <em>Elev</em>, <em>Vårdnadshavare</em> …) eller ditt val, aldrig genom gissning. En lista i en cell, delad på semikolon eller snedstreck, byts namn för namn.</td></tr>
       <tr><td class="k">Signatur</td><td>SIGN-0001</td><td>Genom rubriken <em>Signatur</em>. En signatur är ett namn i förkortning i en liten skola, så den ersätts som förval; du kan välja att behålla den.</td></tr>
       <tr><td class="k">Annan personlig text</td><td>TEXT-0001</td><td>Genom rubriken: <em>Födelsedatum</em>, <em>Adress</em>, <em>Postnummer</em>, <em>Ort</em>, <em>Anteckning</em>, <em>Kommentar</em> och liknande.</td></tr>
@@ -11649,9 +11738,7 @@
     lista med en kolumn, om det står annan text på de två raderna. I en tabell med flera kolumner hittas det
     inte: där är sista cellen på en rad och första på nästa olika poster. Sökningen har ett pris: en rad
     som slutar med ett datum och en nästa som börjar med fyra siffror (ett klockslag, <em>Datum 20261121</em>
-    och <em>0810 Matematik</em>) tas i en lista för ett personnummer, som när de står på samma rad. På samma sätt tas ett klockslag
-    skrivet utan kolon som slutar en rad och siffror som börjar nästa (<em>Tid 0815</em> och <em>0810 Matematik</em>) för ett telefonnummer, och
-    märket tar början av den andra raden med sig. Villkoret att det ska stå annan text på raderna är uppfyllt av varje rad med ett ord i, så det
+    och <em>0810 Matematik</em>) tas i en lista för ett personnummer, som när de står på samma rad. Ett telefonnummer som en radbrytning delar hittas bara om det har nio siffror eller fler, så ett klockslag skrivet utan kolon som slutar en rad och siffror som börjar nästa (<em>Tid 0815</em> och <em>0810 Matematik</em>) lämnas som det är, och det gör ett tal som skulle sluta mitt i ett ord på nästa rad (<em>0002 7</em> före A:et i <em>7A</em>). Det kostar ett åttasiffrigt nummer, som i Stockholm, som en radbrytning har delat: det hittas inte. Villkoret att det ska stå annan text på raderna är uppfyllt av varje rad med ett ord i, så det
     skyddar inte en lista där många rader slutar och börjar med siffror.
   </p>
   <p>
@@ -11682,8 +11769,8 @@
       rubriken pekar ut. Det kan inte avgöra allt, och det säger det i sidan, i
       rapporten och här: <strong>namn i löpande text</strong> som inte finns i en
       namnkolumn eller i din lista; e-postadresser och telefonnummer skrivna med ord eller
-      delade över flera celler, och personnummer, TF-nummer och telefonnummer delade över två celler eller över två rader i en tabell med flera kolumner (i löpande text och i en lista med en kolumn hittas ett nummer som en radbrytning delar, om det står annan text på raderna); siffror i andra
-      tecken än vanliga och helbredd-siffror; personnummer med kolon, komma eller apostrof på annat ställe än mellan datum och de fyra sista siffrorna; TF-nummer med sex siffror i datumet eller med fler blanksteg och bindestreck än verktyget tar; kolumner du själv har valt att behålla;
+      delade över flera celler, och personnummer, TF-nummer och telefonnummer delade över två celler eller över två rader i en tabell med flera kolumner (i löpande text och i en lista med en kolumn hittas ett nummer som en radbrytning delar, om det står annan text på raderna, men inte ett personnummer med kolon, komma eller apostrof före de fyra sista siffrorna som en radbrytning i en citerad cell delar inne i dem); siffror i andra
+      tecken än vanliga och helbredd-siffror; personnummer med kolon, komma, apostrof eller en symbol på annat ställe än mellan datum och de fyra sista siffrorna, eller med något annat tecken där än de som tas; TF-nummer med sex siffror i datumet eller med fler blanksteg och bindestreck än verktyget tar; kolumner du själv har valt att behålla;
       och filer med fast bredd, där märkena inte är lika långa som det de ersätter.
       Namn på färre än tre bokstäver söks inte i löpande text, om de inte står i din
       egen lista (där gränsen är två). Ett personnummer med plus (född före 1900) och

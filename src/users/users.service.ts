@@ -8,6 +8,7 @@ import {
   NotFoundException,
   Optional,
   ServiceUnavailableException,
+  HttpStatus,
 } from '@nestjs/common';
 import { Prisma, type AdminProfile, type PrismaClient, type User, type UserRole } from '@prisma/client';
 import { profileDecides } from '../auth/admin-areas';
@@ -23,6 +24,7 @@ import { addDays } from '../common/year-rollover';
 import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { lockTeachers } from '../cover/cover-decisions';
 import {
+  InvitationRefused,
   SupabaseAdminService,
   UserLookupError,
   type EmailChange,
@@ -46,6 +48,20 @@ import type { BulkUpdateStudentsDto, CreateUserDto, UpdateUserDto } from './dto/
 
 /** A pseudonymised person (gallring, 20261021110000) cannot be made active again. */
 export const USER_IS_PSEUDONYMISED = 'USER_IS_PSEUDONYMISED';
+/** A teacher or an administrator is made, or becomes one, with no address (Personer utan e-postadress). 400. */
+export const ADDRESS_REQUIRED = 'ADDRESS_REQUIRED';
+/** An invitation is asked for a person who has no address to send it to. 409: the person is as they are, and an address is what changes it. */
+export const PERSON_HAS_NO_ADDRESS = 'PERSON_HAS_NO_ADDRESS';
+/** An address is set on a person who was invited: their login has the address it has, and the row follows it. 409. */
+export const ADDRESS_OF_AN_INVITED_PERSON = 'ADDRESS_OF_AN_INVITED_PERSON';
+/**
+ * The project's mail limit is spent (Supabase answers 429, over_email_send_rate_limit): the invitation did not go, and the next one will not
+ * either until the hour turns or the limit is raised. 429, with a code the web pauses a mass invitation on.
+ */
+export const INVITATION_RATE_LIMITED = 'INVITATION_RATE_LIMITED';
+
+/** The address of a person was corrected while the invitation to the old one was on its way: the login is not put on the row. 409. */
+export const ADDRESS_CHANGED_WHILE_INVITING = 'ADDRESS_CHANGED_WHILE_INVITING';
 /** A last working day (`leftOn`) names a person who is, or stays, active. */
 export const USER_LEFT_ON_NEEDS_INACTIVE = 'USER_LEFT_ON_NEEDS_INACTIVE';
 /** A last working day after the school's today. */
@@ -164,7 +180,8 @@ export interface PersonView {
   role: UserRole;
   firstName: string;
   lastName: string;
-  email: string;
+  /** NULL for a pupil or a guardian the school added without an address: in the lists, with no login (Personer utan e-postadress). */
+  email: string | null;
   phone: string | null;
   isActive: boolean;
   studentGroupId: string | null;
@@ -242,7 +259,20 @@ export interface RoleChangeView {
 export interface BulkInvitationReport {
   sent: number;
   alreadyRegistered: number;
+  /** People with no address to send to (Personer utan e-postadress): counted, not errors, as they are nobody's failure. */
+  noAddress: number;
+  /**
+   * People skipped because they were invited already, or are being invited this moment by another request: they get no second
+   * invitation. A mass invitation taken up again after a stop, a refusal or a closed tab therefore invites nobody twice.
+   */
+  alreadyInvited: number;
   errors: { userId: string; message: string }[];
+  /**
+   * Set when the project's mail limit was spent: the rest of the people were NOT tried, and `notTried` says how many. A refusal that
+   * was the same for the next person is a reason to stop, not a failure of each of them.
+   */
+  stopped?: 'RATE_LIMITED';
+  notTried?: number;
 }
 
 /**
@@ -267,6 +297,8 @@ export interface BulkInvitationReport {
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
+  /** The people a mass invitation of this process is inviting this moment (inviteMany), by id in lower case. */
+  private readonly invitingNow = new Set<string>();
 
   /**
    * NotificationsService is optional for the scripts and specs that build
@@ -340,6 +372,13 @@ export class UsersService {
     if (dto.role === 'SCHOOL_ADMIN') {
       decides(user);
     }
+    // A pupil or a guardian may be added with no address (Personer utan e-postadress): in the lists, with no login. A teacher or
+    // an administrator is somebody the school invites, and the database holds the same (Users_only_a_pupil_or_guardian_has_no_address).
+    const email = dto.email ?? null;
+    if (email === null) {
+      if (!mayHaveNoAddress(dto.role)) throw addressRequired(dto.role);
+      if (dto.sendInvitation) throw hasNoAddress();
+    }
     // Checked before anything is written: a deployment that cannot send mail
     // must not answer "created and invited" having done only the first half.
     if (dto.sendInvitation && !this.supabaseAdmin.isConfigured) {
@@ -373,7 +412,7 @@ export class UsersService {
             hrRead: profile.hrRead,
             firstName: dto.firstName,
             lastName: dto.lastName,
-            email: dto.email,
+            email,
             phone: dto.phone ?? null,
             studentGroupId: dto.role === 'STUDENT' ? (dto.studentGroupId ?? null) : null,
           },
@@ -389,7 +428,8 @@ export class UsersService {
 
     let invite: { authId: string; emailSent: boolean };
     try {
-      invite = await this.mintIdentity(dto.email, created.id);
+      // `sendInvitation` with no address was refused above, so there is one.
+      invite = await this.mintIdentity(email!, created.id);
     } catch (error) {
       // The provider refused, so take the row back: "create and invite" keeps
       // its both-or-neither promise, and the admin's retry is then just
@@ -402,7 +442,7 @@ export class UsersService {
       throw error;
     }
 
-    const adopted = await this.adoptIdentity(created.id, invite.authId, user);
+    const adopted = await this.adoptIdentity(created.id, invite.authId, user, email);
     if (adopted.sharedLogin) await this.supabaseAdmin.markSeveralSchools(invite.authId);
     return adopted.row;
   }
@@ -462,6 +502,11 @@ export class UsersService {
     if (!target) {
       throw new NotFoundException('The requested record does not exist.');
     }
+    // A person with no address has nowhere to be invited: no road gives them a login (Personer utan e-postadress). Said before the
+    // inactive person's answer, because an address is what changes this and a reactivation does not.
+    if (target.email === null) {
+      throw hasNoAddress();
+    }
     // An administrator's login is a decider's to hand out: the invitation
     // can move it to the address the row has now.
     if (target.role === 'SCHOOL_ADMIN') {
@@ -489,13 +534,13 @@ export class UsersService {
         if (!change.confirmed) {
           await this.resendInvitation(target.email);
         }
-        await this.adoptIdentity(id, login, user);
+        await this.adoptIdentity(id, login, user, target.email);
         return { id, emailSent: !change.confirmed, loginMoved: change.outcome === 'changed', sharedLogin: false };
       }
     }
 
     const invite = await this.mintIdentity(target.email, target.id);
-    const adopted = await this.adoptIdentity(id, invite.authId, user);
+    const adopted = await this.adoptIdentity(id, invite.authId, user, target.email);
     if (adopted.sharedLogin) await this.supabaseAdmin.markSeveralSchools(invite.authId);
 
     // The login the row left: the row's own when another login had the
@@ -518,19 +563,46 @@ export class UsersService {
    * an external side effect that no transaction can roll back, so one failure
    * must not discard the ones that already went out. The report names the
    * people who failed rather than the count alone.
+   *
+   * IT NEVER INVITES A PERSON TWICE (Första veckan utan operatören). A person with an `invitedAt` already is skipped and counted
+   * (`alreadyInvited`) unless the caller says `resend`, and so is one that another request is inviting this moment (the Set below,
+   * which a retry of a part whose answer was lost meets): the web takes a run up again from the register's own list after a stop or a
+   * closed tab, and the part that was running when it stopped may be running still. Whether the person is invited is read AFTER the
+   * person is claimed in the Set, and for that person alone: a list read before the part began is stale for everyone another request
+   * invites while this one is on its way, and invite() does not refuse such a person (GoTrue sends an unconfirmed user the invitation
+   * again), so two runs over the same people, two administrators or a second tab, mailed most of them twice. The claim is released
+   * after the row is written (adoptIdentity), so a request that finds the Set empty finds `invitedAt` set.
+   *
+   * THE PROJECT'S MAIL LIMIT STOPS IT. Supabase answers 429 when the hour's mails are spent, and the next person would be refused the
+   * same way: the run stops there (`stopped`, `notTried`) and does not try them, which would only spend the limit's next hour on
+   * errors. Everything before it stands.
    */
   async inviteMany(
     ids: string[],
     user: AuthenticatedUser,
+    options: { resend?: boolean } = {},
   ): Promise<BulkInvitationReport> {
     const report: BulkInvitationReport = {
       sent: 0,
       alreadyRegistered: 0,
+      alreadyInvited: 0,
+      noAddress: 0,
       errors: [],
     };
 
-    for (const id of ids) {
+    for (const [index, id] of ids.entries()) {
+      const key = id.toLowerCase();
+      if (this.invitingNow.has(key)) {
+        report.alreadyInvited += 1;
+        continue;
+      }
+      this.invitingNow.add(key);
       try {
+        // Read now, under the claim: the person may have been invited since this part began (another request, another tab).
+        if (!options.resend && (await this.isInvited(id, user))) {
+          report.alreadyInvited += 1;
+          continue;
+        }
         const result = await this.invite(id, user);
         if (result.emailSent) {
           report.sent += 1;
@@ -538,6 +610,15 @@ export class UsersService {
           report.alreadyRegistered += 1;
         }
       } catch (error) {
+        if (isCoded(error, PERSON_HAS_NO_ADDRESS)) {
+          report.noAddress += 1;
+          continue;
+        }
+        if (isCoded(error, INVITATION_RATE_LIMITED)) {
+          report.stopped = 'RATE_LIMITED';
+          report.notTried = ids.length - index;
+          break;
+        }
         report.errors.push({
           userId: id,
           message:
@@ -545,10 +626,20 @@ export class UsersService {
               ? error.message
               : 'Inbjudan kunde inte skickas.',
         });
+      } finally {
+        this.invitingNow.delete(key);
       }
     }
 
     return report;
+  }
+
+  /** Whether the person has been invited (`invitedAt`), as the database says it now. A person who is not found is the invitation's to refuse. */
+  private async isInvited(id: string, user: AuthenticatedUser): Promise<boolean> {
+    const row = await this.prisma.withRls(user, (tx) =>
+      tx.user.findUnique({ where: { id }, select: { invitedAt: true } }),
+    );
+    return row?.invitedAt != null;
   }
 
   /**
@@ -601,9 +692,9 @@ export class UsersService {
         // the role, so a teacher or guardian sitting in a student group is
         // handed the students' read path on that group's lessons.
         const [current] = await tx.$queryRaw<
-          Pick<User, 'role' | 'studentGroupId' | 'pseudonymisedAt' | 'adminProfile' | 'hrRead' | 'teaches' | 'isActive' | 'schoolId'>[]
+          Pick<User, 'role' | 'studentGroupId' | 'pseudonymisedAt' | 'adminProfile' | 'hrRead' | 'teaches' | 'isActive' | 'schoolId' | 'email' | 'invitedAt'>[]
         >`
-          SELECT "role", "studentGroupId", "pseudonymisedAt", "adminProfile", "hrRead", "teaches", "isActive", "schoolId"
+          SELECT "role", "studentGroupId", "pseudonymisedAt", "adminProfile", "hrRead", "teaches", "isActive", "schoolId", "email", "invitedAt"
           FROM "Users"
           WHERE "id" = ${id}::uuid
           FOR NO KEY UPDATE
@@ -624,6 +715,13 @@ export class UsersService {
         // and the class, where it clears): an integration that sends every field must be able to deactivate.
         const stopsAt = dto.leftOn == null ? null : await leftOnInstant(tx, current, { isActive: dto.isActive, leftOn: dto.leftOn }, id);
         const role = dto.role ?? current.role;
+        // Personer utan e-postadress. An address is set on a person who has none, or corrected on one who was never invited; a
+        // person who was invited has a login with the address it has. And the row that results has an address if its role needs one:
+        // a pupil with none does not become a teacher, said here with the way out and not as the database's check.
+        const addressChanges = dto.email !== undefined && dto.email.toLowerCase() !== (current.email ?? '').toLowerCase();
+        if (addressChanges && current.invitedAt !== null) throw addressOfAnInvitedPerson();
+        const address = dto.email ?? current.email;
+        if (address === null && !mayHaveNoAddress(role)) throw addressRequired(role);
         // Roller i skolan: an administrator's row, and anybody's role,
         // profile or HR-läs, are rektor's or a full administrator's to
         // change, as Users_administrators_are_decided holds in the database.
@@ -690,6 +788,7 @@ export class UsersService {
             ...(teachesChanged ? { teaches: dto.teaches } : {}),
             ...(dto.firstName !== undefined ? { firstName: dto.firstName } : {}),
             ...(dto.lastName !== undefined ? { lastName: dto.lastName } : {}),
+            ...(addressChanges ? { email: dto.email } : {}),
             ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
             ...(dto.studentGroupId !== undefined
               ? { studentGroupId: dto.studentGroupId }
@@ -1113,7 +1212,11 @@ export class UsersService {
   ): Promise<{ authId: string; emailSent: boolean }> {
     try {
       return await this.supabaseAdmin.inviteUser(email, id);
-    } catch {
+    } catch (error) {
+      if (error instanceof InvitationRefused && error.kind === 'RATE_LIMITED') {
+        this.logger.warn('Supabase refused an invitation: the project\'s mail limit is spent.'); // no PII in logs
+        throw invitationRateLimited();
+      }
       this.logger.error('Supabase invite failed.'); // no PII in logs
       throw new ServiceUnavailableException(
         'Could not send the invitation email. Please try again.',
@@ -1146,7 +1249,11 @@ export class UsersService {
   private async resendInvitation(email: string): Promise<void> {
     try {
       await this.supabaseAdmin.resendInvitation(email);
-    } catch {
+    } catch (error) {
+      if (error instanceof InvitationRefused && error.kind === 'RATE_LIMITED') {
+        this.logger.warn('Supabase refused an invitation: the project\'s mail limit is spent.'); // no PII in logs
+        throw invitationRateLimited();
+      }
       this.logger.error('Supabase invite failed.'); // no PII in logs
       throw new ServiceUnavailableException(
         'Could not send the invitation email. Please try again.',
@@ -1218,15 +1325,28 @@ export class UsersService {
    * other (trigger Users_a_login_joins_another_school_by_invitation, 23505)
    * unless the transaction names the row in app.login_join, which is set
    * here. `sharedLogin` says whether the login is another row's too.
+   *
+   * `address` is the one the invitation went to. The row is locked and its address read before the login is put on it: the address of
+   * a person who was never invited can be corrected (Personer utan e-postadress), and a correction made while the invitation was on
+   * its way would otherwise leave the row with a login minted for the address it replaced, and the mail with whoever owns that one.
+   * The correction takes the same lock, so one of them is wholly before the other: the correction after the login is a 409 for an
+   * invited person, and the login after the correction is the 409 here.
    */
   private async adoptIdentity(
     id: string,
     authId: string,
     user: AuthenticatedUser,
+    address: string | null = null,
   ): Promise<{ row: User; sharedLogin: boolean }> {
     try {
       return await this.prisma.withRls(user, async (tx) => {
         await tx.$executeRaw`SELECT set_config('app.login_join', ${id}, true)`;
+        if (address !== null) {
+          const [now] = await tx.$queryRaw<Array<{ email: string | null }>>`
+            SELECT "email" FROM "Users" WHERE "id" = ${id}::uuid FOR NO KEY UPDATE`;
+          // No row is the update's 404 below; a row with another address is the correction that overtook this invitation.
+          if (now !== undefined && (now.email ?? '').toLowerCase() !== address.toLowerCase()) throw addressChangedWhileInviting();
+        }
         const row = await tx.user.update({
           where: { id },
           data: { authId, invitedAt: new Date() },
@@ -1381,6 +1501,59 @@ async function startPeriodAt(tx: PrismaClient, id: string, stopsAt: Date): Promi
   if (!open) return;
   const startsAt = stopsAt.getTime() < open.recordedAt.getTime() ? stopsAt : open.recordedAt;
   await tx.userDeactivation.updateMany({ where: { userId: id, endsAt: null }, data: { startsAt } });
+}
+
+/** Only a pupil or a guardian may have no address (Users_only_a_pupil_or_guardian_has_no_address). */
+const mayHaveNoAddress = (role: UserRole): boolean => role === 'STUDENT' || role === 'GUARDIAN';
+
+/** Whether an error is an HttpException carrying this `code`: the bulk invitation counts some refusals and reports the rest. */
+function isCoded(error: unknown, code: string): boolean {
+  if (!(error instanceof HttpException)) return false;
+  const body = error.getResponse();
+  return typeof body === 'object' && body !== null && (body as { code?: unknown }).code === code;
+}
+
+function addressRequired(role: UserRole): BadRequestException {
+  const who = role === 'TEACHER' ? 'En lärare' : role === 'SCHOOL_ADMIN' ? 'En administratör' : 'Personen';
+  return new BadRequestException({
+    message: `${who} behöver en e-postadress: det är med den personen bjuds in och loggar in. Bara elever och vårdnadshavare kan läggas upp utan.`,
+    code: ADDRESS_REQUIRED,
+  });
+}
+
+function invitationRateLimited(): HttpException {
+  return new HttpException(
+    {
+      message:
+        'Supabase har inte släppt igenom fler mejl just nu: projektets gräns för mejl i timmen är nådd. Vänta en stund, eller höj gränsen under Authentication → Rate Limits i Supabase, och försök igen. Den som redan fått en inbjudan får ingen ny.',
+      code: INVITATION_RATE_LIMITED,
+    },
+    HttpStatus.TOO_MANY_REQUESTS,
+  );
+}
+
+function hasNoAddress(): ConflictException {
+  return new ConflictException({
+    message:
+      'Personen har ingen e-postadress, så det finns ingenstans att skicka inbjudan. Lägg till en adress på personen först. Personen syns i listor, närvaro och schema utan den.',
+    code: PERSON_HAS_NO_ADDRESS,
+  });
+}
+
+function addressChangedWhileInviting(): ConflictException {
+  return new ConflictException({
+    message:
+      'Personens adress ändrades medan inbjudan skickades, så inloggningen sattes inte på personen. Skicka inbjudan igen, till den nya adressen.',
+    code: ADDRESS_CHANGED_WHILE_INVITING,
+  });
+}
+
+function addressOfAnInvitedPerson(): ConflictException {
+  return new ConflictException({
+    message:
+      'Personen är redan inbjuden och har en inloggning med sin adress, så adressen ändras inte härifrån. Ta bort personen och lägg till den igen, eller ändra adressen i skolans personregister om skolan har ett.',
+    code: ADDRESS_OF_AN_INVITED_PERSON,
+  });
 }
 
 /** A pseudonymised person (gallring) stays inactive: update()'s refusal, and the bulk update's per row. */

@@ -227,8 +227,10 @@ describe('OpenAPI document of /api/v1 (openapi)', () => {
 
     it('src/users/dto: a user is created with the fields and bounds its validators say', () => {
       const create = schema('CreateUserDto');
-      expect(create.required).toEqual(expect.arrayContaining(['role', 'firstName', 'lastName', 'email']));
-      expect(create.properties?.['email']).toMatchObject({ type: 'string', format: 'email', maxLength: 254 });
+      expect(create.required).toEqual(expect.arrayContaining(['role', 'firstName', 'lastName']));
+      // The address is optional: a pupil or a guardian is added with none (Personer utan e-postadress).
+      expect(create.required).not.toContain('email');
+      expect(create.properties?.['email']).toMatchObject({ type: 'string', format: 'email', maxLength: 254, nullable: true });
       expect(create.properties?.['role']).toMatchObject({ type: 'string', enum: expect.arrayContaining(['TEACHER', 'STUDENT']) });
       expect(create.properties?.['studentGroupId']).toMatchObject({ format: 'uuid', nullable: true });
       expect(document.paths['/api/v1/users']?.post?.requestBody).toMatchObject({

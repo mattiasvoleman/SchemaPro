@@ -106,7 +106,8 @@ describe("a column that looks like a personnummer", () => {
     const done = applyMapping(b, "students", assign("firstName", "lastName", "className"));
     expect(done.dropped).toEqual([{ index: 1, label: null }]);
     // The column is not read although a field was put on it: the field is then missing, and no row holds what the column had.
-    expect(done.problems.map((problem) => [problem.code, problem.field])).toEqual([["MISSING_REQUIRED", "lastName"], ["MISSING_REQUIRED", "email"]]);
+    // The address is no field a pupils' file must give (Personer utan e-postadress), so only the surname is missing.
+    expect(done.problems.map((problem) => [problem.code, problem.field])).toEqual([["MISSING_REQUIRED", "lastName"]]);
     expect(done.rows).toEqual([]);
     expect(JSON.stringify(done)).not.toMatch(/19800101/);
     // A field the kind does not need: the rows are written without it.

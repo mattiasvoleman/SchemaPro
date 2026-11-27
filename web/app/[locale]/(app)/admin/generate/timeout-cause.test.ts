@@ -136,6 +136,11 @@ describe("the searches that ran", () => {
     expect(sites.search.phases).toHaveLength(1);
   });
 
+  it("counts the search year by year (YEARS) as a search, and the reading of the start schedule (START) as none (G6b)", () => {
+    expect(searchesOf(stages(["SEARCH_CLEAN", 60], ["YEARS", 40], ["SEARCH_CLONE", 50]))).toEqual({ count: 3, seconds: 150 });
+    expect(searchesOf(stages(["START", 3], ["SEARCH_CLEAN", 60]))).toEqual({ count: 1, seconds: 60 });
+  });
+
   it("counts the walk's search when it is the only one that ran, and the two satisfaction searches", () => {
     expect(searchesOf(stages(["SITES", 60]))).toEqual({ count: 1, seconds: 60 });
     expect(searchesOf(stages(["SEARCH_CLEAN", 60], ["SEARCH_CLONE", 112.1]))).toEqual({ count: 2, seconds: 172.1 });

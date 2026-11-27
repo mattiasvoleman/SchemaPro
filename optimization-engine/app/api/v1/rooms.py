@@ -8,6 +8,7 @@ from app.config import Settings
 from app.dependencies import get_app_settings, verify_api_key
 from app.exceptions import SolverTimeoutError
 from app.logging_config import get_logger
+from app.solve_load import OTHER, SOLVE_LOAD
 from app.schemas.rooms import OptimizeRoomsRequest, OptimizeRoomsResponse
 from app.solver.room_walks import RoomWalkSolver
 from app.timing import BUILD_HEADROOM_SECONDS, RouteLimits
@@ -35,9 +36,15 @@ async def run_room_solver(
     """Run the CPU-bound solve off the event loop with a hard ceiling."""
     solver = RoomWalkSolver(settings)
     timeout = route_limits(settings).ceiling_seconds
+
+    def counted() -> OptimizeRoomsResponse:
+        # The thread's life is what is counted (app.solve_load), as the generator's is.
+        with SOLVE_LOAD.running(OTHER, str(payload.request_id)):
+            return solver.solve(payload)
+
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(solver.solve, payload),
+            asyncio.to_thread(counted),
             timeout=timeout,
         )
     except asyncio.TimeoutError:

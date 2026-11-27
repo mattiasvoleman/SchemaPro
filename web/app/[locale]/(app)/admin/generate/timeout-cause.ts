@@ -61,7 +61,8 @@ const SETUP_STAGES: readonly string[] = ["PRECHECKS", "BUILD"];
 // The steps that are searches: the same three the list above the sentence names as searches. `search.phases` has a phase for the two
 // satisfaction searches only (the engine notes none for the walk's), so a sentence made of the phases says less than the list when
 // the walk's search ran: "En sökning pågick i sammanlagt 30 s" under 60 s and 30 s.
-const SEARCH_STAGES: readonly string[] = ["SITES", "SEARCH_CLEAN", "SEARCH_CLONE"];
+// The years' road (YEARS, M8 PR 5) is a search too: the week laid a year at a time between the two. START (the schedule a week is laid from) is not.
+const SEARCH_STAGES: readonly string[] = ["SITES", "SEARCH_CLEAN", "YEARS", "SEARCH_CLONE"];
 
 /**
  * How many searches ran and for how long, counted from the same steps the list above the sentence shows. A search step that took no time

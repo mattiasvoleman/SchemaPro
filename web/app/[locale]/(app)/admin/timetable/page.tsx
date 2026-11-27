@@ -467,6 +467,9 @@ export default function TimetablePage() {
         dayOfWeek: change.dayOfWeek,
         startTime: minutesToHHMM(change.startMinutes),
         endTime: minutesToHHMM(change.endMinutes),
+        // The room a numbered time was offered in, when it is not the lesson's own (board-keys.tsx): sent only then, so that an
+        // ordinary move's patch is exactly what it was.
+        ...(change.roomId !== undefined ? { roomId: change.roomId } : {}),
         // A lesson dragged in from the tray arrives placed. Sent only then,
         // so an ordinary move's patch is exactly what it was — and undo of an
         // arrival, which restores the snapshot, parks it again.

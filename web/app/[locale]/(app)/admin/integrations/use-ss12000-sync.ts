@@ -134,20 +134,32 @@ export function useProvisioning(enabled: boolean) {
  * A chunk that fails as a whole is counted against each of its ids, so the
  * total always accounts for every person chosen, with what `say` makes of the
  * failure: the reader's sentence for it, not the gateway's English.
+ *
+ * The project's mail limit is not a failure of any one person (Första veckan utan operatören): the gateway answers a spent limit with
+ * `stopped` and `notTried`, and `errors` empty. It is carried on, the next chunks are not sent (each would be refused at its first
+ * person), and the people not tried, in this chunk and after it, are counted in `notTried`, so that the total still accounts for
+ * everyone chosen and the card can say that they were not invited.
  */
 export async function inviteInChunks(
   userIds: string[],
   post: (ids: string[]) => Promise<BulkInvitationReport>,
   say: (error: unknown) => string,
 ): Promise<BulkInvitationReport> {
-  const merged: BulkInvitationReport = { sent: 0, alreadyRegistered: 0, errors: [] };
+  const merged: BulkInvitationReport = { sent: 0, alreadyRegistered: 0, alreadyInvited: 0, noAddress: 0, errors: [] };
   for (let at = 0; at < userIds.length; at += INVITE_CHUNK) {
     const chunk = userIds.slice(at, at + INVITE_CHUNK);
     try {
       const report = await post(chunk);
       merged.sent += report.sent;
       merged.alreadyRegistered += report.alreadyRegistered;
+      merged.alreadyInvited = (merged.alreadyInvited ?? 0) + (report.alreadyInvited ?? 0);
+      merged.noAddress = (merged.noAddress ?? 0) + (report.noAddress ?? 0);
       merged.errors.push(...report.errors);
+      if (report.stopped) {
+        merged.stopped = report.stopped;
+        merged.notTried = Math.min(report.notTried ?? chunk.length, chunk.length) + (userIds.length - at - chunk.length);
+        break;
+      }
     } catch (error) {
       const message = say(error);
       merged.errors.push(...chunk.map((userId) => ({ userId, message })));

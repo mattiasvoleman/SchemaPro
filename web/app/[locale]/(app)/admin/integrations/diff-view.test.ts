@@ -267,6 +267,21 @@ describe("Bjud in valda", () => {
     expect(report.errors).toHaveLength(501);
     expect(report.sent + report.alreadyRegistered + report.errors.length).toBe(ids.length);
   });
+
+  // Första veckan utan operatören: the project's mail limit is spent. The gateway says so as `stopped`, with `errors` empty, and a
+  // sum that read only `sent`, `alreadyRegistered` and `errors` called the people it did not try invited.
+  it("stops at the project's mail limit, sends no further chunk, and counts the people not tried, so that everyone chosen is accounted for", async () => {
+    const ids = Array.from({ length: 1203 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+    const post = vi
+      .fn()
+      .mockResolvedValueOnce({ sent: 500, alreadyRegistered: 0, alreadyInvited: 0, noAddress: 0, errors: [] })
+      .mockResolvedValueOnce({ sent: 30, alreadyRegistered: 0, alreadyInvited: 2, noAddress: 0, errors: [], stopped: "RATE_LIMITED", notTried: 468 })
+      .mockResolvedValue({ sent: 203, alreadyRegistered: 0, errors: [] });
+    const report = await inviteInChunks(ids, post, () => "x");
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(report).toMatchObject({ sent: 530, alreadyInvited: 2, stopped: "RATE_LIMITED", notTried: 468 + 203, errors: [] });
+    expect(report.sent + (report.alreadyInvited ?? 0) + (report.notTried ?? 0) + report.errors.length).toBe(ids.length);
+  });
 });
 
 describe("the source form", () => {

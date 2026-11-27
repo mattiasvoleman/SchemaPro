@@ -70,7 +70,7 @@ async function readFacts(tx: Db, spec: DemoSpec, schoolId: string, name: string)
   // The people are locked as they are read. The school's row lock keeps a person from being ADDED, but nothing kept one who is already
   // there from being CHANGED between this reading and the delete: an address set to a real one after the judgement is a real person the
   // delete takes unseen. An update of the address waits for this transaction now, and finds the person gone.
-  const people = await tx.$queryRaw<{ email: string }[]>(Prisma.sql`SELECT "email" FROM "Users" WHERE "schoolId" = ${schoolId}::uuid FOR NO KEY UPDATE`);
+  const people = await tx.$queryRaw<{ email: string | null }[]>(Prisma.sql`SELECT "email" FROM "Users" WHERE "schoolId" = ${schoolId}::uuid FOR NO KEY UPDATE`);
   const huvudman = await tx.$queryRaw<{ n: bigint }[]>(Prisma.sql`
     SELECT (SELECT count(*) FROM "HuvudmanSchools" WHERE "schoolId" = ${schoolId}::uuid)
          + (SELECT count(*) FROM "HuvudmanSchoolRequests" WHERE "schoolId" = ${schoolId}::uuid)

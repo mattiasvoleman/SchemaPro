@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { contactFromEnv, DIGG_REPORT_URL, statement, TEMPLATE, toMarkdown } from "./statement";
+import { ASSESSED, contactFromEnv, DIGG_REPORT_URL, statement, TEMPLATE, toMarkdown } from "./statement";
 
 const { intro, sections } = statement(TEMPLATE);
 
@@ -115,6 +115,15 @@ describe("tillgänglighetsredogörelsen", () => {
       const aria = bullets.find((bullet) => bullet.startsWith("Granskning av vad hjälpmedel får veta"))!;
       expect(aria).toMatch(/Pseudonymisera en fil har ingen sådan sparad jämförelse/);
     });
+  });
+
+  it("says the public page was added after the date of the assessment and is not in it (the review of #430, L-1)", () => {
+    const text = sections.flatMap((section) => section.blocks).map((block) => JSON.stringify(block)).join("\n");
+    const assessed = text.indexOf(ASSESSED);
+    const added = text.indexOf("Sidan Pseudonymisera en fil lades till efter det datumet och ingår inte i den bedömningen");
+    expect(assessed).toBeGreaterThan(0);
+    expect(added).toBeGreaterThan(assessed);
+    expect(text.slice(added, added + 260)).toContain("inget test med skärmläsare");
   });
 
   it("says what is not done yet: the recorded screen-reader test, and the app", () => {

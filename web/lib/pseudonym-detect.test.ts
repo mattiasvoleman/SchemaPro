@@ -114,7 +114,7 @@ describe("e-mail addresses", () => {
   it("is not a domain in brackets with a blank in it: anna@[10.0.0 1] is no address, and nothing of it is taken (the review of #403)", () => {
     const at = (text: string) => findPersonalData(text).map((finding) => text.slice(finding.start, finding.end));
     expect(at("Skriv till anna@[10.0.0 1] i dag")).toEqual([]);
-    expect(at("Skriv till anna@[10.0.0\t1] i dag")).toEqual([]);
+    // (A tab in the bracket was a third case here. It is a blank to `\s` as the space is, so nothing could make it fail that the case above does not: the review of #429, L-3.)
     // The same bracket with no blank is one: the blank is what makes the difference.
     expect(at("Skriv till anna@[10.0.0.1] i dag")).toEqual(["anna@[10.0.0.1]"]);
   });
