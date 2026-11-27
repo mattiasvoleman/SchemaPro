@@ -70337,20 +70337,22 @@ BEGIN
 
   FOR sc IN SELECT * FROM (VALUES
       -- label, state, started_ago, lease text (a time offset from now, 'none', or the text itself after '=' ), previous?, what the sweep does
-      ('a lease that ran out a second ago',               'RUNNING', interval '3 minutes',  '-1 second',   false, 'failed'),
-      ('a lease that ran out a millisecond ago',          'RUNNING', interval '3 minutes',  '-1 millisecond', false, 'failed'),
-      ('a lease that ends this very instant',             'RUNNING', interval '3 minutes',  '0 seconds',   false, 'untouched'),
-      ('a lease that ends in a second',                   'RUNNING', interval '3 minutes',  '1 second',    false, 'untouched'),
-      ('a renewed lease on an analysis older than six minutes', 'RUNNING', interval '20 minutes', '2 minutes', false, 'untouched'),
-      ('a lease past, asked over a finished analysis',    'RUNNING', interval '3 minutes',  '-1 second',   true,  'previous'),
-      ('no lease, six minutes and a second old',          'RUNNING', interval '6 minutes 1 second', 'none', false, 'failed-now'),
-      ('no lease, one second short of six minutes',       'RUNNING', interval '5 minutes 59 seconds', 'none', false, 'untouched'),
-      ('no lease, old, asked over a finished analysis',   'RUNNING', interval '20 minutes', 'none',        true,  'previous'),
-      ('a lease that is no time, the analysis old',       'RUNNING', interval '7 minutes',  '=soon',       false, 'failed-now'),
-      ('a lease that is no time, the analysis young',     'RUNNING', interval '1 minute',   '=soon',       false, 'untouched'),
-      ('a lease with no millisecond, the analysis old',   'RUNNING', interval '7 minutes',  '=2027-03-13T09:00:00Z', false, 'failed-now'),
-      ('an analysis that ended, its old lease left over', 'FAILED',  interval '2 hours',    '-1 hour',     false, 'untouched'),
-      ('a finished analysis',                             'DONE',    interval '2 hours',    'none',        false, 'untouched')
+      ('a lease that ran out a second ago',               'RUNNING', interval '3 minutes',  '-1 second',   'none', 'failed'),
+      ('a lease that ran out a millisecond ago',          'RUNNING', interval '3 minutes',  '-1 millisecond', 'none', 'failed'),
+      ('a lease that ends this very instant',             'RUNNING', interval '3 minutes',  '0 seconds',   'none', 'untouched'),
+      ('a lease that ends in a second',                   'RUNNING', interval '3 minutes',  '1 second',    'none', 'untouched'),
+      ('a renewed lease on an analysis older than six minutes', 'RUNNING', interval '20 minutes', '2 minutes', 'none', 'untouched'),
+      ('a lease past, asked over a finished analysis',    'RUNNING', interval '3 minutes',  '-1 second',   'DONE', 'previous'),
+      -- (The service never writes a previous that is not DONE; one that was is no list to give back: the analysis is written as what it is.)
+      ('a lease past, asked over what is not a finished analysis', 'RUNNING', interval '3 minutes', '-1 second', 'FAILED', 'failed'),
+      ('no lease, six minutes and a second old',          'RUNNING', interval '6 minutes 1 second', 'none', 'none', 'failed-now'),
+      ('no lease, one second short of six minutes',       'RUNNING', interval '5 minutes 59 seconds', 'none', 'none', 'untouched'),
+      ('no lease, old, asked over a finished analysis',   'RUNNING', interval '20 minutes', 'none',        'DONE', 'previous'),
+      ('a lease that is no time, the analysis old',       'RUNNING', interval '7 minutes',  '=soon',       'none', 'failed-now'),
+      ('a lease that is no time, the analysis young',     'RUNNING', interval '1 minute',   '=soon',       'none', 'untouched'),
+      ('a lease with no millisecond, the analysis old',   'RUNNING', interval '7 minutes',  '=2027-03-13T09:00:00Z', 'none', 'failed-now'),
+      ('an analysis that ended, its old lease left over', 'FAILED',  interval '2 hours',    '-1 hour',     'none', 'untouched'),
+      ('a finished analysis',                             'DONE',    interval '2 hours',    'none',        'none', 'untouched')
     ) AS t(label, state, started_ago, lease, has_previous, outcome) LOOP
     PERFORM set_config('request.jwt.claims', admin_claims, true);
     planted := jsonb_build_object(
@@ -70363,7 +70365,7 @@ BEGIN
       'leaseUntil', CASE WHEN sc.lease = 'none' THEN NULL
                          WHEN left(sc.lease, 1) = '=' THEN substr(sc.lease, 2)
                          ELSE to_char((now() + sc.lease::interval) AT TIME ZONE 'UTC', fmt) END,
-      'previous', CASE WHEN sc.has_previous THEN asked_over END);
+      'previous', CASE WHEN sc.has_previous <> 'none' THEN jsonb_set(asked_over, '{state}', to_jsonb(sc.has_previous)) END);
     -- (A key that is not there is a lease that was never written: an API from before the lease.)
     IF sc.lease = 'none' THEN planted := planted - 'leaseUntil'; END IF;
     INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt", "suggestions")
@@ -70402,7 +70404,7 @@ BEGIN
     DELETE FROM "OptimizationJobs" WHERE id = rid;
     tested := tested + 1;
   END LOOP;
-  IF tested <> 14 THEN RAISE EXCEPTION 'g6b 1: % scenarios ran, expected 14', tested; END IF;
+  IF tested <> 15 THEN RAISE EXCEPTION 'g6b 1: % scenarios ran, expected 15', tested; END IF;
   RAISE NOTICE 'g6b 1: an analysis past its lease (or, with none, six minutes) is written as abandoned or as the analysis it was asked over, at the edges, and none else is touched';
 END $$;
 ROLLBACK;
