@@ -81,6 +81,7 @@ import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
+import { recordRead } from '../../src/access-log/access-log';
 import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
 import { createPgAdapter } from '../../src/database/pool-config';
 import { PrismaService } from '../../src/database/prisma.service';
@@ -1092,6 +1093,27 @@ async function main(): Promise<void> {
         return { registered, takenBackByThem, reportedByThem };
       });
 
+      // The clerk read the register of absences (the läslogg names the teachers read), and the läslogg is a file of the extract too.
+      await api.withRls(clerk, (tx) => recordRead(tx, 'STAFF_ABSENCES', [away.id, selfReporter.id], 'WEB'));
+      // The notice the self-report path sends every administrator (TeacherAbsencesService.tellAdmins: who, the period, whether whole days, and
+      // never why), as it writes it: the clerk is one of the recipients, and a notice is in the extract of the person it was sent to.
+      await owner.notification.create({
+        data: {
+          schoolId: a.schoolId, userId: clerk.userId!, type: 'TEACHER_ABSENCE_REPORTED',
+          meta: {
+            absenceId: abs.reportedByThem.id, userId: selfReporter.id, teacherName: `${selfReporter.firstName} ${selfReporter.lastName}`,
+            startsAt: '2027-03-21T23:00:00.000Z', endsAt: '2027-03-22T23:00:00.000Z', wholeDays: true,
+          },
+        },
+      });
+      // ...and one about the clerk's own absence, which is the clerk's to be given whole.
+      await owner.notification.create({
+        data: {
+          schoolId: a.schoolId, userId: clerk.userId!, type: 'TEACHER_ABSENCE_REPORTED',
+          meta: { absenceId: randomUUID(), userId: clerk.userId, teacherName: 'Expeditionen Eget', startsAt: '2027-05-03T22:00:00.000Z', endsAt: '2027-05-04T22:00:00.000Z', wholeDays: true },
+        },
+      });
+
       const model = await owner.calendarLesson.findFirstOrThrow({ where: { schoolId: a.schoolId } });
       const lessonAt = (day: string) =>
         owner.calendarLesson.create({
@@ -1174,7 +1196,7 @@ async function main(): Promise<void> {
       for (const hidden of ['shiftId', 'absenceId', 'absentTeacherId']) assert.equal(passes[0]![hidden], '', `${hidden} of a pass is empty`);
       assert.ok(passes[0]!['areaId'] && passes[0]!['date'] && passes[0]!['startsAt'] && passes[0]!['decision'], 'the occurrence and the decision stay');
       assert.equal(passes[0]!['decidedByUserId'], clerk.userId);
-      for (const token of [away.id, selfReporter.id, sick.id, shift.id, lessonNote, '2027-03-14T23:00', '2027-04-11T22:00']) {
+      for (const token of [away.id, selfReporter.id, sick.id, shift.id, lessonNote, '2027-03-14T23:00', '2027-04-11T22:00', selfReporter.firstName, '2027-03-21T23:00']) {
         assert.deepEqual(everyFileHolds(theirs.files, token), [], `no file of the clerk's extract holds ${token}`);
       }
       // A registration's own id is the act (which row): it is in teacherabsences.csv and in no other file, so no cover names the absence.
@@ -1189,6 +1211,11 @@ async function main(): Promise<void> {
       assert.equal(blanked('data/person/supervisioncovers.csv'), 3);
       // The pool is whole: the clerk added the vikarie, and nothing in the row is the vikarie's state.
       assert.equal(table(theirs.files, 'substitutepoolmembers')[0]!['userId'], vikarie.id);
+      // The notice of a colleague's own report is empty (it names the teacher, the period and whether it was whole days, as the absence's row
+      // does), counted in the manifest, and the notice about the clerk's own absence is the clerk's and stays whole.
+      const clerkNotices = theirs.files.get('data/notiser.csv')!.toString('utf8');
+      assert.ok(clerkNotices.includes('Expeditionen Eget'), "the notice about the clerk's own absence is theirs");
+      assert.equal(blanked('data/notiser.csv'), 1, 'the manifest counts the notice it emptied');
 
       // The teacher who was away: every row whole, with who registered it, the category and the lesson's note as it was.
       const own = await ask(a.admins.FULL, away.id);
@@ -1209,6 +1236,14 @@ async function main(): Promise<void> {
       assert.equal(ownPass[0]!['shiftId'], shift.id);
       assert.equal(blanked('data/person/teacherabsences.csv') > 0, true);
       assert.equal(own.manifest.files.find((file) => file.path === 'data/person/teacherabsences.csv')?.tommaCeller ?? 0, 0, 'nothing is emptied in their own extract');
+      // The API takes a personId in either case (the review of #494, M-2): the same rows come back, whole for the teacher and emptied for the clerk.
+      const ownUpper = await ask(a.admins.FULL, away.id.toUpperCase());
+      assert.deepEqual(table(ownUpper.files, 'teacherabsences'), ownAbsences, 'the absent teacher asked for by an upper-case id has every row whole');
+      assert.deepEqual(table(ownUpper.files, 'teacherabsencecovers'), ownCovers, "and the covers with the teacher in them");
+      const clerkUpper = await ask(a.admins.FULL, clerk.userId!.toUpperCase());
+      assert.deepEqual(table(clerkUpper.files, 'teacherabsences'), absences, 'the clerk asked for by an upper-case id has the same rows, emptied the same');
+      assert.deepEqual(table(clerkUpper.files, 'teacherabsencecovers'), covers);
+      assert.deepEqual(table(clerkUpper.files, 'supervisioncovers'), passes);
 
       // The teacher who reported their own absence: the row is theirs, and the clerk who took it back stays as who took it back.
       const reporter = await ask(a.admins.FULL, selfReporter.id);

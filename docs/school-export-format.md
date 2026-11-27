@@ -151,7 +151,7 @@ Källa: Notifications.
 | `mottagare_id` | Mottagarens id (personer.csv). |
 | `mottagare_epost` | Mottagarens e-postadress. |
 | `typ` | Notisens typ, till exempel LEAVE_DECIDED eller LESSON_CANCELLED. |
-| `innehall` | Notisens innehåll som JSON-text. Tomt om innehållet nämner en person med skyddad identitet. |
+| `innehall` | Notisens innehåll som JSON-text. Tomt om innehållet nämner en person med skyddad identitet, och i ett registerutdrag för en notis om en kollegas egen frånvaroanmälan (TEACHER_ABSENCE_REPORTED). |
 | `last` | När mottagaren läste notisen (UTC), tomt om den inte lästs. |
 | `epostad` | När notisen skickades som e-post (UTC), tomt om den inte gjorts. |
 | `skapad` | När notisen skapades (UTC). |
