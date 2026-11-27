@@ -33,6 +33,7 @@ const WRITERS: Record<string, string> = {
   'src/optimization/room-optimization.service.ts': 'apply of a room proposal',
   'src/optimization/optimization-proxy.service.ts': 'Generera’s write-back and the candidate’s apply',
   'src/schedule-exchange/exchange.service.ts': 'the timetable import’s apply',
+  'src/requirement-placements/placement-write-in.service.ts': 'Skriv in förläggningarna (E4b): the year’s förläggningar written as lessons, without the engine',
 };
 
 const WRITE_CALL = /\bmasterLesson\s*\.\s*(create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/;
