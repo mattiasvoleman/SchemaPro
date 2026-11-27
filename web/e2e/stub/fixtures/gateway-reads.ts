@@ -1,6 +1,6 @@
 import type { AccessLogAnswer } from "../../../app/[locale]/(app)/admin/dataskydd/use-access-log";
 import type { GuardianChild } from "../../../lib/guardian-queries";
-import type { GroupAttendanceRow, GroupMembershipRow } from "../../../lib/queries";
+import type { GroupAttendanceRow, GroupMembershipRow, InvitationChannel } from "../../../lib/queries";
 import type { AbsenceReport, AttendanceRecordRow, Person } from "../../../lib/types";
 import { Reply, route, type GatewayContext, type GatewayRoute } from "../gateway-routes";
 import { HUVUDMAN_MEMBER, MULTI_GUARDIAN, TEACHING_ADMIN, type SignedInPerson } from "../sessions";
@@ -61,6 +61,13 @@ export const readRoutes: GatewayRoute[] = [
   route("GET", "/api/v1/users", (context): Person[] | Reply =>
     staffOnly(context) ?? (context.person?.userId === TEACHING_ADMIN.userId ? [...ALL_PEOPLE, TEACHING_ADMIN_LISTED] : ALL_PEOPLE),
   ),
+
+  // How an invitation reaches the person (Första veckan utan operatören): an administrator's, and nothing of any person. The start page
+  // and the people page ask it of every administrator, so a stub without it fails every a11y spec that opens either.
+  route("GET", "/api/v1/users/invitation-channel", (context): InvitationChannel | Reply => {
+    if (context.person?.persona !== "admin") return context.person ? new Reply(403, { message: "Forbidden." }) : unauthorised;
+    return { configured: true, smtp: "CUSTOM", perHour: 30 };
+  }),
 
   route("GET", "/api/v1/users/counts", (context) => {
     if (context.person?.persona !== "admin") return context.person ? new Reply(403, { message: "Forbidden." }) : unauthorised;

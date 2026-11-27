@@ -28029,6 +28029,46 @@
         ]
       }
     },
+    "/api/v1/users/invitation-channel": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "operationId": "UsersController_invitationChannel",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
     "/api/v1/users/invitations": {
       "post": {
         "tags": [
@@ -28083,7 +28123,7 @@
           ]
         },
         "x-rate-limit": {
-          "limit": 5,
+          "limit": 1200,
           "ttlSeconds": 60
         }
       }
@@ -33221,6 +33261,9 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          "resend": {
+            "type": "boolean"
           }
         },
         "required": [

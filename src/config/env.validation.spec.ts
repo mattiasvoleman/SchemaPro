@@ -159,6 +159,35 @@ describe('validateEnv', () => {
     });
   });
 
+  // Första veckan utan operatören: what the operator says of the mail an invitation is.
+  describe('the mail of an invitation (AUTH_SMTP, AUTH_EMAIL_LIMIT_PER_HOUR)', () => {
+    it.each([
+      ['nothing said', {}],
+      ['the project\'s own SMTP', { AUTH_SMTP: 'custom' }],
+      ['the limit it was given', { AUTH_SMTP: 'custom', AUTH_EMAIL_LIMIT_PER_HOUR: '30' }],
+      ['both left blank, as a dashboard that was cleared leaves them', { AUTH_SMTP: '', AUTH_EMAIL_LIMIT_PER_HOUR: '' }],
+      ['a limit of only spaces, which is not a limit of 0', { AUTH_EMAIL_LIMIT_PER_HOUR: '  ' }],
+    ])('accepts %s', (_label, extra) => {
+      expect(() => validateEnv({ ...valid(), ...extra })).not.toThrow();
+    });
+
+    it('reads a limit as a number, and a blank one as none', () => {
+      expect(validateEnv({ ...valid(), AUTH_EMAIL_LIMIT_PER_HOUR: '30' }).AUTH_EMAIL_LIMIT_PER_HOUR).toBe(30);
+      expect(validateEnv({ ...valid(), AUTH_EMAIL_LIMIT_PER_HOUR: '' }).AUTH_EMAIL_LIMIT_PER_HOUR).toBeUndefined();
+      expect(validateEnv({ ...valid(), AUTH_SMTP: 'custom' }).AUTH_SMTP).toBe('custom');
+    });
+
+    it.each([
+      ['an SMTP word it does not know: "builtin" is what is not said, not a value', { AUTH_SMTP: 'builtin' }, /AUTH_SMTP/],
+      ['a limit of 0', { AUTH_EMAIL_LIMIT_PER_HOUR: '0' }, /AUTH_EMAIL_LIMIT_PER_HOUR/],
+      ['a limit that is not a whole number', { AUTH_EMAIL_LIMIT_PER_HOUR: '2.5' }, /AUTH_EMAIL_LIMIT_PER_HOUR/],
+      ['a limit that is words', { AUTH_EMAIL_LIMIT_PER_HOUR: 'many' }, /AUTH_EMAIL_LIMIT_PER_HOUR/],
+      ['a limit no project has', { AUTH_EMAIL_LIMIT_PER_HOUR: '1000000' }, /AUTH_EMAIL_LIMIT_PER_HOUR/],
+    ])('refuses %s', (_label, extra, name) => {
+      expect(() => validateEnv({ ...valid(), ...extra })).toThrow(name);
+    });
+  });
+
   describe('SS12000 consumer', () => {
     it.each([
       ['a 32-byte base64 key and its predecessor', { INTEGRATION_SECRETS_KEY: Buffer.alloc(32, 1).toString('base64'), INTEGRATION_SECRETS_KEY_PREVIOUS: Buffer.alloc(32, 2).toString('base64') }],

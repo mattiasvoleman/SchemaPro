@@ -373,6 +373,8 @@ Run it with (see `.env.example` for the full annotated list):
 | `JWT_AUDIENCE` | `authenticated` |
 | `SUPABASE_URL` | project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key |
+| `AUTH_SMTP` | **optional.** `custom` is the operator's word that Supabase Auth sends its mail through the project's **own SMTP** (Authentication → SMTP). It changes what the administrator's start page says (§7.3) and nothing the API does: the API cannot read the project's setting, because the token that does is yours and never the API's. Unset, the page warns that Supabase's own sender lets two mails an hour through. Blank is unset; any other value is refused at start |
+| `AUTH_EMAIL_LIMIT_PER_HOUR` | **optional.** The project's mail limit an hour as you read it under Authentication → Rate Limits (30 is what a project gets with its own SMTP). The start page and the mass invitation say how long 300 people take at it. A whole number, 1 to 100 000; blank is unset |
 | `AI_ENGINE_URL` | solver base URL, scheme included (`https://…`) — a bare hostname is not a URL and surfaces as "AI engine unavailable". **A public https address has a road limit of 300 s (§5.3); `http://<engine service>.railway.internal:<port>` has none.** |
 | `AI_ENGINE_API_KEY` | the shared secret from step 0 |
 | `AI_ENGINE_TIMEOUT_MS` | **optional, and best left unset.** Unset, the API waits as long as the engine says its route can take (`GET /api/v1/timing`) plus 10 s: 240 s at a 180 s budget and a 20 s probe, and it follows the engine when its budget is changed, so nothing is set in two places. An engine that says nothing (older, or not up yet) is waited for 120 000 ms. Set, it is the wait, and the request carries it to the engine as its deadline (`deadlineSeconds`), so the engine answers inside it; it must then be at least the engine's ceiling plus 5 s: `240000` at a 180 s budget and a 20 s probe (235 000 is the least). **A production start that finds it set and shorter is refused**, with a sentence that says which number to change, **and the API is then down**: no service in Railway has a health check (read 2026-11-18), so nothing holds the deploy before it up while the new one is refused, and a refused start is a stopped API until the variable is removed or raised, or the engine's budget is lowered and the API restarted (a change on the engine restarts only the engine). **Remove the variable, or raise it to the new ceiling plus 5 s, before raising the engine's budget** (`SOLVER_MAX_TIME_SECONDS`, `SOLVER_PROBE_SECONDS`), not after, or a deploy that follows the engine's change finds it too short; at runtime a shorter wait is answered with a shorter search, which a TIMEOUT states ("within 94 s"), and a line in the log. To get out of a refused start remove the variable. |
@@ -621,6 +623,35 @@ login** until an address is added and the person is invited.
   "email" IS NULL`.
 - **The Schemavisaren and the iCal feeds** are not logins, and a school shows the timetable to a family through them whether or not
   the pupil has an address.
+
+### 7.3 Inviting a whole school: in parts, and where it stops
+
+Every invitation and every password reset is a mail from Supabase Auth. **Supabase's own sender lets 2 an hour through; a project that sets
+its own SMTP gets 30 an hour until the limit is raised under Authentication → Rate Limits** (`rate_limit_email_sent`). Past it Supabase answers
+HTTP 429 `over_email_send_rate_limit`. A school of 300 people is therefore ten hours of invitations at the default, and a day with Supabase's
+own sender.
+
+- **The start page says it.** `GET /api/v1/users/invitation-channel` (an administrator's, and nothing of any person) answers whether the API
+  can make a login at all (`SUPABASE_URL` and the service key), what `AUTH_SMTP` says, and `AUTH_EMAIL_LIMIT_PER_HOUR`. The page warns
+  where nobody has said that the project has its own SMTP, says so when somebody has, and says that no invitation can go where the API has
+  no connection. The API cannot ask the project: set both variables when you have configured the sender (the operator script of §7.1 reads
+  it for you with `SUPABASE_ACCESS_TOKEN`).
+- **The web sends the mass invitation in parts of twenty**, one at a time, and shows how far it has got (Admin → People → *Bjud in N ej
+  inbjudna*). It can be stopped, and taken up again, at any time, also after the window was closed: *Ta om* asks the register who is still not
+  invited and sends only those. The gateway skips a person who is invited already (`alreadyInvited`) unless the request says `resend`, and one
+  who another request is inviting that moment, so **nobody gets two invitations**, whether the run stopped for the limit, a network error, a
+  Stop or a closed tab. A person with no address (§7.2) is counted apart (`noAddress`).
+- **When the project's mail limit is spent**, GoTrue refuses the invitation (429 `over_email_send_rate_limit`) **and makes no user** (read
+  against GoTrue v2.195.0: the refused address has no row in `auth.users` afterwards, and the refused invitation of an address never invited
+  before leaves nothing behind to look up). Until now the API read every refusal as "already registered, no mail needed" **when a user with
+  the address existed**, which is the case for an address whose earlier invitation went out and whose row was never marked, or an address a
+  person at another school holds: the person was marked invited without a mail from this call. A first invitation was a 503 ("Could not
+  send the invitation email") and no more. It is now the refusal (`INVITATION_RATE_LIMITED`, 429) and the person is **not** marked
+  invited; the mass invitation stops at the first (`stopped`, `notTried`) and the dialog says how many are left, in place of an error for
+  each person. The next invitation of the address is a first one.
+- **Rate limit per login, not per address.** `POST /api/v1/users/invitations` is limited to 30 parts a minute per verified login, with a
+  high ceiling per address for the route (1 200): a school is one NAT address, and the web calls the API from every browser, so the earlier 5 a
+  minute per address stopped a run at its sixth part and took every other administrator of the school with it.
 
 ## 8. Mobile app
 

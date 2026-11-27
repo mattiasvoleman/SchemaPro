@@ -91,6 +91,15 @@ export class InviteUsersDto {
   @ArrayMaxSize(500)
   @IsUUID('4', { each: true })
   userIds!: string[];
+
+  /**
+   * Send the invitation again to people who were invited already. Left out, they are skipped and counted (`alreadyInvited`): a
+   * mass invitation taken up again invites nobody twice. The web sends a part of twenty at a time (web/lib/mass-invitation.ts), and
+   * the 500 is what a script may send in one call.
+   */
+  @IsOptional()
+  @IsBoolean()
+  resend?: boolean;
 }
 
 export class UpdateUserDto {
