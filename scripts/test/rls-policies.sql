@@ -70310,10 +70310,13 @@ ROLLBACK;
 -- ===========================================================================
 
 BEGIN;
+SELECT set_config('ut.school_b', :'school_b', true);
 DO $$
 DECLARE
   roller uuid;
   school_a uuid;
+  other uuid := current_setting('ut.school_b')::uuid;
+  col text;
 BEGIN
   -- School A (the runner's administrator): no row yet. The first administrator who saves makes it, with the defaults a school starts from.
   PERFORM pg_temp.ut_as(current_setting('ut.admin'));
@@ -70324,9 +70327,17 @@ BEGIN
     (SELECT concat_ws(',', "preferredFree", "preferredBusy", disruption, spread, "teacherGap") FROM "OptimizationProfiles"), '10,5,8,3,2');
   PERFORM pg_temp.ut_expect('601 one row a school', split_part(pg_temp.ut_try(format($q$INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (%L)$q$, school_a)), ' ', 1), '23505');
   PERFORM pg_temp.ut_expect('601 not even a full administrator removes it', pg_temp.ut_try('DELETE FROM "OptimizationProfiles"'), '42501');
-  PERFORM pg_temp.ut_expect('601 a weight over 1000 is refused', split_part(pg_temp.ut_try('UPDATE "OptimizationProfiles" SET disruption = 1001'), ' ', 1), '23514');
-  PERFORM pg_temp.ut_expect('601 a negative weight is refused', split_part(pg_temp.ut_try('UPDATE "OptimizationProfiles" SET "teacherGap" = -1'), ' ', 1), '23514');
-  PERFORM pg_temp.ut_expect('601 0 and 1000 are weights', pg_temp.ut_try('UPDATE "OptimizationProfiles" SET "preferredFree" = 0, "preferredBusy" = 1000'), 'ok');
+  -- The row goes with its school: the key to Schools cascades (a school deleted, the demo school reset, leaves no row of it behind).
+  PERFORM pg_temp.ut_expect('601 the key to Schools cascades on delete',
+    (SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = '"OptimizationProfiles"'::regclass AND c.contype = 'f'),
+    'FOREIGN KEY ("schoolId") REFERENCES "Schools"(id) ON UPDATE CASCADE ON DELETE CASCADE');
+  -- Each of the five weights has its own bounds in the CHECK: 0 and 1000 are weights, -1 and 1001 are not, for every one of them.
+  FOREACH col IN ARRAY ARRAY['preferredFree', 'preferredBusy', 'disruption', 'spread', 'teacherGap'] LOOP
+    PERFORM pg_temp.ut_expect('601 ' || col || ' over 1000 is refused', pg_temp.ut_try(format('UPDATE "OptimizationProfiles" SET %I = 1001', col)), '23514');
+    PERFORM pg_temp.ut_expect('601 ' || col || ' under 0 is refused', pg_temp.ut_try(format('UPDATE "OptimizationProfiles" SET %I = -1', col)), '23514');
+    PERFORM pg_temp.ut_expect('601 ' || col || ' of 1000 is a weight', pg_temp.ut_try(format('UPDATE "OptimizationProfiles" SET %I = 1000', col)), 'ok');
+    PERFORM pg_temp.ut_expect('601 ' || col || ' of 0 is a weight', pg_temp.ut_try(format('UPDATE "OptimizationProfiles" SET %I = 0', col)), 'ok');
+  END LOOP;
 
   -- The roller school's administrators, as the fixtures make them (section 107's list), and the row the fixtures plant for the matrix.
   PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000105');
@@ -70361,6 +70372,10 @@ BEGIN
   PERFORM pg_temp.ut_expect('601 another school sees none of the roller school''s row', (SELECT count(*)::text FROM "OptimizationProfiles" WHERE "schoolId" = roller), '0');
   PERFORM pg_temp.ut_expect('601 and writes none for it', pg_temp.ut_try(format($q$INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (%L)$q$, roller)), '42501');
   PERFORM pg_temp.ut_expect('601 nor changes its', pg_temp.ut_try(format($q$UPDATE "OptimizationProfiles" SET spread = 1 WHERE "schoolId" = %L$q$, roller)), 'ok');
+  -- The row's own key is not a thing to change: moving school A's row to a school that has none (school B) would plant a profile there, and
+  -- onto one that has a row would be refused by the key only after the policy's check passed. The WITH CHECK of the update arm holds the school.
+  PERFORM pg_temp.ut_expect('601 school A''s row cannot be moved to a school that has none', pg_temp.ut_try(format($q$UPDATE "OptimizationProfiles" SET "schoolId" = %L WHERE "schoolId" = %L$q$, other, school_a)), '42501');
+  PERFORM pg_temp.ut_expect('601 ... nor onto the roller school''s', pg_temp.ut_try(format($q$UPDATE "OptimizationProfiles" SET "schoolId" = %L WHERE "schoolId" = %L$q$, roller, school_a)), '42501');
   PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000105');
   PERFORM pg_temp.ut_expect('601 ... and nothing of the roller school''s changed', (SELECT spread::text FROM "OptimizationProfiles"), '30');
   RAISE NOTICE 'ut 601: % checks', current_setting('ut.checks');
@@ -70371,6 +70386,10 @@ BEGIN
   PERFORM pg_temp.ut_expect('601 expected to act as authenticated', current_user::text, 'authenticated');
   PERFORM pg_temp.ut_expect('601 PostgREST''s role reads nothing', pg_temp.ut_try('SELECT count(*) FROM "OptimizationProfiles"'), '42501');
   PERFORM pg_temp.ut_expect('601 and writes nothing', pg_temp.ut_try('INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (gen_random_uuid())'), '42501');
+  -- Not by an arm alone: neither of PostgREST's roles holds a privilege on the table, so that an arm added to it later admits nothing it was never meant to.
+  PERFORM pg_temp.ut_expect('601 anon and authenticated hold no privilege on it',
+    (SELECT coalesce(string_agg(r || ' ' || p, ', '), 'none') FROM unnest(ARRAY['anon', 'authenticated']) r, unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+      WHERE has_table_privilege(r, '"OptimizationProfiles"', p)), 'none');
   RAISE NOTICE 'ut 601 (authenticated): % checks', current_setting('ut.checks');
 END $$;
 RESET ROLE;
