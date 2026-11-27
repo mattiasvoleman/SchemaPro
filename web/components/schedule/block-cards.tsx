@@ -124,6 +124,8 @@ export interface BlockActions {
   validate: (id: string, change: LessonChange, without?: ReadonlySet<string>) => boolean;
   history: { push: (entry: HistoryEntry) => void };
   showError: (error: unknown) => void;
+  /** The question before a change in Direkt that reaches families: asked around a card's first move (lib/use-direct-reach-ask.tsx). */
+  guard: <T>(run: () => Promise<T>) => Promise<T>;
   /** The page's saved toast. */
   announce: (result: SavedWrite) => void;
   /** The page's saved sentence ("Sparat. 3 lektioner i kalendern flyttades."). */
@@ -352,7 +354,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       try {
         // What the card took in where it landed, and the other term's card
         // it took along: its undo leaves the one and takes back the other.
-        let result = await patchCard(to);
+        let result = await acts.current.guard(() => patchCard(to));
         acts.current.history.push({
           label: "block-move",
           undo: async () => void (await patchCard(moveBackOf(from, result))),

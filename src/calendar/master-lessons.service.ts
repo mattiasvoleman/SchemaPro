@@ -14,6 +14,7 @@ import type { LessonRecurrence } from '@prisma/client';
 import { RealtimeService } from '../realtime/realtime.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
+import { requireDirectReachAnswered } from '../publication/direct-reach';
 import { lockYearForGrundschemaEdit, lockYearsOfLessonsForGrundschemaEdit } from '../optimization/regeneration-lock';
 import { propagateTemplateChange, reconcilableLessons } from './propagate-template';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -1117,6 +1118,13 @@ export class MasterLessonsService {
               schoolId: lesson.school.id,
               academicYearId: lesson.academicYearId,
             });
+      // Direkt: the edit reached published lessons. The first one in a published period is asked of the school before it goes (P5,
+      // beslut 8); the throw rolls the whole edit back, so nothing has moved and no notice has gone.
+      await requireDirectReachAnswered(tx, {
+        academicYearId: lesson.academicYearId,
+        mode,
+        reached: propagatedLessons + removedCalendarLessons,
+      });
 
       // The ämnesfördelning, asked of the week as the PATCH leaves it. A
       // warning and never a 409: a school that puts two idrott lessons on one
@@ -1644,6 +1652,12 @@ export class MasterLessonsService {
         results.push(after);
         if (moved > 0 || removed > 0) notices.push({ lesson, after });
       }
+      // As update(): a card whose move reached published lessons asks the school first, once, and the throw takes the whole card back.
+      await requireDirectReachAnswered(tx, {
+        academicYearId: leader.academicYearId,
+        mode,
+        reached: propagatedLessons + removedCalendarLessons,
+      });
       // Lärarens dag once for the card, over every member's teachers: the
       // move is one, and so are its reads of the rules and of the week,
       // however many members it has. Each member goes with its name, read
@@ -2266,6 +2280,9 @@ export class MasterLessonsService {
           : await tx.calendarLesson.deleteMany({
               where: reconcilableLessons(id),
             });
+
+      // Direkt: the deletion took published lessons out of the calendar; asked of the school once, and the throw puts them back.
+      await requireDirectReachAnswered(tx, { academicYearId: lesson.academicYearId, mode, reached: removedCalendarLessons });
 
       await tx.masterLesson.delete({ where: { id } });
 

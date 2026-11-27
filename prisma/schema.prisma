@@ -1650,6 +1650,13 @@ model PublicationSettings {
   calendarFeedTeachers  Boolean      @default(false)
   calendarFeedStudents  Boolean      @default(false)
   calendarFeedGuardians Boolean      @default(false)
+  /// P5 (20270312090000): when an administrator answered "Fortsätt i Direkt" to
+  /// the question asked before the first change that reaches families in a
+  /// published period. Not null: answered, once; DraftService.switchMode writes
+  /// null, because a switch of mode is a new decision about who is reached.
+  /// The definer function app.direct_reach_facts reads it for administrators
+  /// who do not read this row (Schemaläggning without Publicering).
+  directReachAcknowledgedAt DateTime? @db.Timestamptz(6)
   createdAt          DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
 

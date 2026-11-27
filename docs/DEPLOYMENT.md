@@ -7915,3 +7915,37 @@ When the judge says a time breaks the stage's ramtid or the class's lunch, an ad
 
 - The function `app.master_lesson_exemption_ends()` has no `REVOKE ... FROM PUBLIC`, which nearly all of the schema's other trigger functions have: the next migration that touches `MasterLessons` adds it.
 - A school's students and participants read `exemptFrom` through the PostgREST door like every other column of the table; whether to revoke it by column or let it stand is a decision not taken.
+
+## 42. A change in Direkt that reaches families asks first ("Förvalen en ny skola möter", omgång 15, P5, part 2)
+
+Direkt stays the default. What changes is that the school is asked once, before the first change that moves or removes published lessons, and is told who gets the notice. The answer is kept in one new nullable column, **`PublicationSettings."directReachAcknowledgedAt"`**, and read through one new function, **`app.direct_reach_facts(uuid)`** (migration `20270312090000`).
+
+### 42.1 What the migration is
+
+- **One column**, `timestamptz`, nullable, no default: null is "never answered", not null is "answered", and a switch of mode writes null again (`DraftService.switchMode`, both directions), because going to utkast and back is a new decision about who is reached. Nothing is backfilled: every school is asked at its first change that reaches families after the deploy.
+- **One `SECURITY DEFINER` function**, `app.direct_reach_facts(year_id uuid)`, one row at most: the caller's own school's latest publication of the year that has not ended (`PUBLISHED`, not a `REFILL`, `validTo` today or later in the school's own time zone) and the school's answer. Both tables are Publicering's arms (`20261110100000`), and every profile that moves a lesson writes Publicering today (`PROFILE_WRITES`), so the arms would let a guard read them. The function is there so the guard does not depend on that: a guard that read zero rows because an arm hid them would stay silent where it must ask. It answers only for `app.current_school_id()`, so a session with no login or another school's gets no row. The API's role may run it; `anon`, `authenticated` and `service_role` may not (RLS sections 600 and 600o hold it).
+- **No arm, no index, no trigger changes.** The column follows the table's existing arm: Publicering writes it.
+- **Lock.** `ADD COLUMN` takes `ACCESS EXCLUSIVE` on `PublicationSettings`, which every grundschema writer reads (`app.school_publish_mode`); the migration takes it `NOWAIT` in a 50 ms loop for 30 s with `lock_timeout` 5 s, and stops with nothing changed if it is not free in that time (run it again).
+
+### 42.2 What the gateway does
+
+- `GET /api/v1/publication-settings/direct-reach` (every administrator) answers whether the page should ask, which period is published, and, only when it asks, how many pupils and guardians can get a notice (counted, never listed). `POST …/acknowledge` (area Publicering) writes the answer at the database's own clock.
+- **The guard** (`requireDirectReachAnswered`, `src/publication/direct-reach.ts`) is called by `PATCH /master-lessons/:id`, `PATCH /master-lessons/block-card` and `DELETE /master-lessons/:id` **after** they have moved or removed the published lessons, inside their transaction, with the number reached. In Direkt, with at least one lesson reached and no answer, it answers **409 `DIRECT_REACH_UNANSWERED`** and the transaction rolls the whole edit back: nothing has moved and no notice has gone. An edit that reached no published lesson (`propagate: false`, a note, a lesson outside the period) asks nothing, and nothing asks in utkast. E4's laying calls the same function with the number it reached.
+- **Not guarded**: the other writers of published lessons (byten, vikarier, inläsning, Generera's apply) have their own explicit confirmations and are not the first drag of a school that has never been asked.
+
+### 42.3 Deploy order and rolling back
+
+- **Run the migration before the API is merged (§20.2)**, from a tree that has every migration applied. The API before it names its own columns and never reads the new one, so it is unaffected; the API after it calls the function from the first propagating edit, and one deployed before the migration would answer 500 to such an edit.
+- **After the deploy** a school in Direkt with a published period is asked at its first propagating edit; until then nothing differs. The web asks before the write and the gateway holds the line for a stale page, a second tab or a script.
+- **Rolling back** the gateway needs nothing: the previous one ignores the column and the function. To remove them: `ALTER TABLE "PublicationSettings" DROP COLUMN "directReachAcknowledgedAt"; DROP FUNCTION app.direct_reach_facts(uuid);`.
+
+### 42.4 Looking at it (read-only)
+
+- Who has answered: `SELECT "schoolId", "directReachAcknowledgedAt" FROM "PublicationSettings" WHERE "directReachAcknowledgedAt" IS NOT NULL`.
+- What the guard sees for a school: `SELECT * FROM app.direct_reach_facts('<year id>')` as that school's administrator (it answers nothing under the owner, which carries no login).
+- The refusals are 409s with `code=DIRECT_REACH_UNANSWERED` in the access log; a school that sees many has an administrator who dismisses the question (Avbryt) or a script that writes without it.
+
+### 42.5 What is not done
+
+- The page asks before a write; **the reach is not counted per change**. The dialog gives the school's totals, not the pupils of the lesson at hand.
+- Answering needs the area Publicering, which every profile that moves a lesson has today. A profile that did not would see the question's 403 and ask one who has it.

@@ -91,6 +91,7 @@ import { useTimetableReads } from "./use-timetable-reads";
 import { useScheduleEngine } from "./use-schedule-engine";
 import { useTimetableView } from "./use-timetable-view";
 import { useUndoableEdits } from "./use-undoable-edits";
+import { useDirectReachAsk } from "@/lib/use-direct-reach-ask";
 import { useLunchEdits } from "./use-lunch-edits";
 
 export default function TimetablePage() {
@@ -382,6 +383,8 @@ export default function TimetablePage() {
   const lunchMode = placingLunch && canPlaceLunch;
   const trayRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<TimetableGridHandle>(null);
+  // The question before a change in Direkt that reaches families (P5, beslut 8): asked around the first write, once.
+  const directReach = useDirectReachAsk();
   const {
     showError, undoableUpdate, undoableCreate, undoableDelete, doUndo,
     doRedo,
@@ -393,6 +396,7 @@ export default function TimetablePage() {
     createLesson,
     deleteLesson,
     history,
+    ask: directReach.ask,
   });
 
   /*
@@ -1564,6 +1568,7 @@ export default function TimetablePage() {
             validate: validateChange,
             history,
             showError,
+            guard: directReach.ask,
             announce: announceSaved,
             title: editSavedMessage,
             name: lessonName,
@@ -1571,6 +1576,7 @@ export default function TimetablePage() {
           }}
         />
       ) : null}
+      {directReach.question}
       <DialogLoadBoundary key={`lessons-${dialogsAttempt}`} onError={lessonDialogsFailed}>
         {confirmUsed && (
           <Suspense fallback={null}>
