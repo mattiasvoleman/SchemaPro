@@ -374,6 +374,8 @@ describe('CSV import (e2e)', () => {
         { id: GROUP_ID, name: '7A' },
       ]);
       harness.tx['user']!['findFirst']!.mockResolvedValue(null);
+      // The pupils the school has with no address, read with the classes (Personer utan e-postadress): none.
+      harness.tx['user']!['findMany']!.mockResolvedValue([]);
       harness.tx['user']!['create']!.mockResolvedValue({ id: 'u-2' });
 
       const response = await post(harness, 'students')
@@ -445,9 +447,33 @@ describe('CSV import (e2e)', () => {
       ]);
     });
 
+    // Personer utan e-postadress: the body web/lib/csv.ts posts for a file with no epost cell (email null) reaches the service through the
+    // real ValidationPipe, as does the empty string an older client posts for it.
+    it.each([[null], [''], [undefined]])('imports a pupil with no address through the pipe, posted as %j', async (address) => {
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValue([{ id: GROUP_ID, name: '7A' }]);
+      harness.tx['user']!['findMany']!.mockResolvedValue([]);
+      harness.tx['user']!['create']!.mockResolvedValue({ id: 'u-4' });
+
+      const response = await post(harness, 'students')
+        .send({ academicYearId: YEAR_ID, rows: [{ firstName: 'Alva', lastName: 'Utan', ...(address === undefined ? {} : { email: address }), className: '7A' }] })
+        .expect(201);
+
+      expect(response.body).toMatchObject({ created: 1, errors: [] });
+      expect(response.body.warnings).toEqual([expect.objectContaining({ code: 'IMPORT_STUDENT_WITHOUT_ADDRESS', row: 1 })]);
+      expect(harness.tx['user']!['create']).toHaveBeenCalledWith({ data: expect.objectContaining({ email: null, role: 'STUDENT', invitedAt: null }) });
+    });
+
+    it('still refuses an address that is filled in and is not one, naming the field', async () => {
+      const response = await post(harness, 'students')
+        .send({ academicYearId: YEAR_ID, rows: [{ firstName: 'Alva', lastName: 'Utan', email: 'alva@', className: '7A' }] })
+        .expect(400);
+      expect(JSON.stringify(response.body)).toContain('email');
+    });
+
     it('imports a pupil without a class, as the people page exports one', async () => {
       harness.tx['studentGroup']!['findMany']!.mockResolvedValue([]);
       harness.tx['user']!['findFirst']!.mockResolvedValue(null);
+      harness.tx['user']!['findMany']!.mockResolvedValue([]);
       harness.tx['user']!['create']!.mockResolvedValue({ id: 'u-3' });
 
       const response = await post(harness, 'students')

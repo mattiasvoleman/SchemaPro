@@ -13,6 +13,7 @@ import {
   IsString,
   IsUUID,
   MaxLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { BulkIdsDto, lowerCaseId } from '../../common/bulk';
@@ -32,9 +33,16 @@ export class CreateUserDto {
   @MaxLength(120)
   lastName!: string;
 
+  /**
+   * The person's address. Left out (or null) for a pupil or a guardian the school adds without one (Personer utan e-postadress,
+   * 20270310090000): the person is in lists, attendance and the timetable and has no login until an address is added and the person
+   * is invited. A teacher or an administrator needs one (400 ADDRESS_REQUIRED), and so does `sendInvitation`. An empty string is not
+   * an address: it is a 400, as it was, so that a form that posts "" for an empty cell says so instead of dropping the field.
+   */
+  @IsOptional()
   @IsEmail()
   @MaxLength(254)
-  email!: string;
+  email?: string | null;
 
   @IsOptional()
   @IsString()
@@ -101,6 +109,17 @@ export class UpdateUserDto {
   @IsNotEmpty()
   @MaxLength(120)
   lastName?: string;
+
+  /**
+   * An address for a person who has none, or a corrected one for a person who was never invited: there is no login to move. Not
+   * `null`: an address is not taken away (400). A person who was invited keeps the address their login has (409
+   * ADDRESS_OF_AN_INVITED_PERSON), which is changed by the school's source of persons or by removing and adding the person again. The
+   * person is then an ordinary uninvited one: the invitation is a separate act (POST :id/invite), as it is for every person.
+   */
+  @ValidateIf((_object, value: unknown) => value !== undefined)
+  @IsEmail()
+  @MaxLength(254)
+  email?: string;
 
   @IsOptional()
   @IsString()

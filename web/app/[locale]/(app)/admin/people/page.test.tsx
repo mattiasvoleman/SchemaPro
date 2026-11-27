@@ -60,6 +60,11 @@ const people = [
 
 /** The same school with Gun, Almas guardian, for the tests of the guardians export. */
 const peopleAndAGuardian = [...people, person("gu-1", "Gun", "Berg", "GUARDIAN", null)];
+/** Personer utan e-postadress: a pupil in 7A and a guardian the school has no address for, never invited and with no login. */
+const withNoAddress = [
+  { ...person("st-3", "Alva", "Utan", "STUDENT", "g-7a"), email: null },
+  { ...person("gu-2", "Vera", "Utan", "GUARDIAN", null), email: null },
+];
 
 /** Alma takes Ma71 on top of her home class; Nils takes nothing extra. */
 const memberships = [{ studentId: "st-1", studentGroupId: "g-ma71" }];
@@ -105,6 +110,8 @@ const state = vi.hoisted(() => ({
   roleChanges: [] as unknown[],
   /** Whether the school has an active guardian, who is what makes the guardians export available. */
   withGuardian: false,
+  /** Whether the school also has a pupil and a guardian with no address (Personer utan e-postadress). */
+  withoutAddress: false,
   /** Skyddad identitet: the marks the exports read at the click, or a read that fails. */
   marks: [] as Array<{ userId: string; source: string }>,
   marksFail: false,
@@ -150,7 +157,9 @@ vi.mock("@/lib/work-rule-queries", () => ({
 
 vi.mock("@/lib/queries", () => ({
   usePeople: () => {
-    const all = (state.withGuardian ? peopleAndAGuardian : people).filter((one) => !(state.noTeachers && one.role === "TEACHER"));
+    const all = [...(state.withGuardian ? peopleAndAGuardian : people), ...(state.withoutAddress ? withNoAddress : [])].filter(
+      (one) => !(state.noTeachers && one.role === "TEACHER"),
+    );
     return {
       data: all.map((one) => (state.marked.includes(one.id) ? { ...one, teaches: true } : one)),
       isLoading: false,
@@ -296,6 +305,7 @@ describe("People page", () => {
     state.noTeachers = false;
     state.roleChanges = [];
     state.withGuardian = false;
+    state.withoutAddress = false;
     state.marks = [];
     state.marksFail = false;
     apiGet.mockImplementation((path: string) =>
@@ -471,6 +481,105 @@ describe("People page", () => {
     await user.type(searchBox(), "7a alma");
 
     expect(rowNames()).toEqual(["Alma Berg"]);
+  });
+
+  // Personer utan e-postadress (20270310090000): a pupil or a guardian with no address is in the register, and has no login.
+  describe("a person with no address", () => {
+    beforeEach(() => {
+      state.withoutAddress = true;
+    });
+    const rowOf = (name: string) => screen.getAllByRole("row").find((candidate) => candidate.textContent?.includes(name))!;
+
+    it("is in the list, says so where the address would be, and says the person has no login", () => {
+      render(<PeoplePage />);
+
+      const row = rowOf("Alva Utan");
+      expect(within(row).getByText("noAddress")).toBeInTheDocument();
+      expect(within(row).getByText("noLogin")).toBeInTheDocument();
+      expect(within(row).queryByText("notInvited")).not.toBeInTheDocument();
+    });
+
+    it("has an invitation button that cannot be pressed: there is nowhere to send it", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      const button = within(rowOf("Alva Utan")).getByRole("button", { name: "sendInvitationTo(Alva Utan)" });
+      expect(button).toBeDisabled();
+      await user.click(button);
+      expect(inviteOne).not.toHaveBeenCalled();
+    });
+
+    it("is not counted among the people to invite, and the page says how many cannot be", () => {
+      render(<PeoplePage />);
+
+      // Alma and Nils have never been invited; Alva and Vera have no address.
+      expect(screen.getByText("inviteAll(2)")).toBeInTheDocument();
+      expect(screen.getByText("withoutAddressNote(2)")).toBeInTheDocument();
+    });
+
+    it("is found by name and by class, and the search does not stumble on a missing address", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.type(searchBox(), "7a utan");
+
+      expect(rowNames()).toEqual(["Alva Utan"]);
+    });
+
+    it("is added from the dialog with no address, as a pupil, and no invitation is asked for", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(screen.getByRole("button", { name: "addPerson" }));
+      await user.type(screen.getByLabelText("firstName"), "Ny");
+      await user.type(screen.getByLabelText("lastName"), "Elev");
+      // The default role is a pupil: the address is optional, and the switch for an invitation cannot be turned on without one.
+      expect(screen.getByLabelText(/^email/)).toHaveTextContent("");
+      expect(screen.getByRole("switch", { name: "sendInvitation" })).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: "save" }));
+
+      expect(createPerson).toHaveBeenCalledWith(expect.objectContaining({ firstName: "Ny", role: "STUDENT", email: null, sendInvitation: false }));
+    });
+
+    it("is not added as a teacher or an administrator with no address: those are invited", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(screen.getByRole("button", { name: "addPerson" }));
+      await user.type(screen.getByLabelText("firstName"), "Ny");
+      await user.type(screen.getByLabelText("lastName"), "Lärare");
+      await user.click(screen.getAllByRole("combobox")[0]!);
+      await user.click(screen.getByRole("option", { name: "TEACHER" }));
+
+      expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+      await user.type(screen.getByLabelText(/^email/), "ny@skolan.se");
+      expect(screen.getByRole("button", { name: "save" })).toBeEnabled();
+    });
+
+    it("is given an address by editing, which is saved as the address and nothing else, and can invite at once", async () => {
+      inviteOne.mockResolvedValue({ id: "st-3", emailSent: true });
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(within(rowOf("Alva Utan")).getByRole("button", { name: "editNamed(Alva Utan)" }));
+      const address = screen.getByLabelText(/^email/);
+      expect(address).toBeEnabled();
+      await user.type(address, "alva@skolan.se");
+      await user.click(screen.getByRole("switch", { name: "sendInvitation" }));
+      await user.click(screen.getByRole("button", { name: "save" }));
+
+      expect(updatePerson).toHaveBeenCalledWith(expect.objectContaining({ id: "st-3", email: "alva@skolan.se" }));
+      expect(inviteOne).toHaveBeenCalledWith("st-3");
+    });
+
+    it("keeps the address of a person who was invited: their login has it, and the field is locked", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(within(rowOf("Karin Ek")).getByRole("button", { name: "editNamed(Karin Ek)" }));
+
+      expect(screen.getByLabelText(/^email/)).toBeDisabled();
+    });
   });
 
   it("scopes the bulk invitation to what the search leaves on screen", async () => {
@@ -1330,7 +1439,7 @@ describe("People page", () => {
       await user.click(screen.getByRole("button", { name: "addPerson" }));
       await user.type(screen.getByLabelText("firstName"), "Ny");
       await user.type(screen.getByLabelText("lastName"), "Lärare");
-      await user.type(screen.getByLabelText("email"), "ny@skolan.se");
+      await user.type(screen.getByLabelText(/^email/), "ny@skolan.se");
       // The role select is the dialog's first combobox; the class select
       // (second) exists only while the role is STUDENT.
       await user.click(screen.getAllByRole("combobox")[0]!);
@@ -1735,7 +1844,7 @@ describe("People page", () => {
         await user.click(screen.getByRole("button", { name: "addPerson" }));
         await user.type(await screen.findByLabelText("firstName"), "Nora");
         await user.type(screen.getByLabelText("lastName"), "Ny");
-        await user.type(screen.getByLabelText("email"), "nora@skolan.se");
+        await user.type(screen.getByLabelText(/^email/), "nora@skolan.se");
         // The role select is the dialog's first combobox.
         await user.click(screen.getAllByRole("combobox")[0]!);
         await user.click(screen.getByRole("option", { name: "SCHOOL_ADMIN" }));

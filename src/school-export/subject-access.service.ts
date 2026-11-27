@@ -83,7 +83,7 @@ export class SubjectAccessService {
       const person = await tx.user.findUnique({ where: { id: personId }, select: { id: true } });
       if (!person) throw new NotFoundException('Personen finns inte.');
       const school = await tx.school.findUniqueOrThrow({ where: { id: schoolId }, select: { name: true } });
-      const marks = await tx.$queryRaw<Array<{ id: string; first: string; last: string; email: string }>>`
+      const marks = await tx.$queryRaw<Array<{ id: string; first: string; last: string; email: string | null }>>`
         SELECT DISTINCT u."id"::text AS id, u."firstName" AS first, u."lastName" AS last, u."email" AS email
           FROM "PersonProtections" p JOIN "Users" u ON u."id" = p."userId" AND u."schoolId" = p."schoolId"
          WHERE p."schoolId" = ${schoolId}::uuid`;

@@ -150,7 +150,8 @@ export class Ss12000Service {
           id: user.id,
           givenName: user.firstName,
           familyName: user.lastName,
-          eduPersonPrincipalNames: [user.email],
+          // A person with no address (Personer utan e-postadress) has no principal name: an empty list, never a null in it.
+          eduPersonPrincipalNames: user.email === null ? [] : [user.email],
           enabled: user.isActive,
           // An administrator who teaches is the school's teacher as well as its staff: the one label this version has
           // says Lärare for them. The `role` filter above is the row's own role and is unchanged (they are found

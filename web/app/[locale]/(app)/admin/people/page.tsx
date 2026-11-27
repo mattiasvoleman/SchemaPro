@@ -211,6 +211,9 @@ const PEOPLE_INLINE_ACTIONS = 4;
  */
 const MAY_HAVE_WORK_TIME: UserRole[] = ["TEACHER", "SCHOOL_ADMIN"];
 
+/** Only a pupil or a guardian may be added with no address (Personer utan e-postadress): a teacher or an administrator is invited. */
+const mayHaveNoAddress = (role: UserRole): boolean => role === "STUDENT" || role === "GUARDIAN";
+
 interface PersonForm {
   firstName: string;
   lastName: string;
@@ -578,7 +581,8 @@ export default function PeoplePage() {
   const mutations = useCrudMutations<{
     firstName: string;
     lastName: string;
-    email?: string;
+    /** null for a pupil or a guardian added with no address (Personer utan e-postadress). */
+    email?: string | null;
     phone?: string | null;
     role?: UserRole;
     studentGroupId?: string | null;
@@ -654,7 +658,7 @@ export default function PeoplePage() {
     return filterByQuery(byRole, search, (person) => [
       person.firstName,
       person.lastName,
-      person.email,
+      person.email ?? "",
       groupName(person.studentGroupId),
     ]);
   }, [people, filter, search, groups]);
@@ -682,7 +686,12 @@ export default function PeoplePage() {
    * that honest, so it must keep coming from the same list.
    */
   const uninvited = useMemo(
-    () => filtered.filter((person) => person.invitedAt === null && person.isActive),
+    () => filtered.filter((person) => person.invitedAt === null && person.isActive && person.email !== null),
+    [filtered],
+  );
+  /** Active people with no address on screen: nobody to send an invitation to (Personer utan e-postadress). */
+  const withoutAddress = useMemo(
+    () => filtered.filter((person) => person.email === null && person.isActive).length,
     [filtered],
   );
 
@@ -697,11 +706,13 @@ export default function PeoplePage() {
 
   const openEdit = (person: Person) => {
     setEditing(person);
+    // An invitation is a decision, as when adding: off every time the dialog opens.
+    setSendInvitation(false);
     const post = employmentOf(person.id);
     setForm({
       firstName: person.firstName,
       lastName: person.lastName,
-      email: person.email,
+      email: person.email ?? "",
       phone: person.phone ?? "",
       role: person.role,
       studentGroupId: person.studentGroupId ?? NO_GROUP,
@@ -788,19 +799,30 @@ export default function PeoplePage() {
       if (sendsTeaches) saved = message;
       else toast.success(message);
     };
+    // An invitation goes to an address: with none there is nothing to send (Personer utan e-postadress).
+    const address = form.email.trim();
+    const invite = sendInvitation && address !== "";
     try {
       let userId = editing?.id ?? null;
       if (editing) {
-        await mutations.update.mutateAsync({ id: editing.id, ...body });
-        said(tCommon("updated"));
+        // An address given to a person who has none, or corrected on one who was never invited (the gateway refuses it for an
+        // invited person, whose login has the address it has); the dialog leaves the field alone for those.
+        const addressChanged = address !== "" && address !== (editing.email ?? "");
+        await mutations.update.mutateAsync({ id: editing.id, ...body, ...(addressChanged ? { email: address } : {}) });
+        if (invite && editing.invitedAt === null) {
+          await invitations.inviteOne.mutateAsync(editing.id);
+          said(t("addressGivenAndInvited"));
+        } else {
+          said(tCommon("updated"));
+        }
       } else {
         const created = (await mutations.create.mutateAsync({
           ...body,
-          email: form.email.trim(),
-          sendInvitation,
+          email: address === "" ? null : address,
+          sendInvitation: invite,
         })) as { id?: string } | undefined;
         userId = created?.id ?? null;
-        said(sendInvitation ? t("createdAndInvited") : tCommon("created"));
+        said(invite ? t("createdAndInvited") : tCommon("created"));
       }
       /*
        * The post, written only when the dialog SAYS something about it. An
@@ -836,7 +858,7 @@ export default function PeoplePage() {
               role: form.role,
               firstName: body.firstName,
               lastName: body.lastName,
-              email: form.email.trim(),
+              email: form.email.trim() || null,
               phone: body.phone,
               isActive: true,
               invitedAt: null,
@@ -990,7 +1012,8 @@ export default function PeoplePage() {
           ? t("resendInvitationTo", { name })
           : t("sendInvitationTo", { name }),
         onSelect: () => void inviteOne(person),
-        disabled: invitations.inviteOne.isPending || lockedAdmin,
+        // A person with no address has nowhere to be invited: the row says so, and an address is given by editing the person.
+        disabled: invitations.inviteOne.isPending || lockedAdmin || person.email === null,
       });
     }
     if (writesPeople) {
@@ -1012,6 +1035,9 @@ export default function PeoplePage() {
         subtitle={t("subtitle")}
         actions={
           <>
+            {withoutAddress > 0 && writesPeople ? (
+              <span className="self-center text-xs text-muted-foreground">{t("withoutAddressNote", { count: withoutAddress })}</span>
+            ) : null}
             {uninvited.length > 0 && writesPeople ? (
               <Button
                 variant="outline"
@@ -1235,7 +1261,9 @@ export default function PeoplePage() {
                       {person.firstName} {person.lastName}
                     </button>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{person.email}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {person.email ?? <span className="italic">{t("noAddress")}</span>}
+                  </TableCell>
                   <TableCell>
                     <Badge variant="secondary">{tRoles(person.role)}</Badge>
                     {/* An administrator who also teaches (Users.teaches): a small text beside the role. */}
@@ -1260,6 +1288,8 @@ export default function PeoplePage() {
                   <TableCell>
                     {person.invitedAt ? (
                       <Badge variant="secondary">{t("invited")}</Badge>
+                    ) : person.email === null ? (
+                      <Badge variant="outline">{t("noLogin")}</Badge>
                     ) : (
                       <Badge variant="outline">{t("notInvited")}</Badge>
                     )}
@@ -1359,11 +1389,17 @@ export default function PeoplePage() {
                 />
               </FormField>
             </div>
-            <FormField id="person-email" label={t("email")}>
+            <FormField
+              id="person-email"
+              label={t("email")}
+              optional={mayHaveNoAddress(form.role)}
+              hint={mayHaveNoAddress(form.role) ? t("emailOptionalHint") : undefined}
+            >
               <Input
                 type="email"
                 value={form.email}
-                disabled={editing !== null}
+                // An invited person's login has the address it has; one never invited has none to move.
+                disabled={editing !== null && editing.invitedAt !== null}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
               />
             </FormField>
@@ -1469,7 +1505,7 @@ export default function PeoplePage() {
               </div>
             ) : null}
 
-            {!editing ? (
+            {!editing || editing.invitedAt === null ? (
               <div className="flex items-start justify-between gap-4 rounded-md border p-3">
                 <div className="space-y-1">
                   <Label htmlFor="send-invitation">{t("sendInvitation")}</Label>
@@ -1479,7 +1515,8 @@ export default function PeoplePage() {
                 </div>
                 <Switch
                   id="send-invitation"
-                  checked={sendInvitation}
+                  checked={sendInvitation && form.email.trim() !== ""}
+                  disabled={form.email.trim() === ""}
                   onCheckedChange={setSendInvitation}
                   aria-describedby="send-invitation-hint"
                 />
@@ -1495,7 +1532,7 @@ export default function PeoplePage() {
               disabled={
                 form.firstName.trim().length === 0 ||
                 form.lastName.trim().length === 0 ||
-                (!editing && form.email.trim().length === 0) ||
+                (form.email.trim().length === 0 && (editing ? editing.email !== null : !mayHaveNoAddress(form.role))) ||
                 postProblem !== null ||
                 mutations.create.isPending ||
                 mutations.update.isPending ||
@@ -1546,7 +1583,7 @@ export default function PeoplePage() {
                     <div className="min-w-0">
                       <div className="font-medium">{name}</div>
                       <div className="truncate text-xs text-muted-foreground">
-                        {entry.guardian.email}
+                        {entry.guardian.email ?? t("noAddress")}
                       </div>
                     </div>
                     {/* Reached from ?guardians= by any profile, so the link's writes are marked here. */}

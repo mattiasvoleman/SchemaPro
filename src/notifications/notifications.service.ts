@@ -107,7 +107,9 @@ export class NotificationsService {
               where: { id: { in: chunk }, isActive: true },
               select: { id: true, email: true },
             })
-          ).map((r) => ({ userId: r.id, email: r.email }))
+          )
+            // A person with no address (Personer utan e-postadress) gets the notice in the inbox they cannot open yet, and no mail.
+            .flatMap((r) => (r.email === null ? [] : [{ userId: r.id, email: r.email }]))
         : [];
 
       const outbox = this.outboxOf(tx);
