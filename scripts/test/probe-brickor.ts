@@ -91,7 +91,7 @@ export async function brickorChecks(owner: Client, api: PrismaService, check: Ch
     await check('(br-w) a save that sends the weeks as they stood is no write of them: only weeks the lesson did not have hand it to the school', async () => {
       const R1 = a.roomId.get('R1')!;
       const R2 = a.roomId.get('R2')!;
-      const weeks = async (id: string) => (await owner.query<{ recurrence: string; start: string | null }>(`SELECT recurrence, to_char("startDate", 'YYYY-MM-DD') AS start FROM "MasterLessons" WHERE id = $1`, [id])).rows[0]!;
+      const weeks = async (id: string) => (await owner.query<{ recurrence: string; start: string | null; end: string | null }>(`SELECT recurrence, to_char("startDate", 'YYYY-MM-DD') AS start, to_char("endDate", 'YYYY-MM-DD') AS "end" FROM "MasterLessons" WHERE id = $1`, [id])).rows[0]!;
       /** L1 as Generera laid it: Monday 09:00, R1, every week, nobody's lock. */
       const reset = () => owner.query(`UPDATE "MasterLessons" SET "dayOfWeek" = 1, "startTime" = '09:00', "endTime" = '10:00', "roomId" = $2, "isLocked" = false, "isGenerated" = true, recurrence = 'ALL_WEEKS', "startDate" = NULL, "endDate" = NULL WHERE id = $1`, [L1, R1]);
       /** What the dialog sends: every field, the weeks as it read them. */
@@ -116,6 +116,21 @@ export async function brickorChecks(owner: Client, api: PrismaService, check: Ch
       await reset();
       await masters.update(L1, dialog({ startDate: '2026-09-01' }), a.caller);
       assert.deepEqual([(await stateOf(L1)).generated, (await weeks(L1)).start], [false, '2026-09-01']);
+      await reset();
+      await masters.update(L1, dialog({ endDate: '2026-12-18' }), a.caller);
+      assert.deepEqual([(await stateOf(L1)).generated, (await weeks(L1)).end], [false, '2026-12-18']);
+      // Odd weeks sent as they stand are no write of them; even weeks, where the lesson had odd, are.
+      await reset();
+      await owner.query(`UPDATE "MasterLessons" SET recurrence = 'ODD_WEEKS' WHERE id = $1`, [L1]);
+      await masters.update(L1, dialog({ roomId: R2, recurrence: 'ODD_WEEKS' }), a.caller);
+      assert.equal((await stateOf(L1)).generated, true, 'odd weeks sent as they stand');
+      await masters.update(L1, dialog({ roomId: R2, recurrence: 'EVEN_WEEKS' }), a.caller);
+      assert.deepEqual([(await stateOf(L1)).generated, (await weeks(L1)).recurrence], [false, 'EVEN_WEEKS']);
+      // The day is the window: the same first day as a timestamp with an offset is the same first day.
+      await reset();
+      await owner.query(`UPDATE "MasterLessons" SET "startDate" = '2026-08-17' WHERE id = $1`, [L1]);
+      await masters.update(L1, dialog({ roomId: R2, startDate: '2026-08-17T23:59:59+02:00' }), a.caller);
+      assert.equal((await stateOf(L1)).generated, true, 'the same day, written as a timestamp, is no write of the first day');
 
       // A move by the dialog locks the lesson, in sight, and leaves it Generera's: the lock is what keeps it.
       await reset();
