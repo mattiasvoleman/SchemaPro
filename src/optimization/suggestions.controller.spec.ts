@@ -15,7 +15,7 @@ const JOB_ID = '66666666-6666-4666-8666-666666666666';
 
 const view: SuggestionsView = {
   version: 1, state: 'RUNNING', startedAt: '2027-03-05T10:00:00.000Z', finishedAt: null, verdict: null, verified: false,
-  total: 0, searchSeconds: null, verifySeconds: null, changes: [], failure: null,
+  total: 0, searchSeconds: null, verifySeconds: null, changes: [], failure: null, report: null,
 };
 
 describe('SuggestionsController', () => {
