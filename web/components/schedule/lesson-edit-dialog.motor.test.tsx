@@ -39,14 +39,14 @@ const base = {
 } as MasterLesson;
 const draft: LessonEditDraft = { dayOfWeek: "1", startTime: "14:30", endTime: "15:30", roomId: NONE, teacherId: "anna", isLocked: false, recurrence: "ALL_WEEKS", startDate: "", endDate: "" };
 
-const draw = (lesson: MasterLesson) =>
+const draw = (lesson: MasterLesson, over: Partial<LessonEditDraft> = {}) =>
   render(
     <LessonEditDialog
       open
       lesson={lesson}
       onOpenChange={() => {}}
       lessonName="Matematik 7A"
-      draft={draft}
+      draft={{ ...draft, ...over }}
       onDraftChange={() => {}}
       rooms={[]}
       teachers={[]}
@@ -70,12 +70,27 @@ describe("Justera lektion says whether the motor keeps the lesson", () => {
     ["a lesson with an extra class", { isGenerated: true, extraGroupIds: ["8B"] }, "Låst för motorn: lektionen har en extra klass eller utvalda elever, och Generera låter den stå."],
     ["a lesson written from a förläggning", { isGenerated: true, isLocked: true, fromPlacement: true }, "Fri för motorn: nästa Generera skriver om lektionen ur sin förläggning."],
   ])("for %s", (_name, over, sentence) => {
-    draw({ ...base, ...over } as MasterLesson);
+    // The draft holds the lock the lesson has, as the dialog opens it.
+    draw({ ...base, ...over } as MasterLesson, { isLocked: "isLocked" in over && over.isLocked === true });
     expect(screen.getByText(sentence)).toBeInTheDocument();
   });
 
   it("says nothing for a lesson read without the column", () => {
     draw(base);
     expect(screen.queryByText(/för motorn/)).toBeNull();
+  });
+
+  // The sentence sits under the lock's own switch and says what the save will leave: it follows the switch, not the lesson as it was read.
+  it("follows the lock switch: a free lesson the reader locks is kept, and a locked one the reader unlocks is free", () => {
+    const first = draw({ ...base, isGenerated: true }, { isLocked: true });
+    expect(screen.getByText("Låst för motorn: Generera låter lektionen stå där den är.")).toBeInTheDocument();
+    first.unmount();
+    draw({ ...base, isGenerated: true, isLocked: true }, { isLocked: false });
+    expect(screen.getByText("Fri för motorn: nästa Generera lägger om lektionen.")).toBeInTheDocument();
+  });
+
+  it("says a lesson made by hand is kept whichever way the switch stands", () => {
+    draw({ ...base, isGenerated: false }, { isLocked: false });
+    expect(screen.getByText("Låst för motorn: lektionen är handgjord, och Generera låter den stå.")).toBeInTheDocument();
   });
 });
