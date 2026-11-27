@@ -29,6 +29,13 @@ describe('the defaults', () => {
     expect(profileView(null)).toEqual({ weights: WHOLE, stored: false, updatedAt: null });
   });
 
+  it("are, as the JSON body of a run, byte for byte what the page sent for a school that never touched the sliders", () => {
+    // The literal the page held in useState before P5 part 3, in its key order: a school with no row must send the engine exactly this.
+    const BEFORE = '{"preferredFree":10,"preferredBusy":5,"disruption":8,"spread":3,"teacherGap":2}';
+    expect(JSON.stringify(profileView(null).weights)).toBe(BEFORE);
+    expect(JSON.stringify(DEFAULT_PROFILE_WEIGHTS)).toBe(BEFORE);
+  });
+
   it('is a copy: what a caller does to the answer does not change the defaults', () => {
     profileView(null).weights.spread = 99;
     expect(DEFAULT_PROFILE_WEIGHTS.spread).toBe(3);
