@@ -100,9 +100,11 @@ export interface World {
   meals: { class: string; day: number; start: string; end: string; startDate?: string; endDate?: string }[];
   /**
    * The pupils of the school, each in the class they name (Users.studentGroupId), as `class:n`. Only the worlds from the nineteenth
-   * on have any: with none, a class has no pupil and the clash rule's PUPILS has nothing to say.
+   * on have any: with none, a class has no pupil and the clash rule's PUPILS has nothing to say. `inactive`: a pupil who has left
+   * (Users.isActive false) and whose rows stay, in the class they named and in the groups they were a member of: the judge reads active
+   * pupils only (E3, g503 #503 L-1).
    */
-  pupils?: { key: string; class: string }[];
+  pupils?: { key: string; class: string; inactive?: true }[];
   /** Teaching groups: pupils of one or several classes who have a lesson of their own (StudentGroupMembers). */
   groups?: { key: string; members: string[] }[];
   /** A room of this school that a second school of the huvudman has borrowed for an hour of the week: OTHER_SCHOOL (RoomLoans). */
@@ -389,7 +391,8 @@ export function generateRichWorlds(count: number, perWorld: number, options: { s
 // The richer worlds are random, and what a random world lacks is the exact turn of a comparison: a pupil named on TWO lessons (the pupil is
 // in neither lesson's class), a window of dates that begins on the day another ends (the days are inclusive), a lesson's window that touches a
 // meal's first or last day, a stage whose ramtid is not the class's own (an extra class from the younger stage), a teaching group whose pupils
-// are all of years the ramtid does not reach, and an hour lent to another school that a lesson touches without covering. Written by hand,
+// are all of years the ramtid does not reach, an hour lent to another school that a lesson touches without covering, and a pupil who has left (the judge
+// reads active pupils only: the groups that share only her share none). Written by hand,
 // each with the drags on both sides of its turn; after the richer worlds in the file, so that every earlier case stays where it was.
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -555,6 +558,43 @@ export function generateEdgeWorlds(): { worlds: World[]; drags: Drag[][] } {
     ],
   );
 
+  // 7. A pupil who has left (isActive false) and whose rows stay, in the class they named and in teaching groups: the judge reads active pupils
+  // only, so two groups that share only the one who left do not share a pupil, nor does a group and a class, and a ramtid is read from the
+  // pupils who are there (E3, g503 #503 L-1). The controls are the pupils who are there: a group and a class that share one still clash.
+  add(
+    plain({
+      pupils: [
+        { key: '7A:1', class: '7A', inactive: true },
+        { key: '7A:2', class: '7A' },
+        { key: '8B:1', class: '8B' },
+        { key: '8B:2', class: '8B' },
+      ],
+      groups: [
+        { key: 'G1', members: ['7A:1', '8B:1'] },
+        { key: 'G2', members: ['7A:1', '8B:2'] },
+        { key: 'G3', members: ['7A:2', '8B:2'] },
+      ],
+      frames: [{ grades: [7, 7], start: '08:00', end: '14:30' }],
+      lessons: [
+        lesson('P1', 'G1', 'Ma', 'T1', 1, '09:00', { room: 'R1' }),
+        lesson('P2', 'G2', 'Sv', 'T2', 2, '09:00', { room: 'R2' }),
+        lesson('P3', 'G3', 'Ma', 'T3', 3, '09:00', { room: 'R3' }),
+        lesson('P4', '7A', 'Sv', 'T4', 4, '09:00', { room: 'R4' }),
+      ],
+      teachers: ['T1', 'T2', 'T3', 'T4'],
+      rooms: ['R1', 'R2', 'R3', 'R4'],
+    }),
+    [
+      to('P2', 1, '09:00'), // G1 and G2 share 7A:1 and nobody else, and 7A:1 has left: free
+      to('P4', 1, '09:00'), // 7A and G1 share 7A:1 only: free
+      to('P3', 2, '09:00'), // G3 and G2 share 8B:2, who is there: PUPILS
+      to('P4', 3, '09:00'), // 7A and G3 share 7A:2, who is there: PUPILS
+      to('P2', 1, '14:00'), // G2 is 7A:1 (left) and 8B:2: its years are 8's, and the ramtid is 7's: free
+      to('P1', 1, '14:00'),
+      to('P4', 4, '14:00'), // 7A itself: the ramtid is its own, ends 14:30: FRAME
+    ],
+  );
+
   return { worlds, drags };
 }
 
@@ -588,11 +628,11 @@ export async function plant(owner: Client, slug: string, world: World): Promise<
       [school],
     )
   ).id;
-  const person = async (label: string, role: string, adminProfile?: string, studentGroupId?: string) => {
+  const person = async (label: string, role: string, adminProfile?: string, studentGroupId?: string, isActive = true) => {
     const authId = randomUUID();
     const row = await one<{ id: string }>(
-      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "adminProfile", "studentGroupId", "updatedAt") VALUES ($1, $2, $3, 'Domaren', $4, $5, true, $6, $7, now()) RETURNING id`,
-      [school, `${slug}-${label}@example.invalid`, label, role, authId, adminProfile ?? null, studentGroupId ?? null],
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "adminProfile", "studentGroupId", "updatedAt") VALUES ($1, $2, $3, 'Domaren', $4, $5, $8, $6, $7, now()) RETURNING id`,
+      [school, `${slug}-${label}@example.invalid`, label, role, authId, adminProfile ?? null, studentGroupId ?? null, isActive],
     );
     return { id: row.id, authId };
   };
@@ -605,7 +645,7 @@ export async function plant(owner: Client, slug: string, world: World): Promise<
   }
   // The pupils, each in a class of their own (the home class), and the teaching groups of pupils from several classes.
   const pupilId = new Map<string, string>();
-  for (const pupil of world.pupils ?? []) pupilId.set(pupil.key, (await person(`p-${pupil.key.replace(':', '-')}`, 'STUDENT', undefined, classId.get(pupil.class))).id);
+  for (const pupil of world.pupils ?? []) pupilId.set(pupil.key, (await person(`p-${pupil.key.replace(':', '-')}`, 'STUDENT', undefined, classId.get(pupil.class), pupil.inactive !== true)).id);
   for (const group of world.groups ?? []) {
     const id = (await one<{ id: string }>(`INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt") VALUES ($1, $2, $3, 'TEACHING_GROUP', now()) RETURNING id`, [school, year, group.key])).id;
     classId.set(group.key, id);
@@ -908,7 +948,7 @@ export async function domarenChecks(owner: Client, api: PrismaService, check: (l
           'WRITTEN BY scripts/test/probe-domaren.ts (DOMAREN_WRITE=1 npx ts-node --transpile-only scripts/test/probe-domaren.ts), which asks the läsande frågan, a swap\'s judge and the förläggning\'s judge of every case over real Postgres and requires them to agree before it writes. Do not edit by hand.',
           'verdict.reasons: every reason the hand edit finds, the heaviest first (TEACHER, ROOM, GROUP, PUPILS, AVAILABILITY, then FRAME, LUNCH, GRADE_RULE). web/lib/lesson-judge-mirror.contract.test.ts holds the web\'s mirror of the clash rule to them: never milder, for the rules it has.',
           'Every lesson of a world stands where it was laid, whether or not it stands against a frame, a meal or a closure (låt stå), and every meal is the school\'s own. Lessons are laid clear of one another (by the clash rule\'s measure, pupils and windows of dates included).',
-          'The first eighteen worlds have a class and no pupil in it, one class to a lesson, no window of dates and no other school. The worlds from the nineteenth on (generateRichWorlds) carry pupils (`pupils`, each in the class they name), teaching groups (`groups`), lessons with an extra class (`extra`) or pupils named on them (`participants`), lessons and meals in a window of dates (`startDate`, `endDate`) and rooms a second school has borrowed (`loans`: OTHER_SCHOOL). A shared teacher\'s lessons at another school need a huvudman and are not here.',
+          'The first eighteen worlds have a class and no pupil in it, one class to a lesson, no window of dates and no other school. The worlds from the nineteenth on (generateRichWorlds) carry pupils (`pupils`, each in the class they name), teaching groups (`groups`), lessons with an extra class (`extra`) or pupils named on them (`participants`), lessons and meals in a window of dates (`startDate`, `endDate`) and rooms a second school has borrowed (`loans`: OTHER_SCHOOL). A pupil who has left (`inactive`) keeps her rows and is not counted by the judge. A shared teacher\'s lessons at another school need a huvudman and are not here.',
         ];
         writeFileSync(FIXTURE, `${JSON.stringify(fixture, null, 1)}\n`);
         console.log(`     wrote ${fixture.cases.length} cases in ${fixture.worlds.length} worlds`);

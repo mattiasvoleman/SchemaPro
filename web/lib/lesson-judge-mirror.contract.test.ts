@@ -52,7 +52,8 @@ const MIRROR_STRICTER: Readonly<Record<string, string>> = {};
 function pageOf(world: World) {
   const groups = groupsOf(world);
   const studentGroupOf = homeClassOf(world);
-  const memberships = membershipsOf(world);
+  // The rows of the pupils who are there: the gateway answers a pupil who has left too, and the page reads her as the judge does (use-schedule-engine.ts).
+  const memberships = membershipsOf(world).filter((row) => studentGroupOf.has(row.studentId));
   const membersByGroup = new Map<string, string[]>();
   for (const row of memberships) membersByGroup.set(row.studentGroupId, [...(membersByGroup.get(row.studentGroupId) ?? []), row.studentId]);
   const lunchOf: LunchOf = new Map();

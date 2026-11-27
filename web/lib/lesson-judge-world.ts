@@ -38,7 +38,7 @@ export interface World {
   frames: { grades: [number, number]; start: string; end: string }[];
   meals: { class: string; day: number; start: string; end: string; startDate?: string; endDate?: string }[];
   /** The pupils, each in the class they name; the teaching groups of pupils; the rooms another school of the huvudman has borrowed. */
-  pupils?: { key: string; class: string }[];
+  pupils?: { key: string; class: string; inactive?: true }[];
   groups?: { key: string; members: string[] }[];
   loans?: { room: string; day: number; start: string; end: string }[];
 }
@@ -95,12 +95,12 @@ export const groupsOf = (world: World): StudentGroup[] => [
   ...(world.groups ?? []).map((group) => ({ id: group.key, academicYearId: "y1", name: group.key, kind: "TEACHING_GROUP" as const, gradeLevel: null })),
 ];
 
-/** Each pupil's home class, as the page holds it (use-schedule-engine.ts: studentId → class). Empty in the worlds that have no pupils. */
-export const homeClassOf = (world: World): Map<string, string | null> => new Map((world.pupils ?? []).map((pupil) => [pupil.key, pupil.class]));
+/** Each pupil's home class, as the page holds it (use-schedule-engine.ts: the active pupils, studentId → class). Empty in the worlds that have no pupils. */
+export const homeClassOf = (world: World): Map<string, string | null> => new Map((world.pupils ?? []).filter((pupil) => pupil.inactive !== true).map((pupil) => [pupil.key, pupil.class]));
 
-/** The pupils as the page's people list holds them: active, in the home class they name. */
+/** The pupils as the page's people list holds them: in the home class they name, active unless they have left. */
 export const peopleOf = (world: World) =>
-  (world.pupils ?? []).map((pupil) => ({ id: pupil.key, role: "STUDENT" as const, isActive: true, studentGroupId: pupil.class, firstName: pupil.key, lastName: "Elev" }));
+  (world.pupils ?? []).map((pupil) => ({ id: pupil.key, role: "STUDENT" as const, isActive: pupil.inactive !== true, studentGroupId: pupil.class, firstName: pupil.key, lastName: "Elev" }));
 
 /** The teaching groups' memberships, as the page reads them for the relation of groups that share pupils. */
 export const membershipsOf = (world: World): Array<{ studentId: string; studentGroupId: string }> =>

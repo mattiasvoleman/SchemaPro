@@ -73,6 +73,17 @@ export function useScheduleEngine(inputs: Pick<TimetableReads, "groups" | "shown
     [students],
   );
   /**
+   * The teaching groups' memberships of the pupils who are there. The gateway answers every row of the school's groups, a pupil who has left
+   * included (and her rows stay in the groups she was in), while the judge reads active pupils only, as the generator does: two groups
+   * that share only a pupil who has left share no pupil, and the grid must not paint them as clashing (the fall file's inactive pupils,
+   * E3, granskaren g503 #503 L-1).
+   */
+  // Undefined stays undefined: the roster has not come, which the roster index says by it (lib/lesson-audience.ts).
+  const activeMemberships = useMemo(
+    () => memberships?.filter((row) => studentGroupOf.has(row.studentId)),
+    [memberships, studentGroupOf],
+  );
+  /**
    * groupId -> the years it holds, so a GRADE_LEVEL rule can reach it.
    *
    * A teaching group has no year of its own, so it is derived from its members'
@@ -92,7 +103,7 @@ export function useScheduleEngine(inputs: Pick<TimetableReads, "groups" | "shown
         // of another year (the active one, while the projection loads) would
         // lend a teaching group a grade in another numbering.
         groups: (groups ?? []).filter((group) => group.academicYearId === shownYear?.id),
-        membersByGroup: (memberships ?? []).reduce((map, row) => {
+        membersByGroup: (activeMemberships ?? []).reduce((map, row) => {
           const list = map.get(row.studentGroupId);
           if (list) list.push(row.studentId);
           else map.set(row.studentGroupId, [row.studentId]);
@@ -101,13 +112,13 @@ export function useScheduleEngine(inputs: Pick<TimetableReads, "groups" | "shown
         homeClassOf: studentGroupOf,
         numbering: shownYear?.gradeNumbering,
       }),
-    [groups, memberships, studentGroupOf, shownYear?.id, shownYear?.gradeNumbering],
+    [groups, activeMemberships, studentGroupOf, shownYear?.id, shownYear?.gradeNumbering],
   );
 
   /** Groups sharing students — the manual-edit twin of the engine's pairs, halves included. */
   const pupilRelation = useMemo(
-    () => buildGroupConflictMap(studentGroupOf, memberships ?? [], groups),
-    [studentGroupOf, memberships, groups],
+    () => buildGroupConflictMap(studentGroupOf, activeMemberships ?? [], groups),
+    [studentGroupOf, activeMemberships, groups],
   );
 
   /** The groups that are somebody's home. A teaching group is not one. */
@@ -126,8 +137,8 @@ export function useScheduleEngine(inputs: Pick<TimetableReads, "groups" | "shown
    * collide", this one answers "how much of this class is in the room".
    */
   const rosterIndex = useMemo(
-    () => buildRosterIndex(studentGroupOf, memberships, groups),
-    [studentGroupOf, memberships, groups],
+    () => buildRosterIndex(studentGroupOf, activeMemberships, groups),
+    [studentGroupOf, activeMemberships, groups],
   );
 
   /*

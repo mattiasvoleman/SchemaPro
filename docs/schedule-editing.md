@@ -54,7 +54,9 @@ a Sunday (`SCHOOL_DAY`, the förläggning's own first question, in its words).
   (the possible-times probe holds its prune exact only where none is, since it cannot see one) and six edge worlds
   (`generateEdgeWorlds`), written by hand, that ask each turn of a comparison on both sides: a pupil named on two lessons, two windows
   of dates that meet on one day, a window that touches a meal's first or last day, an extra class of the younger stage's ramtid, a
-  teaching group no pupil of which the ramtid reaches, and an hour lent to another school that a lesson touches without covering.
+  teaching group no pupil of which the ramtid reaches, and an hour lent to another school that a lesson touches without covering; a seventh asks for pupils who have left (`Users.isActive` false, `inactive` in the world): the
+  judge reads active pupils only, so two groups, or a group and a class, that share only such a pupil share none, and a ramtid is read from the pupils who are there. The page reads the
+  gateway's memberships the same way (`activeMemberships`, `use-schedule-engine.ts`).
 
 ## Att lägga: grundschemats bricklåda (E4)
 
