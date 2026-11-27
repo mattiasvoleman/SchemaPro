@@ -364,7 +364,15 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
                 );
               } else {
                 fitsSeen.shut += 1;
-                assert.ok(refusals.some((refusal) => refusal.reason === 'AVAILABILITY' && refusal.params['resource'] === 'ROOM'), `${label}: the chooser says shut and the judge does not say the room is unavailable`);
+                if (room.closedBy === 'OTHER_SCHOOL') {
+                  // A room another school has borrowed (a world's `loans`): the judge names the school.
+                  assert.ok(
+                    refusals.some((refusal) => refusal.reason === 'OTHER_SCHOOL' && refusal.params['schools'] === room.closedParams['schools']),
+                    `${label}: the chooser says another school holds it (${String(room.closedParams['schools'])}) and the judge says ${refusals.map((refusal) => `${refusal.reason}${JSON.stringify(refusal.params)}`).join(',')}`,
+                  );
+                } else {
+                  assert.ok(refusals.some((refusal) => refusal.reason === 'AVAILABILITY' && refusal.params['resource'] === 'ROOM'), `${label}: the chooser says shut and the judge does not say the room is unavailable`);
+                }
               }
             }
           }
