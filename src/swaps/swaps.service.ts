@@ -20,6 +20,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { requirementName } from '../optimization/optimization-proxy.service';
 import { lockYearsOfLessonsForGrundschemaEdit } from '../optimization/regeneration-lock';
 import { enterGrundschemaWrite, publishModeOf } from '../publication/publish-mode';
+import { requireDirectReachAnswered } from '../publication/direct-reach';
 import { RealtimeService } from '../realtime/realtime.service';
 import type { ApplySwapDto, SuggestSwapsDto } from './dto/swaps.dto';
 import { SwapContext } from './swap-context';
@@ -545,6 +546,14 @@ export class SwapsService {
         results.push(after);
         if (moved > 0 || removed > 0) notices.push({ before: row, after });
       }
+
+      // Direkt: the swap moved published lessons. The first change in a published period is asked of the school before it goes (P5, beslut 8);
+      // the throw rolls the whole swap back, the safety version above included, so nothing has moved and no notice has gone.
+      await requireDirectReachAnswered(tx, {
+        academicYearId: leader.academicYearId,
+        mode,
+        reached: propagatedLessons + removedCalendarLessons,
+      });
 
       this.logger.log(
         `Swap applied [lessons=${moves.length}, propagated=${propagatedLessons}, removed=${removedCalendarLessons}, version=${version.id}]`,

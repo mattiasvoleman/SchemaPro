@@ -27,7 +27,8 @@ import type { PublishMode } from './publish-mode';
  * besvarad; kastet rullar tillbaka skrivningen, så ingenting har ändrats och ingen notis har gått. En ändring som inte nådde någon
  * (en anteckning, en lektion utanför perioden, propagate: false) frågar aldrig.
  *
- * Skrivvägar som anropar vakten i dag: PATCH master-lessons/:id, PATCH master-lessons/block-card och DELETE master-lessons/:id.
+ * Skrivvägar som anropar vakten i dag: PATCH master-lessons/:id, PATCH master-lessons/block-card, DELETE master-lessons/:id och POST swaps/apply
+ * (ett byte flyttar publicerade lektioner på samma sätt och rullas tillbaka med sin säkerhetsversion).
  * E4:s läggning (att lägga en bricka som flyttar publicerade lektioner) anropar samma funktion med det antal den nådde.
  */
 

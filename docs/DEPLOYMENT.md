@@ -7931,7 +7931,8 @@ Direkt stays the default. What changes is that the school is asked once, before 
 
 - `GET /api/v1/publication-settings/direct-reach` (every administrator) answers whether the page should ask, which period is published, and, only when it asks, how many pupils and guardians can get a notice (counted, never listed). `POST …/acknowledge` (area Publicering) writes the answer at the database's own clock.
 - **The guard** (`requireDirectReachAnswered`, `src/publication/direct-reach.ts`) is called by `PATCH /master-lessons/:id`, `PATCH /master-lessons/block-card` and `DELETE /master-lessons/:id` **after** they have moved or removed the published lessons, inside their transaction, with the number reached. In Direkt, with at least one lesson reached and no answer, it answers **409 `DIRECT_REACH_UNANSWERED`** and the transaction rolls the whole edit back: nothing has moved and no notice has gone. An edit that reached no published lesson (`propagate: false`, a note, a lesson outside the period) asks nothing, and nothing asks in utkast. E4's laying calls the same function with the number it reached.
-- **Not guarded**: the other writers of published lessons (byten, vikarier, inläsning, Generera's apply) have their own explicit confirmations and are not the first drag of a school that has never been asked.
+- **Guarded the same way**: `POST /api/v1/swaps/apply`, after its moves have propagated and inside its transaction, so a refused swap rolls back its safety version with it.
+- **Not guarded**: the other writers of published lessons (vikarier, inläsning, Generera's apply) have their own explicit confirmations and are not the first drag of a school that has never been asked.
 
 ### 42.3 Deploy order and rolling back
 
