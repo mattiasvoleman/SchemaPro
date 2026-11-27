@@ -141,6 +141,10 @@ export class BoardTrayService {
       );
       const brick = bricks[0];
       if (!brick || brick.partKey !== dto.partKey) throw staleConflict(dto.postId);
+      // Every brick of the part is a lesson on the tray (a brick is that lesson, namely itself): a request that names none of them asks for a new
+      // lesson beside the parked one, which would stay on the tray while the post counts the new one. The picture the request read is not the part's
+      // way of being laid now; it names the lesson (`lessonId` of the brick) or it is stale.
+      if (dto.lessonId === undefined && bricks.every((entry) => entry.lessonId !== null)) throw staleConflict(dto.postId);
       if (brick.cannotPlace !== null) {
         throw new ConflictException({
           message:
