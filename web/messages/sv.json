@@ -11176,6 +11176,7 @@
       "ROOM_NEEDS_APPROVAL": "Salen kräver godkännande och bokas i stället av expeditionen.",
       "SPLIT_MINUTES": "Delarna ska vara minst 15 minuter var och tillsammans lika långa som lektionen.",
       "LESSON_IS_PLACED": "Lektionen är förlagd på timplanen och skrivs om därifrån vid varje Generera. Den ändras av schemaläggaren, på timplansposten.",
+      "DIRECT_REACH_UNANSWERED": "Skolan har ännu inte svarat på frågan om att fortsätta i Direkt, och ändringen når familjerna. En administratör svarar på frågan när hon ändrar något i Schema, och därefter går ändringen att publicera.",
       "UNKNOWN": "Lektionen kan inte ändras av klassläraren."
     },
     "problem": {

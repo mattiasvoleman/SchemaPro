@@ -11176,6 +11176,7 @@
       "ROOM_NEEDS_APPROVAL": "The room requires approval and is booked by the office instead.",
       "SPLIT_MINUTES": "The parts must be at least 15 minutes each and together as long as the lesson.",
       "LESSON_IS_PLACED": "The lesson is placed on the curriculum and is written again from there at every Generera. The scheduler changes it, on its curriculum entry.",
+      "DIRECT_REACH_UNANSWERED": "The school has not yet answered the question about staying in Direkt, and this change reaches families. An administrator answers it when she changes something in Schema, and then the change can be published.",
       "UNKNOWN": "The lesson cannot be changed by the class teacher."
     },
     "problem": {
