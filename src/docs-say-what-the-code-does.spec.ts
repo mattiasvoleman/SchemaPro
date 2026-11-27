@@ -321,3 +321,22 @@ describe("the user manual's 5.2 says what a 'tiden tar slut' row of its table is
     expect(text).toContain('inte skiljer en svår vecka från en omöjlig');
   });
 });
+
+describe("the user manual's 5.1 and the feature list say where the optimization profile is kept: with the school (omgång 15, P5 del 3)", () => {
+  const manual = read('docs/manual/anvandarmanual.html');
+  const section = flat(manual.slice(manual.indexOf('id="s51"'), manual.indexOf('<h3 id="s52">')).replace(/<[^>]+>/g, ''));
+
+  it("says the profile is the school's, which every scheduler sees whatever computer they sit at", () => {
+    expect(section).toContain('Profilen är skolans, inte webbläsarens');
+  });
+
+  it("does not also say, in a note below, that it is kept in the browser and a colleague's computer has its own", () => {
+    expect(section).not.toContain('Profilen sparas lokalt');
+    expect(section).not.toContain('sparas i den webbläsare du använder');
+    expect(section).not.toContain('har den datorn sina egna inställningar');
+  });
+
+  it('and docs/schedule-editing.md does not list the sliders as persisted per browser', () => {
+    expect(flat(read('docs/schedule-editing.md'))).not.toContain('persisted per browser');
+  });
+});
