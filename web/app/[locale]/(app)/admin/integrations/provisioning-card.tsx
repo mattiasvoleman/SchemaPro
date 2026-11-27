@@ -82,7 +82,8 @@ export function ProvisioningCard() {
                   onSuccess: (result) => {
                     setReport(result);
                     setChosen(new Set());
-                    toast.success(t("invited", { sent: result.sent }));
+                    if (result.stopped) toast.error(t("stoppedShort", { left: result.notTried ?? 0 }));
+                    else toast.success(t("invited", { sent: result.sent }));
                   },
                   onError: (error) => toast.error(errorText(tErrors, error, tCommon)),
                 })
@@ -122,8 +123,9 @@ export function ProvisioningCard() {
         </>
       ) : null}
       {report ? (
-        <Notice tone={report.errors.length > 0 ? "warning" : "success"}>
+        <Notice tone={report.errors.length > 0 || report.stopped ? "warning" : "success"}>
           {t("report", { sent: report.sent, already: report.alreadyRegistered, failed: report.errors.length })}
+          {report.stopped ? ` ${t("stopped", { left: report.notTried ?? 0 })}` : ""}
         </Notice>
       ) : null}
     </SectionCard>

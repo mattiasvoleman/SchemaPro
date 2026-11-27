@@ -266,8 +266,10 @@ export function downloadCsv(filename: string, content: string): void {
 export const isActivePerson = (person: { isActive?: boolean }) => person.isActive !== false;
 
 /** Person id → e-mail, for the active people only. */
-export const activeEmails = (people: { id: string; email: string; isActive?: boolean }[]) =>
-  new Map(people.filter(isActivePerson).map((person) => [person.id, person.email]));
+export const activeEmails = (people: { id: string; email: string | null; isActive?: boolean }[]) =>
+  new Map(
+    people.filter(isActivePerson).flatMap((person) => (person.email === null ? [] : [[person.id, person.email] as const])),
+  );
 
 // ---------------------------------------------------------------------------
 // The words an export writes for an enum, the inverse of the importer's
@@ -441,7 +443,7 @@ export function teachersToCsv(
     teaches?: boolean | null;
     firstName: string;
     lastName: string;
-    email: string;
+    email: string | null;
     phone?: string | null;
     isActive?: boolean;
   }[],
@@ -475,7 +477,7 @@ export function teachersToCsv(
         return [
           person.firstName,
           person.lastName,
-          person.email,
+          person.email ?? "",
           person.phone ?? "",
           post ? decimalComma(post.employmentPercent!) : "",
           post && (post.reductionPercent ?? 0) > 0 ? decimalComma(post.reductionPercent!) : "",
@@ -502,7 +504,7 @@ export function teacherQualificationsToCsv(
     maxGradeLevel: number;
     kind: TeacherQualificationKind;
   }[],
-  people: { id: string; email: string; isActive?: boolean }[],
+  people: { id: string; email: string | null; isActive?: boolean }[],
   subjects: { id: string; name: string; code: string | null }[],
 ): string {
   const email = activeEmails(people);
@@ -530,7 +532,7 @@ export function studentsToCsv(
     role: string;
     firstName: string;
     lastName: string;
-    email: string;
+    email: string | null;
     phone?: string | null;
     studentGroupId: string | null;
     isActive?: boolean;
@@ -544,11 +546,26 @@ export function studentsToCsv(
       .map((person) => [
         person.firstName,
         person.lastName,
-        person.email,
+        person.email ?? "",
         person.phone ?? "",
         className(person.studentGroupId),
       ]),
   );
+}
+
+/**
+ * How many memberships of the listed groups membershipsToCsv leaves out because the pupil has no address (Personer utan e-postadress):
+ * the file names a pupil by address, and a pupil with none is in the group and not in the file. Said once the file is handed over,
+ * so that a file that looks whole is not taken for one.
+ */
+export function membersWithoutAddress(
+  groups: { id: string }[],
+  people: { id: string; email: string | null; isActive?: boolean }[],
+  memberships: { studentGroupId: string; studentId: string }[],
+): number {
+  const inGroups = new Set(groups.map((group) => group.id));
+  const none = new Set(people.filter((person) => isActivePerson(person) && person.email === null).map((person) => person.id));
+  return memberships.filter((row) => inGroups.has(row.studentGroupId) && none.has(row.studentId)).length;
 }
 
 /**
@@ -561,7 +578,7 @@ export function studentsToCsv(
  */
 export function membershipsToCsv(
   groups: { id: string; name: string }[],
-  people: { id: string; email: string; isActive?: boolean }[],
+  people: { id: string; email: string | null; isActive?: boolean }[],
   memberships: { studentGroupId: string; studentId: string }[],
 ): string {
   const groupName = new Map(groups.map((group) => [group.id, group.name]));

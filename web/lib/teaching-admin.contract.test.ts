@@ -214,6 +214,15 @@ const PAGE_FILES: Record<string, string[]> = {
  * row fails) and is in no table.
  */
 const NOT_CALLED_FOR_HER: Record<string, { paths: string[]; why: string }[]> = {
+  "/teacher": [
+    {
+      paths: ["api/v1/master-lessons/possible-times"],
+      why:
+        "the board of the grundschema paints where a lesson in hand can stand (possible-layer.tsx, E3), and the teacher's week draws the same grid: the " +
+        "painting is fetched only by an editable board grid when a lesson is taken up (timetable-grid.tsx `holding`), and the teacher's grid is read " +
+        "only, so no lesson is ever in hand there (possible-layer.test.tsx and timetable-grid.tsx hold that a grid that is not the board asks nothing)",
+    },
+  ],
   "/teacher/franvaro": [
     {
       paths: [

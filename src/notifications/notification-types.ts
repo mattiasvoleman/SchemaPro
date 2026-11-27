@@ -12,8 +12,10 @@ import type { NotificationKind } from './notifications.service';
  * all, and självstudier — each to the lesson's roster, its guardians and the
  * teachers concerned. A teacher also hears of a leave request that is theirs
  * to decide as the pupil's mentor (LEAVE_REQUESTED, Mentorns ledighetsbeslut);
- * an admin is told of none, as before. TEACHER_ABSENCE_REPORTED is in nobody's
- * list: it never leaves the inbox, so a switch for it would do nothing.
+ * an admin is told of none, as before. TEACHER_ABSENCE_REPORTED (a teacher's own
+ * report of an absence, to the school's administrators) is one an administrator may switch
+ * off as e-mail: it goes out as a mail that says only that a teacher has reported an
+ * absence, never who, when or why, and never as a push (K6, NEVER_PUSHED).
  * A week's or month's count of pupils over the school's absence limits
  * (ABSENCE_WATCH_DIGEST, Frånvarobevakning) goes to a mentor, a rektor or
  * kansli administrator and a guardian, each of whom may switch it off; a pupil
@@ -132,7 +134,7 @@ export const TYPES_BY_ROLE: Record<ChoosingRole, readonly NotificationKind[]> = 
   GUARDIAN: [...LESSONS, 'LESSON_PUPIL_MOVED', 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED', 'ABSENCE_WATCH_DIGEST', 'CRISIS_GUARDIAN_AFTER', 'ACK_REQUESTED', 'ACK_REMINDER', 'LEAVE_CONSENT_REQUESTED', 'LEAVE_CONSENT_REMINDER', 'LEAVE_CONSENT_REFUSED'],
   STUDENT: [...LESSONS, 'LEAVE_DECIDED'],
   TEACHER: [...STAFF, 'LESSON_PUPIL_MOVED', 'LEAVE_REQUESTED', 'ABSENCE_WATCH_DIGEST', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED', 'LESSON_REPORT_REMINDER'],
-  SCHOOL_ADMIN: [...STAFF, 'ABSENCE_WATCH_DIGEST', 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED', 'REPORTING_RATE_DIGEST', 'EXTERNAL_BOOKING_CLASH'],
+  SCHOOL_ADMIN: [...STAFF, 'ABSENCE_WATCH_DIGEST', 'COVER_REQUEST_ACCEPTED', 'COVER_REQUEST_CLOSED', 'REPORTING_RATE_DIGEST', 'EXTERNAL_BOOKING_CLASH', 'TEACHER_ABSENCE_REPORTED'],
 };
 
 /**
@@ -190,8 +192,12 @@ export function deliveredRegardless(type: NotificationKind, meta: Record<string,
   );
 }
 
-/** Never e-mailed or pushed: a colleague's absence is HR data, kept in the admins' inbox. */
-export const NEVER_EXTERNAL: ReadonlySet<NotificationKind> = new Set(['TEACHER_ABSENCE_REPORTED']);
+/**
+ * Never pushed: a colleague's absence is HR data, and a push is read on a lock screen. It may go as an e-mail to the school's
+ * administrators (K6), which says that an absence has been reported and nothing about it (who, when, why): the names and the dates
+ * are behind the login, in the inbox notice. The administrator may switch the e-mail off, like any other type's.
+ */
+export const NEVER_PUSHED: ReadonlySet<NotificationKind> = new Set(['TEACHER_ABSENCE_REPORTED']);
 
 export function isChoosingRole(role: string): role is ChoosingRole {
   return Object.prototype.hasOwnProperty.call(TYPES_BY_ROLE, role);

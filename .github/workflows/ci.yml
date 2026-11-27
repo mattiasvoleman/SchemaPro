@@ -406,6 +406,28 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-demo-reset.ts
 
+      # P3 Personer utan e-postadress: a pupil and a guardian the school has no address for are in the register, the class, the roster of
+      # a lesson (and marked there), and the register extract, through the real services under row security, and have no login by any
+      # road: the invitation is 409, the mass invitation counts them apart, the database refuses an invitedAt on their row, a teacher
+      # needs an address, a file of pupils with none is made once and given the address later, and a removal asks the provider nothing.
+      # It makes a school of its own and drops it.
+      - name: People with no address probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-personer-utan-adress.ts
+
+      # P3 Första veckan utan operatören: the operator script that makes a school and its first administrator
+      # (scripts/operator/new-school.ts, docs/DEPLOYMENT.md §7), run against the database with a stand-in for the
+      # Supabase Auth admin API. A dry run writes nothing; --apply makes the school and the administrator in one
+      # transaction and attaches the login last; a run that stopped before the login continues from it and makes one
+      # school, not two; a finished one does nothing; a slug that holds another school, the wrong host and a login
+      # another school holds are refused with the rows untouched. It makes schools of its own and drops them.
+      - name: New school probe
+        env:
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-new-school.ts
+
       # Den utgående kön (H3, 20270309090000, omgång 15): mail and push wait in the database and survive a restart. A child process
       # of the probe takes the queue up against a Resend and an Expo that are servers of the probe's own, and is killed with SIGKILL
       # while a mail is on its way (and, apart, a push); the next takes it from there, and every mail reaches Resend once under its

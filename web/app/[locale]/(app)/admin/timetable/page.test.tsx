@@ -69,10 +69,10 @@ vi.mock("@/utils/supabase/client", () => ({
     from: () => ({ select: () => ({ eq: () => ({ order: blockNames.read }) }) }),
   }),
 }));
-const blockApi = vi.hoisted(() => ({ patch: vi.fn() }));
+const blockApi = vi.hoisted(() => ({ patch: vi.fn(), post: vi.fn() }));
 vi.mock("@/lib/api", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/api")>();
-  return { ...real, api: { ...real.api, patch: blockApi.patch } };
+  return { ...real, api: { ...real.api, patch: blockApi.patch, post: blockApi.post } };
 });
 
 /**
@@ -623,6 +623,9 @@ const TRAY_RECT = {
 
 beforeEach(() => {
   cleanup();
+  // Where a lesson in hand can stand is asked of the gateway (possible-layer.tsx); a test that does not set an answer gets none.
+  blockApi.post.mockReset();
+  blockApi.post.mockRejectedValue(new Error("the gateway is not asked in this test"));
   noMutation.mutateAsync.mockClear();
   vi.mocked(buildIcs).mockClear();
   vi.mocked(exportTimetablePdf).mockClear();
@@ -1443,6 +1446,30 @@ describe("a refusal of the one judge, and the krocklista (E1)", () => {
     const said = toasts.error.mock.calls[0]![0] as string;
     expect(said.startsWith("common.codes.MASTER_LESSON_REFUSED(LUNCH")).toBe(true);
     expect(said).not.toContain("editConflict");
+  });
+
+  it("says that more rules said no when the gateway names more than one reason, and not otherwise (E3)", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    // The dialog stays open on a refusal: it is opened once, and Spara is pressed again for each answer.
+    let opened = false;
+    const refuse = async (reasons: string) => {
+      toasts.error.mockClear();
+      noMutation.mutateAsync.mockRejectedValue(new ApiError(409, "Tiden ligger på klassens lunch.", "MASTER_LESSON_REFUSED", { reason: "LUNCH", reasons }));
+      if (!opened) {
+        const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+        fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+        fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+        opened = true;
+      }
+      await user.click(await screen.findByRole("button", { name: "common.save" }));
+      await waitFor(() => expect(toasts.error).toHaveBeenCalledTimes(1));
+      return toasts.error.mock.calls[0]![0] as string;
+    };
+    expect(await refuse("LUNCH")).not.toContain("moreReasons");
+    expect(await refuse("LUNCH,LUNCH")).not.toContain("moreReasons");
+    expect(await refuse("LUNCH,FRAME")).toMatch(/ timetable\.moreReasons\(1\)$/);
+    expect(await refuse("LUNCH,FRAME,TEACHER")).toMatch(/ timetable\.moreReasons\(2\)$/);
   });
 
   it("has no way to the list for a week without a clash", async () => {
@@ -3911,6 +3938,36 @@ describe("a parallel block (Block i schemat)", () => {
     );
   });
 
+  it("moves the card from its dialog to a time the gateway says the whole block can stand at, with no drag (E3)", async () => {
+    blockApi.patch.mockResolvedValue({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [] });
+    blockApi.post.mockResolvedValue({
+      academicYearId: "y-1",
+      subject: { lessonId: "l-sv1", className: "", subjectName: "Språkval", minutes: 60, lessonIds: ["l-sv1", "l-sv2"], isLocked: false, unplaced: false, current: null },
+      stepMinutes: 15,
+      options: [{ rank: 1, dayOfWeek: 3, startMinutes: 14 * 60, endMinutes: 15 * 60, lessons: [], roomChanged: false, costs: [], wishes: { met: 0, avoided: 0 }, score: 1 }],
+      days: [],
+      blockers: {},
+    });
+    const user = userEvent.setup();
+    showPage();
+    await user.click(await card());
+    const dialog = await screen.findByRole("dialog");
+    // Closed until opened, and nothing asked of the gateway before.
+    expect(blockApi.post).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByText("boardPossible.dialog.title"));
+    const option = await within(dialog).findByRole("button", { name: /boardPossible\.list\.option\(1\|/ });
+    expect(blockApi.post).toHaveBeenCalledWith("/api/v1/master-lessons/possible-times", expect.objectContaining({ lessonId: expect.stringMatching(/^l-sv/) }), expect.anything());
+    await user.click(option);
+
+    await confirmClasses();
+    await waitFor(() =>
+      expect(blockApi.patch).toHaveBeenCalledWith(
+        "/api/v1/master-lessons/block-card",
+        expect.objectContaining({ lessonIds: ["l-sv1", "l-sv2"], dayOfWeek: 3, startTime: "14:00", endTime: "15:00" }),
+      ),
+    );
+  });
+
   it("names the block under a member standing apart from it", async () => {
     // A second lesson each, at different hours: both stand apart.
     state.lessons = [
@@ -4637,5 +4694,72 @@ describe("the board's keys that write, through the page (E2)", () => {
 
     fireEvent.keyDown(mine, { key: "l" });
     await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-ma2", isLocked: true })));
+  });
+});
+
+describe("a numbered time the gateway offers in another room (E3)", () => {
+  it("lays the lesson there with the room the gateway named, and the write says the room", async () => {
+    blockApi.post.mockResolvedValue({
+      academicYearId: "y-1",
+      subject: { lessonId: "l-slojd", className: "", subjectName: "", minutes: 60, lessonIds: ["l-slojd"], isLocked: false, unplaced: false, current: { dayOfWeek: 1, startMinutes: 480, endMinutes: 540 } },
+      stepMinutes: 15,
+      options: [
+        {
+          rank: 1,
+          dayOfWeek: 2,
+          startMinutes: 540,
+          endMinutes: 600,
+          lessons: [{ lessonId: "l-slojd", roomId: "r-sal", startMinutes: 540, endMinutes: 600 }],
+          roomChanged: true,
+          costs: [],
+          wishes: { met: 0, avoided: 0 },
+          score: 1,
+        },
+      ],
+      days: [{ dayOfWeek: 2, runs: [{ dayOfWeek: 2, fromMinutes: 540, toMinutes: 540, kind: "CHANGE" }] }],
+      blockers: {},
+    });
+    render(<TimetablePage />);
+    const drawn = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-lesson-id="l-slojd"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    drawn.focus();
+    await boardKeysCame();
+    fireEvent.keyDown(drawn, { key: " " });
+    await waitFor(() => expect(document.querySelector('[data-possible-rank="1"]')).not.toBeNull(), { timeout: 3000 });
+    expect(blockApi.post).toHaveBeenCalledWith("/api/v1/master-lessons/possible-times", expect.objectContaining({ lessonId: "l-slojd" }), expect.anything());
+
+    fireEvent.keyDown(drawn, { key: "1" });
+    fireEvent.keyDown(drawn, { key: "Enter" });
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-slojd", dayOfWeek: 2, startTime: "09:00", endTime: "10:00", roomId: "r-sal" })),
+    );
+  });
+
+  it("writes no room for a time the lesson keeps its room in", async () => {
+    blockApi.post.mockResolvedValue({
+      academicYearId: "y-1",
+      subject: { lessonId: "l-slojd", className: "", subjectName: "", minutes: 60, lessonIds: ["l-slojd"], isLocked: false, unplaced: false, current: null },
+      stepMinutes: 15,
+      options: [{ rank: 1, dayOfWeek: 2, startMinutes: 540, endMinutes: 600, lessons: [{ lessonId: "l-slojd", roomId: null, startMinutes: 540, endMinutes: 600 }], roomChanged: false, costs: [], wishes: { met: 0, avoided: 0 }, score: 1 }],
+      days: [{ dayOfWeek: 2, runs: [{ dayOfWeek: 2, fromMinutes: 540, toMinutes: 540, kind: "FREE" }] }],
+      blockers: {},
+    });
+    render(<TimetablePage />);
+    const drawn = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-lesson-id="l-slojd"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    drawn.focus();
+    await boardKeysCame();
+    fireEvent.keyDown(drawn, { key: " " });
+    await waitFor(() => expect(document.querySelector('[data-possible-rank="1"]')).not.toBeNull(), { timeout: 3000 });
+    fireEvent.keyDown(drawn, { key: "1" });
+    fireEvent.keyDown(drawn, { key: "Enter" });
+    await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalled());
+    expect(noMutation.mutateAsync.mock.calls.at(-1)![0]).not.toHaveProperty("roomId");
   });
 });

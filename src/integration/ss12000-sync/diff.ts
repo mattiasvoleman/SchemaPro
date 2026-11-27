@@ -141,7 +141,8 @@ export interface LocalUser {
   role: LocalRole;
   firstName: string;
   lastName: string;
-  email: string;
+  /** NULL for a pupil or a guardian the school added without an address (Personer utan e-postadress): matched by the source id only. */
+  email: string | null;
   isActive: boolean;
   studentGroupId: string | null;
   ss12000Id: string | null;
@@ -417,6 +418,8 @@ export function computeDiff(input: DiffInput): DiffResult {
   const usersByEmail = new Map<string, LocalUser[]>();
   for (const user of local.users) {
     if (user.ss12000Id) usersByExt.set(user.ss12000Id, user);
+    // A person with no address is matched by the source id and by nothing else: there is no address to share with a person of the source.
+    if (user.email === null) continue;
     const key = user.email.trim().toLowerCase();
     usersByEmail.set(key, [...(usersByEmail.get(key) ?? []), user]);
   }
@@ -544,7 +547,7 @@ export function computeDiff(input: DiffInput): DiffResult {
     if (linked) {
       if (!linked.isActive || linked.role === 'SCHOOL_ADMIN') continue;
       const next = pickEmail(person, linked.role);
-      if (next && next !== linked.email.trim().toLowerCase()) claims.set(next, (claims.get(next) ?? 0) + 1);
+      if (next && next !== (linked.email ?? '').trim().toLowerCase()) claims.set(next, (claims.get(next) ?? 0) + 1);
       continue;
     }
     const roles = derivedRoles(person.id);
@@ -597,7 +600,7 @@ export function computeDiff(input: DiffInput): DiffResult {
         });
       }
       const email = pickEmail(person, linked.role);
-      if (email && email !== linked.email.trim().toLowerCase()) {
+      if (email && email !== (linked.email ?? '').trim().toLowerCase()) {
         const holders = (usersByEmail.get(email) ?? []).filter((u) => u.id !== linked.id);
         if (holders.length > 0 || (claims.get(email) ?? 0) > 1) {
           note('PERSON', 'CONFLICT', 'PERSON_EMAIL_TAKEN', person.id, linked.id, { email }, isProt);

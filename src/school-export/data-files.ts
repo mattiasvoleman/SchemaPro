@@ -168,7 +168,7 @@ interface PersonRow {
   role: string;
   first: string;
   last: string;
-  email: string;
+  email: string | null;
   phone: string | null;
   active: boolean;
   klass: string | null;
@@ -220,7 +220,7 @@ export const PERSONER: DataFile = {
       env.named('PEOPLE', batch.map((row) => row.id));
       for (const row of batch) {
         yield [
-          row.id, row.role, row.first, row.last, row.email, text(row.phone), row.active ? 'ja' : 'nej', text(row.klass),
+          row.id, row.role, row.first, row.last, text(row.email), text(row.phone), row.active ? 'ja' : 'nej', text(row.klass),
           row.created, text(row.deactivated), text(row.pseudonymised), text(row.profile), row.hr ? 'ja' : 'nej',
         ];
       }

@@ -193,7 +193,7 @@ export class SchoolExportJob implements OnModuleInit, OnModuleDestroy {
     if (!standing?.decides || !standing.name) throw new RequesterNotAllowed();
 
     const marked = await read((tx) =>
-      tx.$queryRaw<Array<{ id: string; first: string; last: string; email: string }>>(
+      tx.$queryRaw<Array<{ id: string; first: string; last: string; email: string | null }>>(
         Prisma.sql`SELECT DISTINCT u."id"::text AS id, u."firstName" AS first, u."lastName" AS last, u."email" AS email
                      FROM "PersonProtections" p JOIN "Users" u ON u."id" = p."userId" AND u."schoolId" = p."schoolId"
                     WHERE p."schoolId" = ${claim.school_id}::uuid`,

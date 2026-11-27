@@ -1438,6 +1438,18 @@
     klass. Personer loggar in med sin e-postadress.
   </p>
   <p>
+    <strong>En elev eller en vårdnadshavare kan läggas upp utan e-postadress.</strong>
+    Yngre elever har sällan en skoladress, och en skola ska inte behöva hitta
+    på en. Personen syns då i listor, i klassen, i närvaron och i schemat, men
+    har ingen inloggning, och kan inte bjudas in förrän en adress finns. I
+    listan står <em>Ingen adress</em> där adressen skulle stå och <em>Ingen
+    inloggning</em> i kolumnen <span class="ui">Inbjudan</span>. När du får
+    adressen öppnar du personen, skriver in den och kan bjuda in direkt, eller
+    läser in en fil med adresserna (3.6). En adress ändras inte på någon som
+    redan är inbjuden: hens inloggning har den adress den har. Lärare och
+    administratörer behöver alltid en adress.
+  </p>
+  <p>
     <strong>Att lägga upp någon skickar inget e-postmeddelande.</strong> Du
     bygger alltså upp hela listan i lugn och ro — gärna veckor före
     terminsstart — utan att någon får en inbjudan hen inte väntar sig. I
@@ -1467,6 +1479,19 @@
     lösenord, och först då kan hen logga in. Vill du bjuda in direkt när du
     lägger upp någon finns reglaget <span class="ui">Skicka inbjudan</span> i
     dialogen.
+  </p>
+  <p>
+    <strong>Att bjuda in många går i delar, och kan tas om.</strong> Knappen
+    öppnar en ruta som skickar inbjudningarna tjugo i taget och visar hur långt
+    det har kommit. Du kan <em>stoppa</em> när som helst och <em>ta om</em>
+    efteråt, också efter att fönstret har stängts: <em>Ta om</em> frågar
+    registret vilka som fortfarande saknar inbjudan och skickar bara till dem,
+    så ingen får två. Mejlen skickas av Supabase Auth, och Supabases egen
+    avsändare släpper bara igenom två i timmen; med skolans egen SMTP är gränsen
+    som förval 30 i timmen, vilket för 300 personer är ungefär tio timmar. Når
+    gränsen stannar inbjudan och rutan säger hur många som återstår: vänta, eller
+    be den som sköter driften höja gränsen. Administratörens startsida säger om
+    någon har uppgett att skolan har egen SMTP.
   </p>
   <div class="note">
     <span class="label">Om någon redan har ett konto</span>
@@ -1636,7 +1661,7 @@
       <tr><td class="k">salar.csv</td><td>namn; kod; salstyp; kapacitet; lagsta_arskurs; hogsta_arskurs; byggnad; vaning</td><td>Under <span class="path">Grunddata › Salar</span>. Endast namnet krävs. Salstypen anges med namn och måste finnas — importera salstyperna först. En våning under mark skrivs med minus, t.ex. <em>-1</em>. Skolområde och om salen kräver godkännande ställs in på salen.</td></tr>
       <tr><td class="k">klasser.csv</td><td>namn; arskurs; typ; halvklass_av; ersatter_amne</td><td>Läsårets grupper. <em>typ</em> är <em>klass</em> eller <em>undervisningsgrupp</em>, tom betyder klass. <em>halvklass_av</em> är klassen en halvklass hör till (3.4). En klass som redan är delad får inga fler halvor från en fil. <em>ersatter_amne</em> är ämnet en undervisningsgrupp ersätter, med kod eller namn. En fil med bara namn och årskurs läses som förut. Importeras före eleverna — de hänvisar till klassnamnen.</td></tr>
       <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost; telefon; tjanst_procent; nedsattning_procent; avtal; signatur</td><td>Ingen inbjudan skickas vid importen — du bjuder in när du vill, se 3.5. De fyra sista kolumnerna är tjänsten för det aktiva läsåret och får lämnas tomma. Procent skrivs med decimalkomma, t.ex. <em>66,667</em>. Saknar du HR-läs exporteras tjänsten tom, eftersom procenten inte visas för dig. En administratör som undervisar (2.6) och är aktiv står med som lärare, med sin tjänst och utan markering.</td></tr>
-      <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; telefon; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas. Lämna cellen tom för en elev som inte har någon klass än; förhandsvisningen och rapporten säger hur många som skapas utan klass, eftersom importen inte kan ge dem en klass i efterhand.</td></tr>
+      <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; telefon; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas. Lämna cellen tom för en elev som inte har någon klass än; förhandsvisningen och rapporten säger hur många som skapas utan klass, eftersom importen inte kan ge dem en klass i efterhand. Lämna <em>epost</em> tom, eller utelämna kolumnen, för en elev som inte har någon adress: eleven läggs upp utan inloggning, och en senare fil med adressen lägger den på eleven med samma förnamn, efternamn och klass.</td></tr>
       <tr><td class="k">vardnadshavare.csv</td><td>fornamn; efternamn; epost; telefon; elev_epost</td><td>En rad per koppling mellan en vårdnadshavare och en elev: har en vårdnadshavare två barn blir det två rader med samma fyra första kolumner. <em>elev_epost</em> är elevens egen adress. Eleven måste finnas i skolan och vara aktiv, annars avvisas raden med rad och kolumn, och ingen vårdnadshavare skapas för den raden. En vårdnadshavare som inte finns skapas utan inbjudan (3.5). En som redan finns, även om adressen är skriven med andra versaler, får bara kopplingen: namn och telefon ändras inte. En koppling som redan finns hoppas över. Står samma adress på flera rader gäller den första raden, och förhandsvisningen varnar när en senare rad har andra uppgifter. Importeras efter eleverna, under <span class="path">Grunddata › Personer</span>. I en skola som hämtar från registret, se 7.2.</td></tr>
       <tr><td class="k">undervisningsgrupper.csv</td><td>grupp; epost</td><td>En rad per medlem. Gruppen skapas automatiskt om den saknas. En halvklass (3.4) tar bara klassens egna elever och varje elev i en halva i taget. En rad som bryter mot det avvisas med elevens och halvans namn, och de andra raderna läses ändå in.</td></tr>
       <tr><td class="k">uppdrag.csv</td><td>larare_epost; typ; benamning; minuter_per_vecka; raknas_som_undervisning; amne; grupp; fran; till; anteckning</td><td>Importeras under <span class="path">Grunddata › Personer</span>, till det aktiva läsåret. Samma lärare, typ och benämning en gång till uppdaterar uppdraget i stället för att dubblera det. <em>fran</em> och <em>till</em> är uppdragets datum (åååå-mm-dd, inom läsåret); tomt betyder läsårets egen gräns. Tid i schemat blockeras inte via fil — det görs på uppdraget, se 4.3.</td></tr>
@@ -1704,10 +1729,12 @@
       rubrikerna. Skiljer sig din fil, välj <em>Ingen av dem</em> och peka ut
       kolumnerna själv.</li>
     <li><strong>Det Skola24:s filer inte har.</strong> Skola24:s elevfil har
-      ingen e-postadress, och Rastras elevimport kräver en. Vårdnadshavarfilen
-      anger eleven med personnummer, och Rastras import vill ha elevens
-      e-postadress. De filerna går därför inte att läsa in som de är: rutan
-      nämner fälten, och du pekar ut en kolumn själv eller kompletterar filen.
+      ingen e-postadress. Eleverna läggs då upp utan en (3.5): de syns i
+      listor, närvaro och schema, och får ingen inloggning förrän en adress
+      finns. Vårdnadshavarfilen anger eleven med personnummer, och Rastras
+      import vill ha elevens e-postadress. Den filen går därför inte att
+      läsa in som den är: rutan nämner fältet, och du pekar ut en kolumn själv
+      eller kompletterar filen.
       Personalfilen har namn och e-postadress och går in. Dess
       <em>signatur</em> läses inte som standard: Rastra sparar signaturen på
       lärarens tjänst och vägrar en signatur utan tjänstgöringsgrad, som filen
@@ -1986,7 +2013,7 @@
     <thead><tr><th style="width:26%">Fil i Skola24</th><th>Så läses den</th><th style="width:28%">Det du gör</th></tr></thead>
     <tbody>
       <tr data-source="skola24-personal-csv" data-reads="reads"><td class="k">Importera personal (CSV, utan rubrikrad)</td><td>Läses: namn och e-postadress. En rad utan e-postadress läses inte: Skola24 låter cellen vara tom, men Rastra Schemas import gör det inte. Signaturen läses inte som standard, eftersom en signatur kräver en tjänstgöringsgrad och filen har ingen. Skolans namn och avdelning läses inte.</td><td>Välj <span class="ui">Filen kommer från Skola24</span> i importen av lärare (3.6). Lägg in e-postadressen på raderna som saknar den, eller lägg upp de personerna för hand (3.5).</td></tr>
-      <tr data-source="skola24-elever-klass" data-reads="incomplete"><td class="k">Importera elever till klasser (kopierad ur Excel, med rubrikrad)</td><td>Går inte in som den är: filen har ingen e-postadress, och Rastras elevimport kräver en.</td><td>Lägg till en kolumn med e-postadress i filen och peka ut den.</td></tr>
+      <tr data-source="skola24-elever-klass" data-reads="reads"><td class="k">Importera elever till klasser (kopierad ur Excel, med rubrikrad)</td><td>Läses: namn och klass. Filen har ingen e-postadress, och eleverna läggs då upp utan en: de syns i listor, närvaro och schema, men har ingen inloggning förrän en adress finns.</td><td>Lägg till adresserna under Personer när du har dem, eller läs in en fil med dem senare: den lägger adressen på eleven med samma förnamn, efternamn och klass.</td></tr>
       <tr data-source="skola24-foraldrar-csv" data-reads="incomplete"><td class="k">Importera föräldrar CSV</td><td>Går inte in som den är: filen pekar ut eleven med personnummer, och Rastras import vill ha elevens e-postadress. En rad utan vårdnadshavarens egen e-postadress läses inte heller: Skola24 låter den vara tom, och i Skola24:s egna exempelfiler är den tom på många rader, men Rastra Schemas import kräver den.</td><td>Komplettera filen med elevens e-postadress och, där den saknas, vårdnadshavarens.</td></tr>
       <tr data-source="skola24-grupp-elev" data-reads="unknown"><td class="k">Importera elever till grupper (Grupp/Elev)</td><td>Läses inte: filen har två lägen och pekar ut eleven med personnummer, som Rastra Schema aldrig tar emot.</td><td>Gruppmedlemmar kommer in genom filen undervisningsgrupper.csv (3.6), som pekar ut eleven med e-postadress.</td></tr>
       <tr data-source="skola24-textfil" data-reads="unknown"><td class="k">Textfil Gr, Gy eller Vux (.txt)</td><td>Läses inte: ingen offentlig sida beskriver var fälten ligger.</td><td>Skicka oss en exempelfil utan personuppgifter (7.8), så att vi kan lära oss läsa den.</td></tr>
@@ -7909,7 +7936,8 @@
     återkalla en anmälan innan den börjar, eller inom en timme om inget har
     bestämts. Orsaken kan läraren inte ändra efteråt; det gör en administratör.
     Administratörerna får notisen <em>En lärare har anmält frånvaro</em>, utan
-    orsak.
+    orsak, och där skolan har e-post ett mejl som bara säger att en lärare har
+    anmält frånvaro, utan namn och dag (6.10).
   </p>
   <div class="note">
     <span class="label">Välj rätt verktyg</span>
@@ -8822,7 +8850,7 @@
     <tbody>
       <tr><td class="k">Vårdnadshavare</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet, sammanställning av frånvaro (6.12)</td><td>Oanmäld frånvaro</td></tr>
       <tr><td class="k">Elev</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet</td><td>—</td></tr>
-      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarier på mina lektioner, självstudier, bytt sal, beslut om lokalbokning, sammanställning av frånvaro (6.12), och för lärare ledighetsansökningar att besluta om som mentor, påminnelse om lektioner utan sparat register (lärare) och veckobesked om rapporteringsgrad (rektor och fullständig administratör) (6.13)</td><td>Egna vikariepass och avbokade vikariepass, rastvaktspass som vikarie och avbokade rastvaktspass</td></tr>
+      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarier på mina lektioner, självstudier, bytt sal, beslut om lokalbokning, sammanställning av frånvaro (6.12), för administratör mejlet om att en lärare har anmält frånvaro (6.2), och för lärare ledighetsansökningar att besluta om som mentor, påminnelse om lektioner utan sparat register (lärare) och veckobesked om rapporteringsgrad (rektor och fullständig administratör) (6.13)</td><td>Egna vikariepass och avbokade vikariepass, rastvaktspass som vikarie och avbokade rastvaktspass</td></tr>
     </tbody>
   </table>
   <p>
@@ -8830,8 +8858,10 @@
     vårdnadshavarna samma dag. En lärares egna vikariepass och rastvaktspass
     som vikarie, och avbokningarna av dem, skickas alltid, eftersom
     vikarietavlan (6.3) räknar med att den inbokade får veta. Pushen om ett
-    rastvaktspass säger när men inte var. Notisen <em>En lärare har anmält frånvaro</em> lämnar aldrig
-    Rastra Schema: den mejlas inte och skickas inte som push.
+    rastvaktspass säger när men inte var. Notisen <em>En lärare har anmält frånvaro</em> skickas aldrig som
+    push. Den kan mejlas till skolans administratörer, men mejlet säger bara att en lärare har anmält frånvaro
+    och att man loggar in för att se vem: aldrig namn, dag eller orsak. En administratör kan stänga av mejlet
+    här, och notisen står kvar i Rastra Schema.
   </p>
   <div class="warn">
     <span class="label">Push är avstängt tills skolan har gjort klart</span>

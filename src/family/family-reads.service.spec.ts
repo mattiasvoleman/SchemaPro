@@ -208,13 +208,15 @@ describe('FamilyReadsService', () => {
         link(GUARDIAN_ID, CHILD_B, 'gun@example.test', 'bo@example.test'),
       ]);
 
-      tx.guardianStudent.count.mockResolvedValue(2);
+      // The links the school has, then the ones with nobody to name them by (none).
+      tx.guardianStudent.count.mockResolvedValueOnce(2).mockResolvedValueOnce(0);
       await expect(service.guardianExport(testUser({ channel: 'WEB' }))).resolves.toEqual({
         rows: [
           { firstName: 'Gun', lastName: 'Ek', email: 'gun@example.test', phone: '070-123 45 67', studentEmail: 'alva@example.test' },
           { firstName: 'Gun', lastName: 'Ek', email: 'gun@example.test', phone: null, studentEmail: 'bo@example.test' },
         ],
         heldOut: 0,
+        withoutAddress: 0,
       });
       const [query] = tx.guardianStudent.findMany.mock.calls[0] as [{ select: { student: { select: object } } }];
       expect(query.select.student.select).toEqual({ email: true });
@@ -225,9 +227,10 @@ describe('FamilyReadsService', () => {
 
       expect(tx.guardianStudent.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
+          // A link is in the file only if both have an address to name them by (Personer utan e-postadress).
           where: {
-            guardian: { role: 'GUARDIAN', isActive: true, protections: { none: {} } },
-            student: { role: 'STUDENT', isActive: true, protections: { none: {} } },
+            guardian: { role: 'GUARDIAN', isActive: true, protections: { none: {} }, email: { not: null } },
+            student: { role: 'STUDENT', isActive: true, protections: { none: {} }, email: { not: null } },
           },
           orderBy: [
             { guardian: { lastName: 'asc' } },
@@ -257,18 +260,43 @@ describe('FamilyReadsService', () => {
 
     it('records nothing for a school with no links: the read named nobody', async () => {
       tx.guardianStudent.count.mockResolvedValue(0);
-      await expect(service.guardianExport(testUser())).resolves.toEqual({ rows: [], heldOut: 0 });
+      await expect(service.guardianExport(testUser())).resolves.toEqual({ rows: [], heldOut: 0, withoutAddress: 0 });
       expect(recordedReads(tx)).toEqual([]);
+    });
+
+    it('leaves out a link where the pupil or the guardian has no address, and counts it apart from the protected', async () => {
+      // Four links; one is held out for a mark, one has a pupil with no address; two are in the file.
+      tx.guardianStudent.count.mockResolvedValueOnce(4).mockResolvedValueOnce(1);
+      tx.guardianStudent.findMany.mockResolvedValue([
+        link(GUARDIAN_ID, CHILD_A, 'gun@example.test', 'alva@example.test'),
+        link(GUARDIAN_ID, CHILD_B, 'gun@example.test', 'bo@example.test'),
+      ]);
+
+      const answer = await service.guardianExport(testUser());
+
+      expect(answer.rows).toHaveLength(2);
+      expect(answer.withoutAddress).toBe(1);
+      expect(answer.heldOut).toBe(1);
+      // The count of those without an address is asked of the unmarked, so a protected link is counted once, as protected.
+      const [{ where }] = tx.guardianStudent.count.mock.calls[1] as [{ where: { AND: unknown[] } }];
+      expect(where.AND).toEqual([
+        {
+          guardian: { role: 'GUARDIAN', isActive: true, protections: { none: {} } },
+          student: { role: 'STUDENT', isActive: true, protections: { none: {} } },
+        },
+        { OR: [{ guardian: { email: null } }, { student: { email: null } }] },
+      ]);
     });
 
     it('holds out a link where the pupil or the guardian has a protected identity, counts it, and names nobody it held out', async () => {
       // Three links the school has; the read that leaves the marked out answers one.
-      tx.guardianStudent.count.mockResolvedValue(3);
+      tx.guardianStudent.count.mockResolvedValueOnce(3).mockResolvedValueOnce(0);
       tx.guardianStudent.findMany.mockResolvedValue([link(GUARDIAN_ID, CHILD_A, 'gun@example.test', 'alva@example.test')]);
 
       const answer = await service.guardianExport(testUser({ channel: 'WEB' }));
 
       expect(answer.heldOut).toBe(2);
+      expect(answer.withoutAddress).toBe(0);
       expect(answer.rows).toHaveLength(1);
       // The count asks the same people without the marks: both ends of a link, each.
       expect(tx.guardianStudent.count).toHaveBeenCalledWith({

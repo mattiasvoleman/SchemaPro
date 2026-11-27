@@ -49,6 +49,13 @@ export interface SupabaseAdminConfig {
   serviceRoleKey?: string;
 }
 
+/** What the operator has said of the mail an invitation is (AUTH_SMTP, AUTH_EMAIL_LIMIT_PER_HOUR): the administrator's start page tells it. */
+export interface AuthMailConfig {
+  /** `custom`: the project sends through its own SMTP. `not-stated`: nobody has said, and Supabase's own sender lets two an hour through. */
+  smtp: 'custom' | 'not-stated';
+  perHour: number | null;
+}
+
 /** "Logga in med skolkonto": SCHOOL_ACCOUNTS=on. Off, no school-account row can be saved. */
 export interface SignInConfig {
   schoolAccounts: boolean;
@@ -170,6 +177,7 @@ export interface Configuration {
   aiEngine: AiEngineConfig;
   throttle: ThrottleConfig;
   supabase: SupabaseAdminConfig;
+  authMail: AuthMailConfig;
   publicViewer: PublicViewerConfig;
   signIn: SignInConfig;
   push: PushConfig;
@@ -228,6 +236,10 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     supabase: {
       url: env.SUPABASE_URL,
       serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
+    },
+    authMail: {
+      smtp: env.AUTH_SMTP === 'custom' ? 'custom' : 'not-stated',
+      perHour: env.AUTH_EMAIL_LIMIT_PER_HOUR && env.AUTH_EMAIL_LIMIT_PER_HOUR > 0 ? env.AUTH_EMAIL_LIMIT_PER_HOUR : null,
     },
     publicViewer: {
       proxyKey: env.PUBLIC_VIEWER_PROXY_KEY && env.PUBLIC_VIEWER_PROXY_KEY.length > 0 ? env.PUBLIC_VIEWER_PROXY_KEY : undefined,

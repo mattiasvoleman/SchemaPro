@@ -166,10 +166,11 @@ the API on `:4000` and the solver on `:8000`.
 
 ## Bootstrapping the first admin
 
-Migrations create the schema but no data. Create a `Schools` row, sign up a
-user through Supabase Auth, then insert a `Users` row with `role =
-'SCHOOL_ADMIN'` and `authId` set to the Supabase `auth.users.id`. From there,
-everything else happens in the web UI.
+Migrations create the schema but no data. `npm run operator:new-school`
+makes a school and its first administrator (a `Schools` row, a `Users` row with
+`role = 'SCHOOL_ADMIN'` and the Supabase login's `authId`, and the invitation
+mail), against the database the operator names and reading no `.env` file; see
+`docs/DEPLOYMENT.md` §7. From there, everything else happens in the web UI.
 
 ## Security model
 

@@ -1435,15 +1435,15 @@ describe("CsvImportDialog a file from Skola24", () => {
     expect(importButton()).toBeDisabled();
   });
 
-  it("applies the pupils' file by itself on its exact headers, and says what it cannot give: Rastra's import wants an e-mail", async () => {
+  it("applies the pupils' file by itself on its exact headers: it has no e-mail, and the pupils are made with no address and no login (Personer utan e-postadress)", async () => {
     const user = userEvent.setup();
     renderDialog({ kinds: ["students"] });
 
     await uploadCsv(user, "Personnummer\tEfternamn\tFörnamn\tKlass\r\n19000105-0001\tTestsson\tÅsa\t7A\r\n19000105-0002\tProvsson\tÖrjan\t7B\r\n");
     await screen.findByText(/^format\.recognised\(/);
-    expect(screen.getByText("format.gap(count=1|names=fields.students.email)")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "format.use" })).not.toBeInTheDocument();
-    expect(importButton()).toBeDisabled();
+    // An address is no longer something the file must give: the dialog does not name a gap, and says what the import will make.
+    expect(screen.queryByText(/^format\.gap\(/)).not.toBeInTheDocument();
+    expect(await screen.findByText("withoutAddress(count=2)")).toBeInTheDocument();
   });
 
   it("does not take a mobile number for a personnummer, and names the guardians' file's gap: the pupil is its personnummer, not an e-mail", async () => {
