@@ -5161,7 +5161,7 @@
       "level": "Lärarens högsta nivå vid heltid (timmar per läsår)",
       "levelHint": "Lämna tomt om förordningens högsta nivå ska gälla: {edge} h vid heltid för det här stadiet. Nivån kan ligga var som helst i spannet eller under det, och räknas om efter tjänstens omfattning.",
       "levelHintNoEdge": "Lämna tomt om förordningens högsta nivå ska gälla. Nivån kan ligga var som helst i spannet eller under det, och räknas om efter tjänstens omfattning.",
-      "levelOverStageEdge": "Nivån är över förordningens högsta nivå för lärarens stadium ({edge} h vid heltid). Den sparas ändå, eftersom lärarens stadier ändras med schemat, men räknas som högst {edge} h.",
+      "levelOverStageEdge": "Nivån är över förordningens högsta nivå för lärarens stadium ({edge} h vid heltid). Ligger den inom högsta nivån för något annat stadium sparas den ändå, eftersom lärarens stadier ändras med schemat, men den räknas som högst {edge} h. Ligger den över alla stadiers högsta nivå vägras den.",
       "exceptionLabel": "Undantag enligt 11 §",
       "exceptionNone": "Inget undantag",
       "exceptionOptionOWN_INITIATIVE": "På lärarens eget initiativ (11 § p. 1)",

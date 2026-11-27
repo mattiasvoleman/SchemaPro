@@ -5161,7 +5161,7 @@
       "level": "The teacher's highest level at full time (hours per school year)",
       "levelHint": "Leave empty for the ordinance's highest level to apply: {edge} h at full time for this stage. The level may lie anywhere in the span or under it, and is scaled by the size of the post.",
       "levelHintNoEdge": "Leave empty for the ordinance's highest level to apply. The level may lie anywhere in the span or under it, and is scaled by the size of the post.",
-      "levelOverStageEdge": "The level is above the ordinance's highest level for the teacher's stage ({edge} h at full time). It is saved all the same, because the teacher's stages change with the schedule, but it counts as {edge} h at the most.",
+      "levelOverStageEdge": "The level is above the ordinance's highest level for the teacher's stage ({edge} h at full time). If it is within the highest level of another stage it is saved all the same, because the teacher's stages change with the schedule, but it counts as {edge} h at the most. If it is above the highest level of every stage it is refused.",
       "exceptionLabel": "Exception under § 11",
       "exceptionNone": "No exception",
       "exceptionOptionOWN_INITIATIVE": "At the teacher's own initiative (§ 11 point 1)",
