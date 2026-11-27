@@ -385,7 +385,16 @@ export function isEngineCeilingBody(body: { message?: unknown; code?: unknown } 
  * The steps a generation solve says it was in when its ceiling fell: the engine's `TimeoutStageName`
  * (optimization-engine/app/schemas/schedule.py), the closed set the page has a sentence for.
  */
-export const ENGINE_STAGES: readonly string[] = ['PRECHECKS', 'BUILD', 'SITES', 'SEARCH_CLEAN', 'SEARCH_CLONE', 'PROBE'];
+export const ENGINE_STAGES: readonly string[] = [
+  'PRECHECKS',
+  'START',
+  'BUILD',
+  'SITES',
+  'SEARCH_CLEAN',
+  'YEARS',
+  'SEARCH_CLONE',
+  'PROBE',
+];
 
 /**
  * What an engine's ceiling 503 says of the solve it gave up on (omgång 13, M2), as the FLAT params of the

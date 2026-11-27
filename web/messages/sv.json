@@ -475,12 +475,16 @@
       "ROOMS": "Salar",
       "FRAME_TIMES": "Ramtider",
       "RASTS": "Raster",
+      "BREAKS": "Lov och studiedagar",
+      "LUNCH": "Lunch",
+      "SUPERVISION": "Rastvakt",
       "CLASSES": "Klasser",
       "TEACHING_GROUPS": "Undervisningsgrupper",
       "PEOPLE": "Personer",
       "TIMPLAN": "Lokal timplan",
       "REQUIREMENTS": "Timplansposter",
-      "STAFFING": "Tjänstefördelning"
+      "STAFFING": "Tjänstefördelning",
+      "SWITCHES": "Inställningar som är av"
     },
     "found": {
       "years": "{count, plural, one {# läsår} other {# läsår}}",
@@ -494,7 +498,13 @@
       "students": "{count, plural, one {# elev} other {# elever}}",
       "gradesWithTimplan": "{count, plural, one {# årskurs med lokal timplan} other {# årskurser med lokal timplan}}",
       "requirements": "{count, plural, one {# timplanspost} other {# timplansposter}}",
-      "posts": "{count, plural, one {# tjänst} other {# tjänster}}"
+      "posts": "{count, plural, one {# tjänst} other {# tjänster}}",
+      "roomTypes": "{count, plural, one {# salstyp} other {# salstyper}}",
+      "breaks": "{count, plural, one {# lov eller studiedag} other {# lov och studiedagar}}",
+      "lunchServings": "{count, plural, one {# lunchsittning} other {# lunchsittningar}}",
+      "supervisionAreas": "{count, plural, one {# rastvaktsområde} other {# rastvaktsområden}}",
+      "supervisionShifts": "{count, plural, one {# rastvaktspass} other {# rastvaktspass}}",
+      "switchesOn": "{count, plural, one {# av 4 är på} other {# av 4 är på}}"
     },
     "gaps": {
       "NO_YEAR": {
@@ -577,6 +587,38 @@
       "POSTS_WITHOUT_SIGNATURE": {
         "title": "{count, plural, one {# tjänst saknar} other {# tjänster saknar}} signatur",
         "hint": "Ett schema från Untis eller aSc hittar läraren på signatur eller e-postadress. Lägg in signaturerna innan du läser in ett schema."
+      },
+      "NO_ROOM_TYPES": {
+        "title": "Inga salstyper är inlagda",
+        "hint": "Ett ämne kan peka ut en salstyp (Gymnastiksal, Slöjdsal) så att motorn bara lägger det i en sal av den typen. Utan salstyper läggs ämnena i vilken sal som helst. En skola som startat för hand börjar utan dem."
+      },
+      "NO_BREAKS": {
+        "title": "Läsåret har inga lov eller studiedagar",
+        "hint": "Lov och studiedagar hoppas över när schemat publiceras. Utan dem publiceras lektioner också på höstlovet, jullovet och studiedagarna."
+      },
+      "LUNCH_OFF": {
+        "title": "Lunchen är av",
+        "hint": "Utan en lunchregel planerar motorn ingen måltid för klasserna och ger ingen lunchsittning. Fönstret, längden och matsalens platser läggs in under Tillgänglighet."
+      },
+      "NO_SUPERVISION": {
+        "title": "Ingen rastvakt är lagd i läsåret",
+        "hint": "Rastvaktsschemat är områdena skolan vaktar och vem som vaktar när. Det påverkar inte Generera: en lärares pass syns i hens schema."
+      },
+      "ABSENCE_WATCH_OFF": {
+        "title": "Frånvarobevakningen är av",
+        "hint": "Bevakningen räknar elevernas frånvaro mot skolans gränser och skickar sammanställningar till mentor, rektor, expedition och vårdnadshavare. Den är av tills skolan slår på den."
+      },
+      "ACK_OFF": {
+        "title": "Kvittens är av",
+        "hint": "Med kvittens ber en lärare vårdnadshavare bekräfta ett meddelande, och de som inte svarat får en påminnelse. Den är av tills skolan slår på den."
+      },
+      "VIEWER_OFF": {
+        "title": "Schemavisaren är av",
+        "hint": "Schemavisaren visar klassens, gruppens, lärarens eller salens schema för dem skolan väljer. Inget visas förrän skolan väljer vilka slag av schema som visas och vem som får titta."
+      },
+      "SICK_REPORT_OFF": {
+        "title": "Lärarnas egen sjukanmälan är av",
+        "hint": "En lärare kan inte sjukanmäla sig själv i appen: frånvaron läggs in av en administratör. Den slås på bland inställningarna under Lärarfrånvaro."
       }
     }
   },
@@ -1970,6 +2012,62 @@
     "loadFailed": "Listan över lov kunde inte hämtas.",
     "loadFailedHint": "Ingen lista visas, eftersom en tom lista skulle betyda att skolan inte har några lov alls. Byt läsår i väljaren ovan för att försöka igen.",
     "tableCaption": "Läsårets lov och studiedagar, tidigast först. Varje rad är en period då skolan inte undervisar, och timplansposternas timtal drar av den.",
+    "calendar": {
+      "open": "Skolans kalender",
+      "title": "Skolans kalender",
+      "description": "Röda dagar, förslag på lov och kommunens läsårstider för {year}. Du ser vad som läggs till innan något sparas, och inget som redan är inlagt tas bort.",
+      "sources": "Vad ska läggas till",
+      "holidays": "Röda dagar",
+      "holidaysHint": "{count, plural, =0 {Inga röda dagar} =1 {1 röd dag} other {# röda dagar}} som infaller en skoldag i läsåret, räknade från påsk och kalendern. Julafton, midsommarafton och nyårsafton är med, eftersom skolan är stängd de dagarna.",
+      "proposals": "Förslag på lov",
+      "proposalsHint": "Höstlov vecka {autumn}, jullov, sportlov vecka {spring} och påsklov. Förslagen följer samma regler som rullningen använder för nästa år. Din kommun kan ha en annan vecka för sportlovet: ändra den med kommunens fil.",
+      "file": "Kommunens läsårstider",
+      "fileHint": "En kalenderfil (.ics) eller en CSV med kolumnerna namn, start och slut, och gärna typ, från årskurs och till årskurs. Filen läses i din webbläsare och skickas inte någonstans förrän du sparar.",
+      "chooseFile": "Välj fil",
+      "changeFile": "Byt fil",
+      "removeFile": "Ta bort filen",
+      "fileRead": "{name} lästes som {format, select, ICS {kalenderfil} other {CSV}}: {count, plural, =0 {inga poster} =1 {1 post} other {# poster}}.",
+      "fileUnreadable": "Filen kunde inte läsas: {problem}",
+      "problemsTitle": "{count, plural, =1 {1 sak i filen kunde inte läsas} other {# saker i filen kunde inte läsas}}",
+      "problemsMore": "…och {count} till.",
+      "placeEvent": "Händelse {n}",
+      "placeRow": "Rad {n}",
+      "problem": {
+        "NOT_A_CALENDAR": "Filen heter .ics men är ingen kalenderfil.",
+        "NO_COLUMNS": "Filen har ingen kolumn för namn och start. Rubrikerna den har: {value}.",
+        "NO_EVENTS": "Filen har inga poster.",
+        "NO_NAME": "Posten har inget namn och hoppades över.",
+        "BAD_DATE": "”{value}” är inget datum (skriv ÅÅÅÅ-MM-DD) och posten hoppades över.",
+        "END_BEFORE_START": "{value} slutar före den börjar och hoppades över.",
+        "BAD_GRADES": "{value} har årskurser som inte går ihop (båda eller ingen, 0–12, från före till) och hoppades över.",
+        "RECURRING": "{value} återkommer och hoppades över: ett läsår är daterat och ett återkommande lov är en gissning.",
+        "CANCELLED": "{value} är inställd och hoppades över.",
+        "TOO_MANY": "Filen har {value} poster och de första 200 lästes."
+      },
+      "preview": "Förhandsvisning",
+      "previewCaption": "Det som läggs till, med vad var och en gör mot de lov som redan finns.",
+      "nothingChosen": "Välj något ovan, eller läs in en fil, så visas det här.",
+      "colTick": "Lägg till",
+      "colStatus": "Vad händer",
+      "status": {
+        "NEW": "Läggs till",
+        "SAME": "Finns redan",
+        "CHANGED": "Flyttas från {range}",
+        "COVERED": "Ligger inom {name}",
+        "OUTSIDE": "Utanför läsåret",
+        "WEEKEND": "Bara helg"
+      },
+      "termDate": "Ser ut som en terminsstart eller ett terminsslut, inte ett lov. Bocka för om det är ett.",
+      "overlaps": "Delar dagar med {names}.",
+      "onlyHere": "Finns hos skolan men inte i filen: {names}. De tas inte bort.",
+      "nothingToAdd": "Inget att lägga till: allt som visas finns redan eller ligger inom ett lov.",
+      "counting": "Räknar vad det tar bort…",
+      "countFailed": "Lektionerna kunde inte räknas. {count, plural, =1 {1 lov} other {# lov}} kan sparas ändå, och antalet borttagna lektioner visas efteråt.",
+      "willSave": "{count, plural, =1 {1 lov sparas} other {# lov sparas}}. {lessons, plural, =0 {Inga publicerade lektioner tas bort.} =1 {1 publicerad lektion tas bort ur kalendern.} other {# publicerade lektioner tas bort ur kalendern.}}",
+      "save": "{count, plural, =0 {Lägg till} =1 {Lägg till 1 lov} other {Lägg till # lov}}",
+      "saved": "{count, plural, =1 {1 lov sparades} other {# lov sparades}}.",
+      "savedNotice": "{created, plural, =0 {} =1 {1 lov lades till. } other {# lov lades till. }}{updated, plural, =0 {} =1 {1 lov flyttades. } other {# lov flyttades. }}{removed, plural, =0 {Inga publicerade lektioner behövde tas bort.} =1 {1 publicerad lektion togs bort ur kalendern.} other {# publicerade lektioner togs bort ur kalendern.}}"
+    },
     "credits": {
       "title": "Tillgodoräknad tid",
       "intro": "Skolans beslut att en dags aktivitet räknas som undervisningstid, till exempel att en friluftsdag räknas som 300 minuter idrott och hälsa för åk 7–9. Tiden räknas som genomförd i Täckning från dagen efter. En dag utan beslut här räknas inte.",
@@ -2095,7 +2193,7 @@
     "timeoutAccount": {
       "title": "Så gick tiden",
       "whereTitle": "Var tiden gick",
-      "stage": "{stage, select, PRECHECKS {Kontroller före sökningen} BUILD {Förberedelser av sökningen} SITES {Sökning med restid mellan skolområden} SEARCH_CLEAN {Första sökningen} SEARCH_CLONE {Andra sökningen} PROBE {Förklaringen av varför inget schema hittades} other {Ett steg}}: {seconds, number} s",
+      "stage": "{stage, select, PRECHECKS {Kontroller före sökningen} START {Läsningen av schemat veckan utgår från} BUILD {Förberedelser av sökningen} SITES {Sökning med restid mellan skolområden} SEARCH_CLEAN {Första sökningen} YEARS {Sökningen årskurs för årskurs} SEARCH_CLONE {Andra sökningen} PROBE {Förklaringen av varför inget schema hittades} other {Ett steg}}: {seconds, number} s",
       "otherSteps": "Steg som den här sidan inte har ord för: {seconds, number} s",
       "total": "Lösarens arbete tog {seconds, number} s.",
       "searchTitle": "Hur långt sökningen kom",
@@ -2124,7 +2222,7 @@
         "PROBE_CHANGED_WEEK": "Läs raderna under Upptäckta konflikter: de säger vad provet ändrade i veckan. Det är ingen regel att lätta, utan en ändring av underlaget.",
         "TIGHT_WEEK": "Frigör tid i de årskurserna: egen lärare per parallell grupp och block, eller vidga ramtiderna. En körning till på samma underlag ger samma besked.",
         "SHORT_CLOCK": "Kör igen: den här körningen fick kortare tid än motorn brukar ha. Upprepas det, hör av dig till den som driver tjänsten.",
-        "SLOW_SETUP": "Har ni ett tidigare schema: höj Schemastabilitet, så utgår motorn från det. Annars kan Bästa möjliga schema ge ett schema med avsteg.",
+        "SLOW_SETUP": "Kör igen. Upprepas det, hör av dig till den som driver tjänsten.",
         "NOTHING_FOUND": "Kör igen. Kontrollera veckan säger om veckan redan är för full innan du kör."
       },
       "technicalTitle": "Tekniska uppgifter",
@@ -5898,14 +5996,15 @@
       "volume": "Skiljer sig från {plan} i {count, plural, one {# ämne} other {# ämnen}}"
     },
     "volumeLine": "{subject}: {carried} min/vecka, timplanen {planned}",
-    "breaksHint": "Inga lov följer med om du inte bockar för dem. Datumen är förslag: jullovet flyttas hela veckor, påsklovet följer påsken och övriga behåller sitt veckonummer. Ändra dem om skolan har beslutat annat.",
+    "breaksHint": "Inga lov följer med om du inte bockar för dem. Datumen är förslag: jullovet flyttas hela veckor, påsklovet och de röda dagarna kring påsken (långfredag, Kristi himmelsfärd, pingst) följer påsken, en röd dag med fast datum behåller det (julafton och midsommarafton följer kalenderns dag), och övriga behåller sitt veckonummer. Ändra dem om skolan har beslutat annat.",
     "noBreaks": "Läsåret har inga lov eller studiedagar.",
     "breakThisYear": "I år {start} – {end}",
     "anchor": {
       "CHRISTMAS": "Förslag {start} – {end} (hela veckor, som julen)",
       "EASTER": "Förslag {start} – {end} (följer påsken)",
+      "FIXED_DATE": "Förslag {start} (följer kalendern)",
       "ISO_WEEK": "Förslag {start} – {end} (samma veckor)",
-      "NONE": "Inget förslag — veckan finns inte nästa år. Ange datumen."
+      "NONE": "Inget förslag — veckan finns inte nästa år, eller dagen är en lördag eller söndag. Ange datumen eller lämna lovet."
     },
     "breakStartFor": "Första dag för {name}",
     "breakEndFor": "Sista dag för {name}",
@@ -8574,7 +8673,7 @@
       "ENGINE_MEALS_INCONSISTENT": "Schemamotorn svarade med lunchtider som inte passar läsårets perioder, så ingenting skrevs. Försök igen, och hör av dig om det upprepas.",
       "ENGINE_TIMED_OUT": "Schemamotorn hann inte svara inom sin längsta väntetid, så inget schema sparades. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
       "ENGINE_TIMED_OUT_CEILING": "Schemamotorn hann inte svara inom sin längsta väntetid på {ceilingSeconds, number} s, så inget schema sparades. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
-      "ENGINE_TIMED_OUT_AT": "Schemamotorn hann inte svara inom sin längsta väntetid på {ceilingSeconds, number} s, så inget schema sparades. När tiden tog slut höll den på med {stage, select, PRECHECKS {kontrollerna före sökningen} BUILD {förberedelserna av sökningen} SITES {sökningen med restid mellan skolområden} SEARCH_CLEAN {den första sökningen efter ett schema} SEARCH_CLONE {den andra sökningen efter ett schema} PROBE {förklaringen av varför inget schema hittades} other {ett steg}}, som hade pågått i {stageSeconds, number} s av de {elapsedSeconds, number} s som körningen tagit. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
+      "ENGINE_TIMED_OUT_AT": "Schemamotorn hann inte svara inom sin längsta väntetid på {ceilingSeconds, number} s, så inget schema sparades. När tiden tog slut höll den på med {stage, select, PRECHECKS {kontrollerna före sökningen} START {läsningen av schemat veckan utgår från} BUILD {förberedelserna av sökningen} SITES {sökningen med restid mellan skolområden} SEARCH_CLEAN {den första sökningen efter ett schema} YEARS {sökningen årskurs för årskurs} SEARCH_CLONE {den andra sökningen efter ett schema} PROBE {förklaringen av varför inget schema hittades} other {ett steg}}, som hade pågått i {stageSeconds, number} s av de {elapsedSeconds, number} s som körningen tagit. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
       "ENGINE_WAIT_EXPIRED": "Tjänsten fick inget svar från schemamotorn inom sin väntetid, så inget schema sparades. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
       "ENGINE_WAIT_EXPIRED_AFTER": "Tjänsten väntade {waitSeconds, number} s på schemamotorn och fick inget svar, så inget schema sparades. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
       "ENGINE_WAIT_EXPIRED_SHORT": "Tjänsten väntade {waitSeconds, number} s på schemamotorn och fick inget svar, så inget schema sparades. Motorns egen gräns för en körning är {engineCeilingSeconds, number} s. Vad som hände syns inte härifrån: väntetiden kan vara för kort för en äldre motor, eller motorn eller nätet mellan tjänsten och motorn kan ha hängt sig. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen. Hör av dig till den som driver tjänsten.",
@@ -8643,6 +8742,7 @@
       "CANDIDATES_NONE_APPLICABLE": "Inget av förslagen gav ett schema som går att tillämpa.",
       "CANDIDATE_RUN_INTERRUPTED": "Tjänsten startades om medan förslagen togs fram. Ta fram dem igen.",
       "CANDIDATE_RUN_ABANDONED": "Förslagen slutade svara och har avbrutits. Ta fram dem igen.",
+      "DATABASE_BUSY": "Servern var upptagen när förslagen skulle sparas, så de blev inte klara. Ta fram dem igen om en stund.",
       "generic": "Förslagen kunde inte tas fram."
     },
     "refusal": {

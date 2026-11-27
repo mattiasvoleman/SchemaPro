@@ -199,6 +199,9 @@ const pupil = (id: string, studentGroupId: string) => ({
 
 beforeEach(() => {
   cleanup();
+  // The page writes the year it is on to the address (?year=, usePlanningYear.choose, G6b) and jsdom keeps the address from one test to the
+  // next: a test that chose next year would otherwise open the following one on it, and its "year the page no longer shows" would never arise.
+  window.history.replaceState(window.history.state, "", "/");
   apiGet.mockReset();
   apiPost.mockReset();
   apiPost.mockResolvedValue(OK_CHECK);

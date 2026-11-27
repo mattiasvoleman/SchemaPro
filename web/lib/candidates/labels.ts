@@ -117,6 +117,7 @@ export const RUN_ERROR_KEYS: Readonly<Record<string, string>> = {
   CANDIDATES_NONE_APPLICABLE: "runErrors.CANDIDATES_NONE_APPLICABLE",
   CANDIDATE_RUN_INTERRUPTED: "runErrors.CANDIDATE_RUN_INTERRUPTED",
   CANDIDATE_RUN_ABANDONED: "runErrors.CANDIDATE_RUN_ABANDONED",
+  DATABASE_BUSY: "runErrors.DATABASE_BUSY",
 };
 
 /** The half of next-intl's translator engineMessage needs (lib/engine-message.ts). */

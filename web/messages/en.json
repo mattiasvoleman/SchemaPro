@@ -475,12 +475,16 @@
       "ROOMS": "Rooms",
       "FRAME_TIMES": "Frame times",
       "RASTS": "Breaks",
+      "BREAKS": "Holidays and study days",
+      "LUNCH": "Lunch",
+      "SUPERVISION": "Break supervision",
       "CLASSES": "Classes",
       "TEACHING_GROUPS": "Teaching groups",
       "PEOPLE": "People",
       "TIMPLAN": "Local timplan",
       "REQUIREMENTS": "Curriculum entries",
-      "STAFFING": "Staffing"
+      "STAFFING": "Staffing",
+      "SWITCHES": "Settings that are off"
     },
     "found": {
       "years": "{count, plural, one {# school year} other {# school years}}",
@@ -494,7 +498,13 @@
       "students": "{count, plural, one {# pupil} other {# pupils}}",
       "gradesWithTimplan": "{count, plural, one {# year with a local timplan} other {# years with a local timplan}}",
       "requirements": "{count, plural, one {# curriculum entry} other {# curriculum entries}}",
-      "posts": "{count, plural, one {# post} other {# posts}}"
+      "posts": "{count, plural, one {# post} other {# posts}}",
+      "roomTypes": "{count, plural, one {# room type} other {# room types}}",
+      "breaks": "{count, plural, one {# holiday or study day} other {# holidays and study days}}",
+      "lunchServings": "{count, plural, one {# lunch sitting} other {# lunch sittings}}",
+      "supervisionAreas": "{count, plural, one {# supervision area} other {# supervision areas}}",
+      "supervisionShifts": "{count, plural, one {# supervision shift} other {# supervision shifts}}",
+      "switchesOn": "{count, plural, one {# of 4 is on} other {# of 4 are on}}"
     },
     "gaps": {
       "NO_YEAR": {
@@ -577,6 +587,38 @@
       "POSTS_WITHOUT_SIGNATURE": {
         "title": "{count, plural, one {# post has} other {# posts have}} no signature",
         "hint": "A schedule from Untis or aSc finds the teacher by signature or e-mail address. Add the signatures before you read a schedule in."
+      },
+      "NO_ROOM_TYPES": {
+        "title": "No room types are entered",
+        "hint": "A subject can name a room type (Gym, Slöjd room) so that the engine places it only in a room of that type. Without room types the subjects go in any room. A school started by hand begins with none."
+      },
+      "NO_BREAKS": {
+        "title": "The school year has no holidays or study days",
+        "hint": "Holidays and study days are skipped when the timetable is published. Without them lessons are published on the autumn break, the Christmas break and the study days too."
+      },
+      "LUNCH_OFF": {
+        "title": "Lunch is off",
+        "hint": "Without a lunch rule the engine plans no meal for the classes and makes no lunch sitting. The window, the length and the dining hall's seats are entered under Availability."
+      },
+      "NO_SUPERVISION": {
+        "title": "No break supervision is laid for the school year",
+        "hint": "The supervision schedule is the areas the school watches and who watches when. It does not affect Generate: a teacher's shifts show in their own timetable."
+      },
+      "ABSENCE_WATCH_OFF": {
+        "title": "Absence watch is off",
+        "hint": "The watch counts pupils' absence against the school's limits and sends summaries to the mentor, the principal, the office and the guardians. It is off until the school turns it on."
+      },
+      "ACK_OFF": {
+        "title": "Acknowledgement (kvittens) is off",
+        "hint": "With kvittens a teacher asks guardians to confirm a message, and those who have not answered get a reminder. It is off until the school turns it on."
+      },
+      "VIEWER_OFF": {
+        "title": "Schemavisaren is off",
+        "hint": "Schemavisaren shows a class's, a group's, a teacher's or a room's schedule to whom the school chooses. Nothing is shown until the school chooses which kinds of schedule are shown and who may look."
+      },
+      "SICK_REPORT_OFF": {
+        "title": "Teachers' own sick reporting is off",
+        "hint": "A teacher cannot report themselves sick in the app: an administrator enters the absence. It is turned on among the settings under Teacher absence."
       }
     }
   },
@@ -1970,6 +2012,62 @@
     "loadFailed": "The list of holidays could not be fetched.",
     "loadFailedHint": "No list is shown, because an empty one would mean the school has no holidays at all. Switch the year above to try again.",
     "tableCaption": "The academic year's holidays and staff days, earliest first. Each row is a period the school is not teaching, and the curriculum's hours deduct it.",
+    "calendar": {
+      "open": "School calendar",
+      "title": "School calendar",
+      "description": "Public holidays, proposed breaks and the municipality's term dates for {year}. You see what is added before anything is saved, and nothing already entered is removed.",
+      "sources": "What to add",
+      "holidays": "Public holidays",
+      "holidaysHint": "{count, plural, =0 {No public holidays} =1 {1 public holiday} other {# public holidays}} that fall on a school day this year, worked out from Easter and the calendar. Christmas Eve, Midsummer Eve and New Year's Eve are included, because the school is shut on them.",
+      "proposals": "Proposed breaks",
+      "proposalsHint": "Autumn break in week {autumn}, Christmas break, winter break in week {spring} and Easter break. The proposals follow the rules the rollover uses for next year. Your municipality may have another week for the winter break: change it with the municipality's file.",
+      "file": "The municipality's term dates",
+      "fileHint": "A calendar file (.ics) or a CSV with the columns name, start and end, and preferably type, from grade and to grade. The file is read in your browser and sent nowhere until you save.",
+      "chooseFile": "Choose file",
+      "changeFile": "Change file",
+      "removeFile": "Remove the file",
+      "fileRead": "{name} was read as {format, select, ICS {a calendar file} other {a CSV}}: {count, plural, =0 {no entries} =1 {1 entry} other {# entries}}.",
+      "fileUnreadable": "The file could not be read: {problem}",
+      "problemsTitle": "{count, plural, =1 {1 thing in the file could not be read} other {# things in the file could not be read}}",
+      "problemsMore": "…and {count} more.",
+      "placeEvent": "Event {n}",
+      "placeRow": "Row {n}",
+      "problem": {
+        "NOT_A_CALENDAR": "The file is named .ics but is not a calendar file.",
+        "NO_COLUMNS": "The file has no column for name and start. The headings it has: {value}.",
+        "NO_EVENTS": "The file has no entries.",
+        "NO_NAME": "The entry has no name and was skipped.",
+        "BAD_DATE": "“{value}” is not a date (write YYYY-MM-DD) and the entry was skipped.",
+        "END_BEFORE_START": "{value} ends before it starts and was skipped.",
+        "BAD_GRADES": "{value} has grades that do not fit (both or neither, 0–12, from before to) and was skipped.",
+        "RECURRING": "{value} recurs and was skipped: a school year is dated, and a recurring break is a guess.",
+        "CANCELLED": "{value} is cancelled and was skipped.",
+        "TOO_MANY": "The file has {value} entries and the first 200 were read."
+      },
+      "preview": "Preview",
+      "previewCaption": "What is added, with what each row does to the breaks that already exist.",
+      "nothingChosen": "Choose something above, or read in a file, and it shows here.",
+      "colTick": "Add",
+      "colStatus": "What happens",
+      "status": {
+        "NEW": "Added",
+        "SAME": "Already there",
+        "CHANGED": "Moved from {range}",
+        "COVERED": "Inside {name}",
+        "OUTSIDE": "Outside the school year",
+        "WEEKEND": "Weekend only"
+      },
+      "termDate": "Looks like the start or end of a term, not a break. Tick it if it is one.",
+      "overlaps": "Shares days with {names}.",
+      "onlyHere": "The school has these but the file does not: {names}. They are not removed.",
+      "nothingToAdd": "Nothing to add: everything shown is already there or inside a break.",
+      "counting": "Counting what it removes…",
+      "countFailed": "The lessons could not be counted. {count, plural, =1 {1 break} other {# breaks}} can be saved anyway, and the number of lessons removed is shown afterwards.",
+      "willSave": "{count, plural, =1 {1 break is saved} other {# breaks are saved}}. {lessons, plural, =0 {No published lessons are removed.} =1 {1 published lesson is removed from the calendar.} other {# published lessons are removed from the calendar.}}",
+      "save": "{count, plural, =0 {Add} =1 {Add 1 break} other {Add # breaks}}",
+      "saved": "{count, plural, =1 {1 break was saved} other {# breaks were saved}}.",
+      "savedNotice": "{created, plural, =0 {} =1 {1 break was added. } other {# breaks were added. }}{updated, plural, =0 {} =1 {1 break was moved. } other {# breaks were moved. }}{removed, plural, =0 {No published lessons needed removing.} =1 {1 published lesson was removed from the calendar.} other {# published lessons were removed from the calendar.}}"
+    },
     "credits": {
       "title": "Credited teaching time",
       "intro": "The school's decision that a day's activity counts as teaching time, for instance that an outdoor day counts as 300 minutes of physical education for years 7–9. The time counts as delivered in Coverage from the day after. A day with no decision here does not count.",
@@ -2095,7 +2193,7 @@
     "timeoutAccount": {
       "title": "How the time went",
       "whereTitle": "Where the time went",
-      "stage": "{stage, select, PRECHECKS {The checks before the search} BUILD {Preparing the search} SITES {The search that counts travel time between sites} SEARCH_CLEAN {The first search} SEARCH_CLONE {The second search} PROBE {The explanation of why no timetable was found} other {A step}}: {seconds, number} s",
+      "stage": "{stage, select, PRECHECKS {The checks before the search} START {Reading the schedule the week starts from} BUILD {Preparing the search} SITES {The search that counts travel time between sites} SEARCH_CLEAN {The first search} YEARS {The search grade by grade} SEARCH_CLONE {The second search} PROBE {The explanation of why no timetable was found} other {A step}}: {seconds, number} s",
       "otherSteps": "Steps this page has no words for: {seconds, number} s",
       "total": "The solver's work took {seconds, number} s.",
       "searchTitle": "How far the search got",
@@ -2124,7 +2222,7 @@
         "PROBE_CHANGED_WEEK": "Read the rows under Detected conflicts: they say what the probe changed in the week. It is not a rule to relax but a change to the basis.",
         "TIGHT_WEEK": "Free time in those years: a teacher of their own for each parallel group and block, or widen the frame times. Another run on the same basis gives the same answer.",
         "SHORT_CLOCK": "Run again: this run was given less time than the engine usually has. If it repeats, contact whoever runs the service.",
-        "SLOW_SETUP": "If you have an earlier timetable, raise Schedule stability so the engine starts from it. Otherwise Best possible timetable can give a timetable with deviations.",
+        "SLOW_SETUP": "Run again. If it repeats, contact whoever runs the service.",
         "NOTHING_FOUND": "Run again. Check the week says whether the week is already too full before you run."
       },
       "technicalTitle": "Technical details",
@@ -5898,14 +5996,15 @@
       "volume": "Differs from {plan} in {count, plural, one {# subject} other {# subjects}}"
     },
     "volumeLine": "{subject}: {carried} min/week, timplan {planned}",
-    "breaksHint": "No holidays are carried over unless you tick them. The dates are proposals: Christmas moves by whole weeks, Easter follows Easter and the rest keep their week numbers. Change them if the school has decided otherwise.",
+    "breaksHint": "No holidays are carried over unless you tick them. The dates are proposals: Christmas moves by whole weeks, the Easter break and the public holidays around Easter (Good Friday, Ascension Day, Whitsun) follow Easter, a public holiday with a fixed date keeps it (Christmas Eve and Midsummer Eve follow the calendar's day), and the rest keep their week numbers. Change them if the school has decided otherwise.",
     "noBreaks": "The year has no holidays or staff days.",
     "breakThisYear": "This year {start} – {end}",
     "anchor": {
       "CHRISTMAS": "Proposed {start} – {end} (whole weeks, like Christmas)",
       "EASTER": "Proposed {start} – {end} (follows Easter)",
+      "FIXED_DATE": "Proposed {start} (follows the calendar)",
       "ISO_WEEK": "Proposed {start} – {end} (same weeks)",
-      "NONE": "No proposal — the week does not exist next year. Enter the dates."
+      "NONE": "No proposal — the week does not exist next year, or the day is a Saturday or Sunday. Enter the dates or leave the break."
     },
     "breakStartFor": "First day of {name}",
     "breakEndFor": "Last day of {name}",
@@ -8574,7 +8673,7 @@
       "ENGINE_MEALS_INCONSISTENT": "The timetable engine answered with lunch times that do not fit the periods of the school year, so nothing was written. Try again, and get in touch if it keeps happening.",
       "ENGINE_TIMED_OUT": "The scheduling engine did not answer within its longest wait, so no timetable was saved. It may go on working in the background for a while, so wait a few minutes before you run Generate again.",
       "ENGINE_TIMED_OUT_CEILING": "The scheduling engine did not answer within its longest wait of {ceilingSeconds, number} s, so no timetable was saved. It may go on working in the background for a while, so wait a few minutes before you run Generate again.",
-      "ENGINE_TIMED_OUT_AT": "The scheduling engine did not answer within its longest wait of {ceilingSeconds, number} s, so no timetable was saved. When the time ran out it was busy with {stage, select, PRECHECKS {the checks before the search} BUILD {the preparation of the search} SITES {the search that counts the travel time between sites} SEARCH_CLEAN {the first search for a timetable} SEARCH_CLONE {the second search for a timetable} PROBE {the explanation of why no timetable was found} other {a step}}, which had gone on for {stageSeconds, number} s of the {elapsedSeconds, number} s the run had taken. It may go on working in the background for a while, so wait a few minutes before you run Generate again.",
+      "ENGINE_TIMED_OUT_AT": "The scheduling engine did not answer within its longest wait of {ceilingSeconds, number} s, so no timetable was saved. When the time ran out it was busy with {stage, select, PRECHECKS {the checks before the search} START {the reading of the schedule the week starts from} BUILD {the preparation of the search} SITES {the search that counts the travel time between sites} SEARCH_CLEAN {the first search for a timetable} YEARS {the search grade by grade} SEARCH_CLONE {the second search for a timetable} PROBE {the explanation of why no timetable was found} other {a step}}, which had gone on for {stageSeconds, number} s of the {elapsedSeconds, number} s the run had taken. It may go on working in the background for a while, so wait a few minutes before you run Generate again.",
       "ENGINE_WAIT_EXPIRED": "The service got no answer from the scheduling engine within its wait, so no timetable was saved. The engine may go on working in the background for a while, so wait a few minutes before you run Generate again.",
       "ENGINE_WAIT_EXPIRED_AFTER": "The service waited {waitSeconds, number} s for the scheduling engine and got no answer, so no timetable was saved. The engine may go on working in the background for a while, so wait a few minutes before you run Generate again.",
       "ENGINE_WAIT_EXPIRED_SHORT": "The service waited {waitSeconds, number} s for the scheduling engine and got no answer, so no timetable was saved. The engine's own limit for a run is {engineCeilingSeconds, number} s. What happened cannot be told from here: the wait may be too short for an older engine, or the engine, or the network between the service and the engine, may have hung. The engine may go on working in the background for a while, so wait a few minutes before you run Generate again. Contact whoever runs the service.",
@@ -8643,6 +8742,7 @@
       "CANDIDATES_NONE_APPLICABLE": "None of the proposals produced a timetable that can be applied.",
       "CANDIDATE_RUN_INTERRUPTED": "The service restarted while the proposals were being computed. Compute them again.",
       "CANDIDATE_RUN_ABANDONED": "The proposals stopped responding and have been cancelled. Compute them again.",
+      "DATABASE_BUSY": "The server was busy when the proposals were to be saved, so they were not finished. Compute them again in a moment.",
       "generic": "The proposals could not be computed."
     },
     "refusal": {

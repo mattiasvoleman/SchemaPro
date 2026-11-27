@@ -215,3 +215,12 @@ describe("a gap a newer gateway has", () => {
     expect(rooms.getByText("intake.foundHeading: intake.found.rooms(4)")).toBeTruthy();
   });
 });
+
+describe("an area a newer gateway has", () => {
+  it("is a card named by its code and not by a message key the build lacks", () => {
+    state.query = { ...state.query, data: view([area("AN_AREA_WITH_A_GAP_FROM_NEXT_YEAR", {}, [])]) };
+    render(<IntakePage />);
+    expect(screen.getByRole("region", { name: "AN_AREA_WITH_A_GAP_FROM_NEXT_YEAR" })).toBeTruthy();
+    expect(screen.queryByText(/intake\.areas\./)).toBeNull();
+  });
+});

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import BreaksPage from "./page";
@@ -225,6 +225,17 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
     update: { mutateAsync: updateMock, isPending: false },
     remove: { mutateAsync: removeMock, isPending: false },
   }),
+}));
+
+/** The calendar dialog's two hooks: the count it asks for before a save, and the save itself. */
+const calendar = vi.hoisted(() => ({ apply: vi.fn() }));
+vi.mock("@/lib/school-calendar-queries", () => ({
+  useSchoolCalendarCount: () => ({
+    data: { dryRun: true, created: 8, updated: 0, unchanged: 0, removedCalendarLessons: 3, items: [] },
+    isPending: false,
+    isError: false,
+  }),
+  useApplySchoolCalendar: () => ({ mutateAsync: calendar.apply, isPending: false }),
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -988,4 +999,40 @@ describe("Lov och tillgodoräknad tid under Läsbehörighet", () => {
     expect(writes(screen.getByRole("button", { name: "deleteNamed(Friluftsdag)" }))).toBe("DRIFT");
     expect(writes(screen.getByRole("combobox", { name: "yearLabel" }))).toBeUndefined();
   });
+});
+
+describe("Skolans kalender", () => {
+  beforeEach(() => {
+    state = freshState();
+    calendar.apply.mockReset();
+  });
+
+  it("is offered beside Lägg till lov, and opens the dialog for the year on the page", async () => {
+    const user = userEvent.setup();
+    render(<BreaksPage />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "calendar.open" }));
+    // The chunk is fetched on this first open.
+    const dialog = await screen.findByRole("dialog", {}, { timeout: 10_000 });
+    expect(within(dialog).getByText("title")).toBeInTheDocument();
+    // The year the page shows, by name, in the description.
+    expect(within(dialog).getByText("description(2026/2027)")).toBeInTheDocument();
+  }, 20_000);
+
+  it("is what a year with no lov is offered, in the place of the empty list", () => {
+    state = { ...freshState(), breaks: loaded<BreakFixture[]>([]) };
+    render(<BreaksPage />);
+    // One in the header, one where the list would be.
+    expect(screen.getAllByRole("button", { name: "calendar.open" })).toHaveLength(2);
+  });
+
+  it("says in the live region how many lov were made and moved and how many lessons that took, from the answer", async () => {
+    const user = userEvent.setup();
+    calendar.apply.mockResolvedValue({ dryRun: false, created: 6, updated: 1, unchanged: 1, removedCalendarLessons: 42, items: [] });
+    render(<BreaksPage />);
+    await user.click(screen.getByRole("button", { name: "calendar.open" }));
+    const dialog = await screen.findByRole("dialog", {}, { timeout: 10_000 });
+    await user.click(await within(dialog).findByRole("button", { name: /^save/ }));
+    await waitFor(() => expect(notice()).toHaveTextContent("calendar.savedNotice(6|1|42)"));
+  }, 20_000);
 });
