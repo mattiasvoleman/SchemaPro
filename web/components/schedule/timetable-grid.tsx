@@ -326,6 +326,8 @@ interface GhostState {
   startMinutes: number;
   endMinutes: number;
   valid: boolean;
+  /** The room the board paints the square free in, when it is not the lesson's own (possible-layer.tsx makes the ghost valid then). */
+  roomId?: string | null;
 }
 
 function snap(minutes: number, step: number): number {
@@ -1046,6 +1048,7 @@ function TimetableGridInner({
           dayOfWeek: currentGhost.dayOfWeek,
           startMinutes: currentGhost.startMinutes,
           endMinutes: currentGhost.endMinutes,
+          ...(currentGhost.roomId !== undefined && { roomId: currentGhost.roomId }),
         });
       }
     },
@@ -1669,7 +1672,7 @@ function TimetableGridInner({
         }}
       />
     ) : null}
-    {possible && holding ? <possible.PossibleHold lessonId={holding} /> : null}
+    {possible && holding ? <possible.PossibleHold lessonId={holding} ghost={ghostCell} /> : null}
     {possible && holding && !narrow ? <possible.PossibleList /> : null}
     </>
   );

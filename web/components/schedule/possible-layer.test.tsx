@@ -33,6 +33,93 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** The grid's ghost, as the layer sees it: a value outside React that tells when it changed. */
+function ghostCell(initial: { dayOfWeek: number; startMinutes: number; endMinutes: number; valid: boolean; roomId?: string | null } | null) {
+  type Ghost = NonNullable<typeof initial>;
+  let value = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set: (next: Ghost | null) => {
+      if (Object.is(next, value)) return;
+      value = next;
+      for (const listener of [...listeners]) listener();
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+describe("the ghost over a square the board paints free in another room", () => {
+  // The fixture's lesson "a" is an hour long; Wednesday 10:00 to 11:00 starts are free in room r2 only.
+  const red = (dayOfWeek: number, startMinutes: number, minutes = 60) => ({ dayOfWeek, startMinutes, endMinutes: startMinutes + minutes, valid: false });
+
+  it("is made valid, with the room, once the answer is there", () => {
+    const ghost = ghostCell(red(3, 630));
+    act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
+    render(<PossibleHold lessonId="a" ghost={ghost} />);
+    expect(ghost.get()).toEqual({ ...red(3, 630), valid: true, roomId: "r2" });
+  });
+
+  it("is made valid when the answer comes after the ghost was put over the square, and when the ghost is put over it after the answer", async () => {
+    vi.useFakeTimers();
+    post.mockResolvedValue(TIMES);
+    const ghost = ghostCell(red(3, 630));
+    render(<PossibleHold lessonId="a" ghost={ghost} />);
+    expect(ghost.get()!.valid).toBe(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(HOLD_BEFORE_ASKING_MS);
+    });
+    expect(ghost.get()).toMatchObject({ valid: true, roomId: "r2" });
+    // A pointer that moves on gives the ghost a verdict of its own, and a red one over another square of the stretch is made valid too.
+    act(() => ghost.set(red(3, 600)));
+    expect(ghost.get()).toMatchObject({ startMinutes: 600, valid: true, roomId: "r2" });
+  });
+
+  it("is left red over every other square: a lesson in the way, a stretch a rule shuts, a square that has no answer, and a time the lesson cannot be", () => {
+    for (const [name, square] of [
+      ["in the way", red(1, 555)],
+      ["shut by a rule", red(2, 585)],
+      ["no answer", red(5, 480)],
+      // A lesson made longer or shorter than it is: the gateway judged the starts of the lesson's own length.
+      ["another length", red(3, 630, 90)],
+    ] as const) {
+      // The layer empties the store when it goes (the lesson is let go), so the answer is put in it for each of them.
+      act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
+      const ghost = ghostCell(square);
+      render(<PossibleHold lessonId="a" ghost={ghost} />);
+      expect(ghost.get(), name).toEqual(square);
+      cleanup();
+    }
+  });
+
+  it("leaves a ghost that is valid as it is, and one over the answer of another lesson", () => {
+    act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
+    const valid = ghostCell({ ...red(3, 630), valid: true });
+    render(<PossibleHold lessonId="a" ghost={valid} />);
+    expect(valid.get()).toEqual({ ...red(3, 630), valid: true });
+    cleanup();
+    // The answer in the store is for "a": the lesson in hand is another, and has none yet.
+    act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
+    const other = ghostCell(red(3, 630));
+    render(<PossibleHold lessonId="z" ghost={other} />);
+    expect(other.get()).toEqual(red(3, 630));
+  });
+
+  it("stops following the ghost and the answer when the lesson is let go", () => {
+    const ghost = ghostCell(null);
+    const view = render(<PossibleHold lessonId="a" ghost={ghost} />);
+    view.unmount();
+    act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
+    act(() => ghost.set(red(3, 630)));
+    expect(ghost.get()).toEqual(red(3, 630));
+  });
+});
+
 describe("the painted day", () => {
   it("paints nothing until the gateway has answered, and nothing for a lesson that has no answer", () => {
     const { container } = day(1);

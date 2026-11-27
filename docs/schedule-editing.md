@@ -6,6 +6,7 @@ Implemented feature set (Tiers 1–3 of the flexibility roadmap).
 
 - **Drag & drop** — drag a lesson to move it (5-min snap), drag its bottom edge to resize. The ghost turns green/red live based on the client conflict engine; invalid drops are never saved.
 - **Smart suggestions** — dropping on an occupied slot opens the nearest conflict-free slots, ranked by distance; click one to apply.
+- **A stretch painted "Ledigt, annan sal" is laid with the mouse too** — while a lesson is dragged the board paints where it can stand; over a square of a stretch that is free only in another room the ghost turns valid and carries that room (`PossibleHold` follows the ghost and the answer, `web/components/schedule/possible-layer.tsx`), and the drop moves the lesson there with `roomId`, as Enter does. Only a move of the lesson's own length: a resize is not a start the gateway judged.
 - **Click empty slot / "Add lesson"** — manually create lessons (`POST /api/v1/master-lessons`); delete and duplicate from the lesson editor (`DELETE /api/v1/master-lessons/:id`).
 - **Locking** — lock toggle per lesson (manual creates default to locked). Locked lessons survive regeneration: the gateway subtracts them from the requirement demand and sends them to the solver as `fixedLessons` (hard blockers by teacher/group/room). Regeneration now deletes **unlocked lessons only**.
 - **Undo/redo** — Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z (or Ctrl+Y) plus toolbar buttons; every step replays through the gateway so validation and audit still apply.

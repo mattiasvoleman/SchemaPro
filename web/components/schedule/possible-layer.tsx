@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { boardCommands, possibleStore } from "@/lib/possible-store";
-import { askPossibleTimes, clockOf, costWords, type PossibleRun } from "@/lib/possible-times";
+import { askPossibleTimes, clockOf, costWords, roomAt, type PossibleRun } from "@/lib/possible-times";
 
 /*
  * THE BOARD PAINTS WHERE THE LESSON IN HAND CAN STAND (E3, "Se").
@@ -25,7 +25,37 @@ import { askPossibleTimes, clockOf, costWords, type PossibleRun } from "@/lib/po
 /** How long a lesson is held before the gateway is asked: a click presses and lets go at once, and asks nothing. */
 export const HOLD_BEFORE_ASKING_MS = 150;
 
-export function PossibleHold({ lessonId }: { lessonId: string }) {
+/** The grid's ghost: the square the lesson in hand is over (or the marker is on), and whether the page lets it stand there. */
+interface GhostCell {
+  get: () => { dayOfWeek: number; startMinutes: number; endMinutes: number; valid: boolean; roomId?: string | null } | null;
+  set: (next: { dayOfWeek: number; startMinutes: number; endMinutes: number; valid: boolean; roomId?: string | null }) => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+export function PossibleHold({ lessonId, ghost }: { lessonId: string; ghost?: GhostCell }) {
+  /*
+   * A square the board paints "Ledigt, annan sal" is one the lesson can be laid on, in the room the gateway judged: the page's own check
+   * (the grid's validateChange) knows only the lesson's own room, which is taken, and would paint the ghost red and send the drop to the
+   * suggestions. So where the ghost is over such a square it is made valid and carries the room, which the drop hands on with the move,
+   * the way Enter does (board-keys.tsx). Done here, in the layer, and not in the grid: the grid is the route's own bytes, and this is
+   * fetched when a lesson is first taken up. Followed on the ghost AND on the answer: the answer comes a fraction of a second after the lesson
+   * is taken, and a pointer at rest on a square when it comes has not moved to give the ghost a new verdict (granskaren g503, #507 M-1).
+   */
+  useEffect(() => {
+    if (!ghost) return;
+    const lay = () => {
+      const held = ghost.get();
+      const state = possibleStore.get();
+      if (!held || held.valid || state?.lessonId !== lessonId || state.status !== "done") return;
+      // A move of the lesson's own length: the gateway judged each start for that, and a lesson made longer or shorter is not one it judged.
+      if (held.endMinutes - held.startMinutes !== state.times.subject.minutes) return;
+      const room = roomAt(state.times, lessonId, held.dayOfWeek, held.startMinutes);
+      if (room !== undefined) ghost.set({ ...held, valid: true, roomId: room });
+    };
+    lay();
+    const stops = [ghost.subscribe(lay), possibleStore.subscribe(lay)];
+    return () => stops.forEach((stop) => stop());
+  }, [ghost, lessonId]);
   useEffect(() => {
     const asking = new AbortController();
     const timer = setTimeout(() => {
