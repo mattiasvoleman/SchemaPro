@@ -150,7 +150,9 @@ class TestTheDescent:
         (change,), spent = _run(oracle, [_cap(5, 100_000)])
 
         assert spent == MAX_REFINEMENTS == len(oracle.asked)
-        assert change.needed is not None and change.needed < 100_000 and change.needed_is_least is None
+        assert change.needed is not None and change.needed < 100_000
+        # It was lowered and then the checks ran out: tried and not finished, which is `False`. `None` says it was not tried (the schema's own words).
+        assert change.needed_is_least is False
 
     def test_a_check_that_is_not_decided_ends_that_changes_descent_and_not_the_next_ones(self, monkeypatch: pytest.MonkeyPatch) -> None:
         asked: list[tuple[int | None, int | None]] = []

@@ -565,7 +565,8 @@ def refine(
         lowest = change.needed if good < 0 else values[good]
         current[index] = change.model_copy(update={
             "needed": lowest,
-            "needed_is_least": (True if proved and bad == good + 1 else False if bad is not None else None),
+            # None is "not tried": a change that was lowered and then ran out of checks was tried (g493), and says so.
+            "needed_is_least": (True if proved and bad == good + 1 else False if bad is not None or good >= 0 else None),
         })
     return [change for position, change in enumerate(current) if position not in dropped], spent
 
