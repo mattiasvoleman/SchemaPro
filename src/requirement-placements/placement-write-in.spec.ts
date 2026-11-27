@@ -236,6 +236,33 @@ describe('planWriteIn', () => {
     });
   });
 
+  describe('a pair: the odd weeks and the even weeks of one post at one slot (granskaren g505, M-1)', () => {
+    const oddRow = row({ id: 'odd', recurrence: 'ODD_WEEKS', roomId: ROOM });
+    const evenRow = row({ id: 'even', recurrence: 'EVEN_WEEKS', roomId: OLD_ROOM });
+    const oddOld = (id: string) => lesson({ id, recurrence: 'ODD_WEEKS', roomId: ROOM });
+    const evenOld = (id: string) => lesson({ id, recurrence: 'EVEN_WEEKS', roomId: OLD_ROOM });
+
+    // The even half stops holding: it is named and left, and the lesson that answers it stays. Whichever of the two old lessons comes first,
+    // the odd half's lesson is what the odd row writes (nothing to do) and the even half's lesson is untouched.
+    it.each([
+      ['the odd lesson first', [oddOld('a-odd'), evenOld('b-even')]],
+      ['the even lesson first', [evenOld('a-even'), oddOld('b-odd')]],
+    ])('leaves the even half\'s lesson and writes the odd half no second time, %s', (_label, existing) => {
+      const plan = planWriteIn(input({ rows: [oddRow, evenRow], verdicts: [ok(0), refused(1)], existing }));
+      expect(plan.notWritten.map((entry) => [entry.rowId, entry.reason])).toEqual([['even', 'REFUSED']]);
+      expect(plan.creates).toEqual([]);
+      expect(plan.deleteIds).toEqual([]);
+    });
+
+    it('replaces only the half whose row moved: the other half\'s lesson is the same lesson', () => {
+      const moved = row({ id: 'odd', recurrence: 'ODD_WEEKS', roomId: ROOM, dayOfWeek: 2 });
+      const plan = planWriteIn(input({ rows: [moved, evenRow], verdicts: [ok(0), ok(1)], existing: [evenOld('a-even'), oddOld('b-odd')] }));
+      expect(plan.deleteIds).toEqual(['b-odd']);
+      expect(plan.creates).toHaveLength(1);
+      expect(plan.creates[0]).toMatchObject({ recurrence: 'ODD_WEEKS', dayOfWeek: 2 });
+    });
+  });
+
   it('writes nothing and replaces nothing for a year with no förläggning', () => {
     const plan = planWriteIn(input({ rows: [], verdicts: [] }));
     expect(plan).toEqual({ creates: [], deleteIds: [], notWritten: [], postsWritten: 0 });

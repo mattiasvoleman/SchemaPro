@@ -21,7 +21,7 @@ import type { PlacementParams, PlacementVerdict } from './placement-judge';
  * WHAT IT REPLACES. The lessons an earlier run wrote from förläggningar (fromPlacement) of a post the bridge writes for, as Generera deletes them
  * before it writes its own, so that a row moved since is not written beside the lesson it was. A lesson that answers a row the bridge does not
  * write (its room was the engine's choice, or the row has stopped holding) stays: the bridge would take away what only the engine can put back.
- * It is told apart from the rest by what a row says of it, time by time (a row has no id on its lesson). A post the bridge writes nothing for is not
+ * It is told apart from the rest by what a row says of it, time by time and in which weeks (a row has no id on its lesson). A post the bridge writes nothing for is not
  * touched at all. A lesson that is exactly what a row would write (the same teachers, room, clock and weeks) is left where it is and its row writes
  * no copy, so that a second write over the same rows changes nothing: no new ids, nothing in the calendar swept.
  */
@@ -82,9 +82,24 @@ export interface WriteInPlan {
 
 const minutesOf = (time: Date): number => time.getUTCHours() * 60 + time.getUTCMinutes();
 
-/** A lesson or a row by what time by time says of it: class, subject, day, start and length. */
-const slotKey = (studentGroupId: string, subjectId: string, dayOfWeek: number, startMinutes: number, minutes: number): string =>
-  `${studentGroupId}|${subjectId}|${dayOfWeek}|${startMinutes}|${minutes}`;
+const dayOf = (value: Date | null): string => (value === null ? '' : value.toISOString().slice(0, 10));
+
+/**
+ * A lesson or a row by what time by time says of it: class, subject, day, start and length, AND the weeks it runs in (odd or even, the post's
+ * window). The weeks are in the key because a pair is one post's two rows at one slot, odd weeks and even weeks: without them the two halves
+ * are one key, and a half left (its row no longer holds) keeps whichever old lesson comes first by id, which may be the half the write rewrites
+ * (granskaren g505, M-1 of #508): that half is then written twice and the half left is deleted.
+ */
+const slotKey = (
+  studentGroupId: string,
+  subjectId: string,
+  dayOfWeek: number,
+  startMinutes: number,
+  minutes: number,
+  recurrence: LessonRecurrence,
+  startDate: Date | null,
+  endDate: Date | null,
+): string => `${studentGroupId}|${subjectId}|${dayOfWeek}|${startMinutes}|${minutes}|${recurrence}|${dayOf(startDate)}|${dayOf(endDate)}`;
 
 export function planWriteIn(input: WriteInInput): WriteInPlan {
   const written: PlacementRead[] = [];
@@ -94,7 +109,7 @@ export function planWriteIn(input: WriteInInput): WriteInPlan {
   const leave = (row: PlacementRead): void => {
     const post = input.posts.get(row.requirementId);
     if (!post) return;
-    const key = slotKey(post.studentGroupId, post.subjectId, row.dayOfWeek, minutesOf(row.startTime), row.minutes);
+    const key = slotKey(post.studentGroupId, post.subjectId, row.dayOfWeek, minutesOf(row.startTime), row.minutes, row.recurrence, post.startDate, post.endDate);
     leftSlots.set(key, (leftSlots.get(key) ?? 0) + 1);
   };
 
@@ -127,7 +142,16 @@ export function planWriteIn(input: WriteInInput): WriteInPlan {
   const deleteIds: string[] = [];
   for (const lesson of input.existing) {
     if (!writtenPosts.has(`${lesson.studentGroupId}|${lesson.subjectId}`)) continue;
-    const key = slotKey(lesson.studentGroupId, lesson.subjectId, lesson.dayOfWeek, minutesOf(lesson.startTime), minutesOf(lesson.endTime) - minutesOf(lesson.startTime));
+    const key = slotKey(
+      lesson.studentGroupId,
+      lesson.subjectId,
+      lesson.dayOfWeek,
+      minutesOf(lesson.startTime),
+      minutesOf(lesson.endTime) - minutesOf(lesson.startTime),
+      lesson.recurrence,
+      lesson.startDate,
+      lesson.endDate,
+    );
     const kept = leftSlots.get(key) ?? 0;
     if (kept > 0) {
       leftSlots.set(key, kept - 1);

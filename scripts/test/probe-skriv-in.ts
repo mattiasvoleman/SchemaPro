@@ -202,6 +202,38 @@ export async function skrivInChecks(owner: Client, api: PrismaService, check: Ch
       const freed = await bridge.write(a.year, a.caller);
       assert.equal(freed.lessonsReplaced, 0, 'a lesson whose post has no row left is not the bridge\'s to take: the next Generera replaces it');
     });
+
+    await check('(si-e) a pair whose even half stops holding: the odd half is written once and the even half\'s lesson stays, whatever the order of the ids (granskaren g505, M-1)', async () => {
+      await owner.query(`DELETE FROM "MasterLessons" WHERE "academicYearId" = $1 AND "fromPlacement"`, [a.year]);
+      await owner.query(`DELETE FROM "TeachingRequirementPlacements" WHERE "schoolId" = $1`, [a.school]);
+      const pPair = await post('7B', 'Matematik', 'T1', 1, 60);
+      // One statement: the database refuses a lone half (FP409 PAIRS).
+      await owner.query(
+        `INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt")
+         VALUES ($1, $2, 5, '13:00', 60, $3, 'ODD_WEEKS'::"LessonRecurrence", now()), ($1, $2, 5, '13:00', 60, $4, 'EVEN_WEEKS'::"LessonRecurrence", now())`,
+        [a.school, pPair, R1, R2],
+      );
+      const lessonOf = async (id: string, recurrence: string, room: string) =>
+        owner.query(
+          `INSERT INTO "MasterLessons" (id, "schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "roomId", "dayOfWeek", "startTime", "endTime", "isLocked", "isGenerated", "fromPlacement", recurrence, "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 5, '13:00', '14:00', true, true, true, $8::"LessonRecurrence", now())`,
+          [id, a.school, a.year, a.subjectId.get('Matematik'), a.classId.get('7B'), a.teacherId.get('T1'), room, recurrence],
+        );
+      // The odd half's lesson sorts first by id: the order that made the write keep the wrong one.
+      await lessonOf('00000000-0000-4000-8000-0000000000e1', 'ODD_WEEKS', R1);
+      await lessonOf('00000000-0000-4000-8000-0000000000e2', 'EVEN_WEEKS', R2);
+      // The even half stops holding: the same teacher has a lesson of the school's own at that hour in the even weeks.
+      await owner.query(
+        `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "isLocked", "isGenerated", recurrence, "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, 5, '13:00', '14:00', true, false, 'EVEN_WEEKS'::"LessonRecurrence", now())`,
+        [a.school, a.year, a.subjectId.get('Musik'), a.classId.get('7A'), a.teacherId.get('T1')],
+      );
+      const result = await bridge.write(a.year, a.caller);
+      assert.deepEqual(result.notWritten.filter((entry) => entry.requirementId === pPair).map((entry) => entry.reason), ['REFUSED'], 'the even half is named and left');
+      const lessons = (await owner.query<{ id: string; recurrence: string }>(`SELECT id, recurrence::text AS recurrence FROM "MasterLessons" WHERE "academicYearId" = $1 AND "fromPlacement" ORDER BY recurrence, id`, [a.year])).rows;
+      assert.deepEqual(lessons.map((lesson) => lesson.recurrence), ['EVEN_WEEKS', 'ODD_WEEKS'], 'one lesson for each half, none written twice');
+      assert.deepEqual([result.lessonsWritten, result.lessonsReplaced], [0, 0], 'the odd half\'s lesson is what its row writes: nothing to do');
+    });
   } finally {
     await cleanup();
   }
