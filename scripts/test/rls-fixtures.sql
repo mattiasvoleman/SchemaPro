@@ -5147,7 +5147,7 @@ BEGIN
   VALUES (m, teacher, y, 600, now());
 END $$;
 
--- The matrix school's row for the optimization profile (20270313090000), so that the role matrix (section 116) has a row of the table to
+-- The matrix school's row for the optimization profile (20270314090000), so that the role matrix (section 116) has a row of the table to
 -- probe: the defaults, written by the owner, once. A school with no row is the defaults too; section 601 makes the other school's.
 DO $$
 DECLARE

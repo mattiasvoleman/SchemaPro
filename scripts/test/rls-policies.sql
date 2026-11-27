@@ -70300,7 +70300,7 @@ END $$;
 ROLLBACK;
 
 -- ===========================================================================
--- Optimeringsprofilen (20270313090000, avsnitt 601).
+-- Optimeringsprofilen (20270314090000, avsnitt 601).
 --
 -- OptimizationProfiles: en rad per skola med de fem vikterna Generera-sidans reglage sätter. Varje administratör läser den (också en
 -- läsare); Schemaläggning skriver den (full, rektor och schemaläggare, inte expeditionen och inte läsaren); ingen lärare, ingen annan skola

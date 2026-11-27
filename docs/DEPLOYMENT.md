@@ -7918,7 +7918,7 @@ When the judge says a time breaks the stage's ramtid or the class's lunch, an ad
 
 ## 43. The optimization profile is the school's ("Optimeringsprofilen sparas per skola", omgång 15, P5, part 3)
 
-Generera's five sliders (`preferredFree`, `preferredBusy`, `disruption`, `spread`, `teacherGap`) were kept in the browser's `localStorage`: a scheduler who changed computer, or a colleague, ran Generera with another profile than the school's and nothing said so. They are now one row a school in a new table, **`OptimizationProfiles`** (migration `20270313090000`).
+Generera's five sliders (`preferredFree`, `preferredBusy`, `disruption`, `spread`, `teacherGap`) were kept in the browser's `localStorage`: a scheduler who changed computer, or a colleague, ran Generera with another profile than the school's and nothing said so. They are now one row a school in a new table, **`OptimizationProfiles`** (migration `20270314090000`).
 
 ### 43.1 What the migration is
 

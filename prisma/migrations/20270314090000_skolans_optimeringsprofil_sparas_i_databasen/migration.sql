@@ -69,7 +69,7 @@ ALTER TABLE "OptimizationProfiles"
     REFERENCES "Schools"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 COMMENT ON TABLE "OptimizationProfiles" IS
-  'P5 (20270313090000): the school''s Generera profile, the five objective weights its sliders set (0..1000, relative). No row is the defaults (10, 5, 8, 3, 2).';
+  'P5 (20270314090000): the school''s Generera profile, the five objective weights its sliders set (0..1000, relative). No row is the defaults (10, 5, 8, 3, 2).';
 
 ALTER TABLE "OptimizationProfiles" ENABLE ROW LEVEL SECURITY;
 

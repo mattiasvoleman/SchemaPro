@@ -6,7 +6,7 @@ import type { SaveOptimizationProfileDto } from './dto/optimization-profile.dto'
 import { profileView, type OptimizationProfileView } from './optimization-profile';
 
 /**
- * The school's Generera profile (OptimizationProfiles, 20270313090000): read by every administrator, written by Schemaläggning (the
+ * The school's Generera profile (OptimizationProfiles, 20270314090000): read by every administrator, written by Schemaläggning (the
  * table's arm says so, and the route's @Area before it). One row a school; the first save makes it, a later one replaces the five weights.
  */
 @Injectable()
