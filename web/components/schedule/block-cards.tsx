@@ -48,6 +48,7 @@ import type { MasterLesson, StaffingWarning, TeachingBlock, TeachingRequirement 
 import type { HistoryEntry } from "@/lib/use-schedule-history";
 import { createClient } from "@/utils/supabase/client";
 import type { LessonChange, TimetableLesson } from "@/components/schedule/timetable-grid";
+import { PossibleTimesChoices } from "@/components/schedule/possible-times-choices";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -617,6 +618,17 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
                   </li>
                 ))}
               </ul>
+              {/* Where the block can stand (E3): a block cannot be dragged on a phone, and this is the way to move it without. A time here is
+                  one the gateway's judge has let through for the whole block, so it is moved as the card is, and asked no more. */}
+              <PossibleTimesChoices
+                lessonId={opened.lessons[0]!.id}
+                writes="SCHEMALAGGNING DRIFT"
+                onChoose={(option) => {
+                  const change = { dayOfWeek: option.dayOfWeek, startMinutes: option.startMinutes, endMinutes: option.endMinutes };
+                  handOff.current = { focus: opened.id, run: () => void kit.move(opened.id, change) };
+                  setOpened(null);
+                }}
+              />
               {opened.complete ? null : <p className="text-sm text-foreground">{t("splitNote")}</p>}
               <p className="text-sm text-foreground">{t("lockHint")}</p>
             </div>

@@ -393,6 +393,13 @@
     "myResources": "Boka resurs"
   },
   "dashboard": {
+    "channelOffTitle": "Inbjudningar är av",
+    "channelOff": "Servern har ingen koppling till Supabase Auth (SUPABASE_URL och SUPABASE_SERVICE_ROLE_KEY saknas), så ingen kan bjudas in. Se driftboken, DEPLOYMENT §5.",
+    "channelCustomTitle": "Inbjudningarna går genom skolans egen SMTP",
+    "channelCustom": "Operatören har uppgett att Supabase Auth skickar med egen SMTP.",
+    "channelCustomLimit": "Operatören har uppgett att Supabase Auth skickar med egen SMTP, och att gränsen är {perHour} mejl i timmen.",
+    "channelNotStatedTitle": "Kontrollera avsändaren före inbjudningarna",
+    "channelNotStated": "Ingen har uppgett att Supabase Auth skickar med egen SMTP. Supabases egen avsändare släpper bara igenom två mejl i timmen, så de första inbjudningarna kommer fram och resten nekas. Ställ in egen SMTP under Authentication → SMTP i Supabase, och sätt AUTH_SMTP=custom på API:t när det är gjort (DEPLOYMENT §7.1).",
     "title": "Översikt",
     "subtitle": "Allt om {school} i ett svep",
     "students": "Elever",
@@ -987,6 +994,36 @@
     "invitationsSent": "{sent} inbjudningar skickade. {skipped} hade redan konto.",
     "invitationsFailed": "{count} inbjudningar kunde inte skickas.",
     "inviteAll": "Bjud in {count} ej inbjudna",
+    "noAddress": "Ingen adress",
+    "noLogin": "Ingen inloggning",
+    "emailOptionalHint": "Frivillig för elever och vårdnadshavare. Utan adress syns personen i listor, närvaro och schema, men kan inte logga in förrän en adress finns.",
+    "withoutAddressNote": "{count, plural, one {# person utan adress kan inte bjudas in} other {# personer utan adress kan inte bjudas in}}",
+    "addressGivenAndInvited": "Adressen är sparad och inbjudan skickad.",
+    "massInvite": {
+      "finish": "Klart",
+      "title": "Bjud in {count, plural, one {# person} other {# personer}}",
+      "intro": "Inbjudningarna skickas i delar om tjugo, och du ser hur långt det har kommit. Den som redan är inbjuden får ingen ny, så du kan stoppa och ta om när som helst, också efter att fönstret har stängts.",
+      "running": "Inbjudningar skickas. Låt fönstret vara öppet. Stoppa avbryter efter den del som pågår.",
+      "slow": "Supabase släpper igenom {perHour} mejl i timmen, så {count, plural, one {# person} other {# personer}} tar ungefär {hours, plural, one {# timme} other {# timmar}}. Det går bra att stoppa och ta om: ingen får två inbjudningar. Höj gränsen under Authentication → Rate Limits i Supabase om det ska gå fortare.",
+      "limitUnknown": "Ingen har uppgett hur många mejl i timmen Supabase släpper igenom. Med Supabases egen avsändare är det två. Kontrollera skolans SMTP före en stor omgång (se administratörens startsida).",
+      "start": "Bjud in {count, plural, one {# person} other {# personer}}",
+      "resume": "Ta om",
+      "stop": "Stoppa",
+      "progress": "{handled} av {total}",
+      "progressLabel": "Inbjudningar",
+      "sent": "{count, plural, one {# inbjudan skickad} other {# inbjudningar skickade}}",
+      "alreadyRegistered": "{count, plural, one {# hade redan ett konto: inget mejl skickades} other {# hade redan ett konto: inget mejl skickades}}",
+      "alreadyInvited": "{count, plural, one {# var redan inbjuden och fick ingen ny} other {# var redan inbjudna och fick ingen ny}}",
+      "noAddress": "{count, plural, one {# saknar e-postadress och kan inte bjudas in} other {# saknar e-postadress och kan inte bjudas in}}",
+      "failed": "{count, plural, one {# inbjudan kunde inte skickas} other {# inbjudningar kunde inte skickas}}",
+      "pausedLimitTitle": "Supabase har nått sin gräns för mejl",
+      "pausedLimit": "{left, plural, one {# person} other {# personer}} återstår. Vänta en stund, eller höj gränsen under Authentication → Rate Limits i Supabase, och tryck sedan Ta om. De som redan fått en inbjudan får ingen ny.",
+      "pausedErrorTitle": "Det gick inte att fortsätta",
+      "pausedError": "Anropet misslyckades ({message}). Det kan ha hunnit skicka några inbjudningar: Ta om läser registret på nytt och bjuder bara in dem som fortfarande saknar inbjudan.",
+      "stopped": "Stoppad. {left, plural, one {# person} other {# personer}} återstår, och Ta om fortsätter där det slutade.",
+      "done": "{count, plural, one {# inbjudan skickad.} other {# inbjudningar skickade.}} Alla i urvalet är inbjudna.",
+      "doneWithFailures": "{count, plural, one {# inbjudan skickad.} other {# inbjudningar skickade.}} {failed, plural, one {# person kunde} other {# personer kunde}} inte bjudas in: tryck Ta om för att försöka igen."
+    },
     "homeClassLabel": "Klass",
     "teachingGroupsLabel": "Undervisningsgrupper",
     "noTeachingGroups": "Eleven ingår inte i någon undervisningsgrupp.",
@@ -2332,6 +2369,68 @@
     "limits": "Siffrorna är nedre gränser som motorn kan bevisa för årskursens trängsta del av läsåret. En vecka över ramtiden räknas bara till den första period motorn nekar, så den siffran kan vara lägre än den trängsta periodens och jämförs inte med andra. De säger inte att ett schema finns. Behörigheter räknas som de gäller i dag.",
     "notRun": "{count, plural, one {# ämne} other {# ämnen}} hann inte räknas om inom tiden."
   },
+  "boardPossible": {
+    "free": "Ledigt",
+    "change": "Ledigt, annan sal",
+    "closed": {
+      "FRAME": "Ramtid",
+      "LUNCH": "Lunch",
+      "GRADE_RULE": "Årskursregel",
+      "OTHER_SCHOOL": "Annan skola",
+      "AVAILABILITY": "Inte tillgänglig"
+    },
+    "inTheWay": "{subject} {className} i vägen",
+    "inTheWayUnnamed": "En lektion i vägen",
+    "rooms": {
+      "title": "Salar för den här tiden",
+      "hint": "Lediga salar som passar står först. Välj en sal så fylls fältet Sal i; välj den igen för att ta bort valet.",
+      "noClock": "Skriv ett klockslag för att se salarna.",
+      "failed": "Det gick inte att hämta salarna. Fältet Sal fungerar som förut.",
+      "none": "Skolan har inga salar.",
+      "seats": "{capacity, plural, =-1 {platser okända} one {# plats} other {# platser}}, {needed, plural, one {# elev} other {# elever}}",
+      "current": "lektionens sal",
+      "free": "ledig, förslag {rank}",
+      "freeNotRanked": "ledig",
+      "busy": "upptagen av {subject} {className} {day} {from}–{to}{more, plural, =0 {} one { och en till} other { och # till}}",
+      "busyUnnamed": "upptagen",
+      "closed": "stängd: {rule}",
+      "tooSmall": "för liten",
+      "wrongType": "inte den typ ämnet kräver",
+      "outsideYears": "inte för gruppens årskurser",
+      "shared": "delas av flera lektioner: domaren räknar eleverna när lektionen läggs"
+    },
+    "dialog": {
+      "title": "Möjliga tider",
+      "hint": "Välj en tid så fylls dag och klockslag i (och salen, om tiden går i en annan). Spara lägger lektionen.",
+      "failed": "Det gick inte att hämta de möjliga tiderna. Fälten nedan fungerar som förut."
+    },
+    "list": {
+      "title": "Möjliga tider för {lesson}",
+      "loading": "Letar efter tider …",
+      "failed": "Det gick inte att hämta de möjliga tiderna. Pilarna och Enter fungerar som förut.",
+      "none": "Det finns ingen tid i veckan att lägga {lesson} på.",
+      "option": "{rank}. {day} {from}–{to}",
+      "plain": "ingen skillnad för veckan i övrigt",
+      "lay": "Lägg",
+      "layLabel": "Lägg {lesson} {day} {from}–{to}",
+      "typeLabel": "Skriv en tid",
+      "typeGo": "Flytta markören",
+      "layAtMarker": "Lägg där markören står",
+      "words": {
+        "pupilsBetter": "färre håltimmar för eleverna",
+        "pupilsWorse": "fler håltimmar för eleverna",
+        "teacherLess": "färre håltimmar för läraren",
+        "teacherMore": "fler håltimmar för läraren",
+        "distributionBetter": "ämnet fördelas bättre över veckan",
+        "distributionWorse": "ämnet fördelas sämre över veckan",
+        "dayBetter": "lärarens dag blir bättre",
+        "dayWorse": "lärarens dag bryter en gräns",
+        "wishMet": "uppfyller ett önskemål",
+        "wishBroken": "bryter ett önskemål",
+        "roomChanged": "i en annan sal"
+      }
+    }
+  },
   "boardKeys": {
     "clash": "Krock",
     "blockDialog": "{lesson} är ett block: blockets egen ruta öppnas, där lås, parkera och ta bort gäller hela blocket.",
@@ -2340,6 +2439,13 @@
     "pickedUp": "Tog upp {lesson}, {day} {from}–{to}. Pilarna flyttar markören, Enter lägger, Esc släpper.",
     "markerFree": "{day} {from}–{to}: går att lägga. Enter lägger.",
     "markerTaken": "{day} {from}–{to}: går inte att lägga här. Enter visar de närmaste lediga tiderna.",
+    "markerRank": "{day} {from}–{to}: förslag {rank}. Enter lägger.",
+    "markerChange": "{day} {from}–{to}: ledigt, men i en annan sal än lektionens egen. Lägg den med ett av de bästa förslagen eller i Justera lektion, där salen väljs.",
+    "markerClosed": "{day} {from}–{to}: stängt av {code, select, FRAME {ramtiden} LUNCH {klassens lunch} GRADE_RULE {en regel för årskursen} OTHER_SCHOOL {en annan skolas tid} AVAILABILITY {en markering om att något inte är tillgängligt} other {en regel}}. Enter visar de närmaste lediga tiderna.",
+    "markerInTheWay": "{day} {from}–{to}: {subject} {className} ligger i vägen. Enter visar de närmaste lediga tiderna.",
+    "markerCrowded": "{day} {from}–{to}: {units, plural, =0 {något är i vägen} one {en lektion ligger i vägen} other {# lektioner ligger i vägen}}. Enter visar de närmaste lediga tiderna.",
+    "numberNone": "Det finns inget förslag {rank}.",
+    "typedOutside": "Tiden ligger utanför veckans dag: skriv en tid mellan {from} och {to}.",
     "placed": "Flyttar {lesson} till {day} {from}–{to}.",
     "refused": "{lesson} går inte att lägga {day} {from}–{to}. De närmaste lediga tiderna visas.",
     "letGo": "Släppte {lesson}. Ingenting ändrades.",
@@ -2363,6 +2469,10 @@
       "marker": {
         "keys": "Pilar, med en lektion uppe",
         "does": "Flyttar markören ett kvarter upp eller ned (med Skift fem minuter) eller en dag åt sidan."
+      },
+      "numbers": {
+        "keys": "1 till 9, med en lektion uppe",
+        "does": "Flyttar markören till det bästa förslaget med det numret, där brädet har märkt ut de tider lektionen kan ligga."
       },
       "put": {
         "keys": "Enter eller mellanslag, med en lektion uppe",
@@ -2464,6 +2574,7 @@
     "undo": "Ångra",
     "redo": "Gör om",
     "undoRefused": "Det går inte att ångra. {why} Lektionen ligger kvar där den är, och nästa Ångra tar steget före.",
+    "moreReasons": "{count, plural, one {En regel till säger nej} other {# regler till säger nej}}: Justera lektion visar dem.",
     "undone": "Ändringen ångrades",
     "redone": "Ändringen gjordes om",
     "conflictCount": "{count, plural, =1 {1 konflikt} other {# konflikter}}",
@@ -3922,6 +4033,8 @@
       "invite": "Bjud in valda ({count})",
       "invited": "{sent} inbjudningar skickades.",
       "chunked": "Inbjudningarna skickas {chunk} åt gången.",
+      "stoppedShort": "Supabase har nått sin gräns för mejl: {left, plural, one {# person} other {# personer}} har inte bjudits in.",
+      "stopped": "Supabase har nått sin gräns för mejl, så {left, plural, one {# person} other {# personer}} har inte bjudits in. Vänta en stund, eller höj gränsen under Authentication → Rate Limits i Supabase, och bjud in dem igen. De som redan fått en inbjudan får ingen ny.",
       "report": "{sent} skickade, {already} hade redan konto, {failed} misslyckades.",
       "loadFailed": "Listan över nya personer kunde inte hämtas"
     },
@@ -4124,6 +4237,8 @@
     "guardiansNotice": "En rad är en koppling mellan en vårdnadshavare och en elev: elevens e-postadress står i kolumnen elev_epost, och eleven måste finnas och vara aktiv. En vårdnadshavare som inte finns skapas utan inbjudan. En som finns får bara kopplingen, så namn och telefon ändras inte.",
     "noGuardianLinks": "Det finns inga kopplingar mellan vårdnadshavare och elever att exportera.",
     "keptProtected": "{count, plural, one {En person i filen har skyddad identitet. Den finns med, eftersom den som tar emot filen ska ha alla, så hantera filen därefter.} other {# personer i filen har skyddad identitet. De finns med, eftersom den som tar emot filen ska ha alla, så hantera filen därefter.}}",
+    "withoutAddressLinks": "{count, plural, one {# koppling finns inte i filen, eftersom eleven eller vårdnadshavaren saknar e-postadress och filen namnger personer med den.} other {# kopplingar finns inte i filen, eftersom eleven eller vårdnadshavaren saknar e-postadress och filen namnger personer med den.}} Kopplingarna finns kvar under Personer.",
+    "withoutAddressMembers": "{count, plural, one {# elev i en grupp finns inte i filen, eftersom eleven saknar e-postadress och filen namnger elever med den.} other {# elever i grupper finns inte i filen, eftersom eleverna saknar e-postadress och filen namnger elever med den.}} Grupperna är oförändrade under Grupper.",
     "heldOut": {
       "people": "{count, plural, =0 {Ingen hölls utanför filen: ingen av dem är markerad med skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} one {En person med skyddad identitet hölls utanför filen, och varje rad som nämner personen. Den som har skyddad identitet men inte är markerad under Personer finns med.} other {# personer med skyddad identitet hölls utanför filen, och varje rad som nämner någon av dem. Den som har skyddad identitet men inte är markerad under Personer finns med.}}",
       "links": "{count, plural, =0 {Ingen koppling hölls utanför filen: ingen elev eller vårdnadshavare i den är markerad med skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} one {En koppling hölls utanför filen, eftersom eleven eller vårdnadshavaren har skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.} other {# kopplingar hölls utanför filen, eftersom eleven eller vårdnadshavaren har skyddad identitet. Den som har skyddad identitet men inte är markerad under Personer finns med.}}"
@@ -4141,6 +4256,8 @@
     "readAs": "Filen är inte UTF-8 och lästes som {encoding}. Kontrollera att å, ä och ö ser rätt ut i förhandsvisningen.",
     "withoutClass": "{count, plural, one {# elev har ingen klass i filen och skapas utan klass.} other {# elever har ingen klass i filen och skapas utan klass.}} Importen kan inte ge dem en klass i efterhand, så fyll i klass i filen om det inte är meningen.",
     "createdWithoutClass": "{count, plural, one {# elev skapades utan klass.} other {# elever skapades utan klass.}} Ge dem en klass under Personer.",
+    "withoutAddress": "{count, plural, one {# elev har ingen e-postadress i filen och skapas utan inloggning.} other {# elever har ingen e-postadress i filen och skapas utan inloggning.}} De syns i listor, närvaro och schema. En senare fil med adressen lägger den på eleven med samma förnamn, efternamn och klass.",
+    "createdWithoutAddress": "{count, plural, one {# elev skapades utan e-postadress.} other {# elever skapades utan e-postadress.}} De kan inte bjudas in förrän en adress finns: ge dem en under Personer, eller läs in en fil med adresserna.",
     "rejectedByServer": "Servern tog inte emot filen, eftersom en cell har ett värde som inte går att spara. Inget importerades. Jämför filen med mallen."
   },
   "grades": {

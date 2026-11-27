@@ -48,7 +48,7 @@ export interface AbsenceReportView {
 export interface GuardianLinkView {
   id: string;
   guardianId: string;
-  guardian: { id: string; firstName: string; lastName: string; email: string };
+  guardian: { id: string; firstName: string; lastName: string; email: string | null };
 }
 
 /**
@@ -70,6 +70,12 @@ export interface GuardianExportRow {
 export interface GuardianExport {
   rows: GuardianExportRow[];
   heldOut: number;
+  /**
+   * Links left out of the file because the pupil or the guardian has no address (Personer utan e-postadress): the file names a
+   * pupil by address and cannot name one that has none. Counted, so the dialog can say how many are in the register and not in the
+   * file; they are linked on the people page.
+   */
+  withoutAddress: number;
 }
 
 /** The newest this many: what the web and the app read directly before, each one at most. */
@@ -219,8 +225,16 @@ export class FamilyReadsService {
         student: { ...exportable.student, protections: { none: {} } },
       };
       const all = await tx.guardianStudent.count({ where: exportable });
+      // The file names a pupil by address (the import reads it back so), so a link where either has none is not in it.
+      const addressed = {
+        guardian: { ...unmarked.guardian, email: { not: null } },
+        student: { ...unmarked.student, email: { not: null } },
+      };
+      const withoutAddress = await tx.guardianStudent.count({
+        where: { AND: [unmarked, { OR: [{ guardian: { email: null } }, { student: { email: null } }] }] },
+      });
       const links = await tx.guardianStudent.findMany({
-        where: unmarked,
+        where: addressed,
         select: {
           guardianId: true,
           studentId: true,
@@ -242,11 +256,13 @@ export class FamilyReadsService {
         rows: links.map((link) => ({
           firstName: link.guardian.firstName,
           lastName: link.guardian.lastName,
-          email: link.guardian.email,
+          // Both are set: the query leaves out a link where either has none.
+          email: link.guardian.email!,
           phone: link.guardian.phone,
-          studentEmail: link.student.email,
+          studentEmail: link.student.email!,
         })),
-        heldOut: all - links.length,
+        heldOut: all - links.length - withoutAddress,
+        withoutAddress,
       };
     });
   }

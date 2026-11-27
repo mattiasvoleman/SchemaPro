@@ -373,6 +373,8 @@ Run it with (see `.env.example` for the full annotated list):
 | `JWT_AUDIENCE` | `authenticated` |
 | `SUPABASE_URL` | project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key |
+| `AUTH_SMTP` | **optional.** `custom` is the operator's word that Supabase Auth sends its mail through the project's **own SMTP** (Authentication → SMTP). It changes what the administrator's start page says (§7.3) and nothing the API does: the API cannot read the project's setting, because the token that does is yours and never the API's. Unset, the page warns that Supabase's own sender lets two mails an hour through. Blank is unset; any other value is refused at start |
+| `AUTH_EMAIL_LIMIT_PER_HOUR` | **optional.** The project's mail limit an hour as you read it under Authentication → Rate Limits (30 is what a project gets with its own SMTP). The start page and the mass invitation say how long 300 people take at it. A whole number, 1 to 100 000; blank is unset |
 | `AI_ENGINE_URL` | solver base URL, scheme included (`https://…`) — a bare hostname is not a URL and surfaces as "AI engine unavailable". **A public https address has a road limit of 300 s (§5.3); `http://<engine service>.railway.internal:<port>` has none.** |
 | `AI_ENGINE_API_KEY` | the shared secret from step 0 |
 | `AI_ENGINE_TIMEOUT_MS` | **optional, and best left unset.** Unset, the API waits as long as the engine says its route can take (`GET /api/v1/timing`) plus 10 s: 240 s at a 180 s budget and a 20 s probe, and it follows the engine when its budget is changed, so nothing is set in two places. An engine that says nothing (older, or not up yet) is waited for 120 000 ms. Set, it is the wait, and the request carries it to the engine as its deadline (`deadlineSeconds`), so the engine answers inside it; it must then be at least the engine's ceiling plus 5 s: `240000` at a 180 s budget and a 20 s probe (235 000 is the least). **A production start that finds it set and shorter is refused**, with a sentence that says which number to change, **and the API is then down**: no service in Railway has a health check (read 2026-11-18), so nothing holds the deploy before it up while the new one is refused, and a refused start is a stopped API until the variable is removed or raised, or the engine's budget is lowered and the API restarted (a change on the engine restarts only the engine). **Remove the variable, or raise it to the new ceiling plus 5 s, before raising the engine's budget** (`SOLVER_MAX_TIME_SECONDS`, `SOLVER_PROBE_SECONDS`), not after, or a deploy that follows the engine's change finds it too short; at runtime a shorter wait is answered with a shorter search, which a TIMEOUT states ("within 94 s"), and a line in the log. To get out of a refused start remove the variable. |
@@ -592,6 +594,64 @@ Only the host, port, sender and the hourly limit are read out of the answer; the
 whose SMTP server refuses the mail answers the script with HTTP 500, and the script says to look at host, port, user and the
 sender address under Authentication → SMTP. The same mail is what the first administrator signs in from, so a mail that does not
 arrive is found on day one and not when the school invites its teachers.
+
+### 7.2 Pupils and guardians with no address (20270310090000)
+
+A pupil or a guardian can be added **without an e-mail address**. Younger pupils seldom have a school address, and Skola24's pupil file has
+none, so a school should not have to invent one to get them into the register. The person is in every list, in the class lists, in
+attendance and on the timetable (they are rows of `"Users"` like any other, and no reader of those looks at the address); they have **no
+login** until an address is added and the person is invited.
+
+- **What holds it.** `"Users"."email"` is optional. `Users_a_person_with_no_address_has_no_login` (a CHECK) says no row has an
+  `"invitedAt"` without an address, so no road gives a person with no address a login, and none takes the address from a person who
+  has one. `Users_only_a_pupil_or_guardian_has_no_address` says a teacher or an administrator always has one: they are somebody the
+  school invites. The API says the same with words (`ADDRESS_REQUIRED`, `PERSON_HAS_NO_ADDRESS`, `ADDRESS_OF_AN_INVITED_PERSON`);
+  the constraints are what stays if a script or a hand-written `insert` forgets.
+- **Adding one later.** Edit the person (Admin → People) and give an address; the same dialog can send the invitation at once. An
+  address is given to a person with none, or corrected on one who was never invited: a person who was invited has a login with the
+  address it has, and the API refuses to change it from here (409).
+- **Importing.** A pupils' file may leave `epost` empty, or have no such column: the pupils are made with no address, and the report
+  says how many. A pupil with no address is known by first name, last name and class, so a second upload skips them; a later file
+  that has the address gives it to the one pupil of that name in that class (`updated`), and says so when two have the same name and
+  cannot be told apart. The files that name a pupil by address (the guardians' file, the group memberships) cannot name one with none:
+  the guardians' export says how many links it left out, and those links are made on the people page.
+- **Mail.** A notice to a person with no address is in their inbox, which they cannot open yet, and no mail goes. The mass invitation
+  counts them apart (`noAddress`) and invites the rest.
+- **Order of deploy.** Apply the migration before the API that writes an empty address; deploy the API and the web together (an older
+  web that reads a person with `email: null` where it expected text is the one thing that can break). Rolling the migration back
+  needs `ALTER COLUMN "email" SET NOT NULL`, which fails while a person with no address exists: `SELECT count(*) FROM "Users" WHERE
+  "email" IS NULL`.
+- **The Schemavisaren and the iCal feeds** are not logins, and a school shows the timetable to a family through them whether or not
+  the pupil has an address.
+
+### 7.3 Inviting a whole school: in parts, and where it stops
+
+Every invitation and every password reset is a mail from Supabase Auth. **Supabase's own sender lets 2 an hour through; a project that sets
+its own SMTP gets 30 an hour until the limit is raised under Authentication → Rate Limits** (`rate_limit_email_sent`). Past it Supabase answers
+HTTP 429 `over_email_send_rate_limit`. A school of 300 people is therefore ten hours of invitations at the default, and a day with Supabase's
+own sender.
+
+- **The start page says it.** `GET /api/v1/users/invitation-channel` (an administrator's, and nothing of any person) answers whether the API
+  can make a login at all (`SUPABASE_URL` and the service key), what `AUTH_SMTP` says, and `AUTH_EMAIL_LIMIT_PER_HOUR`. The page warns
+  where nobody has said that the project has its own SMTP, says so when somebody has, and says that no invitation can go where the API has
+  no connection. The API cannot ask the project: set both variables when you have configured the sender (the operator script of §7.1 reads
+  it for you with `SUPABASE_ACCESS_TOKEN`).
+- **The web sends the mass invitation in parts of twenty**, one at a time, and shows how far it has got (Admin → People → *Bjud in N ej
+  inbjudna*). It can be stopped, and taken up again, at any time, also after the window was closed: *Ta om* asks the register who is still not
+  invited and sends only those. The gateway skips a person who is invited already (`alreadyInvited`) unless the request says `resend`, and one
+  who another request is inviting that moment, so **nobody gets two invitations**, whether the run stopped for the limit, a network error, a
+  Stop or a closed tab. A person with no address (§7.2) is counted apart (`noAddress`).
+- **When the project's mail limit is spent**, GoTrue refuses the invitation (429 `over_email_send_rate_limit`) **and makes no user** (read
+  against GoTrue v2.195.0: the refused address has no row in `auth.users` afterwards, and the refused invitation of an address never invited
+  before leaves nothing behind to look up). Until now the API read every refusal as "already registered, no mail needed" **when a user with
+  the address existed**, which is the case for an address whose earlier invitation went out and whose row was never marked, or an address a
+  person at another school holds: the person was marked invited without a mail from this call. A first invitation was a 503 ("Could not
+  send the invitation email") and no more. It is now the refusal (`INVITATION_RATE_LIMITED`, 429) and the person is **not** marked
+  invited; the mass invitation stops at the first (`stopped`, `notTried`) and the dialog says how many are left, in place of an error for
+  each person. The next invitation of the address is a first one.
+- **Rate limit per login, not per address.** `POST /api/v1/users/invitations` is limited to 30 parts a minute per verified login, with a
+  high ceiling per address for the route (1 200): a school is one NAT address, and the web calls the API from every browser, so the earlier 5 a
+  minute per address stopped a run at its sixth part and took every other administrator of the school with it.
 
 ## 8. Mobile app
 
@@ -7915,6 +7975,21 @@ When the judge says a time breaks the stage's ramtid or the class's lunch, an ad
 
 - The function `app.master_lesson_exemption_ends()` has no `REVOKE ... FROM PUBLIC`, which nearly all of the schema's other trigger functions have: the next migration that touches `MasterLessons` adds it.
 - A school's students and participants read `exemptFrom` through the PostgREST door like every other column of the table; whether to revoke it by column or let it stand is a decision not taken.
+
+## 41. Leave and absence, what was missing ("Ledighet och anmälan", omgång 15, K6)
+
+K6 is made in parts, each its own release; this section grows with them.
+
+### 41.1 The mail about a teacher's absence report (`20270311090000`)
+
+A teacher who reports their own absence (`TeacherAbsencesService.tellAdmins`) has always written an inbox notice, `TEACHER_ABSENCE_REPORTED`, to the school's active administrators. It could not leave the inbox: a `CHECK` on `NotificationOptOuts` (`NotificationOptOuts_absence_report_is_never_a_type`, 20261013100000) kept an opt-out row for it from existing, and the gateway kept the type out of every list and out of the delivery (`NEVER_EXTERNAL`). It now can go as a **mail**, and never as a push:
+
+- **The mail says that a teacher has reported an absence, and nothing more**: no name, no day, no reason (`ABSENCE_REPORTED_MAIL_BODY`, bilingual like the other fixed letters). A mail is read on any screen; the notice in the inbox keeps who and when, behind the login, as before. Never why.
+- **It goes to the same administrators as the inbox notice, through the queue of §40**, and only where `RESEND_API_KEY` is set (production today: it is not, so nothing is sent and nothing is queued; §40.3).
+- **An administrator can switch it off** under their notification settings, like any other type (`TYPES_BY_ROLE.SCHOOL_ADMIN`, the label *Lärarfrånvaro* was already in both apps' lists): the opt-out is read by user when the row is planned. A teacher, a guardian and a pupil are not offered the switch (`NOTIFICATION_TYPE_NOT_OFFERED`).
+- **It is never pushed**: `NEVER_PUSHED` replaces `NEVER_EXTERNAL`, and `app.push_targets` still answers nothing for the type, so the database says the same behind the gateway.
+- **Deploy order.** Run the migration before the merge (§20.2). It drops one `CHECK` on a small table, taking `ACCESS EXCLUSIVE` on `NotificationOptOuts` with `NOWAIT` in a loop of 50 ms for 30 s (nothing is held between tries; after 30 s it stops with nothing changed and can be run again). The API before it works unchanged. The API after it, with the migration not run, cannot store an administrator's switch (a `CHECK` violation, 500) but sends nothing different; nothing else depends on it.
+- **Rolling back**: the gateway can be rolled back at any time. To put the `CHECK` back, delete any opt-out row for the type first: `DELETE FROM "NotificationOptOuts" WHERE "type" = 'TEACHER_ABSENCE_REPORTED';` and then `ALTER TABLE "NotificationOptOuts" ADD CONSTRAINT "NotificationOptOuts_absence_report_is_never_a_type" CHECK ("type" <> 'TEACHER_ABSENCE_REPORTED');`.
 
 ## 42. A change in Direkt that reaches families asks first ("Förvalen en ny skola möter", omgång 15, P5, part 2)
 

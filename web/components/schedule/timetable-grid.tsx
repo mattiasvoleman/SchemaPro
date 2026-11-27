@@ -127,6 +127,11 @@ export interface LessonChange {
   dayOfWeek: number;
   startMinutes: number;
   endMinutes: number;
+  /**
+   * The room the lesson goes to with the move, when it is not the one it has (a numbered time the gateway offered "in another room",
+   * board-keys.tsx). Absent: the lesson keeps its room, as every drag does.
+   */
+  roomId?: string | null;
 }
 
 interface TimetableGridProps {
@@ -856,6 +861,13 @@ function TimetableGridInner({
   const [roving, setRoving] = useState<string | null>(null);
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  /*
+   * E3, "Se": while a lesson is in hand (taken up, or a pointer dragging it) the board paints where it can stand, behind the lessons
+   * (possible-layer.tsx, fetched with the first lesson taken and not before). The board of the grundschema only: Förlägg i veckan's
+   * grid has its own ghosts and no such judge.
+   */
+  const holding = board && editable ? (draggingId ?? pickedId) : null;
+  const possible = useLazyModule(() => import("./possible-layer"), undefined, holding !== null);
   /*
    * A meal being dragged, in state of its own beside the lessons'. Not folded
    * into DragState: a band is not a lesson — no validateChange, no tray, no
@@ -1590,6 +1602,7 @@ function TimetableGridInner({
                 ) : null}
 
                 {behind?.(day, { startMinutes: startHour * 60, pxPerMinute })}
+                {possible && holding ? <possible.PossibleDay day={day} scale={{ startMinutes: startHour * 60, pxPerMinute }} /> : null}
 
                 {/* Hour lines */}
                 {hours.slice(1, -1).map((hour) => (
@@ -1656,6 +1669,8 @@ function TimetableGridInner({
         }}
       />
     ) : null}
+    {possible && holding ? <possible.PossibleHold lessonId={holding} /> : null}
+    {possible && holding && !narrow ? <possible.PossibleList /> : null}
     </>
   );
 }

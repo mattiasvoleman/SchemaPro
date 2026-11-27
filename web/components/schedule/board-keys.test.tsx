@@ -303,13 +303,13 @@ describe("the board's keys: length, lock, park and remove", () => {
 });
 
 describe("the board's keys: the list of keys", () => {
-  it("opens and closes with ?, and has a line for each of the twelve", async () => {
+  it("opens and closes with ?, and has a line for each of the thirteen", async () => {
     await board();
     expect(screen.queryByRole("term")).toBeNull();
     key("mon-9", { key: "?" });
     const list = screen.getByLabelText("keysTitle");
-    expect(within(list).getAllByRole("term")).toHaveLength(12);
-    expect(within(list).getAllByRole("definition")).toHaveLength(12);
+    expect(within(list).getAllByRole("term")).toHaveLength(13);
+    expect(within(list).getAllByRole("definition")).toHaveLength(13);
     key("mon-9", { key: "?" });
     expect(screen.queryByLabelText("keysTitle")).toBeNull();
   });
@@ -319,14 +319,14 @@ describe("the board's keys: the list of keys", () => {
       const board = (messages as unknown as { boardKeys: Record<string, unknown> }).boardKeys;
       const keys = board.keys as Record<string, { keys: string; does: string }>;
       expect(Object.keys(keys).sort()).toEqual(
-        ["arrows", "take", "marker", "put", "letGoKey", "length", "lock", "park", "remove", "open", "select", "undo"].sort(),
+        ["arrows", "take", "marker", "numbers", "put", "letGoKey", "length", "lock", "park", "remove", "open", "select", "undo"].sort(),
       );
       for (const row of Object.values(keys)) {
         expect(row.keys).toBeTruthy();
         expect(row.does).toBeTruthy();
       }
       for (const sentence of [
-        "pickedUp", "markerFree", "markerTaken", "placed", "refused", "letGo", "length", "lengthLimit", "lengthRefused",
+        "pickedUp", "markerFree", "markerTaken", "markerRank", "markerClosed", "markerInTheWay", "markerCrowded", "numberNone", "placed", "refused", "letGo", "length", "lengthLimit", "lengthRefused",
         "locked", "unlocked", "parked", "removed", "keysTitle",
       ]) {
         expect(typeof board[sentence], sentence).toBe("string");

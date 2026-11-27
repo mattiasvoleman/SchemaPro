@@ -36,12 +36,16 @@ export const SWEEP_ABOVE = 10_000;
 @Injectable()
 export class PerLoginThrottlerGuard implements CanActivate {
   private readonly logins = new WindowedThrottlerStorage(Date.now, { sweepAbove: SWEEP_ABOVE });
+  /** What a login may do in `ttl` ms. A route with a limit of its own names it (InvitationThrottlerGuard). */
+  protected readonly limits: { limit: number; ttl: number } = PER_LOGIN;
+  /** In the key, so that two routes with a guard of this kind do not share one login's bucket. */
+  protected readonly route: string = '';
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request & { user?: AuthenticatedUser }>();
     const who = request.user?.authId ? `login:${request.user.authId}` : `ip:${request.ip ?? 'unknown'}`;
-    const key = createHash('sha256').update(who).digest('hex');
-    const seen = await this.logins.increment(key, PER_LOGIN.ttl, PER_LOGIN.limit, PER_LOGIN.ttl, 'login');
+    const key = createHash('sha256').update(this.route ? `${who}|${this.route}` : who).digest('hex');
+    const seen = await this.logins.increment(key, this.limits.ttl, this.limits.limit, this.limits.ttl, 'login');
     if (seen.isBlocked) {
       const response = context.switchToHttp().getResponse<Response>();
       response.setHeader('Retry-After', String(Math.max(seen.timeToBlockExpire, 1)));

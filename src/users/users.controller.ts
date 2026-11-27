@@ -20,6 +20,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { UsersService, type PersonView, type UserCounts } from './users.service';
+import { InvitationChannelService, type InvitationChannelView } from './invitation-channel';
+import { InvitationThrottlerGuard, PER_ADDRESS_INVITATIONS } from './invitation-throttler.guard';
 import { BulkDeleteDto } from '../common/bulk';
 import { BulkUpdateStudentsDto, CreateUserDto, InviteUsersDto, UpdateUserDto } from './dto/user.dto';
 
@@ -28,7 +30,10 @@ import { BulkUpdateStudentsDto, CreateUserDto, InviteUsersDto, UpdateUserDto } f
 @Roles(Role.SCHOOL_ADMIN)
 @Area('PERSONAL')
 export class UsersController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly channel: InvitationChannelService,
+  ) {}
 
   /** The school's people with contact details; recorded in the läslogg. */
   @Get()
@@ -61,12 +66,26 @@ export class UsersController {
     return this.users.invite(id, user);
   }
 
-  /** Sends invitations to a selected set — the whole class, a whole year. */
+  /**
+   * Sends invitations to a selected set — the whole class, a whole year, a part of twenty of them at a time from the web. Limited per
+   * LOGIN (InvitationThrottlerGuard) and not per address: a school is one address, and five a minute for it stopped a run at the sixth
+   * part and took every other administrator of the school with it. The global guard keeps a ceiling of its own for the route.
+   */
   @Post('invitations')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Throttle({ default: PER_ADDRESS_INVITATIONS })
+  @UseGuards(InvitationThrottlerGuard)
   inviteMany(@Body() dto: InviteUsersDto, @CurrentUser() user: AuthenticatedUser) {
-    return this.users.inviteMany(dto.userIds, user);
+    return this.users.inviteMany(dto.userIds, user, { resend: dto.resend === true });
+  }
+
+  /**
+   * How an invitation reaches the person, for the administrator's start page: whether the API can make a login at all, and what the
+   * operator has said of the project's sender (AUTH_SMTP). Nothing of any person.
+   */
+  @Get('invitation-channel')
+  invitationChannel(): InvitationChannelView {
+    return this.channel.read();
   }
 
   /**

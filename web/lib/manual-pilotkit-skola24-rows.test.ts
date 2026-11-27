@@ -59,10 +59,14 @@ describe("the Skola24 table says what an empty cell does", () => {
     expect(cellsOf(id)[1]).toMatch(words!);
   });
 
-  it("tells a school with a pupils' file to add the column, since the file has none to point out", () => {
+  it("tells a school with a pupils' file that the pupils go in with no address, and how an address is given later", () => {
+    // Personer utan e-postadress: the file has none, and the import no longer needs one, so the pupils are made without and the row says
+    // what that is and how the address comes after.
     const [, how, what] = cellsOf("skola24-elever-klass");
     expect(how).toContain("ingen e-postadress");
-    expect(what).toContain("Lägg till en kolumn");
+    expect(how).toContain("utan en");
+    expect(how).toContain("ingen inloggning");
+    expect(what).toContain("samma förnamn, efternamn och klass");
   });
 
   it("gives the reason the group file is not read that the description gives: two layouts keyed on personnummer", () => {

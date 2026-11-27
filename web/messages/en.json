@@ -393,6 +393,13 @@
     "myResources": "Book resource"
   },
   "dashboard": {
+    "channelOffTitle": "Invitations are off",
+    "channelOff": "The server has no connection to Supabase Auth (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are not set), so nobody can be invited. See the runbook, DEPLOYMENT §5.",
+    "channelCustomTitle": "Invitations go through the school's own SMTP",
+    "channelCustom": "The operator has said that Supabase Auth sends through its own SMTP.",
+    "channelCustomLimit": "The operator has said that Supabase Auth sends through its own SMTP, and that the limit is {perHour} mails an hour.",
+    "channelNotStatedTitle": "Check the sender before the invitations",
+    "channelNotStated": "Nobody has said that Supabase Auth sends through its own SMTP. Supabase's own sender lets only two mails an hour through, so the first invitations arrive and the rest are refused. Set up your own SMTP under Authentication → SMTP in Supabase, and set AUTH_SMTP=custom on the API when it is done (DEPLOYMENT §7.1).",
     "title": "Dashboard",
     "subtitle": "Everything about {school} at a glance",
     "students": "Students",
@@ -987,6 +994,36 @@
     "invitationsSent": "{sent} invitations sent. {skipped} already had an account.",
     "invitationsFailed": "{count} invitations could not be sent.",
     "inviteAll": "Invite {count} not yet invited",
+    "noAddress": "No address",
+    "noLogin": "No login",
+    "emailOptionalHint": "Optional for pupils and guardians. Without one the person is in lists, attendance and the timetable, but cannot sign in until there is an address.",
+    "withoutAddressNote": "{count, plural, one {# person with no address cannot be invited} other {# people with no address cannot be invited}}",
+    "addressGivenAndInvited": "The address is saved and the invitation sent.",
+    "massInvite": {
+      "finish": "Done",
+      "title": "Invite {count, plural, one {# person} other {# people}}",
+      "intro": "The invitations are sent in parts of twenty, and you see how far it has got. Somebody who is invited already gets no second one, so you can stop and take it up again at any time, also after the window has been closed.",
+      "running": "Invitations are being sent. Leave the window open. Stop ends it after the part that is running.",
+      "slow": "Supabase lets {perHour} mails an hour through, so {count, plural, one {# person} other {# people}} takes about {hours, plural, one {# hour} other {# hours}}. You can stop and take it up again: nobody gets two invitations. Raise the limit under Authentication → Rate Limits in Supabase to make it faster.",
+      "limitUnknown": "Nobody has said how many mails an hour Supabase lets through. With Supabase's own sender it is two. Check the school's SMTP before a large run (see the administrator's start page).",
+      "start": "Invite {count, plural, one {# person} other {# people}}",
+      "resume": "Take up again",
+      "stop": "Stop",
+      "progress": "{handled} of {total}",
+      "progressLabel": "Invitations",
+      "sent": "{count, plural, one {# invitation sent} other {# invitations sent}}",
+      "alreadyRegistered": "{count, plural, one {# already had an account: no mail was sent} other {# already had an account: no mail was sent}}",
+      "alreadyInvited": "{count, plural, one {# was invited already and got no second one} other {# were invited already and got no second one}}",
+      "noAddress": "{count, plural, one {# has no e-mail address and cannot be invited} other {# have no e-mail address and cannot be invited}}",
+      "failed": "{count, plural, one {# invitation could not be sent} other {# invitations could not be sent}}",
+      "pausedLimitTitle": "Supabase has reached its mail limit",
+      "pausedLimit": "{left, plural, one {# person} other {# people}} left. Wait a while, or raise the limit under Authentication → Rate Limits in Supabase, then press Take up again. Those who have an invitation already get no second one.",
+      "pausedErrorTitle": "It could not go on",
+      "pausedError": "The call failed ({message}). It may have sent some invitations: Take up again reads the register anew and invites only those who still have none.",
+      "stopped": "Stopped. {left, plural, one {# person} other {# people}} left, and Take up again continues where it stopped.",
+      "done": "{count, plural, one {# invitation sent.} other {# invitations sent.}} Everybody in the selection is invited.",
+      "doneWithFailures": "{count, plural, one {# invitation sent.} other {# invitations sent.}} {failed, plural, one {# person} other {# people}} could not be invited: press Take up again to try again."
+    },
     "homeClassLabel": "Class",
     "teachingGroupsLabel": "Teaching groups",
     "noTeachingGroups": "This student is not in any teaching group.",
@@ -2332,6 +2369,68 @@
     "limits": "The figures are lower bounds the engine can prove for the year's tightest part of the school year. A week over the frame time is counted only up to the first period the engine refuses, so that figure may be lower than the tightest period's and is not compared with others. They do not say a timetable exists. Qualifications count as they hold today.",
     "notRun": "{count, plural, one {# subject} other {# subjects}} could not be counted again in time."
   },
+  "boardPossible": {
+    "free": "Free",
+    "change": "Free, another room",
+    "closed": {
+      "FRAME": "School hours",
+      "LUNCH": "Lunch",
+      "GRADE_RULE": "Year rule",
+      "OTHER_SCHOOL": "Other school",
+      "AVAILABILITY": "Unavailable"
+    },
+    "inTheWay": "{subject} {className} in the way",
+    "inTheWayUnnamed": "A lesson in the way",
+    "rooms": {
+      "title": "Rooms for this time",
+      "hint": "Free rooms that fit come first. Pick a room and the Room field is filled in; pick it again to take the choice away.",
+      "noClock": "Type a time to see the rooms.",
+      "failed": "The rooms could not be fetched. The Room field works as before.",
+      "none": "The school has no rooms.",
+      "seats": "{capacity, plural, =-1 {seats unknown} one {# seat} other {# seats}}, {needed, plural, one {# pupil} other {# pupils}}",
+      "current": "the lesson's room",
+      "free": "free, suggestion {rank}",
+      "freeNotRanked": "free",
+      "busy": "taken by {subject} {className} {day} {from}–{to}{more, plural, =0 {} one { and one more} other { and # more}}",
+      "busyUnnamed": "taken",
+      "closed": "closed: {rule}",
+      "tooSmall": "too small",
+      "wrongType": "not the type the subject needs",
+      "outsideYears": "not for the group's years",
+      "shared": "shared by several lessons: the judge counts the pupils when the lesson is placed"
+    },
+    "dialog": {
+      "title": "Possible times",
+      "hint": "Pick a time and the day and clock are filled in (and the room, if the time is in another). Save places the lesson.",
+      "failed": "The possible times could not be fetched. The fields below work as before."
+    },
+    "list": {
+      "title": "Possible times for {lesson}",
+      "loading": "Looking for times …",
+      "failed": "The possible times could not be fetched. The arrow keys and Enter work as before.",
+      "none": "There is no time in the week to put {lesson} at.",
+      "option": "{rank}. {day} {from}–{to}",
+      "plain": "no difference to the rest of the week",
+      "lay": "Place",
+      "layLabel": "Place {lesson} {day} {from}–{to}",
+      "typeLabel": "Type a time",
+      "typeGo": "Move the marker",
+      "layAtMarker": "Place where the marker is",
+      "words": {
+        "pupilsBetter": "fewer gaps for the pupils",
+        "pupilsWorse": "more gaps for the pupils",
+        "teacherLess": "fewer gaps for the teacher",
+        "teacherMore": "more gaps for the teacher",
+        "distributionBetter": "the subject is spread better over the week",
+        "distributionWorse": "the subject is spread worse over the week",
+        "dayBetter": "the teacher's day gets better",
+        "dayWorse": "breaks a limit of the teacher's day",
+        "wishMet": "meets a wish",
+        "wishBroken": "breaks a wish",
+        "roomChanged": "in another room"
+      }
+    }
+  },
   "boardKeys": {
     "clash": "Clash",
     "blockDialog": "{lesson} is a block: its own dialog opens, where lock, park and remove apply to the whole block.",
@@ -2340,6 +2439,13 @@
     "pickedUp": "Picked up {lesson}, {day} {from}–{to}. The arrow keys move the marker, Enter puts it down, Esc lets go.",
     "markerFree": "{day} {from}–{to}: free. Enter puts it down.",
     "markerTaken": "{day} {from}–{to}: cannot go here. Enter shows the nearest free times.",
+    "markerRank": "{day} {from}–{to}: suggestion {rank}. Enter places it.",
+    "markerChange": "{day} {from}–{to}: free, but in a room other than the lesson's own. Place it with one of the best suggestions, or in Edit lesson, where the room is chosen.",
+    "markerClosed": "{day} {from}–{to}: closed by {code, select, FRAME {the school day's frame} LUNCH {the class's lunch} GRADE_RULE {a rule for the year group} OTHER_SCHOOL {another school's time} AVAILABILITY {a mark that something is unavailable} other {a rule}}. Enter shows the nearest free times.",
+    "markerInTheWay": "{day} {from}–{to}: {subject} {className} is in the way. Enter shows the nearest free times.",
+    "markerCrowded": "{day} {from}–{to}: {units, plural, =0 {something is in the way} one {a lesson is in the way} other {# lessons are in the way}}. Enter shows the nearest free times.",
+    "numberNone": "There is no suggestion {rank}.",
+    "typedOutside": "That time is outside the day: type a time between {from} and {to}.",
     "placed": "Moving {lesson} to {day} {from}–{to}.",
     "refused": "{lesson} cannot go on {day} {from}–{to}. The nearest free times are shown.",
     "letGo": "Let go of {lesson}. Nothing changed.",
@@ -2363,6 +2469,10 @@
       "marker": {
         "keys": "Arrow keys, with a lesson picked up",
         "does": "Move the marker a quarter of an hour up or down (five minutes with Shift) or a day sideways."
+      },
+      "numbers": {
+        "keys": "1 to 9, with a lesson picked up",
+        "does": "Moves the marker to the best time with that number, where the board has marked the times the lesson can stand."
       },
       "put": {
         "keys": "Enter or Space, with a lesson picked up",
@@ -2464,6 +2574,7 @@
     "undo": "Undo",
     "redo": "Redo",
     "undoRefused": "This cannot be undone. {why} The lesson stays where it is, and the next Undo takes the step before it.",
+    "moreReasons": "{count, plural, one {One more rule says no} other {# more rules say no}}: Justera lektion shows them.",
     "undone": "Change undone",
     "redone": "Change redone",
     "conflictCount": "{count, plural, =1 {1 conflict} other {# conflicts}}",
@@ -3922,6 +4033,8 @@
       "invite": "Invite chosen ({count})",
       "invited": "{sent} invitations were sent.",
       "chunked": "Invitations are sent {chunk} at a time.",
+      "stoppedShort": "Supabase has reached its mail limit: {left, plural, one {# person has} other {# people have}} not been invited.",
+      "stopped": "Supabase has reached its mail limit, so {left, plural, one {# person has} other {# people have}} not been invited. Wait a while, or raise the limit under Authentication → Rate Limits in Supabase, and invite them again. Those who have an invitation already get no second one.",
       "report": "{sent} sent, {already} already had an account, {failed} failed.",
       "loadFailed": "The list of new people could not be loaded"
     },
@@ -4124,6 +4237,8 @@
     "guardiansNotice": "A row is a link between a guardian and a pupil: the pupil's e-mail address is in the column elev_epost, and the pupil must exist and be active. A guardian who does not exist is created without an invitation. One who does exist only gets the link, so their name and phone number are not changed.",
     "noGuardianLinks": "There are no links between guardians and pupils to export.",
     "keptProtected": "{count, plural, one {One person in the file has a protected identity. They are in it because whoever receives the file is to have everyone, so handle the file accordingly.} other {# people in the file have a protected identity. They are in it because whoever receives the file is to have everyone, so handle the file accordingly.}}",
+    "withoutAddressLinks": "{count, plural, one {# link is not in the file, because the pupil or the guardian has no e-mail address and the file names people by it.} other {# links are not in the file, because the pupil or the guardian has no e-mail address and the file names people by it.}} The links are still under People.",
+    "withoutAddressMembers": "{count, plural, one {# pupil in a group is not in the file, because the pupil has no e-mail address and the file names pupils by it.} other {# pupils in groups are not in the file, because the pupils have no e-mail address and the file names pupils by it.}} The groups are unchanged under Groups.",
     "heldOut": {
       "people": "{count, plural, =0 {Nobody was kept out of the file: none of them is marked as having a protected identity. Anyone with a protected identity who is not marked under People is in it.} one {One person with a protected identity was kept out of the file, and every row naming them. Anyone with a protected identity who is not marked under People is in it.} other {# people with a protected identity were kept out of the file, and every row naming any of them. Anyone with a protected identity who is not marked under People is in it.}}",
       "links": "{count, plural, =0 {No link was kept out of the file: no pupil or guardian in it is marked as having a protected identity. Anyone with a protected identity who is not marked under People is in it.} one {One link was kept out of the file, because the pupil or the guardian has a protected identity. Anyone with a protected identity who is not marked under People is in it.} other {# links were kept out of the file, because the pupil or the guardian has a protected identity. Anyone with a protected identity who is not marked under People is in it.}}"
@@ -4141,6 +4256,8 @@
     "readAs": "The file is not UTF-8 and was read as {encoding}. Check that å, ä and ö look right in the preview.",
     "withoutClass": "{count, plural, one {# student has no class in the file and is created without one.} other {# students have no class in the file and are created without one.}} The import cannot give them a class afterwards, so fill in the class in the file unless that is intended.",
     "createdWithoutClass": "{count, plural, one {# student was created without a class.} other {# students were created without a class.}} Give them a class under People.",
+    "withoutAddress": "{count, plural, one {# student has no e-mail address in the file and is created with no login.} other {# students have no e-mail address in the file and are created with no login.}} They are in lists, attendance and the timetable. A later file with the address gives it to the student with the same first name, last name and class.",
+    "createdWithoutAddress": "{count, plural, one {# student was created without an e-mail address.} other {# students were created without an e-mail address.}} They cannot be invited until there is an address: give them one under People, or import a file with the addresses.",
     "rejectedByServer": "The server did not accept the file, because a cell holds a value that cannot be saved. Nothing was imported. Compare the file with the template."
   },
   "grades": {

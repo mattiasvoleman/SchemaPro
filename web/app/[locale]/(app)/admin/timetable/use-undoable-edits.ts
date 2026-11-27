@@ -74,7 +74,11 @@ export function useUndoableEdits(inputs: {
         // time, in the reader's language and from the catalogue, so "Schemakonflikt" in front would only say it twice.
         // A block's card names the member it is about (lib/problem-codes.ts says it, as it does for a swap's apply).
         const why = apiErrorText(error, tCommon);
-        toast.error(undoOfAMove.has(error) ? t("undoRefused", { why }) : why);
+        // The sentence is the heaviest reason's, the one the gateway sends the params of; the others are only named by their codes (`reasons`),
+        // and the reader is told that there are more and where to see them, which is more than a toast that says one rule and stops.
+        const reasons = typeof error.params?.["reasons"] === "string" ? new Set(error.params["reasons"].split(",").filter(Boolean)) : new Set<string>();
+        const more = reasons.size > 1 ? ` ${t("moreReasons", { count: reasons.size - 1 })}` : "";
+        toast.error(undoOfAMove.has(error) ? t("undoRefused", { why: `${why}${more}` }) : `${why}${more}`);
       } else if (error instanceof ApiError && error.status === 409) {
         toast.error(`${t("editConflict")}: ${apiErrorText(error, tCommon)}`);
       } else {

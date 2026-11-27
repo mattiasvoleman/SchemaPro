@@ -173,7 +173,7 @@ export function basisHash(slice: LocalSlice, source: SourceBasis): string {
   const sortBy = <T>(rows: T[], key: (row: T) => string) => [...rows].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
   const canonical = {
     users: sortBy(slice.users, (u) => u.id).map((u) => [
-      u.id, u.role, u.firstName, u.lastName, u.email.toLowerCase(), u.isActive, u.studentGroupId, u.ss12000Id, u.invited,
+      u.id, u.role, u.firstName, u.lastName, u.email?.toLowerCase() ?? null, u.isActive, u.studentGroupId, u.ss12000Id, u.invited,
     ]),
     groups: sortBy(slice.groups, (g) => g.id).map((g) => [g.id, g.name, g.kind, g.academicYearId, g.gradeLevel, g.ss12000Id]),
     members: slice.teachingMembers.map((m) => `${m.studentGroupId}|${m.studentId}`).sort(),

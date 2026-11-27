@@ -10016,8 +10016,8 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- 29e: a person's choice of what leaves SchemaPro is theirs alone
 -- (NotificationOptOuts, 20261013100000). Own rows for every role, no admin
--- arm, no UPDATE; never the unreported absence or a teacher's absence report
--- (CHECKs). The refusals are asserted as both roles: authenticated
+-- arm, no UPDATE; never the unreported absence (a CHECK; the one on a teacher's
+-- absence report was dropped in 20270311090000, K6). The refusals are asserted as both roles: authenticated
 -- (PostgREST) and app_authenticated (the API, a member of authenticated).
 -- ---------------------------------------------------------------------------
 
@@ -10045,11 +10045,10 @@ BEGIN
     RAISE EXCEPTION 'optout: the unreported absence was silenced';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
-  BEGIN
-    INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (me, school, 'TEACHER_ABSENCE_REPORTED');
-    RAISE EXCEPTION 'optout: a type that never leaves the inbox was stored';
-  EXCEPTION WHEN check_violation THEN NULL;
-  END;
+  -- A teacher's absence report leaves the inbox as a mail since K6 (never as a push), so an administrator may switch it off like any other type:
+  -- the database no longer refuses the row (20270311090000). Which roles are offered the switch is the gateway's list (TYPES_BY_ROLE).
+  INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (me, school, 'TEACHER_ABSENCE_REPORTED');
+  DELETE FROM "NotificationOptOuts" WHERE "userId" = me AND type = 'TEACHER_ABSENCE_REPORTED';
 END $$;
 
 -- The refusals, as each role.
@@ -70166,6 +70165,82 @@ BEGIN
   PERFORM pg_temp.ut_expect('569 the teacher is removed', pg_temp.ut_try(format($q$DELETE FROM "Users" WHERE id = %L$q$, gone)), 'ok');
   PERFORM pg_temp.ut_expect('569 ... and the assessment of them with them', (SELECT count(*) FROM "AssignmentScopeAssessments" WHERE "userId" = gone)::text, '0');
   RAISE NOTICE 'ut 569: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Personer utan e-postadress (20270310090000), section 573.
+--
+-- A pupil or a guardian may have no address, and then no login: "invitedAt" says the person has one, and a login is born of an address.
+-- What the two checks hold, asked as the school's administrator, who is the only one who writes people:
+--   * the catalogue: the column is optional, the key is the same, and the two checks read as the migration wrote them;
+--   * a pupil and a guardian are made without an address, and many of them (NULL in a unique key is no pair);
+--   * a teacher and an administrator are not;
+--   * no row has an invitedAt without an address: not made so, not given one, and a person who has one is not given none;
+--   * a role change takes the address with it: a person with no address does not become a teacher;
+--   * an address given later makes the person an ordinary uninvited one, and the key still holds it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+DECLARE
+  pupil uuid;
+  pupil2 uuid;
+  guardian uuid;
+BEGIN
+  PERFORM pg_temp.ut_expect('573 the address is optional', (SELECT is_nullable FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'Users' AND column_name = 'email'), 'YES');
+  PERFORM pg_temp.ut_expect('573 the key is the same: school and address', (SELECT pg_get_indexdef(indexrelid) FROM pg_index
+    WHERE indexrelid = 'public."Users_schoolId_email_key"'::regclass), 'CREATE UNIQUE INDEX "Users_schoolId_email_key" ON public."Users" USING btree ("schoolId", email)');
+  PERFORM pg_temp.ut_expect('573 the check that holds the login to an address', (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+    WHERE conname = 'Users_a_person_with_no_address_has_no_login' AND conrelid = '"Users"'::regclass), 'CHECK (((email IS NOT NULL) OR ("invitedAt" IS NULL)))');
+  PERFORM pg_temp.ut_expect('573 the check that holds the address to pupils and guardians', (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+    WHERE conname = 'Users_only_a_pupil_or_guardian_has_no_address' AND conrelid = '"Users"'::regclass),
+    $c$CHECK (((email IS NOT NULL) OR (role = ANY (ARRAY['STUDENT'::"UserRole", 'GUARDIAN'::"UserRole"]))))$c$);
+
+  -- Made without an address: a pupil, another pupil with the same name, and a guardian.
+  INSERT INTO "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
+    VALUES (app.current_school_id(), gen_random_uuid(), 'STUDENT', 'Ut', 'Utanadress', NULL, now()) RETURNING id INTO pupil;
+  PERFORM pg_temp.ut_expect('573 a pupil with no address and no login is made', (SELECT concat_ws('|', (email IS NULL)::text, ("invitedAt" IS NULL)::text) FROM "Users" WHERE id = pupil), 'true|true');
+  PERFORM pg_temp.ut_expect('573 ... and a second one, as the key allows many (NULL is no pair)',
+    pg_temp.ut_try($q$INSERT INTO "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
+      VALUES (app.current_school_id(), gen_random_uuid(), 'STUDENT', 'Ut', 'Utanadress', NULL, now())$q$), 'ok');
+  INSERT INTO "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
+    VALUES (app.current_school_id(), gen_random_uuid(), 'STUDENT', 'Ut', 'Utanadress2', NULL, now()) RETURNING id INTO pupil2;
+  INSERT INTO "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
+    VALUES (app.current_school_id(), gen_random_uuid(), 'GUARDIAN', 'Ut', 'Vårdnadshavare', NULL, now()) RETURNING id INTO guardian;
+  PERFORM pg_temp.ut_expect('573 the school sees them (row security is the same)', (SELECT count(*) FROM "Users" WHERE email IS NULL)::text, '4');
+
+  -- Not a teacher, and not an administrator.
+  PERFORM pg_temp.ut_expect('573 a teacher with no address is refused', pg_temp.ut_try($q$INSERT INTO "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
+    VALUES (app.current_school_id(), gen_random_uuid(), 'TEACHER', 'Ut', 'Larare', NULL, now())$q$), '23514');
+  PERFORM pg_temp.ut_expect('573 an administrator with no address is refused', pg_temp.ut_try($q$INSERT INTO "Users" ("schoolId", "authId", role, "adminProfile", "firstName", "lastName", email, "updatedAt")
+    VALUES (app.current_school_id(), gen_random_uuid(), 'SCHOOL_ADMIN', 'FULL', 'Ut', 'Admin', NULL, now())$q$), '23514');
+
+  -- No login without an address.
+  PERFORM pg_temp.ut_expect('573 a pupil with no address is not made with a login', pg_temp.ut_try($q$INSERT INTO "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "invitedAt", "updatedAt")
+    VALUES (app.current_school_id(), gen_random_uuid(), 'STUDENT', 'Ut', 'Inloggad', NULL, now(), now())$q$), '23514');
+  PERFORM pg_temp.ut_expect('573 ... and is not given one afterwards', pg_temp.ut_try(format($q$UPDATE "Users" SET "invitedAt" = now(), "authId" = gen_random_uuid() WHERE id = %L$q$, pupil)), '23514');
+  PERFORM pg_temp.ut_expect('573 ... nor a guardian', pg_temp.ut_try(format($q$UPDATE "Users" SET "invitedAt" = now() WHERE id = %L$q$, guardian)), '23514');
+  PERFORM pg_temp.ut_expect('573 ... and the row is as it was', (SELECT "invitedAt" IS NULL FROM "Users" WHERE id = pupil)::text, 'true');
+
+  -- No becoming a teacher with no address: the role is changed with the address, or not at all.
+  PERFORM pg_temp.ut_expect('573 a person with no address does not become a teacher', pg_temp.ut_try(format($q$UPDATE "Users" SET role = 'TEACHER', "studentGroupId" = NULL WHERE id = %L$q$, guardian)), '23514');
+
+  -- An address given later: an ordinary uninvited person, and the key holds it.
+  PERFORM pg_temp.ut_expect('573 an address is given later', pg_temp.ut_try(format($q$UPDATE "Users" SET email = 'ut-573-pupil@example.invalid' WHERE id = %L$q$, pupil)), 'ok');
+  PERFORM pg_temp.ut_expect('573 ... the person is uninvited, with the address', (SELECT concat_ws('|', email, ("invitedAt" IS NULL)::text) FROM "Users" WHERE id = pupil), 'ut-573-pupil@example.invalid|true');
+  PERFORM pg_temp.ut_expect('573 ... the address is held by the key', pg_temp.ut_try(format($q$UPDATE "Users" SET email = 'ut-573-pupil@example.invalid' WHERE id = %L$q$, pupil2)), '23505');
+  PERFORM pg_temp.ut_expect('573 ... and is invited when the school says so', pg_temp.ut_try(format($q$UPDATE "Users" SET "invitedAt" = now(), "authId" = gen_random_uuid() WHERE id = %L$q$, pupil)), 'ok');
+
+  -- A person who has a login does not lose the address.
+  PERFORM pg_temp.ut_expect('573 an invited person is not given no address', pg_temp.ut_try(format($q$UPDATE "Users" SET email = NULL WHERE id = %L$q$, pupil)), '23514');
+  PERFORM pg_temp.ut_expect('573 ... the address is the one it was', (SELECT email FROM "Users" WHERE id = pupil), 'ut-573-pupil@example.invalid');
+
+  -- The removal of a person with no address is a removal like any other.
+  PERFORM pg_temp.ut_expect('573 a person with no address is removed', pg_temp.ut_try(format($q$DELETE FROM "Users" WHERE id = %L$q$, pupil2)), 'ok');
+  RAISE NOTICE 'ut 573: % checks', current_setting('ut.checks');
 END $$;
 ROLLBACK;
 

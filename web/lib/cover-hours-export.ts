@@ -28,7 +28,7 @@ import type { CoverPersonKind, Hours } from "@/lib/cover-types";
 
 export interface HoursPerson {
   name: string;
-  email: string;
+  email: string | null;
 }
 
 export interface HoursNames {
@@ -68,7 +68,7 @@ export function hoursLessonsCsv(hours: Hours, names: HoursNames): string {
     )
     .map(({ row, person }) => [
       person.name,
-      person.email,
+      person.email ?? "",
       KIND_WORD[row.kind],
       row.date,
       clock(row.startsAt, names.timezone),
@@ -88,7 +88,7 @@ export function hoursSummaryCsv(hours: Hours, names: HoursNames): string {
     .sort((a, b) => compareSwedish(a.person.name, b.person.name) || a.line.userId.localeCompare(b.line.userId))
     .map(({ line, person }) => [
       person.name,
-      person.email,
+      person.email ?? "",
       KIND_WORD[line.kind],
       String(line.lessons),
       String(line.minutes),
