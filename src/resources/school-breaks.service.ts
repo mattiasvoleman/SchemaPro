@@ -322,18 +322,25 @@ export class SchoolBreaksService {
 
         let removedCalendarLessons = 0;
         if (dryRun) {
-          // Each row alone, for the line under it; all of them together, once each, for the sum.
-          for (const [place, row] of touched.entries()) {
-            items[touchedIndex[place]!]!.removedCalendarLessons = await tx.calendarLesson.count({
-              where: this.lessonsInside(row),
-            });
-          }
-          removedCalendarLessons =
+          // ONE statement for every row, then each row's own number and the sum worked out here. A count per row and
+          // one over the OR of them all was a NOT EXISTS over the attendance register per row (Prisma gives each arm
+          // its own subquery, which the planner cannot share): on a school with a term of attendance the question
+          // took longer than the transaction's 15 s, held its connection until the 30 s statement limit, and the
+          // dialog asks it again at every tick.
+          const candidates =
             touched.length === 0
-              ? 0
-              : await tx.calendarLesson.count({
-                  where: { OR: touched.map((row) => this.lessonsInside(row)) },
+              ? []
+              : await tx.calendarLesson.findMany({
+                  where: this.lessonsInsideAny(touched),
+                  select: { date: true, studentGroup: { select: { gradeLevel: true } } },
                 });
+          for (const [place, row] of touched.entries()) {
+            items[touchedIndex[place]!]!.removedCalendarLessons = candidates.filter((lesson) =>
+              this.takes(row, lesson),
+            ).length;
+          }
+          // Each candidate is a lesson some row takes, and is here once: a lesson on two rows is counted once.
+          removedCalendarLessons = candidates.length;
         } else {
           for (const [place, row] of touched.entries()) {
             const count = await this.removeLessonsInside(tx, row);
@@ -550,11 +557,52 @@ export class SchoolBreaksService {
   ): Prisma.CalendarLessonWhereInput {
     return {
       date: { gte: breakRow.startDate, lte: breakRow.endDate },
+      ...this.takeable(),
+      ...this.gradeLevelFilter(breakRow),
+    };
+  }
+
+  /** What no lov takes: the protection rule, written once for the purge and for the counts. */
+  private takeable(): Prisma.CalendarLessonWhereInput {
+    return {
       status: 'SCHEDULED',
       startsAt: { gt: new Date() },
       attendanceRecords: { none: {} },
-      ...this.gradeLevelFilter(breakRow),
     };
+  }
+
+  /**
+   * The lessons ANY of the rows takes, as one filter: the protection rule once, and the rows' days and årskurser
+   * under it. The same rule as lessonsInside for each row alone, so the union a dry run counts is the union the
+   * writes take.
+   */
+  private lessonsInsideAny(
+    rows: ReadonlyArray<
+      Pick<SchoolBreak, 'startDate' | 'endDate' | 'minGradeLevel' | 'maxGradeLevel'>
+    >,
+  ): Prisma.CalendarLessonWhereInput {
+    const bySpan = new Map<string, { grades: Prisma.CalendarLessonWhereInput; days: Prisma.CalendarLessonWhereInput[] }>();
+    for (const row of rows) {
+      const key = `${row.minGradeLevel ?? ''}|${row.maxGradeLevel ?? ''}`;
+      const entry = bySpan.get(key) ?? { grades: this.gradeLevelFilter(row), days: [] };
+      entry.days.push({ date: { gte: row.startDate, lte: row.endDate } });
+      bySpan.set(key, entry);
+    }
+    return {
+      ...this.takeable(),
+      OR: [...bySpan.values()].map(({ grades, days }) => ({ ...grades, OR: days })),
+    };
+  }
+
+  /** Whether a row takes a lesson (its day and its group's årskurs), for the counts a dry run makes in memory. */
+  private takes(
+    row: Pick<SchoolBreak, 'startDate' | 'endDate' | 'minGradeLevel' | 'maxGradeLevel'>,
+    lesson: { date: Date; studentGroup: { gradeLevel: number | null } | null },
+  ): boolean {
+    if (lesson.date < row.startDate || lesson.date > row.endDate) return false;
+    if (row.minGradeLevel === null || row.maxGradeLevel === null) return true;
+    const grade = lesson.studentGroup?.gradeLevel ?? null;
+    return grade !== null && grade >= row.minGradeLevel && grade <= row.maxGradeLevel;
   }
 
   /**

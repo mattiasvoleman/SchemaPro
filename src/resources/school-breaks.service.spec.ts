@@ -1200,11 +1200,14 @@ describe('SchoolBreaksService', () => {
 
     describe('with dryRun', () => {
       it('writes nothing and tells nobody, and counts the lessons the rows would take, once each', async () => {
-        const wheres: Array<Record<string, unknown>> = [];
-        tx.calendarLesson.count.mockImplementation(({ where }: { where: Record<string, unknown> }) => {
-          wheres.push(where);
-          return Promise.resolve(where['OR'] ? 5 : 3);
-        });
+        const lesson = (day: string, gradeLevel: number | null) => ({ date: date(day), studentGroup: { gradeLevel } });
+        // What the one question answers: the lessons some row takes, each once.
+        tx.calendarLesson.findMany.mockResolvedValue([
+          lesson('2027-02-22', 7),
+          lesson('2027-02-23', 7),
+          lesson('2027-02-24', 9),
+          lesson('2027-02-26', 7),
+        ]);
 
         const result = await service.applyCalendar(
           calendar([sportlov, { name: 'Vecka 8', startDate: '2027-02-23', endDate: '2027-02-24' }], { dryRun: true }),
@@ -1215,27 +1218,45 @@ describe('SchoolBreaksService', () => {
         expect(tx.schoolBreak.update).not.toHaveBeenCalled();
         expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
         expect(told()).toEqual([]);
-        expect(result).toMatchObject({ dryRun: true, created: 2, removedCalendarLessons: 5 });
-        // Each row's own count (3 here), and the sum a lesson on two rows counted once (the OR over both).
-        expect(result.items.map((item) => [item.id, item.removedCalendarLessons])).toEqual([[null, 3], [null, 3]]);
-        expect(wheres.filter((where) => where['OR'])).toHaveLength(1);
-        expect((wheres.find((where) => where['OR'])!['OR'] as unknown[]).length).toBe(2);
+        // One statement, not one per row: each is a NOT EXISTS over the attendance register.
+        expect(tx.calendarLesson.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.calendarLesson.count).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ dryRun: true, created: 2, removedCalendarLessons: 4 });
+        // Each row's own count, and the sum a lesson on two rows counted once.
+        expect(result.items.map((item) => [item.id, item.removedCalendarLessons])).toEqual([[null, 4], [null, 2]]);
       });
 
-      it('asks the database the question the purge asks: the same protection rule, not a copy', async () => {
-        tx.calendarLesson.count.mockResolvedValue(0);
-        await service.applyCalendar(calendar([{ ...sportlov, minGradeLevel: 7, maxGradeLevel: 9 }], { dryRun: true }), testUser());
-        const asked = tx.calendarLesson.count.mock.calls[0]![0].where;
+      it('counts a row for some årskurser by the årskurs of the lesson\'s group, and a group with none is not taken by it', async () => {
+        const lesson = (day: string, gradeLevel: number | null) => ({ date: date(day), studentGroup: { gradeLevel } });
+        tx.calendarLesson.findMany.mockResolvedValue([lesson('2027-02-22', 7), lesson('2027-02-22', 9), lesson('2027-02-22', null)]);
+        const result = await service.applyCalendar(calendar([{ ...sportlov, minGradeLevel: 7, maxGradeLevel: 8 }], { dryRun: true }), testUser());
+        expect(result.items[0]!.removedCalendarLessons).toBe(1);
+      });
+
+      it('asks the database the question the purge asks: the same protection rule, once, not a copy per row', async () => {
+        tx.calendarLesson.findMany.mockResolvedValue([]);
+        const rows = [sportlov, { ...pask, minGradeLevel: 7, maxGradeLevel: 9 }, { name: 'Vecka 8', startDate: '2027-02-23', endDate: '2027-02-24' }];
+        await service.applyCalendar(calendar(rows, { dryRun: true }), testUser());
+        const asked = tx.calendarLesson.findMany.mock.calls[0]![0].where as Record<string, unknown>;
         givenCalendar([]);
         await service.applyCalendar(calendar([{ ...sportlov, minGradeLevel: 7, maxGradeLevel: 9 }]), testUser());
-        const purged = tx.calendarLesson.deleteMany.mock.calls[0]![0].where;
-        expect(asked).toEqual(purged);
+        const purged = tx.calendarLesson.deleteMany.mock.calls[0]![0].where as Record<string, unknown>;
+        // The protection the purge asks for is the protection the count asks for.
+        expect({ status: asked['status'], startsAt: asked['startsAt'], attendanceRecords: asked['attendanceRecords'] }).toEqual({
+          status: purged['status'],
+          startsAt: purged['startsAt'],
+          attendanceRecords: purged['attendanceRecords'],
+        });
+        // And only once: a copy of it under every row is a NOT EXISTS over the register per row.
+        expect(JSON.stringify(asked).match(/attendanceRecords/g)).toHaveLength(1);
+        // One arm per årskurs span (whole school; 7 to 9), the rows with the same span sharing it.
+        expect((asked['OR'] as unknown[]).length).toBe(2);
       });
 
       it('counts nothing for rows that are already there', async () => {
         tx.schoolBreak.findMany.mockResolvedValue([storedBreak({ name: 'Sportlov' })]);
         const result = await service.applyCalendar(calendar([sportlov], { dryRun: true }), testUser());
-        expect(tx.calendarLesson.count).not.toHaveBeenCalled();
+        expect(tx.calendarLesson.findMany).not.toHaveBeenCalled();
         expect(result).toMatchObject({ dryRun: true, created: 0, unchanged: 1, removedCalendarLessons: 0 });
       });
     });
