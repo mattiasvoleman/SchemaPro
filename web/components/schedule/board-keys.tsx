@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { boardCommands, possibleOf } from "@/lib/possible-store";
-import { optionAt, optionNumbered, runAt } from "@/lib/possible-times";
+import { optionAt, optionNumbered, roomAt, runAt } from "@/lib/possible-times";
 import {
   focusAfter,
   lengthened,
@@ -209,7 +209,8 @@ export function BoardKeys(props: BoardKeysProps) {
           if (option) return { key: "markerRank", values: { ...where, rank: option.rank } };
           // A free square in the lesson's own room is the page's own check to say. One in another room is not: the page knows only the
           // lesson's own room and would call it taken, against a board that paints it "Ledigt, annan sal". Only a numbered time carries the room.
-          return run.kind === "CHANGE" ? { key: "markerChange", values: where } : null;
+          // The gateway names the room (run.rooms) and Enter lays the lesson there; a gateway that does not leaves it to Justera lektion.
+          return run.kind === "CHANGE" ? { key: roomAt(times, id, square.dayOfWeek, square.startMinutes) !== undefined ? "markerChangeHere" : "markerChange", values: where } : null;
         }
         case "CLOSED":
           return { key: "markerClosed", values: { ...where, code: run.code ?? "AVAILABILITY" } };
@@ -222,6 +223,16 @@ export function BoardKeys(props: BoardKeysProps) {
         default:
           return null;
       }
+    };
+
+    /**
+     * The room the gateway judged the lesson in at a square, when it is another than its own (a numbered time, or a stretch it paints
+     * "Ledigt, annan sal"): it goes with the move, so that Enter lays the lesson there and the page's own check, which knows only the
+     * lesson's own room, is not asked about a square it would call taken. Undefined for every other square.
+     */
+    const roomOf = (id: string, square: Marker): string | null | undefined => {
+      const times = possibleOf(id);
+      return times ? roomAt(times, id, square.dayOfWeek, square.startMinutes) : undefined;
     };
 
     /** Asks the page whether the lesson may stand on the square, and draws the marker green or red. */
@@ -301,7 +312,7 @@ export function BoardKeys(props: BoardKeysProps) {
           // card, and focus with it, out of the page. The marker stays in the day; the lesson's dialog changes the day.
           if (p.shownDay !== null && next.dayOfWeek !== taken.at.dayOfWeek) return;
           taken.at = next;
-          taken.room = undefined;
+          taken.room = roomOf(id, next);
           const ok = verdict(id, next);
           // The gateway's word for the square when it has one (a rank, the rule that shuts it, the lesson in the way): it is the judge's.
           // Else the page's own check, which is what there is until the gateway has answered.
@@ -323,7 +334,7 @@ export function BoardKeys(props: BoardKeysProps) {
           }
           taken.at = { dayOfWeek: option.dayOfWeek, startMinutes: option.startMinutes, endMinutes: option.startMinutes + length };
           // The room the gateway put it in, when that is another than its own: it goes with the move.
-          taken.room = option.roomChanged ? (option.lessons.find((entry) => entry.lessonId === id)?.roomId ?? null) : undefined;
+          taken.room = roomOf(id, taken.at);
           verdict(id, taken.at);
           say("markerRank", { ...squareOf(taken.at), rank: option.rank });
           return;
@@ -449,7 +460,7 @@ export function BoardKeys(props: BoardKeysProps) {
           return;
         }
         taking.at = { dayOfWeek: taking.at.dayOfWeek, startMinutes: minutes, endMinutes: minutes + length };
-        taking.room = undefined;
+        taking.room = roomOf(taking.id, taking.at);
         const ok = verdict(taking.id, taking.at);
         const known = knownAbout(taking.id, taking.at);
         if (known) say(known.key, known.values);

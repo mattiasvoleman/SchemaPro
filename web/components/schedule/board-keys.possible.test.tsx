@@ -118,7 +118,42 @@ describe("the line says what the gateway says of the marker's square", () => {
     key("a", { key: "ArrowRight" });
     key("a", { key: "ArrowRight" });
     for (let i = 0; i < 5; i++) key("a", { key: "ArrowDown" }); // Wednesday 10:15: CHANGE, and not one of the three numbered times (10:00 is the third)
+    expect(said()).toBe("Onsdag 10:15–11:15: ledigt i en annan sal än lektionens egen. Enter lägger den där.");
+  });
+
+  it("falls back on the old sentence when the gateway names no room for the stretch (an older gateway)", async () => {
+    post.mockResolvedValue({ ...TIMES, days: TIMES.days.map((day) => ({ ...day, runs: day.runs.map(({ rooms: _rooms, ...run }) => run) })) });
+    await board("sv", { validateChange: vi.fn().mockImplementation((_id: string, change: { dayOfWeek: number }) => change.dayOfWeek !== 3) });
+    await takeUp();
+    key("a", { key: "ArrowRight" });
+    key("a", { key: "ArrowRight" });
+    for (let i = 0; i < 5; i++) key("a", { key: "ArrowDown" });
     expect(said()).toBe("Onsdag 10:15–11:15: ledigt, men i en annan sal än lektionens egen. Lägg den med ett av de bästa förslagen eller i Justera lektion, där salen väljs.");
+  });
+
+  it("lays a square that is free only in another room with that room: Enter, the button and a typed time (E3, Ledigt, annan sal läggs)", async () => {
+    const onLessonChange = vi.fn();
+    // The page's own check knows only the lesson's own room, which is taken all of Wednesday: it would refuse every square of the stretch.
+    const validateChange = vi.fn().mockImplementation((_id: string, change: { dayOfWeek: number }) => change.dayOfWeek !== 3);
+    await board("sv", { onLessonChange, validateChange });
+    await takeUp();
+    key("a", { key: "ArrowRight" });
+    key("a", { key: "ArrowRight" });
+    for (let i = 0; i < 5; i++) key("a", { key: "ArrowDown" }); // Wednesday 10:15: a stretch of another room, and not one of the numbered times
+    validateChange.mockClear();
+    key("a", { key: "Enter" });
+    expect(validateChange).not.toHaveBeenCalled();
+    expect(onLessonChange).toHaveBeenLastCalledWith("a", { dayOfWeek: 3, startMinutes: 615, endMinutes: 675, roomId: "r2" });
+
+    // A typed time in the stretch takes the room too, and the button lays it as Enter does.
+    await takeUp();
+    for (let i = 0; i < 2; i++) key("a", { key: "ArrowRight" });
+    await waitFor(() => expect(screen.getByLabelText("Skriv en tid")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Skriv en tid"), { target: { value: "10:30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Flytta markören" }));
+    expect(said()).toBe("Onsdag 10:30–11:30: ledigt i en annan sal än lektionens egen. Enter lägger den där.");
+    fireEvent.click(screen.getByRole("button", { name: "Lägg där markören står" }));
+    expect(onLessonChange).toHaveBeenLastCalledWith("a", { dayOfWeek: 3, startMinutes: 630, endMinutes: 690, roomId: "r2" });
   });
 
   it("says how many are in the way when several are", async () => {
@@ -185,12 +220,17 @@ describe("1 to 9: the marker goes to the best times", () => {
     key("a", { key: "1" });
     key("a", { key: "Enter" });
     expect(onLessonChange).toHaveBeenLastCalledWith("a", { dayOfWeek: 2, startMinutes: 480, endMinutes: 540, roomId: undefined });
-    // 3 (another room), then an arrow: the room is not the arrow's.
+    // 3 (another room), then an arrow inside the same stretch: the stretch's room, which the gateway judged. Out of it, the lesson's own.
     await takeUp();
     key("a", { key: "3" });
     key("a", { key: "ArrowDown" });
     key("a", { key: "Enter" });
-    expect(onLessonChange).toHaveBeenLastCalledWith("a", { dayOfWeek: 3, startMinutes: 615, endMinutes: 675 });
+    expect(onLessonChange).toHaveBeenLastCalledWith("a", { dayOfWeek: 3, startMinutes: 615, endMinutes: 675, roomId: "r2" });
+    await takeUp();
+    key("a", { key: "3" });
+    for (let i = 0; i < 5; i++) key("a", { key: "ArrowDown" }); // 11:15: past the stretch, which ends at 11:00
+    key("a", { key: "Enter" });
+    expect(onLessonChange).toHaveBeenLastCalledWith("a", { dayOfWeek: 3, startMinutes: 675, endMinutes: 735 });
   });
 
   it("says there is no such suggestion, and leaves the marker where it is", async () => {
