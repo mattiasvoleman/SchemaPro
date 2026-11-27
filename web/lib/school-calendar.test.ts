@@ -183,6 +183,17 @@ describe("diffCalendar", () => {
     expect(statuses([entry({ name: "Studiedag", startDate: "2027-01-08", endDate: "2027-01-08", kind: "STAFF_DAY" })], existing)).toEqual(["NEW"]);
   });
 
+  it("does not take a lov of other årskurser for the one that moves: Prao for åk 9 and a file's Prao for the whole school are two", () => {
+    const existing = [lov({ name: "Prao", startDate: "2026-11-02", endDate: "2026-11-06", minGradeLevel: 9, maxGradeLevel: 9 })];
+    const wide = entry({ name: "Prao", startDate: "2026-11-09", endDate: "2026-11-13" });
+    // A "move" writes the entry's årskurser (none: every group), so the row would widen the week to the whole school.
+    expect(statuses([wide], existing)).toEqual(["NEW"]);
+    const diff = diffCalendar([wide], existing, YEAR);
+    expect(calendarBody("y1", savableRows(diff, new Set([wide.key])), false).breaks[0]).not.toHaveProperty("id");
+    // The same årskurser is still a move.
+    expect(statuses([{ ...wide, minGradeLevel: 9, maxGradeLevel: 9 }], existing)).toEqual(["CHANGED"]);
+  });
+
   it("does not take a name two entries share for a move either", () => {
     const rows = [entry({ name: "Höstlov", startDate: "2026-11-02", endDate: "2026-11-06" }), entry({ name: "Höstlov", startDate: "2027-01-11", endDate: "2027-01-15" })];
     expect(statuses(rows, [lov({ name: "Höstlov" })])).toEqual(["NEW", "NEW"]);

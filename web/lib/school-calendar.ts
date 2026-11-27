@@ -312,8 +312,10 @@ const SOURCE_RANK: Record<CalendarSource, number> = { FILE: 0, PROPOSAL: 1, HOLI
  *  1. OUTSIDE the läsår, or an end before the start;
  *  2. WEEKEND, when no day of it is a school day;
  *  3. SAME as a lov of the year (name without regard to case, kind, days, årskurser);
- *  4. CHANGED when it has the name of ONE lov of the year and no other entry has it: a name that several lov share
- *     (Studiedag) says nothing about which of them moved, and the entry is NEW beside them;
+ *  4. CHANGED when it has the name of ONE lov of the year, of the same årskurser, and no other entry has it: a name
+ *     that several lov share (Studiedag) says nothing about which of them moved, and the entry is NEW beside them.
+ *     So is a name with other årskurser: a move writes the årskurser of the entry too, and a Prao week for åk 9 that
+ *     "moved" to a row for the whole school would take every group's lessons under a status that names only days;
  *  5. COVERED when a lov of the year, or another entry that is not itself covered or the same, takes all its days
  *     and årskurser: Annandag påsk inside Påsklov. Of two entries that cover each other (the same days), the
  *     one from the more specific source stays: a file over a proposal over a holiday;
@@ -342,7 +344,7 @@ export function diffCalendar(entries: readonly CalendarEntry[], existing: readon
     );
     if (same) return { entry, status: "SAME" as const, existing: same, overlaps: [] };
     const namesake = existingByName.get(nameKey(entry.name));
-    if (namesake?.length === 1 && namesOfEntries.get(nameKey(entry.name)) === 1) {
+    if (namesake?.length === 1 && namesOfEntries.get(nameKey(entry.name)) === 1 && sameGrades(namesake[0]!, entry)) {
       return { entry, status: "CHANGED" as const, existing: namesake[0]!, overlaps: overlaps.filter((lov) => lov.id !== namesake[0]!.id) };
     }
     const cover = existing.find((lov) => covers(lov, entry));
