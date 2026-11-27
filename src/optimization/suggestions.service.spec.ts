@@ -7,7 +7,15 @@ import { createTxMock, testUser } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import type { AiEngineSuggestChangesResponse } from './interfaces/suggest-changes.interface';
 import type { OptimizationProxyService, PrepareResult } from './optimization-proxy.service';
-import { runningSuggestions, suggestionsOf, type Realiser, type SuggestionsStored } from './suggestions';
+import {
+  PREFLIGHT_REFUSAL_CODES,
+  failedSuggestions,
+  runningSuggestions,
+  suggestionsFromEngine,
+  suggestionsOf,
+  type Realiser,
+  type SuggestionsStored,
+} from './suggestions';
 import {
   SUGGESTIONS_NOT_FOR_THIS_RUN,
   SUGGESTIONS_RUN_IS_OLD,
@@ -120,6 +128,17 @@ describe('SuggestionsService', () => {
     ])('is 409 %s, and wakes nothing', async (_name, run) => {
       tx.optimizationJob!.findUnique!.mockResolvedValue({ ...refused, ...run });
       await expect(service.start(JOB_ID, user)).rejects.toMatchObject({ response: { code: SUGGESTIONS_NOT_FOR_THIS_RUN } });
+      expect(proxy.prepareSchedule).not.toHaveBeenCalled();
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it.each(PREFLIGHT_REFUSAL_CODES)('is 409 for a run the gateway itself refused before the engine was asked (%s), and the start reads the code that says so (G6b)', async (code) => {
+      tx.optimizationJob!.findUnique!.mockResolvedValue({ ...refused, conflictSummaryCode: code });
+      await expect(service.start(JOB_ID, user)).rejects.toMatchObject({ response: { code: SUGGESTIONS_NOT_FOR_THIS_RUN } });
+      // The mock answers whatever it is given whether the select asks for the code or not: that it is asked for is held here.
+      expect(tx.optimizationJob!.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ select: expect.objectContaining({ conflictSummaryCode: true }) }),
+      );
       expect(proxy.prepareSchedule).not.toHaveBeenCalled();
       expect(tx.$executeRaw).not.toHaveBeenCalled();
     });
@@ -355,6 +374,71 @@ describe('SuggestionsService', () => {
       await service.start(JOB_ID, user);
       await expect(service.settled()).resolves.toBeUndefined();
       expect(Logger.prototype.error).toHaveBeenCalled();
+    });
+  });
+
+  describe('a press over a finished analysis (g385-L-5)', () => {
+    const listed = suggestionsFromEngine(answer(), realiser, '2027-03-05T10:00:00.000Z', new Date('2027-03-05T10:01:30.000Z'));
+
+    /**
+     * The press, the engine's end of it, and what the column holds after: the first read is the run as it stands, the read in the write
+     * sees what the claim wrote (the column moves between the two, as it does for real).
+     */
+    async function pressOver(held: unknown, engine: () => Promise<AiEngineSuggestChangesResponse>) {
+      tx.optimizationJob!.findUnique!.mockImplementation(async () => ({
+        ...refused,
+        suggestions: columnCalls().length === 0 ? held : writtenBy(columnCalls()[0]!),
+      }));
+      proxy.callAiEngine.mockImplementation(engine);
+      await service.start(JOB_ID, user);
+      await service.settled();
+      return { claimed: writtenBy(columnCalls()[0]!), written: writtenBy(columnCalls()[1]!) };
+    }
+
+    it('keeps the finished analysis inside the running one, and gives it back when the engine says it is busy', async () => {
+      const { claimed, written } = await pressOver(listed, async () => {
+        throw http(HttpStatus.TOO_MANY_REQUESTS);
+      });
+      expect(claimed).toMatchObject({ state: 'RUNNING', previous: { state: 'DONE', verdict: 'CHANGES', previous: null } });
+      // The failure never replaced the list the school could use: the column is the list again.
+      expect(written).toEqual(listed);
+    });
+
+    it('gives it back when the new analysis found nothing in its time, and when it failed in any other way', async () => {
+      const notFound = await pressOver(listed, async () => answer({ verdict: 'NOT_FOUND', changes: [], verified: false }));
+      expect(notFound.written).toEqual(listed);
+      tx.$executeRaw.mockClear();
+      const failed = await pressOver(listed, async () => {
+        throw new Error('the engine fell over');
+      });
+      expect(failed.written).toEqual(listed);
+    });
+
+    it('takes the new analysis when it has a list of its own, or a refusal by a rule that never gives way', async () => {
+      const fresh = await pressOver(listed, async () =>
+        answer({ changes: [{ rule: 'SUBJECT_PER_DAY', cost: 20, current: 1, needed: 2, weekdays: [1], requirementIds: [], roomIds: [], resourceIds: [], proof: 'SOLVED' }] }),
+      );
+      expect(fresh.written).toMatchObject({ state: 'DONE', verdict: 'CHANGES', previous: null });
+      expect(fresh.written.changes[0]!.rule).toBe('SUBJECT_PER_DAY');
+      tx.$executeRaw.mockClear();
+      proxy.prepareSchedule.mockResolvedValueOnce({ ready: false, refusalCode: 'STAFF_UNSTAFFED_REQUIREMENTS', refusal: { conflicts: null } });
+      const refusedNow = await pressOver(listed, async () => answer());
+      expect(refusedNow.written).toMatchObject({ state: 'DONE', verdict: 'HARD_REFUSAL', previous: null });
+    });
+
+    it('keeps nothing over an analysis that failed or found nothing: a failure over a failure is a failure', async () => {
+      const failedBefore = failedSuggestions('2027-03-05T09:00:00.000Z', 'ENGINE_FAILED', new Date('2027-03-05T09:01:00.000Z'));
+      const { claimed, written } = await pressOver(failedBefore, async () => {
+        throw http(HttpStatus.TOO_MANY_REQUESTS);
+      });
+      expect(claimed.previous).toBeNull();
+      expect(written).toMatchObject({ state: 'FAILED', failure: 'ENGINE_BUSY' });
+    });
+
+    it('hands on what an abandoned press was asked over, and keeps nothing for the press that took its place', async () => {
+      const abandoned = { ...runningSuggestions(new Date(Date.now() - 20 * 60 * 1000), listed) };
+      const { claimed } = await pressOver(abandoned, async () => answer());
+      expect(claimed.previous).toMatchObject({ state: 'DONE', verdict: 'CHANGES' });
     });
   });
 

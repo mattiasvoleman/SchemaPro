@@ -92,7 +92,8 @@ describe('Åtgärdsförslag vid vägran: the page\'s copy of the view', () => {
   });
 
   it('has the fields of the stored analysis', () => {
-    const stored = fieldsOf(bodyOf(gateway, 'SuggestionsStored'));
+    // `previous` (the finished analysis a RUNNING one was asked over, g385-L-5) is the column's own: no view carries it.
+    const stored = fieldsOf(bodyOf(gateway, 'SuggestionsStored')).filter((field) => field !== 'previous');
     expect(stored.length).toBeGreaterThan(8);
     expect(fieldsOf(bodyOf(web, 'Suggestions'))).toEqual(stored);
   });

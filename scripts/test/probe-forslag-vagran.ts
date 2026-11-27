@@ -79,7 +79,8 @@ export async function suggestionsChecks(owner: Client, api: PrismaService, marke
   const b = await schoolOf('b');
 
   // The engine, answered by hand: every call waits for the probe to say so.
-  const calls: Array<(response: AiEngineSuggestChangesResponse) => void> = [];
+  type Call = ((response: AiEngineSuggestChangesResponse) => void) & { reject: (error: unknown) => void };
+  const calls: Call[] = [];
   const RULE = '11111111-1111-4111-8111-111111111111';
   const proxy = {
     waitSeconds: 240,
@@ -94,7 +95,7 @@ export async function suggestionsChecks(owner: Client, api: PrismaService, marke
       nameOf: () => undefined,
       teacherOfRule: (id: string) => (id === RULE ? a.teacher : undefined),
     }),
-    callAiEngine: () => new Promise<AiEngineSuggestChangesResponse>((resolve) => calls.push(resolve)),
+    callAiEngine: () => new Promise<AiEngineSuggestChangesResponse>((resolve, reject) => calls.push(Object.assign(resolve, { reject }))),
   };
   const service = new SuggestionsService(api, proxy as unknown as OptimizationProxyService);
   const jobs = new OptimizationJobsService(proxy as unknown as OptimizationProxyService, api);
@@ -175,9 +176,12 @@ export async function suggestionsChecks(owner: Client, api: PrismaService, marke
         `UPDATE "OptimizationJobs" SET "suggestions" = jsonb_set("suggestions", '{startedAt}', to_jsonb(to_char((now() - interval '10 minutes') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))) WHERE id = $1`,
         [first],
       );
+      // THE PRESS WAS OVER A FINISHED ANALYSIS (ag-a, ag-b: a list), so what is read of the abandoned one is that list and not a failure (G6b,
+      // g385-L-5): the school keeps what it could use, and the failure is only for a press that was asked over nothing (ag-c2).
       const read = await jobs.get(first, a.admin);
-      assert.equal(read.suggestions?.state, 'FAILED');
-      assert.equal(read.suggestions?.failure, 'ABANDONED');
+      assert.equal(read.suggestions?.state, 'DONE');
+      assert.equal(read.suggestions?.verdict, 'CHANGES');
+      assert.equal(read.suggestions?.changes[0]?.rule, 'TEACHER_DAILY_CAP');
       // A new press takes it over.
       const taken = await service.start(first, a.admin);
       assert.equal(taken.state, 'RUNNING');
@@ -191,6 +195,48 @@ export async function suggestionsChecks(owner: Client, api: PrismaService, marke
       assert.equal(held.startedAt, taken.startedAt);
       calls.shift()!(answer());
       await until('the one that took over is DONE', async () => (await column(first)).state === 'DONE');
+    });
+
+    await check('(ag-c2) an analysis asked over nothing, RUNNING for longer than any lasts, reads as abandoned: a failure, as it always did', async () => {
+      const fresh = await plantRun(b);
+      await service.start(fresh, b.admin);
+      await until('the engine was asked', async () => calls.length === 1);
+      const lost = calls.shift()!;
+      await owner.query(
+        `UPDATE "OptimizationJobs" SET "suggestions" = jsonb_set("suggestions", '{startedAt}', to_jsonb(to_char((now() - interval '10 minutes') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))) WHERE id = $1`,
+        [fresh],
+      );
+      const read = await jobs.get(fresh, b.admin);
+      assert.equal(read.suggestions?.state, 'FAILED');
+      assert.equal(read.suggestions?.failure, 'ABANDONED');
+      lost(answer());
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+
+    await check('(ag-c3) a press over a finished analysis keeps it in the column while it runs (the column\'s own check accepts the two), and a failure gives it back (G6b)', async () => {
+      calls.length = 0;
+      const run = await plantRun(b, { createdAt: new Date(Date.now() + 120_000).toISOString() });
+      await service.start(run, b.admin);
+      await until('the engine was asked', async () => calls.length === 1);
+      calls.shift()!(answer());
+      await until('the column is DONE', async () => (await column(run)).state === 'DONE');
+      const finished = await column(run);
+      assert.equal(finished.verdict, 'CHANGES');
+      // The second press, over the list: RUNNING with the list inside it, through the column's CHECK.
+      await service.start(run, b.admin);
+      await until('the engine was asked again', async () => calls.length === 1);
+      const running = await one<{ state: string; kept: string | null }>(
+        `SELECT "suggestions"->>'state' AS state, "suggestions"->'previous'->>'verdict' AS kept FROM "OptimizationJobs" WHERE id = $1`,
+        [run],
+      );
+      assert.deepEqual(running, { state: 'RUNNING', kept: 'CHANGES' });
+      // What a reader is shown meanwhile is the running analysis, and never the list it was asked over.
+      assert.ok(!JSON.stringify((await jobs.get(run, b.admin)).suggestions).includes('previous'));
+      // The engine is busy: the failure does not replace the list.
+      calls.shift()!.reject(new HttpException({ message: 'one at a time' }, 429));
+      await until('the list is back', async () => (await column(run)).state === 'DONE');
+      assert.deepEqual(await column(run), finished, 'the very analysis it was before the press');
+      assert.equal((await jobs.get(run, b.admin)).suggestions?.state, 'DONE');
     });
 
     await check('(ag-d) a run it may not be asked for is 409 with its code and wakes nothing; another school sees no such run', async () => {
