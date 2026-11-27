@@ -240,6 +240,34 @@ describe('DEPLOYMENT.md', () => {
     expect(Number(found[1])).toBe(Number(found[2]) - limit);
   });
 
+  it('36: Vad kom in names every area the gateway counts, and the off-states as the lowest level', () => {
+    const start = deployment.indexOf('## 36. ');
+    expect(start).toBeGreaterThan(0);
+    const section = flat(deployment.slice(start, deployment.indexOf('\n## 37. ', start)));
+    // The areas as the gateway lists them, and the words this section uses for each: a new area is added here and in the section together.
+    const areas = [...(/export const INTAKE_AREAS = \[([^\]]*)\]/.exec(read('src/intake/intake.ts'))?.[1] ?? '').matchAll(/'([A-Z_]+)'/g)].map((found) => found[1]!);
+    const WORDS: Record<string, string> = {
+      YEAR: 'the year',
+      SUBJECTS: 'subjects',
+      ROOMS: 'room types',
+      FRAME_TIMES: 'frame times',
+      RASTS: 'rasts',
+      BREAKS: 'lov',
+      LUNCH: 'the lunch',
+      SUPERVISION: 'the rastvakt',
+      CLASSES: 'classes',
+      TEACHING_GROUPS: 'teaching groups',
+      PEOPLE: 'pupils',
+      TIMPLAN: 'lokal timplan',
+      REQUIREMENTS: 'the posts',
+      STAFFING: 'the staffing',
+      SWITCHES: 'kvittens',
+    };
+    expect(areas.filter((area) => WORDS[area] === undefined)).toEqual([]);
+    expect(areas.filter((area) => !section.includes(WORDS[area]!))).toEqual([]);
+    expect(section).toContain('is always the third level');
+  });
+
   it('38: every part of R1 has the number of its pull request', () => {
     const start = deployment.indexOf('| Part | What it adds | Migration |');
     const table = deployment.slice(start, deployment.indexOf('\n\n', start)).split('\n').slice(2);
