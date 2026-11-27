@@ -7915,3 +7915,33 @@ When the judge says a time breaks the stage's ramtid or the class's lunch, an ad
 
 - The function `app.master_lesson_exemption_ends()` has no `REVOKE ... FROM PUBLIC`, which nearly all of the schema's other trigger functions have: the next migration that touches `MasterLessons` adds it.
 - A school's students and participants read `exemptFrom` through the PostgREST door like every other column of the table; whether to revoke it by column or let it stand is a decision not taken.
+
+## 43. The optimization profile is the school's ("Optimeringsprofilen sparas per skola", omgång 15, P5, part 3)
+
+Generera's five sliders (`preferredFree`, `preferredBusy`, `disruption`, `spread`, `teacherGap`) were kept in the browser's `localStorage`: a scheduler who changed computer, or a colleague, ran Generera with another profile than the school's and nothing said so. They are now one row a school in a new table, **`OptimizationProfiles`** (migration `20270313090000`).
+
+### 43.1 What the migration is
+
+- **One table**, `OptimizationProfiles`: `schoolId` (primary key, `ON DELETE CASCADE`), the five weights as `SMALLINT` with the defaults the page always started from (10, 5, 8, 3, 2) and a `CHECK` that each is 0..1000 (the engine's request takes no more), and `updatedAt`. No row is the defaults. No person is named by it, so the registerutdrag leaves it out (`person-tables.ts` lists tables that hold a person).
+- **Row security**: every administrator of the school reads the row (a läsare included); Schemaläggning writes it (`app.current_user_may('SCHEMALAGGNING', true)`, as Generera's runs, `OptimizationJobs`); nobody removes it (the grant has no `DELETE`); a teacher, another school and PostgREST's roles reach nothing. `TABLE_WRITE_GATES` names it (`src/auth/admin-areas.ts`) and RLS sections 116 (the matrix) and 601 hold it.
+- **Lock.** The foreign key takes `SHARE ROW EXCLUSIVE` on `Schools` (a read is not blocked, a write waits), taken `NOWAIT` in a 50 ms loop for 30 s with `lock_timeout` 5 s; after 30 s the migration stops with nothing changed and can be run again.
+
+### 43.2 What the gateway and the page do
+
+- `GET /api/v1/optimization/profile` (every administrator) answers the five weights, whether the school has saved them (`stored`) and when. `PUT` (Schemaläggning) replaces all five: a body with fewer is a 400, not "leave the others".
+- The Generera page reads the profile when it opens, saves the whole profile for the school half a second after the last move of a slider, and sends it with each run as before (`weights` in the run's request is unchanged: **the gateway does not read the profile for a run**, so an API caller that sends none still gets the engine's own defaults).
+- **What the browser held** is given to a school that has no profile, once, by the first administrator who can save and opens the page; the browser forgets it when the school has it. Where the school already has a profile, the school's wins and the browser's is dropped.
+
+### 43.3 Deploy order and rolling back
+
+- **Run the migration before the API is merged (§20.2)**, from a tree that has every migration applied. It adds a table and changes nothing that exists. The page before it keeps the profile in the browser; the page after it asks for a route the API before the merge does not have (404, and the sliders then start at the defaults and save nowhere: say so to a school that tries in that minute).
+- **Rolling back** needs nothing: the previous page ignores the row. To remove it: `DROP TABLE "OptimizationProfiles";`.
+
+### 43.4 Looking at it (read-only)
+
+- Which schools have saved a profile: `SELECT "schoolId", "preferredFree", "preferredBusy", disruption, spread, "teacherGap", "updatedAt" FROM "OptimizationProfiles" ORDER BY "updatedAt" DESC`.
+
+### 43.5 What is not done
+
+- A run that sends no `weights` (an API caller; a candidate run of another page) does not read the profile. Reading it in the gateway would change what every such caller gets and move the hash a candidate run is priced by; it is a decision of its own.
+- One profile a school. A profile per läsår or a named profile is not built.

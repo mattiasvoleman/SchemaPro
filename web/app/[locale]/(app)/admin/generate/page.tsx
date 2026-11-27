@@ -63,6 +63,7 @@ import { CandidatesSection, candidatesHref } from "./candidates-section";
 import { RefusalLink } from "./refusal-link";
 import { placementLinkOfRefusal } from "@/lib/placement-link";
 import { useScheduleCandidates } from "./use-schedule-candidates";
+import { useOptimizationProfile } from "./use-optimization-profile";
 import { apiErrorText } from "@/lib/api-error-text";
 import type { StartFrom } from "@/lib/start-from";
 
@@ -317,32 +318,9 @@ export default function GeneratePage() {
   const candidatesQuery = useScheduleCandidates(year?.id ?? null);
   const candidateRunActive = isActiveRun(candidatesQuery.data?.latest?.run.status);
 
-  // Optimization profile — persisted locally per browser.
-  const [weights, setWeights] = useState<Required<ObjectiveWeights>>({
-    preferredFree: 10,
-    preferredBusy: 5,
-    disruption: 8,
-    spread: 3,
-    teacherGap: 2,
-  });
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem("schemapro.optimizationWeights");
-      if (stored) setWeights((prev) => ({ ...prev, ...JSON.parse(stored) }));
-    } catch {
-      // ignore malformed local storage
-    }
-  }, []);
-  const setWeight = (key: keyof ObjectiveWeights, value: number) => {
-    setWeights((prev) => {
-      const next = { ...prev, [key]: value };
-      window.localStorage.setItem(
-        "schemapro.optimizationWeights",
-        JSON.stringify(next),
-      );
-      return next;
-    });
-  };
+  // Optimeringsprofilen (P5): the school's, saved for the school half a second after the last move of a slider. What this browser held
+  // before is given to the school once, when it has no profile yet (use-optimization-profile.ts).
+  const { weights, setWeight, canSave: canSaveProfile, status: profileStatus } = useOptimizationProfile();
 
   /*
    * Scheduling rules are no longer edited here.
@@ -1031,12 +1009,17 @@ export default function GeneratePage() {
                   min={0}
                   max={50}
                   value={weights[key]}
+                  disabled={!canSaveProfile}
                   onChange={(e) => setWeight(key, Number(e.target.value))}
                   className="w-full accent-primary"
                 />
               </div>
             ))}
           </div>
+          {/* What became of the last move: saved for the school, or why not. A polite live region without the status role, which the run's own notice holds on this page. */}
+          <p className="mt-3 text-xs text-muted-foreground" aria-live="polite" data-testid="profile-status">
+            {!canSaveProfile ? t("profileReadOnly") : profileStatus === "saving" ? t("profileSaving") : profileStatus === "saved" ? t("profileSaved") : profileStatus === "failed" ? t("profileSaveFailed") : ""}
+          </p>
         </SectionCard>
 
         <SectionCard

@@ -157,6 +157,9 @@
       "name": "Optimization"
     },
     {
+      "name": "OptimizationProfile"
+    },
+    {
       "name": "PersonProtections"
     },
     {
@@ -15800,6 +15803,99 @@
         "x-rate-limit": {
           "limit": 3,
           "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/optimization/profile": {
+      "get": {
+        "tags": [
+          "OptimizationProfile"
+        ],
+        "operationId": "OptimizationProfileController_read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "put": {
+        "tags": [
+          "OptimizationProfile"
+        ],
+        "operationId": "OptimizationProfileController_save",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveOptimizationProfileDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING"
+          ]
         }
       }
     },
@@ -34868,6 +34964,43 @@
         "required": [
           "academicYearId",
           "walkers"
+        ]
+      },
+      "SaveOptimizationProfileDto": {
+        "type": "object",
+        "properties": {
+          "preferredFree": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "preferredBusy": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "disruption": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "spread": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "teacherGap": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1000
+          }
+        },
+        "required": [
+          "preferredFree",
+          "preferredBusy",
+          "disruption",
+          "spread",
+          "teacherGap"
         ]
       },
       "ScheduleActivitySelectionDto": {
