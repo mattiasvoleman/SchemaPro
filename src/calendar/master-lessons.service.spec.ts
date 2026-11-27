@@ -3570,6 +3570,25 @@ describe('MasterLessonsService', () => {
         await expect(service.update(LESSON_ID, { dayOfWeek: 3, propagate: false }, testUser())).resolves.toMatchObject({ propagatedLessons: 0 });
       });
 
+      it('asks of an edit that only took published lessons out of the calendar: what was removed is reached too, and the notice goes for it', async () => {
+        // A narrowed recurrence: the only published lesson is in an even week, which the odd weeks no longer cover. Nothing moved, one lesson went.
+        arrangeUpdate({}, { recurrence: 'ODD_WEEKS' });
+        tx.calendarLesson.findMany.mockResolvedValue([{ id: OTHER_CAL_LESSON_ID, date: new Date('2026-08-17T00:00:00.000Z') }]);
+        school('DIRECT', { answered: false });
+        const attempt = service.update(LESSON_ID, { recurrence: 'ODD_WEEKS' }, testUser());
+        await expect(attempt).rejects.toMatchObject({ response: expect.objectContaining({ code: 'DIRECT_REACH_UNANSWERED' }) });
+        expect(notifications.notifyUsers).not.toHaveBeenCalled();
+
+        arrangeUpdate({}, { recurrence: 'ODD_WEEKS' });
+        tx.calendarLesson.findMany.mockResolvedValue([{ id: OTHER_CAL_LESSON_ID, date: new Date('2026-08-17T00:00:00.000Z') }]);
+        school('DIRECT', { answered: true });
+        await expect(service.update(LESSON_ID, { recurrence: 'ODD_WEEKS' }, testUser())).resolves.toMatchObject({
+          propagatedLessons: 0,
+          removedCalendarLessons: 1,
+        });
+        expect(notifications.notifyUsers).toHaveBeenCalledTimes(1);
+      });
+
       it('asks nothing in DRAFT: an edit there is a draft and reaches nobody', async () => {
         school('DRAFT', { answered: false });
         await expect(moveWithOneCalendarLesson()).resolves.toMatchObject({ propagatedLessons: 0 });

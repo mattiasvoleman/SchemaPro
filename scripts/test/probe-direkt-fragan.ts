@@ -20,7 +20,8 @@
  *       propagate, or of a drag that reached no published lesson;
  *   (e) a switch of mode takes the answer back, both ways, and the question is asked again in Direkt;
  *   (f) the view counts the school's pupils and the guardians linked to an active one, and no other school's;
- *   (g) a läsare cannot answer for the school (the settings row is the Publicering area's), and nothing is written.
+ *   (g) a läsare cannot answer for the school (the settings row is the Publicering area's), and nothing is written;
+ *   (h) a swap that reached published lessons is refused whole, its safety version rolled back with it, and goes once the school has answered.
  *
  * Each in a school of its own (slug <marker>-direkt-<n>), swept whole after, and before the first. The year is in 2096, so every day of
  * it lies ahead and nothing a check writes is ever "the past".
@@ -42,6 +43,7 @@ import { DraftService } from '../../src/publication/draft.service';
 import { PublicationsService } from '../../src/publication/publications.service';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
 import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
+import { SwapsService } from '../../src/swaps/swaps.service';
 import { TimplanCoverageService } from '../../src/timplan/timplan-coverage.service';
 
 type Owner = PrismaClient;
@@ -150,8 +152,10 @@ function servicesOf(api: PrismaService, spy: Spy) {
     },
   } as unknown as NotificationsService;
   const calendar = new CalendarService(api);
+  const masters = new MasterLessonsService(api, realtime, notifications);
   return {
-    masters: new MasterLessonsService(api, realtime, notifications),
+    masters,
+    swaps: new SwapsService(api, masters, new ScheduleVersionsService(api), realtime, notifications),
     publications: new PublicationsService(api, calendar, new TimplanCoverageService(api), new StaffingLoadService(api), notifications, realtime),
     drafts: new DraftService(api, calendar, new ScheduleVersionsService(api), realtime),
     reach: new DirectReachService(api),
@@ -283,6 +287,10 @@ async function main(): Promise<void> {
         const inDraft = await svc.reach.read(s.admin);
         assert.deepEqual([inDraft.mode, inDraft.ask], ['DRAFT', false]);
         await svc.masters.update(s.monday, { dayOfWeek: 2 }, s.admin);
+        // An answer given while the school is in utkast (a tab that was open since Direkt) is written, and the switch back takes it away too: the
+        // clearing is in both directions, which only an answer written in between can tell from a clearing on the way out alone.
+        await svc.reach.acknowledge(s.admin);
+        assert.ok(await answerOf(s), 'the stale answer was written in utkast');
         // Back in Direkt (nothing unpublished: the draft is published first), the question stands again.
         await svc.drafts.discard(s.yearId, s.admin);
         await svc.drafts.switchMode('DIRECT', s.admin);
@@ -327,6 +335,31 @@ async function main(): Promise<void> {
         assert.equal(await answerOf(s), null);
         // A läsare reads the same question as a full administrator.
         assert.deepEqual(await svc.reach.read(s.lasare), await svc.reach.read(s.admin));
+      });
+    });
+
+    await check('(h) a swap that reached published lessons is refused whole before the school has answered, the safety version with it, and goes after', async () => {
+      await inSchool('h', async (s, spy, svc) => {
+        await publish(s, svc);
+        const body = {
+          lessonId: s.monday,
+          moves: [
+            { lessonId: s.monday, from: { dayOfWeek: 1, startTime: '08:00', endTime: '09:00' }, to: { dayOfWeek: 3, startTime: '10:00', endTime: '11:00' } },
+            { lessonId: s.wednesday, from: { dayOfWeek: 3, startTime: '10:00', endTime: '11:00' }, to: { dayOfWeek: 1, startTime: '08:00', endTime: '09:00' } },
+          ],
+        };
+        const before = [await standing(s.monday), await standing(s.wednesday)];
+        const refusal = await refusalOf(svc.swaps.apply(body, s.admin));
+        assert.equal(refusal.code, 'DIRECT_REACH_UNANSWERED');
+        assert.deepEqual([await standing(s.monday), await standing(s.wednesday)], before, 'both lessons and their calendar rows are as they were');
+        assert.equal(await owner.scheduleVersion.count({ where: { schoolId: s.schoolId } }), 0, 'the safety version the swap took first was rolled back with it');
+        assert.equal(await owner.scheduleChangeLog.count({ where: { schoolId: s.schoolId } }), 0, 'no log row');
+        assert.deepEqual(spy.sent, [], 'nobody was told');
+        await svc.reach.acknowledge(s.admin);
+        const applied = await svc.swaps.apply(body, s.admin);
+        assert.ok(applied.propagatedLessons > 0, 'published lessons moved');
+        assert.equal(await owner.scheduleVersion.count({ where: { schoolId: s.schoolId } }), 1, 'the safety version stands now');
+        assert.ok(spy.sent.length > 0, 'the classes were told');
       });
     });
   } finally {
