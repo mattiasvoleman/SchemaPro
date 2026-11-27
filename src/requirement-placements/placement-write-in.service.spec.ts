@@ -4,6 +4,7 @@ import type { ScheduleVersionsService } from '../calendar/schedule-versions.serv
 import type { PrismaService } from '../database/prisma.service';
 import { regenerationSweepDay } from '../optimization/optimization-proxy.service';
 import { lockYearForRegeneration, SCHEDULE_BUSY, scheduleBusy } from '../optimization/regeneration-lock';
+import { requireDirectReachAnswered } from '../publication/direct-reach';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
 import type { RealtimeService } from '../realtime/realtime.service';
 import { roomRefusalsOf } from './placement-room-refusal';
@@ -21,6 +22,7 @@ import type { RequirementPlacementsService } from './requirement-placements.serv
 jest.mock('../publication/publish-mode', () => ({ ...jest.requireActual('../publication/publish-mode'), enterGrundschemaWrite: jest.fn() }));
 jest.mock('../optimization/regeneration-lock', () => ({ ...jest.requireActual('../optimization/regeneration-lock'), lockYearForRegeneration: jest.fn() }));
 jest.mock('./placement-room-refusal', () => ({ roomRefusalsOf: jest.fn(async () => new Map()) }));
+jest.mock('../publication/direct-reach', () => ({ ...jest.requireActual('../publication/direct-reach'), requireDirectReachAnswered: jest.fn() }));
 jest.mock('../optimization/optimization-proxy.service', () => ({ ...jest.requireActual('../optimization/optimization-proxy.service'), regenerationSweepDay: jest.fn() }));
 
 const YEAR = '99999999-9999-4999-8999-999999999999';
@@ -134,6 +136,7 @@ describe('PlacementWriteInService', () => {
     (lockYearForRegeneration as jest.Mock).mockReset().mockImplementation(async () => void order.push('lock'));
     (regenerationSweepDay as jest.Mock).mockReset().mockResolvedValue(new Date('2026-11-26T00:00:00.000Z'));
     (roomRefusalsOf as jest.Mock).mockReset().mockResolvedValue(new Map());
+    (requireDirectReachAnswered as jest.Mock).mockReset().mockResolvedValue(undefined);
   });
 
   it('writes in the order a rewrite of the year takes: the mode, the year\'s lock, the reads, a restore point, the sweep, the replacing, the writing, the log', async () => {
@@ -157,6 +160,32 @@ describe('PlacementWriteInService', () => {
     expect(logged[1]!['after']).toMatchObject({ id: 'new-0', roomId: ROOM, isLocked: true, extraGroupIds: [], studentIds: [] });
     // Told after the commit, as a change of the master timetable.
     expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL);
+  });
+
+  describe('Direkt asks first (P5, beslut 8; granskaren g505, M-2)', () => {
+    it('asks with the number of dated lessons it took off the calendar, after the sweep and before it replaces anything', async () => {
+      (requireDirectReachAnswered as jest.Mock).mockImplementation(async () => void order.push('ask'));
+      existing = [existingOf()];
+      await service.write(YEAR, user);
+      expect(order).toEqual(['mode', 'lock', 'judge', 'version', 'sweep', 'ask', 'delete', 'create', 'log']);
+      expect(requireDirectReachAnswered).toHaveBeenCalledWith(tx, { academicYearId: YEAR, mode: 'DIRECT', reached: 3 });
+    });
+
+    it('is a 409 that writes nothing and tells no one when the school has not answered', async () => {
+      (requireDirectReachAnswered as jest.Mock).mockRejectedValue(new ConflictException({ code: 'DIRECT_REACH_UNANSWERED' }));
+      existing = [existingOf()];
+      await expect(service.write(YEAR, user)).rejects.toMatchObject({ response: { code: 'DIRECT_REACH_UNANSWERED' } });
+      expect(tx['masterLesson']!['deleteMany']).not.toHaveBeenCalled();
+      expect(tx['masterLesson']!['createManyAndReturn']).not.toHaveBeenCalled();
+      expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
+    });
+
+    it('asks in a draft too, with nothing reached: no calendar was swept', async () => {
+      (enterGrundschemaWrite as jest.Mock).mockImplementation(async () => 'DRAFT');
+      existing = [existingOf()];
+      await service.write(YEAR, user);
+      expect(requireDirectReachAnswered).toHaveBeenCalledWith(tx, { academicYearId: YEAR, mode: 'DRAFT', reached: 0 });
+    });
   });
 
   it('writes and replaces nothing, takes no version and tells no one when the lessons already are what the rows say', async () => {

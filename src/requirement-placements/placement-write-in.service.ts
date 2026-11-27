@@ -8,6 +8,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
 import { calendarSweepWhere, regenerationSweepDay } from '../optimization/optimization-proxy.service';
 import { lockYearForRegeneration } from '../optimization/regeneration-lock';
+import { requireDirectReachAnswered } from '../publication/direct-reach';
 import type { PlacedPost } from '../optimization/placed-lessons';
 import { enterGrundschemaWrite, type PublishMode } from '../publication/publish-mode';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -89,6 +90,10 @@ const CREATED_SELECT = {
  * 409. In DIRECT mode the dated lessons of the lessons it replaces are swept off the calendar from the school's today on, as a regeneration does
  * it; a publish writes the new ones. A restore point is taken first (a version, as a swap takes one).
  *
+ * DIREKT ASKS FIRST (P5, beslut 8; granskaren g505, M-2). The dated lessons it takes off the calendar are published lessons that reach pupils and
+ * guardians, so the write asks the question a hand edit asks (requireDirectReachAnswered) with the number it removed, after the sweep and inside the
+ * transaction: 409 DIRECT_REACH_UNANSWERED, and nothing is written.
+ *
  * WHAT IT WRITES IS THE RUN'S OWN: locked, `isGenerated` and `fromPlacement`, so the next Generera replaces it from the rows as they then stand
  * and a hand edit cannot move it (LESSON_IS_PLACED).
  */
@@ -133,6 +138,9 @@ export class PlacementWriteInService {
           sweepFrom === null || plan.deleteIds.length === 0
             ? { count: 0 }
             : await tx.calendarLesson.deleteMany({ where: calendarSweepWhere({ kind: 'IDS', ids: plan.deleteIds }, academicYearId, sweepFrom) });
+        // Direkt: the dated lessons taken off the published calendar are families' own (P5, beslut 8). The first write that reaches them in a published
+        // period is asked of the school, once; the throw rolls the whole write back (the restore point included), so nothing has changed and nothing is lost.
+        await requireDirectReachAnswered(tx, { academicYearId, mode, reached: calendarLessonsRemoved });
         if (plan.deleteIds.length > 0) {
           const { count } = await tx.masterLesson.deleteMany({ where: { academicYearId, fromPlacement: true, id: { in: plan.deleteIds } } });
           // The year's regeneration lock is held, so these rows are as they were read; one gone is a draft that moved.

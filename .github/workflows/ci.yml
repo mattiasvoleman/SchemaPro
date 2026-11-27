@@ -546,6 +546,13 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-skriv-in.ts
 
+      # Skriv in förläggningarna i Direkt (E4b, P5 beslut 8): a write that takes lessons off a published calendar asks the school first, once.
+      - name: Skriv in i Direkt probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-skriv-in-direkt.ts
+
       # Anslutningarna (incident 2026-11-23): what a long fetch of a school's week does to the rest of the API. The real
       # school's first Generera answered every other request 500 "Unable to start a transaction in the given time" for 26 s
       # and failed ten background jobs' ticks, because Kontrollera veckan's and Generera's first step reads the week in one

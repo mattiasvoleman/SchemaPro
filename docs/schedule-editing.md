@@ -190,8 +190,11 @@ skriva något (varje administratör får läsa det, skrivningen är schemalägga
 - **Hur.** Som varje omskrivning av året: läget, sedan årets regenereringslås (exklusivt, högst 5 s, annars `409 SCHEDULE_BUSY`), sedan läsningarna den bestämmer av, en återställningspunkt (en version, som ett byte tar en),
   kalenderns daterade lektioner för de ersatta från skolans idag (i läget Direkt, som en regenerering), ersättningen, skrivningen och en loggrad per lektion som gick (`DELETE`) och per lektion som kom (`CREATE`).
   Säges efter commit som en ändring av mastertidtabellen.
+- **Direkt frågar först** (P5, beslut 8; granskaren g505, M-2). De daterade lektioner skrivningen tar bort från kalendern är publicerade lektioner som når elever och vårdnadshavare, så en skrivning som
+  tar bort några i en publicerad period ställer samma fråga som en handredigering, en gång (`requireDirectReachAnswered`, med antalet borttagna): `409 DIRECT_REACH_UNANSWERED`, och inget skrivs.
+  En skrivning som inte når någon publicerad lektion frågar aldrig.
 - **Hålls av** `src/requirement-placements/placement-write-in.spec.ts` (vad som skrivs, lämnas och ersätts), `placement-write-in.service.spec.ts` (ordningen, förhandsvisning, utkast, 409),
-  `test/placement-write-in.e2e-spec.ts` (vägarna och vem som får), `scripts/test/probe-skriv-in.ts` (mot riktig Postgres, i CI) och, för hand mot en riktig motor, `scripts/test/probe-skriv-in-motor.ts`:
+  `test/placement-write-in.e2e-spec.ts` (vägarna och vem som får), `scripts/test/probe-skriv-in.ts` och `probe-skriv-in-direkt.ts` (mot riktig Postgres, i CI) och, för hand mot en riktig motor, `scripts/test/probe-skriv-in-motor.ts`:
   Generera, körd efter bron, skriver samma lektioner ur samma rader, och bron efter Generera ändrar ingenting.
 
 ## Tier 3
