@@ -161,7 +161,7 @@ export const en: Messages = {
     submittedConsent: 'The school asks all guardians to consent before the request is decided.',
     submittedFlagged: 'The request came later than the school’s minimum and has been flagged for whoever decides.',
     submitFailed: 'The request could not be submitted.',
-    status: { PENDING: 'Pending', APPROVED: 'Approved', REJECTED: 'Rejected', GUARDIAN_DECLINED: 'Ended' },
+    status: { PENDING: 'Pending', APPROVED: 'Approved', REJECTED: 'Rejected', GUARDIAN_DECLINED: 'Ended', WITHDRAWN: 'Withdrawn' },
     note: 'Note: {note}',
     decidedByMentor: 'Decided by the mentor',
     decidedByRektor: 'Decided by the principal',

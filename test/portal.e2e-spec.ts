@@ -316,6 +316,55 @@ describe('Portal and platform surfaces (e2e)', () => {
       }
     });
 
+    describe('taking a request back (K6)', () => {
+      const pupil = () => asUser({ role: 'STUDENT' as never, userId: STUDENT_ID, schoolId: SCHOOL_ID });
+      const take = (principal: string, id: string = RECORD_ID) => request(http()).post(`/api/v1/leave-requests/${id}/withdraw`).set('x-test-user', principal);
+      const found = (row: { requestedById: string; status: string } | null) => harness.tx['leaveRequest']!['findUnique']!.mockResolvedValue(row);
+
+      it('lets the guardian and the pupil who filed a request take it back, through the database’s function, and no mentor', async () => {
+        const taken = jest.fn().mockResolvedValue([{ withdrawn: true }]);
+        Object.assign(harness.tx, { $queryRaw: taken });
+        for (const [principal, who] of [[guardian(), GUARDIAN_ID], [pupil(), STUDENT_ID]] as const) {
+          found({ requestedById: who, status: 'PENDING' });
+          const answer = await take(principal).expect(201);
+          expect(answer.body).toEqual({ id: RECORD_ID, status: 'WITHDRAWN' });
+        }
+        expect(taken).toHaveBeenCalledTimes(2);
+        // A tagged template reaches the mock as the strings and then the values.
+        const [strings, ...values] = taken.mock.calls[0]! as [string[], ...unknown[]];
+        expect(strings.join('?')).toContain('app.leave_request_withdraw(');
+        expect(values).toEqual([RECORD_ID]);
+        // A mentor takes back nothing: the request is not theirs.
+        await take(teacher()).expect(403);
+        await take(guardian(), 'not-a-uuid').expect(400);
+      });
+
+      it('answers 404 for a request the caller does not read, 403 with its code for one somebody else filed, and 409 for one that is decided', async () => {
+        found(null);
+        await take(guardian()).expect(404);
+        found({ requestedById: '99999999-9999-4999-8999-999999999999', status: 'PENDING' });
+        const notYours = await take(guardian()).expect(403);
+        expect(notYours.body).toMatchObject({ code: 'LEAVE_WITHDRAW_NOT_YOURS' });
+        for (const status of ['APPROVED', 'REJECTED', 'GUARDIAN_DECLINED']) {
+          found({ requestedById: GUARDIAN_ID, status });
+          const decided = await take(guardian()).expect(409);
+          expect(decided.body).toMatchObject({ code: 'LEAVE_REQUEST_DECIDED' });
+        }
+      });
+
+      it('answers a taking back that lost the race to a decision as 409, and one that is already taken back as no news', async () => {
+        found({ requestedById: GUARDIAN_ID, status: 'PENDING' });
+        Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([{ withdrawn: false }]) });
+        const lost = await take(guardian()).expect(409);
+        expect(lost.body).toMatchObject({ code: 'LEAVE_REQUEST_DECIDED' });
+        found({ requestedById: GUARDIAN_ID, status: 'WITHDRAWN' });
+        const again = jest.fn().mockResolvedValue([{ withdrawn: false }]);
+        Object.assign(harness.tx, { $queryRaw: again });
+        await take(guardian()).expect(201, { id: RECORD_ID, status: 'WITHDRAWN' });
+        expect(again).not.toHaveBeenCalled();
+      });
+    });
+
     it('answers a decision before the consent as 409 with its code, and a late filing as 400', async () => {
       harness.tx['leaveRequest']!['findUnique']!.mockResolvedValue({
         id: RECORD_ID, schoolId: SCHOOL_ID, studentId: STUDENT_ID, requestedById: GUARDIAN_ID, status: 'PENDING', consentRequired: true,

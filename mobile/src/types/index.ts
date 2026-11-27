@@ -185,8 +185,8 @@ export interface AbsenceReportRow {
   readonly removable?: boolean;
 }
 
-/** GUARDIAN_DECLINED (Ledighetspolicy): a guardian did not consent, and the request ended there. */
-export type LeaveRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'GUARDIAN_DECLINED';
+/** GUARDIAN_DECLINED (Ledighetspolicy): a guardian did not consent, and the request ended there. WITHDRAWN (K6): the person who filed it took it back. */
+export type LeaveRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'GUARDIAN_DECLINED' | 'WITHDRAWN';
 
 /**
  * The school's three choices about leave (Ledighetspolicy, GET /leave-policy).

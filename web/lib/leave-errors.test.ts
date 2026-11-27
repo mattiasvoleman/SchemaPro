@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api";
-import { lastLeaveDay, leaveActionError, leaveConsentError, leaveRequestError } from "./leave-errors";
+import { lastLeaveDay, leaveActionError, leaveConsentError, leaveRequestError, leaveWithdrawError } from "./leave-errors";
 
 /**
  * What the leave forms say when the gateway refuses. A family's request has
@@ -102,5 +102,20 @@ describe("leaveConsentError", () => {
     // A known code on another status is not that refusal.
     expect(leaveConsentError(new ApiError(500, "Boom.", "LEAVE_CONSENT_ANSWERED"), words)).toBe("Boom.");
     expect(leaveConsentError("boom", words)).toBe("fel");
+  });
+});
+
+describe("leaveWithdrawError", () => {
+  const words = { decided: "redan beslutad", notYours: "inte din", fallback: "fel" };
+
+  it("words each refusal of a taking back by its code, so the family is told why nothing changed", () => {
+    expect(leaveWithdrawError(new ApiError(409, "x", "LEAVE_REQUEST_DECIDED"), words)).toBe("redan beslutad");
+    expect(leaveWithdrawError(new ApiError(403, "x", "LEAVE_WITHDRAW_NOT_YOURS"), words)).toBe("inte din");
+  });
+
+  it("leaves any other refusal as the gateway said it, and an unknown throw as the fallback; a known code on another status is not that refusal", () => {
+    expect(leaveWithdrawError(new ApiError(404, "Not found.", "NOT_FOUND"), words)).toBe("Not found.");
+    expect(leaveWithdrawError(new ApiError(500, "Boom.", "LEAVE_REQUEST_DECIDED"), words)).toBe("Boom.");
+    expect(leaveWithdrawError("boom", words)).toBe("fel");
   });
 });

@@ -8,6 +8,7 @@
  *   LV403 not a guardian        LV404 not asked about the request    LV409 decided or stopped
  *   LV410 custody ended         LV411 answered the other way         LV412 awaiting consent
  *   LV413 too late              LV414 contact required               LV415 contact incomplete
+ *   LV417 only a request that waits is taken back (K6)       LV418 only whoever filed a request takes it back
  */
 export function leaveSqlStateOf(error: unknown): string | null {
   const meta = (error as { meta?: { driverAdapterError?: { cause?: { originalCode?: unknown } } } } | null)?.meta;

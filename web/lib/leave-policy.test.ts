@@ -72,4 +72,13 @@ describe("a request with more to say than its row", () => {
     expect(hasLeaveExtras({ ...plain, consent: { ...NO_CONSENT, state: "GIVEN", mine: "GIVEN" } })).toBe(true);
     expect(hasLeaveExtras({ ...plain, status: "GUARDIAN_DECLINED" })).toBe(true);
   });
+
+  it("has something for a request the signed-in person filed that still waits (to take back), and nothing for anybody else's, or a decided one", () => {
+    const mine = { ...plain, requestedById: "g-1" };
+    expect(hasLeaveExtras(mine, "g-1")).toBe(true);
+    expect(hasLeaveExtras(mine, "g-2")).toBe(false);
+    expect(hasLeaveExtras(mine)).toBe(false);
+    expect(hasLeaveExtras({ ...mine, status: "APPROVED" as never }, "g-1")).toBe(false);
+    expect(hasLeaveExtras({ ...mine, status: "WITHDRAWN" as never }, "g-1")).toBe(false);
+  });
 });

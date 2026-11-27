@@ -12381,7 +12381,8 @@
                 "APPROVED",
                 "GUARDIAN_DECLINED",
                 "PENDING",
-                "REJECTED"
+                "REJECTED",
+                "WITHDRAWN"
               ]
             }
           },
@@ -12637,6 +12638,59 @@
         "x-roles": [
           "TEACHER"
         ]
+      }
+    },
+    "/api/v1/leave-requests/{id}/withdraw": {
+      "post": {
+        "tags": [
+          "Family"
+        ],
+        "operationId": "FamilyController_withdrawLeaveRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "GUARDIAN",
+          "STUDENT",
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 20,
+          "ttlSeconds": 60
+        }
       }
     },
     "/api/v1/lesson-logs": {

@@ -5,8 +5,11 @@ import type { ExemptRule } from "@/lib/exemptions";
 
 export type UserRole = "STUDENT" | "TEACHER" | "SCHOOL_ADMIN" | "GUARDIAN";
 export type AbsenceReportType = "SICK" | "APPOINTMENT" | "OTHER";
-/** GUARDIAN_DECLINED: a guardian did not consent (Ledighetspolicy), so nobody decides it. */
-export type LeaveRequestStatus = "PENDING" | "APPROVED" | "REJECTED" | "GUARDIAN_DECLINED";
+/**
+ * GUARDIAN_DECLINED: a guardian did not consent (Ledighetspolicy), so nobody decides it. WITHDRAWN: the person who filed it took it back
+ * before it was decided (K6), so nobody decides that either.
+ */
+export type LeaveRequestStatus = "PENDING" | "APPROVED" | "REJECTED" | "GUARDIAN_DECLINED" | "WITHDRAWN";
 /** A room type the school owns and names itself. */
 export interface RoomType {
   id: string;

@@ -28,12 +28,15 @@
  *       once, forty rounds: a request is never decided without its consent, and nothing deadlocks
  *   mi  a pupil with a protected identity: the guardian is asked like any other; the staff's overview names
  *       nobody who answered
+ *   mk  a request taken back (K6, 20270312090100): only by whoever filed it, only while it waits, nobody is told,
+ *       the notices that asked something of anybody are read, the mentor no longer reads it; a decision and a
+ *       taking back at once: exactly one wins
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Client } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
@@ -466,6 +469,115 @@ export async function ledighetspolicyChecks(owner: Client, api: PrismaService, m
     assert.ok(!JSON.stringify(overview.consent).includes(g3.id), 'the overview names the guardian');
     assert.equal(await service.answerConsent(made.id, { consent: true }, asG(g3)).then((r) => r.state), 'GIVEN');
     await owner.query(`DELETE FROM "PersonProtections" WHERE "userId" = $1`, [p3.id]);
+    await reset();
+  });
+
+  await check('mk: whoever filed a request takes it back while it waits: nobody else, nothing decided, nobody told, the notices it asked for are read, and a decision and a taking back at once never both win', async () => {
+    const unread = (type: string, who: { id: string }, id: string) =>
+      count(`SELECT count(*) AS n FROM "Notifications" WHERE "userId" = $1 AND type = $2 AND "readAt" IS NULL AND meta ->> 'leaveRequestId' = $3`, [who.id, type, id]);
+    const row = (id: string) =>
+      one<{ status: string; decidedById: string | null; decidedAs: string | null; decidedAt: Date | null }>(
+        `SELECT status::text AS status, "decidedById", "decidedAs"::text AS "decidedAs", "decidedAt" FROM "LeaveRequests" WHERE id = $1`, [id]);
+    const decidedCode = (error: unknown) => error instanceof ConflictException && codeOf(error) === 'LEAVE_REQUEST_DECIDED';
+
+    await policy({ requireAllGuardians: true });
+    const asking = await file(asG(g1), p1);
+    assert.equal(await unread('LEAVE_CONSENT_REQUESTED', g2, asking.id), 1, 'the other guardian was not asked');
+    // Not anybody else's to take back: the other guardian's, or an administrator's who did not file it; and a request that is nobody's.
+    for (const other of [asG(g2), asAdmin]) {
+      await assert.rejects(() => service.withdrawLeaveRequest(asking.id, other), (error: unknown) => error instanceof ForbiddenException && codeOf(error) === 'LEAVE_WITHDRAW_NOT_YOURS');
+    }
+    await assert.rejects(() => service.withdrawLeaveRequest(randomUUID(), asG(g1)), (error: unknown) => error instanceof NotFoundException);
+    assert.equal((await row(asking.id)).status, 'PENDING', 'a refused taking back changed the request');
+    // Where the gateway is not asked the trigger holds the line: an administrator's own UPDATE is the filer's alone to make (LV418).
+    await assert.rejects(
+      () => api.withRls(asAdmin, (tx) => tx.leaveRequest.updateMany({ where: { id: asking.id }, data: { status: 'WITHDRAWN', decidedAt: new Date() } })),
+      (error: unknown) => {
+        assert.equal(leaveSqlStateOf(error), 'LV418', `the bypass's refusal read back as ${leaveSqlStateOf(error)}`);
+        return true;
+      },
+    );
+    assert.equal((await row(asking.id)).status, 'PENDING');
+
+    // The taking back: nobody is told, the request for consent is no work to do, the mentor never reads it, a late answer or decision finds it ended.
+    const mark = delivered.length;
+    assert.deepEqual(await service.withdrawLeaveRequest(asking.id, asG(g1)), { id: asking.id, status: 'WITHDRAWN' });
+    assert.deepEqual(await lastDelivered(mark), [], 'a taking back told somebody');
+    const taken = await row(asking.id);
+    assert.deepEqual([taken.status, taken.decidedById, taken.decidedAs, taken.decidedAt !== null], ['WITHDRAWN', null, null, true]);
+    assert.equal(await unread('LEAVE_CONSENT_REQUESTED', g2, asking.id), 0, 'the request for consent is still work to do');
+    assert.equal((await view(asG(g1), asking.id))!.status, 'WITHDRAWN');
+    assert.equal(await view(asMentor1, asking.id), undefined, 'the mentor reads a request that was taken back');
+    // Said twice is the same, and moves nothing.
+    assert.deepEqual(await service.withdrawLeaveRequest(asking.id, asG(g1)), { id: asking.id, status: 'WITHDRAWN' });
+    assert.equal((await row(asking.id)).decidedAt!.getTime(), taken.decidedAt!.getTime(), 'the second taking back moved the time');
+    await assert.rejects(() => service.answerConsent(asking.id, { consent: true }, asG(g2)), (error: unknown) => codeOf(error) === 'LEAVE_CONSENT_REQUEST_ENDED');
+    await assert.rejects(() => service.decideLeaveRequest(asking.id, { status: 'APPROVED' } as never, asAdmin), decidedCode);
+    // The pass reminds nobody about it, however old: of two requests three days old, only the one still waiting is reminded about.
+    const aged = async (from: string) =>
+      (await one<{ id: string }>(
+        `INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "consentRequired", "createdAt")
+         VALUES ($1, $2, $3, $4::date, $4::date, 'Hemlig anledning', true, now() - interval '3 days') RETURNING id`,
+        [s, p1.id, g1.id, from],
+      )).id;
+    const agedTaken = await aged(addDays(today, 30));
+    const agedLive = await aged(addDays(today, 31));
+    await service.withdrawLeaveRequest(agedTaken, asG(g1));
+    assert.equal((await service.consentPass()).reminded, 1, 'the pass reminded about something other than the one request that waits');
+    const remindedOf = (id: string) => count(`SELECT count(*) AS n FROM "LeaveConsents" WHERE "leaveRequestId" = $1 AND "remindedAt" IS NOT NULL`, [id]);
+    assert.deepEqual([await remindedOf(agedTaken), await remindedOf(agedLive)], [0, 1]);
+    // Nothing moves it out of that status (the trigger, with the gateway bypassed: LV409).
+    await assert.rejects(
+      () => api.withRls(asAdmin, (tx) => tx.leaveRequest.updateMany({ where: { id: asking.id }, data: { status: 'REJECTED', decidedAt: new Date() } })),
+      (error: unknown) => {
+        assert.equal(leaveSqlStateOf(error), 'LV409', `a decision on a request taken back read back as ${leaveSqlStateOf(error)}`);
+        return true;
+      },
+    );
+    assert.equal((await row(asking.id)).status, 'WITHDRAWN');
+    await reset();
+
+    // Without consent: the mentor was told "a new request", and it is read once the request is taken back.
+    const plain = await file(asG(g1), p1);
+    assert.equal(await unread('LEAVE_REQUESTED', mentor1, plain.id), 1, 'the mentor was not told');
+    await service.withdrawLeaveRequest(plain.id, asG(g1));
+    assert.equal(await unread('LEAVE_REQUESTED', mentor1, plain.id), 0, 'the mentor still has the notice as work to do');
+    assert.equal(await view(asMentor1, plain.id), undefined);
+    // A pupil who filed for themselves takes it back, and their guardian is not the one asked to.
+    const own = await file(asPupil, p1);
+    await assert.rejects(() => service.withdrawLeaveRequest(own.id, asG(g1)), (error: unknown) => error instanceof ForbiddenException);
+    assert.equal((await service.withdrawLeaveRequest(own.id, asPupil)).status, 'WITHDRAWN');
+
+    // Only a request that waits: not one decided, and not one a guardian's no ended.
+    const approved = await file(asG(g1), p1);
+    await service.decideLeaveRequest(approved.id, { status: 'APPROVED' } as never, asAdmin);
+    await assert.rejects(() => service.withdrawLeaveRequest(approved.id, asG(g1)), decidedCode);
+    assert.equal((await row(approved.id)).status, 'APPROVED');
+    await policy({ requireAllGuardians: true });
+    const refused = await file(asG(g1), p1);
+    await service.answerConsent(refused.id, { consent: false }, asG(g2));
+    await assert.rejects(() => service.withdrawLeaveRequest(refused.id, asG(g1)), decidedCode);
+    assert.equal((await row(refused.id)).status, 'GUARDIAN_DECLINED');
+    await reset();
+
+    // A decision and a taking back at once, many times: exactly one of them wins, and the loser is told it was decided.
+    for (let round = 0; round < 24; round++) {
+      const racing = await file(asG(g1), p1);
+      const [back, decision] = await Promise.allSettled([
+        service.withdrawLeaveRequest(racing.id, asG(g1)),
+        service.decideLeaveRequest(racing.id, { status: round % 2 === 0 ? 'APPROVED' : 'REJECTED' } as never, asAdmin),
+      ]);
+      const final = await row(racing.id);
+      if (final.status === 'WITHDRAWN') {
+        assert.equal(back.status, 'fulfilled', `round ${round}: ${JSON.stringify(back)}`);
+        assert.ok(decision.status === 'rejected' && decidedCode(decision.reason), `round ${round}: the decision of a request taken back: ${JSON.stringify(decision)}`);
+        assert.equal(final.decidedById, null, `round ${round}: a request taken back has a decider`);
+      } else {
+        assert.equal(decision.status, 'fulfilled', `round ${round}: ${final.status} ${JSON.stringify(decision)}`);
+        assert.ok(back.status === 'rejected' && decidedCode(back.reason), `round ${round}: the taking back of a decided request: ${JSON.stringify(back)}`);
+        assert.equal(final.decidedById, admin.id);
+      }
+    }
     await reset();
   });
 

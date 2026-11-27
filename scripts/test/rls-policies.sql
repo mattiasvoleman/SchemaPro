@@ -18439,7 +18439,8 @@ DECLARE fn text; r text;
 BEGIN
   FOREACH fn IN ARRAY ARRAY['app.leave_mine_to_decide(uuid, uuid, date, date)', 'app.leave_request_refer(uuid)',
                             'app.leave_request_facts(uuid[])', 'app.leave_request_notices(uuid)',
-                            'app.leave_requests_tell_new_mentors()', 'app.leave_request_taken(uuid)'] LOOP
+                            'app.leave_requests_tell_new_mentors()', 'app.leave_request_taken(uuid)',
+                            'app.leave_request_withdraw(uuid)'] LOOP
     IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'functions: % is not SECURITY DEFINER', fn; END IF;
     IF NOT coalesce((SELECT 'search_path="public", "pg_temp"' = ANY (proconfig) OR 'search_path=public, pg_temp' = ANY (proconfig)
                        FROM pg_proc WHERE oid = fn::regprocedure), false) THEN
@@ -18476,16 +18477,16 @@ BEGIN
     END IF;
   END LOOP;
   IF (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname = 'app' AND p.proname LIKE 'leave\_%' AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')) <> 14 THEN
+       WHERE n.nspname = 'app' AND p.proname LIKE 'leave\_%' AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')) <> 15 THEN
     -- Six of the mentor's delegation, and eight of Ledighetspolicyn (20270205091000): the policy, the
     -- filing check, the policies' question about consent, its facts, the filing's notices, the answer, the job's pass and
-    -- the guardians' answers for the export.
-    RAISE EXCEPTION 'functions: the API runs a leave function beyond its fourteen';
+    -- the guardians' answers for the export, and the one of K6 (20270312090100): the person who filed a request takes it back.
+    RAISE EXCEPTION 'functions: the API runs a leave function beyond its fifteen';
   END IF;
   IF (SELECT string_agg(conname || (CASE WHEN convalidated THEN '' ELSE ' (not valid)' END), ',' ORDER BY conname) FROM pg_constraint
        WHERE conrelid = '"LeaveRequests"'::regclass AND contype = 'c')
-     IS DISTINCT FROM 'LeaveRequests_a_contact_is_short,LeaveRequests_a_contact_is_whole,LeaveRequests_a_referral_has_a_time,LeaveRequests_a_role_decided,LeaveRequests_a_stopped_request_has_no_decider,LeaveRequests_a_year_at_most' THEN
-    RAISE EXCEPTION 'check: the CHECKs on LeaveRequests are not the six, validated';
+     IS DISTINCT FROM 'LeaveRequests_a_contact_is_short,LeaveRequests_a_contact_is_whole,LeaveRequests_a_referral_has_a_time,LeaveRequests_a_role_decided,LeaveRequests_a_stopped_request_has_no_decider,LeaveRequests_a_withdrawn_request_has_no_decider,LeaveRequests_a_year_at_most' THEN
+    RAISE EXCEPTION 'check: the CHECKs on LeaveRequests are not the seven, validated';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '"LeaveRequests"'::regclass AND tgname = 'LeaveRequests_request_is_fixed' AND tgenabled = 'O') THEN
     RAISE EXCEPTION 'trigger: LeaveRequests_request_is_fixed is not in place';
@@ -70295,5 +70296,121 @@ BEGIN
   PERFORM pg_temp.ut_expect('592 the pace gives the first slot at once', app.outbound_slot('EMAIL', 500)::text, '0');
   PERFORM pg_temp.ut_expect('592 the sweep has nothing of ours to do', (SELECT (gave_up + deleted)::text FROM app.outbound_sweep()), '0');
   RAISE NOTICE 'ut 592: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Ledighetsansökan som familjen drar tillbaka (K6, 20270312090000 och 20270312090100), avsnitt 600 och 601. Ägarens sida är 600o i
+-- rls-owner-checks.sql: vad som läses av notiser och vad CHECK:en och triggern nekar när ingen inloggad person finns.
+--
+--   600  den som ansökte drar tillbaka en ansökan som väntar, och ingen annan: inte en lärare, inte en administratör, inte efter ett beslut
+--   601  en tillbakadragen ansökan är slutgiltig och sätts bara av den som ansökte, och ingen roll utanför API:t når funktionen
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.ut_as('00000000-0000-4000-8000-000000000004');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  child uuid;
+  a uuid; b uuid; c uuid;
+BEGIN
+  PERFORM pg_temp.ut_expect('600 the guardian acts as app_authenticated', current_user::text, 'app_authenticated');
+  SELECT gs."studentId" INTO child FROM "GuardianStudents" gs WHERE gs."guardianId" = me ORDER BY gs."studentId" LIMIT 1;
+  IF child IS NULL THEN RAISE EXCEPTION 'ut 600: the fixture guardian has no child'; END IF;
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, child, me, DATE '2096-05-04', DATE '2096-05-05', 'ut600 a') RETURNING id INTO a;
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, child, me, DATE '2096-05-11', DATE '2096-05-12', 'ut600 b') RETURNING id INTO b;
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, child, me, DATE '2096-05-18', DATE '2096-05-19', 'ut600 c') RETURNING id INTO c;
+  PERFORM set_config('ut.t600a', a::text, true);
+  PERFORM set_config('ut.t600b', b::text, true);
+  PERFORM set_config('ut.t600c', c::text, true);
+
+  -- The one who filed it takes it back, once: the status, the moment, and nobody who decided.
+  PERFORM pg_temp.ut_expect('600 a request that waits is taken back', app.leave_request_withdraw(a)::text, 'true');
+  PERFORM pg_temp.ut_expect('600 ... as the family reads it', (SELECT concat_ws('|', status, decidedat_set, "decidedById" IS NULL, "decidedAs" IS NULL)
+    FROM (SELECT status, "decidedAt" IS NOT NULL AS decidedat_set, "decidedById", "decidedAs" FROM "LeaveRequests" WHERE id = a) r), 'WITHDRAWN|t|t|t');
+  PERFORM pg_temp.ut_expect('600 ... and once only: the second time is no news and writes nothing', app.leave_request_withdraw(a)::text, 'false');
+  PERFORM pg_temp.ut_expect('600 the guardian cannot take back another family''s request, which they do not read either',
+    app.leave_request_withdraw(gen_random_uuid())::text, 'false');
+END $$;
+
+-- Nobody else takes it back: not the school's administrator, not a teacher, not a pupil.
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+DECLARE b uuid := current_setting('ut.t600b')::uuid; c uuid := current_setting('ut.t600c')::uuid; me uuid := app.current_user_id();
+BEGIN
+  PERFORM pg_temp.ut_expect('600 the administrator who did not file it cannot take it back', app.leave_request_withdraw(b)::text, 'false');
+  PERFORM pg_temp.ut_expect('600 ... nor writes the status by hand (LV418)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now() WHERE id = %L$q$, b)), 'LV418');
+  -- A decision, and then it is too late.
+  PERFORM pg_temp.ut_expect('600 the administrator decides request c', pg_temp.ut_rows(format(
+    $q$UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedById" = %L, "decidedAs" = 'ADMIN', "decidedAt" = now() WHERE id = %L AND status = 'PENDING'$q$, me, c))::text, '1');
+END $$;
+
+SELECT pg_temp.ut_become('TEACHER');
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('600 a teacher cannot take a request back', app.leave_request_withdraw(current_setting('ut.t600b')::uuid)::text, 'false');
+END $$;
+
+SELECT pg_temp.ut_as('00000000-0000-4000-8000-000000000004');
+DO $$
+DECLARE a uuid := current_setting('ut.t600a')::uuid; b uuid := current_setting('ut.t600b')::uuid; c uuid := current_setting('ut.t600c')::uuid;
+BEGIN
+  PERFORM pg_temp.ut_expect('600 a decided request is not taken back: the family asks the school', app.leave_request_withdraw(c)::text, 'false');
+  PERFORM pg_temp.ut_expect('600 ... and it stays decided', (SELECT status::text FROM "LeaveRequests" WHERE id = c), 'APPROVED');
+  PERFORM pg_temp.ut_expect('600 request b still waits, untouched by the others'' tries', (SELECT status::text FROM "LeaveRequests" WHERE id = b), 'PENDING');
+  PERFORM pg_temp.ut_expect('600 the taken-back request is still read by the one who filed it', (SELECT count(*)::text FROM "LeaveRequests" WHERE id = a AND status = 'WITHDRAWN'), '1');
+  RAISE NOTICE 'ut 600: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT pg_temp.ut_as('00000000-0000-4000-8000-000000000004');
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  child uuid;
+  a uuid;
+BEGIN
+  SELECT gs."studentId" INTO child FROM "GuardianStudents" gs WHERE gs."guardianId" = me ORDER BY gs."studentId" LIMIT 1;
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, child, me, DATE '2096-06-04', DATE '2096-06-05', 'ut601 a') RETURNING id INTO a;
+  PERFORM set_config('ut.t601a', a::text, true);
+  PERFORM pg_temp.ut_expect('601 withdrawn', app.leave_request_withdraw(a)::text, 'true');
+  -- Final: nobody sets it back, not the one who filed it, and not by a write of the school's.
+  -- The family has no write on the table at all: a write that tries to put it back changes no row.
+  PERFORM pg_temp.ut_expect('601 a taken-back request is not made pending again by the family', pg_temp.ut_rows(format($q$UPDATE "LeaveRequests" SET status = 'PENDING' WHERE id = %L$q$, a))::text, '0');
+END $$;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+DECLARE a uuid := current_setting('ut.t601a')::uuid; me uuid := app.current_user_id();
+BEGIN
+  PERFORM pg_temp.ut_expect('601 ... nor decided by the administrator (LV409)', pg_temp.ut_try(format(
+    $q$UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedById" = %L, "decidedAs" = 'ADMIN', "decidedAt" = now() WHERE id = %L$q$, me, a)), 'LV409');
+  PERFORM pg_temp.ut_expect('601 ... nor rejected (LV409)', pg_temp.ut_try(format(
+    $q$UPDATE "LeaveRequests" SET status = 'REJECTED', "decidedById" = %L, "decidedAs" = 'ADMIN', "decidedAt" = now() WHERE id = %L$q$, me, a)), 'LV409');
+  PERFORM pg_temp.ut_expect('601 the administrator reads it as taken back', (SELECT status::text FROM "LeaveRequests" WHERE id = a), 'WITHDRAWN');
+END $$;
+
+-- PostgREST's role reaches no function that takes a request back, and a session with no person is refused.
+SELECT pg_temp.ut_as('00000000-0000-4000-8000-000000000004');
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('601 expected to act as authenticated', current_user::text, 'authenticated');
+  PERFORM pg_temp.ut_expect('601 PostgREST''s role may not take a request back', pg_temp.ut_try(format($q$SELECT app.leave_request_withdraw(%L)$q$, current_setting('ut.t601a'))), '42501');
+END $$;
+RESET ROLE;
+DO $$
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  PERFORM pg_temp.ut_expect('601 a session with no person is refused (LV403)', pg_temp.ut_try(format($q$SELECT app.leave_request_withdraw(%L)$q$, current_setting('ut.t601a'))), 'LV403');
+  RAISE NOTICE 'ut 601: % checks', current_setting('ut.checks');
 END $$;
 ROLLBACK;

@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { GUARDIAN_KEYS } from "@/lib/guardian-keys";
-import type { AbsenceReport, LeaveRequest } from "@/lib/types";
+import type { AbsenceReport, LeaveRequest, LeaveRequestStatus } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // The guardian dashboard: children, absence reports, leave requests
@@ -116,7 +116,7 @@ export function useAbsenceReportActions() {
  * route answers rektor's and the mentor's inboxes with more on every row
  * (lib/leave-queries.ts); the dashboard reads the fields it always has.
  */
-export function useLeaveRequests(status?: "PENDING" | "APPROVED" | "REJECTED" | "GUARDIAN_DECLINED") {
+export function useLeaveRequests(status?: LeaveRequestStatus) {
   return useQuery({
     queryKey: [...GUARDIAN_KEYS.leaveRequests, status ?? null],
     queryFn: () =>

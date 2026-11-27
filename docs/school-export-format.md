@@ -111,7 +111,7 @@ Källa: LeaveRequests.
 | `fran` | Första dagen (ÅÅÅÅ-MM-DD). |
 | `till` | Sista dagen (ÅÅÅÅ-MM-DD). |
 | `skal` | Skälet som ansökan gavs. Tomt om det nämner en person med skyddad identitet, och i ett registerutdrag om ansökan inte gäller personen utdraget är om. |
-| `status` | PENDING (väntar), APPROVED (beviljad), REJECTED (avslagen) eller GUARDIAN_DECLINED (en vårdnadshavare som skolan bad om samtycke sa nej, och ansökan avslutades; ingen beslutsfattare). |
+| `status` | PENDING (väntar), APPROVED (beviljad), REJECTED (avslagen), GUARDIAN_DECLINED (en vårdnadshavare som skolan bad om samtycke sa nej, och ansökan avslutades; ingen beslutsfattare) eller WITHDRAWN (den som ansökte drog tillbaka ansökan innan den beslutades; ingen beslutsfattare, och beslut_tid är när den drogs tillbaka). |
 | `beslut_av_id` | Id på den som beslutade. Tomt om personen är borttagen eller har skyddad identitet. |
 | `beslut_av_epost` | E-postadress till den som beslutade. |
 | `beslut_tid` | När beslutet fattades (UTC). |

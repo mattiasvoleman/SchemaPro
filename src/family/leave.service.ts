@@ -47,6 +47,8 @@ export const LEAVE_CONSENT_REQUEST_ENDED = 'LEAVE_CONSENT_REQUEST_ENDED';
 export const LEAVE_CONSENT_CUSTODY_ENDED = 'LEAVE_CONSENT_CUSTODY_ENDED';
 /** The guardian answered the other way before: an answer is final. */
 export const LEAVE_CONSENT_ANSWERED = 'LEAVE_CONSENT_ANSWERED';
+/** Only the person who filed a request takes it back (K6); anyone else asks the school. */
+export const LEAVE_WITHDRAW_NOT_YOURS = 'LEAVE_WITHDRAW_NOT_YOURS';
 
 /** The most requests one list answers with, newest first. */
 export const LEAVE_LIST_LIMIT = 200;
@@ -118,7 +120,7 @@ export interface LeaveRequestView {
   endDate: string;
   /** The family's words. RLS gives them to the family, the admin and the deciding mentor only. */
   reason: string;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'GUARDIAN_DECLINED';
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'GUARDIAN_DECLINED' | 'WITHDRAWN';
   decidedById: string | null;
   decidedAt: string | null;
   decisionNote: string | null;
@@ -495,6 +497,32 @@ export class LeaveService {
         `Leave request decided [request=${id}, status=${dto.status}, as=${decidedAs}, absenceDays=${absenceDays}]`,
       );
       return { id, status: dto.status, decidedAs, absenceDays };
+    });
+  }
+
+  /**
+   * The person who filed a request takes it back while it waits (K6): a guardian, a pupil, or the administrator who filed it for a
+   * family. Only the one who filed it (another guardian of the child reads the request and cannot take it back, a mentor does not read
+   * it) and only before a decision: a request that is decided, ended by a guardian's no, or taken back already is a 409 the page words
+   * as "already decided", and the family asks the school to undo a granted one. Taking back a request that is already taken back is
+   * no news. The database does it (app.leave_request_withdraw): the status, the moment, and the notices that asked somebody something
+   * are read, so a mentor's bell and a guardian's request for consent do not wait for a request that is gone. Nobody is told.
+   */
+  async withdrawLeaveRequest(id: string, user: AuthenticatedUser): Promise<{ id: string; status: 'WITHDRAWN' }> {
+    const me = requireUserId(user);
+    return this.prisma.withRls(user, async (tx) => {
+      const request = await tx.leaveRequest.findUnique({ where: { id }, select: { requestedById: true, status: true } });
+      if (!request) throw new NotFoundException('Leave request not found.');
+      if (request.requestedById !== me) {
+        throw new ForbiddenException({ message: 'Only whoever filed a leave request takes it back.', code: LEAVE_WITHDRAW_NOT_YOURS });
+      }
+      if (request.status === 'WITHDRAWN') return { id, status: 'WITHDRAWN' as const };
+      if (request.status !== 'PENDING') throw alreadyDecided();
+      const [row] = await tx.$queryRaw<Array<{ withdrawn: boolean }>>`SELECT app.leave_request_withdraw(${id}::uuid) AS "withdrawn"`;
+      // A decision won the race between the read and the write.
+      if (!row?.withdrawn) throw alreadyDecided();
+      this.logger.log(`Leave request taken back [request=${id}]`);
+      return { id, status: 'WITHDRAWN' as const };
     });
   }
 

@@ -71,6 +71,9 @@ enum LeaveRequestStatus {
   /// A guardian the school asked for consent answered no, and that ended the request (20270205090000, K4).
   /// Never a decision of the school: decidedById and decidedAs stay empty.
   GUARDIAN_DECLINED
+  /// The person who filed it took it back while it waited (20270312090000, K6): decidedAt is the moment, decidedById and decidedAs stay
+  /// empty. Final, and only from PENDING: a decided request is not taken back, the family asks the school.
+  WITHDRAWN
 }
 
 /// In which role a leave request was decided (20261023091000): by the pupil's

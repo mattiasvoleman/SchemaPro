@@ -8688,3 +8688,87 @@ BEGIN
   RAISE NOTICE 'ut 594o: % checks', current_setting('ut.checks');
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Ledighetsansökan som familjen drar tillbaka (K6, 20270312090100), avsnitt 600o: det bara ägaren kan fråga. Raderna skrivs som ägaren
+-- (utan en inloggad person, så att triggern inte släpper in något annat än funktionen), funktionen körs med den ansökandes claims, och
+-- notiserna läses som ägaren, eftersom ingen API-roll läser en annan persons notiser.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  school uuid; guardian uuid; guardian_auth uuid; child uuid; teacher uuid; other_guardian uuid;
+  r1 uuid; r2 uuid;
+BEGIN
+  SELECT u."schoolId", u.id, u."authId" INTO school, guardian, guardian_auth FROM "Users" u WHERE u."authId" = '00000000-0000-4000-8000-000000000004';
+  SELECT gs."studentId" INTO child FROM "GuardianStudents" gs WHERE gs."guardianId" = guardian ORDER BY gs."studentId" LIMIT 1;
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO other_guardian FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND "isActive" AND id <> guardian ORDER BY id LIMIT 1;
+  IF child IS NULL OR teacher IS NULL OR other_guardian IS NULL THEN RAISE EXCEPTION 'ut 600o: the fixtures lack a child, a teacher or a second guardian'; END IF;
+
+  -- Two requests of one family, written as the owner (no person: the owner's own writes are not the family's).
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, child, guardian, DATE '2096-07-06', DATE '2096-07-07', 'ut600o 1') RETURNING id INTO r1;
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, child, guardian, DATE '2096-07-13', DATE '2096-07-14', 'ut600o 2') RETURNING id INTO r2;
+  -- What each asked of somebody: a mentor's "new request", a guardian's request for consent and its reminder, and an unrelated notice; one of the second's.
+  INSERT INTO "Notifications" ("schoolId", "userId", type, meta) VALUES
+    (school, teacher, 'LEAVE_REQUESTED', jsonb_build_object('leaveRequestId', r1)),
+    (school, other_guardian, 'LEAVE_CONSENT_REQUESTED', jsonb_build_object('leaveRequestId', r1)),
+    (school, other_guardian, 'LEAVE_CONSENT_REMINDER', jsonb_build_object('leaveRequestId', r1)),
+    (school, guardian, 'LEAVE_DECIDED', jsonb_build_object('leaveRequestId', r1)),
+    (school, teacher, 'LEAVE_REQUESTED', jsonb_build_object('leaveRequestId', r2));
+  INSERT INTO "Notifications" ("schoolId", "userId", type, meta, "readAt") VALUES
+    (school, teacher, 'LEAVE_REQUESTED', jsonb_build_object('leaveRequestId', r1, 'old', true), TIMESTAMPTZ '2096-01-01 00:00:00+00');
+  PERFORM set_config('ut.t600o_school', school::text, true);
+  PERFORM set_config('ut.t600o_r1', r1::text, true);
+  PERFORM set_config('ut.t600o_r2', r2::text, true);
+  PERFORM set_config('ut.t600o_auth', guardian_auth::text, true);
+  PERFORM set_config('ut.t600o_other_auth', (SELECT "authId"::text FROM "Users" WHERE id = other_guardian), true);
+
+  -- Without a person the function refuses; with the filer's claims it takes the request back.
+  PERFORM pg_temp.ut_expect('600o no person, no taking back (LV403)', pg_temp.ut_try(format($q$SELECT app.leave_request_withdraw(%L)$q$, r1)), 'LV403');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', guardian_auth)::text, true);
+  PERFORM pg_temp.ut_expect('600o the filer takes request 1 back', app.leave_request_withdraw(r1)::text, 'true');
+  PERFORM set_config('request.jwt.claims', '', true);
+
+  PERFORM pg_temp.ut_expect('600o the request is withdrawn, with a moment, and no decider', (SELECT concat_ws('|', status, "decidedAt" IS NOT NULL, "decidedById" IS NULL, "decidedAs" IS NULL) FROM "LeaveRequests" WHERE id = r1), 'WITHDRAWN|t|t|t');
+  PERFORM pg_temp.ut_expect('600o what it asked of anybody is read: the mentor''s and the guardians'' notices of THIS request',
+    (SELECT count(*)::text FROM "Notifications" WHERE meta ->> 'leaveRequestId' = r1::text AND type IN ('LEAVE_REQUESTED', 'LEAVE_CONSENT_REQUESTED', 'LEAVE_CONSENT_REMINDER') AND "readAt" IS NOT NULL), '4');
+  PERFORM pg_temp.ut_expect('600o ... the notice that is not a question is left unread (the decision to the family)',
+    (SELECT count(*)::text FROM "Notifications" WHERE meta ->> 'leaveRequestId' = r1::text AND type = 'LEAVE_DECIDED' AND "readAt" IS NULL), '1');
+  PERFORM pg_temp.ut_expect('600o ... another request''s notice is left unread', (SELECT count(*)::text FROM "Notifications" WHERE meta ->> 'leaveRequestId' = r2::text AND "readAt" IS NULL), '1');
+  PERFORM pg_temp.ut_expect('600o ... and one read before keeps the moment it was read', (SELECT "readAt"::text FROM "Notifications" WHERE meta ->> 'old' = 'true'), '2096-01-01 00:00:00+00');
+
+  -- The CHECK, with the trigger out of the way: a withdrawn request has a moment and no decider.
+  ALTER TABLE "LeaveRequests" DISABLE TRIGGER "LeaveRequests_gate";
+  PERFORM pg_temp.ut_expect('600o a withdrawn request with a decider is refused', split_part(pg_temp.ut_try(format(
+    $q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now(), "decidedById" = %L WHERE id = %L$q$, guardian, r2)), ' ', 1), '23514');
+  PERFORM pg_temp.ut_expect('600o ... one without a moment', split_part(pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN' WHERE id = %L$q$, r2)), ' ', 1), '23514');
+  PERFORM pg_temp.ut_expect('600o ... one with a role that decided', split_part(pg_temp.ut_try(format(
+    $q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now(), "decidedAs" = 'ADMIN' WHERE id = %L$q$, r2)), ' ', 1), '23514');
+  ALTER TABLE "LeaveRequests" ENABLE TRIGGER "LeaveRequests_gate";
+
+  -- The trigger, as the owner with no person: not the filer's, so not withdrawn by a write (LV418), and only a request that waits (LV417).
+  PERFORM pg_temp.ut_expect('600o a write with no person does not withdraw (LV418)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now() WHERE id = %L$q$, r2)), 'LV418');
+  UPDATE "LeaveRequests" SET status = 'REJECTED', "decidedAt" = now() WHERE id = r2;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', guardian_auth)::text, true);
+  PERFORM pg_temp.ut_expect('600o a request that is rejected is not withdrawn by a write either (LV417)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now() WHERE id = %L$q$, r2)), 'LV417');
+  PERFORM pg_temp.ut_expect('600o ... and the function says no', app.leave_request_withdraw(r2)::text, 'false');
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM pg_temp.ut_expect('600o a withdrawn request is decided by nobody (LV409)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'APPROVED' WHERE id = %L$q$, r1)), 'LV409');
+
+  -- Rights: the API's role alone.
+  PERFORM pg_temp.ut_expect('600o the function is the API role''s alone',
+    concat_ws('/', has_function_privilege('app_authenticated', 'app.leave_request_withdraw(uuid)', 'EXECUTE')::text,
+      (SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN has_function_privilege('authenticated', 'app.leave_request_withdraw(uuid)', 'EXECUTE')::text ELSE 'false' END),
+      (SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN has_function_privilege('anon', 'app.leave_request_withdraw(uuid)', 'EXECUTE')::text ELSE 'false' END),
+      (SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN has_function_privilege('service_role', 'app.leave_request_withdraw(uuid)', 'EXECUTE')::text ELSE 'false' END),
+      (SELECT count(*)::text FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE p.oid = 'app.leave_request_withdraw(uuid)'::regprocedure AND a.grantee = 0)),
+    'true/false/false/false/0');
+  PERFORM pg_temp.ut_expect('600o the function is a definer with a pinned search path',
+    (SELECT concat_ws('|', p.prosecdef, array_to_string(p.proconfig, ',')) FROM pg_proc p WHERE p.oid = 'app.leave_request_withdraw(uuid)'::regprocedure), 't|search_path=public, pg_temp');
+  RAISE NOTICE 'ut 600o: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;

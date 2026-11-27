@@ -42,12 +42,17 @@ export function policyAsks(policy: LeavePolicy | undefined): policy is LeavePoli
 /**
  * Whether a request in the family's list has more to say than its plain row: a
  * contact the family wrote, a request that asked for consent, or one ended by
- * a guardian's no. Read defensively: a gateway older than Ledighetspolicy sends
+ * a guardian's no, or one the signed-in person filed that still waits and so can be taken back. Read defensively: a gateway older than Ledighetspolicy sends
  * none of the fields, and the list then looks as it always did.
  */
-export function hasLeaveExtras(leave: Pick<LeaveRequest, "status" | "contact" | "consent">): boolean {
+export function hasLeaveExtras(
+  leave: Pick<LeaveRequest, "status" | "contact" | "consent"> & { requestedById?: string },
+  /** The signed-in person: a request they filed that still waits can be taken back (K6). */
+  me?: string,
+): boolean {
   return (
     leave.status === "GUARDIAN_DECLINED" ||
+    (leave.status === "PENDING" && me !== undefined && leave.requestedById === me) ||
     (leave.contact ?? null) !== null ||
     (leave.consent?.state ?? "NOT_REQUIRED") !== "NOT_REQUIRED" ||
     (leave.consent?.mine ?? "NOT_ASKED") !== "NOT_ASKED"

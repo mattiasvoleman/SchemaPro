@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { leaveConsentError } from "@/lib/leave-errors";
+import { leaveConsentError, leaveWithdrawError } from "@/lib/leave-errors";
 import type { ContactProblem } from "@/lib/leave-policy";
-import { useAnswerLeaveConsent } from "@/lib/leave-consent-queries";
+import { useAnswerLeaveConsent, useWithdrawLeave } from "@/lib/leave-consent-queries";
 import type { LeaveContact, LeavePolicy, LeaveRequest } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
@@ -126,11 +126,26 @@ export function LeavePolicyFields({
  * answers. A no is asked about first, because it ends the request for everybody
  * and cannot be taken back.
  */
-export function LeaveRowExtras({ leave, name, span }: { leave: LeaveRequest; name: string; span: string }) {
+export function LeaveRowExtras({
+  leave,
+  name,
+  span,
+  filedByMe = false,
+}: {
+  leave: LeaveRequest;
+  name: string;
+  span: string;
+  /** The signed-in person filed this request: while it waits they may take it back (K6). */
+  filedByMe?: boolean;
+}) {
   const t = useTranslations("guardian");
   const tCommon = useTranslations("common");
   const answer = useAnswerLeaveConsent();
+  const withdraw = useWithdrawLeave();
   const [confirming, setConfirming] = useState(false);
+  const [taking, setTaking] = useState(false);
+  const takeButton = useRef<HTMLButtonElement>(null);
+  const takeTitle = useRef<HTMLParagraphElement>(null);
   const confirmTitle = useRef<HTMLParagraphElement>(null);
   const noButton = useRef<HTMLButtonElement>(null);
 
@@ -138,6 +153,9 @@ export function LeaveRowExtras({ leave, name, span }: { leave: LeaveRequest; nam
   useEffect(() => {
     if (confirming) confirmTitle.current?.focus();
   }, [confirming]);
+  useEffect(() => {
+    if (taking) takeTitle.current?.focus();
+  }, [taking]);
 
   const consent = leave.consent;
   const open = leave.status === "PENDING";
@@ -163,7 +181,17 @@ export function LeaveRowExtras({ leave, name, span }: { leave: LeaveRequest; nam
     setConfirming(false);
   };
 
-  const named = (key: "consent.yesNamed" | "consent.noNamed") => t(key, { name, span });
+  const take = async () => {
+    try {
+      await withdraw.mutateAsync(leave.id);
+      toast.success(t("withdraw.done"));
+    } catch (error) {
+      toast.error(leaveWithdrawError(error, { decided: t("withdraw.decided"), notYours: t("withdraw.notYours"), fallback: tCommon }));
+    }
+    setTaking(false);
+  };
+
+  const named = (key: "consent.yesNamed" | "consent.noNamed" | "withdraw.named") => t(key, { name, span });
   const note = "text-xs text-muted-foreground";
 
   return (
@@ -182,6 +210,42 @@ export function LeaveRowExtras({ leave, name, span }: { leave: LeaveRequest; nam
       {told && mine === "REFUSED" ? <p className={note}>{t("consent.mineRefused")}</p> : null}
       {told && mine === "ENDED" ? <p className={note}>{t("consent.mineEnded")}</p> : null}
 
+      {open && filedByMe ? (
+        taking ? (
+          <div className="space-y-2 rounded-md border bg-muted/40 p-3" role="group" aria-label={t("withdraw.title")}>
+            <p ref={takeTitle} tabIndex={-1} className="font-medium">
+              {t("withdraw.confirmTitle")}
+            </p>
+            <p>{t("withdraw.confirmBody")}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="destructive" disabled={withdraw.isPending} onClick={() => void take()}>
+                {t("withdraw.confirm")}
+                <span className="sr-only">
+                  , {name}, {span}
+                </span>
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={withdraw.isPending}
+                onClick={() => {
+                  setTaking(false);
+                  // The button that asked is back after this render.
+                  queueMicrotask(() => takeButton.current?.focus());
+                }}
+              >
+                {tCommon("cancel")}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <Button ref={takeButton} size="sm" variant="outline" aria-label={named("withdraw.named")} onClick={() => setTaking(true)}>
+              {t("withdraw.button")}
+            </Button>
+          </div>
+        )
+      ) : null}
       {open && mine === "WAITING" ? (
         <div className="space-y-2 rounded-md border bg-muted/40 p-3" role="group" aria-label={t("consent.askTitle")}>
           {confirming ? (
