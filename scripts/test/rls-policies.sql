@@ -70372,3 +70372,33 @@ BEGIN
   RAISE NOTICE 'ut 592: % checks', current_setting('ut.checks');
 END $$;
 ROLLBACK;
+
+-- ===========================================================================
+-- Frågan före en ändring i Direkt som når familjer (20270312090000, avsnitt 600; ägarsidan 600o i rls-owner-checks.sql).
+--
+-- app.direct_reach_facts(year_id) är en SECURITY DEFINER-läsare som vakten i skrivvägen inte ska behöva områdesarmarna för (inställningen och
+-- publiceringarna är Publicerings): en arm som döljer raderna ger noll rader, och en vakt som läser noll rader tiger där den ska fråga. Den
+-- svarar för den inloggades egen skola, högst en rad. API-rollen får köra den; PostgREST-rollerna gör det inte.
+--
+--   600  som API-rollen och administratör: funktionen kan köras och ger ingen rad för ett läsår som ingen publicering gäller; PostgREST-rollen
+--        får 42501
+-- ===========================================================================
+
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('600 the API role may run the reader', pg_temp.ut_try($q$SELECT * FROM app.direct_reach_facts(gen_random_uuid())$q$), 'ok');
+  PERFORM pg_temp.ut_expect('600 ... a year no publication holds gives no row',
+    (SELECT count(*)::text FROM app.direct_reach_facts(gen_random_uuid())), '0');
+  RAISE NOTICE 'ut 600: % checks', current_setting('ut.checks');
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('600 expected to act as authenticated', current_user::text, 'authenticated');
+  PERFORM pg_temp.ut_expect('600 PostgREST''s role may not run the reader', pg_temp.ut_try($q$SELECT * FROM app.direct_reach_facts(gen_random_uuid())$q$), '42501');
+  RAISE NOTICE 'ut 600 (authenticated): % checks', current_setting('ut.checks');
+END $$;
+RESET ROLE;
+ROLLBACK;

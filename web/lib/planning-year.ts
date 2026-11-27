@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAcademicYears } from "@/lib/queries";
@@ -40,11 +40,35 @@ export interface PlanningYear {
   active: AcademicYear | null;
   /** Next year while it is not activated; null when there is none to plan. */
   successor: AcademicYear | null;
+  /**
+   * Work on this year from now on. Also written to the address (?year=, left
+   * out for the active year, which is where every page starts), so that a
+   * reload, the browser's back button and a link copied from the page come
+   * back to the year that was counted for.
+   */
   choose: (yearId: string) => void;
   /** The server's overlay for `year`; null for the active year, or until it arrives. */
   rosters: YearRosters | null;
   /** The overlay was asked for and did not come: the page must say so. */
   rostersFailed: boolean;
+}
+
+/**
+ * `?year=` of the address set to `yearId`, or removed for null, with every
+ * other parameter and the hash left as they are. replaceState and not push: a
+ * choice between two years is not a place to go back to, and not the router,
+ * whose navigation would render the route again for a value this hook already
+ * holds. A page without a window (the server's render) has no address to write.
+ */
+export function writeYearToAddress(yearId: string | null): void {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  // The rollover's offer (?year=<the new year>&start=PREVIOUS_YEAR, StartFromCard) belongs to the year the link names: left behind beside
+  // another year, or beside none (the active year), a reload would offer last year's schedule as the start for a year it was not made for.
+  if (url.searchParams.get("year") !== yearId) url.searchParams.delete("start");
+  if (yearId === null) url.searchParams.delete("year");
+  else url.searchParams.set("year", yearId);
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 export function usePlanningYear(): PlanningYear {
@@ -63,11 +87,18 @@ export function usePlanningYear(): PlanningYear {
     id === null ? null : ([active, successor].find((year) => year?.id === id) ?? null);
   const year = linked === null ? null : (pick(chosenId) ?? pick(linked.id) ?? active);
   const rosters = useYearRosters(year, active);
+  const choose = useCallback(
+    (yearId: string) => {
+      setChosenId(yearId);
+      writeYearToAddress(yearId === active?.id ? null : yearId);
+    },
+    [active?.id],
+  );
   return {
     year,
     active,
     successor,
-    choose: setChosenId,
+    choose,
     rosters: rosters.data ?? null,
     rostersFailed: rosters.isError,
   };

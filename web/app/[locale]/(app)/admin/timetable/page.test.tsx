@@ -251,6 +251,10 @@ vi.mock("@/lib/publication-draft-notice", () => ({
 vi.mock("@/lib/use-timetable-realtime", () => ({
   useTimetableRealtime: () => ({ peers: [], setEditing: vi.fn() }),
 }));
+// The question before a change in Direkt that reaches families reads the gateway through react-query, which these tests do not provide. It is
+// held on its own (lib/use-direct-reach-ask.test.tsx); here a write is run as it is.
+const direct = vi.hoisted(() => ({ ask: <T,>(run: () => Promise<T>) => run(), question: null }));
+vi.mock("@/lib/use-direct-reach-ask", () => ({ useDirectReachAsk: () => direct }));
 // The page links to the version history; next-intl's navigation helper pulls in
 // the Next router, which has no place in a question about who is on screen.
 vi.mock("@/i18n/navigation", () => ({

@@ -96,7 +96,7 @@
 import { Suspense, lazy, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { CalendarOff, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { CalendarOff, CalendarPlus, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   useGroups,
   useSchoolBreakActions,
@@ -109,6 +109,7 @@ import {
   useTimplanCredits,
   type TimplanCredit,
 } from "@/lib/timplan-credit-queries";
+import type { SchoolCalendarResult } from "@/lib/school-calendar-queries";
 import type { BreakKind, SchoolBreak } from "@/lib/types";
 import { Link } from "@/i18n/navigation";
 import { Page } from "@/components/layout/page";
@@ -164,6 +165,11 @@ const lazyCreditDialog = () =>
   lazy(() => import("@/components/timplan/credit-dialog").then((module) => ({ default: module.CreditDialog })));
 let CreditDialog = lazyCreditDialog();
 
+/** The school calendar dialog (Skolans kalender), fetched the same way on its first open. */
+const lazyCalendarDialog = () =>
+  lazy(() => import("@/components/schedule/school-calendar-dialog").then((module) => ({ default: module.SchoolCalendarDialog })));
+let CalendarDialog = lazyCalendarDialog();
+
 /** The credit dialog's state: closed, or open on a credit or a day. */
 interface CreditDialogState {
   open: boolean;
@@ -209,6 +215,8 @@ const EMPTY_FORM: BreakForm = {
 interface RemovalNotice {
   name: string;
   removed: number;
+  /** Set when a whole calendar was saved at once (Skolans kalender): the lov made and moved, and no single name. */
+  calendar?: { created: number; updated: number };
 }
 
 export default function BreaksPage() {
@@ -240,6 +248,13 @@ export default function BreaksPage() {
   const [deleting, setDeleting] = useState<SchoolBreak | null>(null);
   const [form, setForm] = useState<BreakForm>(EMPTY_FORM);
   const [notice, setNotice] = useState<RemovalNotice | null>(null);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarUsed, setCalendarUsed] = useState(false);
+  const [calendarLoad, setCalendarLoad] = useState(0);
+  const openCalendar = () => {
+    setCalendarUsed(true);
+    setCalendarOpen(true);
+  };
 
   const {
     data: credits,
@@ -485,6 +500,11 @@ export default function BreaksPage() {
               problem the timplan's picker had, and the same fix.
             */}
             <YearSelect value={activeYearId} onValueChange={pickYear} label={t("yearLabel")} />
+            {/* A calendar of lov is a write of the same area: POST /school-breaks/calendar. */}
+            <Button data-writes="PLANERING DRIFT" variant="outline" onClick={openCalendar} disabled={!activeYearId || !year}>
+              <CalendarPlus aria-hidden="true" />
+              {t("calendar.open")}
+            </Button>
             {/* A lov writes the calendar too: school-breaks.controller.ts @Area('PLANERING', 'DRIFT'). */}
             <Button data-writes="PLANERING DRIFT" onClick={openCreate} disabled={!activeYearId}>
               <Plus aria-hidden="true" />
@@ -516,9 +536,11 @@ export default function BreaksPage() {
       >
         {notice ? (
           <Notice role={null} className="max-w-prose leading-relaxed">
-            {notice.removed > 0
-              ? t("removedLessons", { name: notice.name, count: notice.removed })
-              : t("removedNone", { name: notice.name })}
+            {notice.calendar
+              ? t("calendar.savedNotice", { ...notice.calendar, removed: notice.removed })
+              : notice.removed > 0
+                ? t("removedLessons", { name: notice.name, count: notice.removed })
+                : t("removedNone", { name: notice.name })}
           </Notice>
         ) : null}
       </div>
@@ -569,6 +591,13 @@ export default function BreaksPage() {
           description={t("empty")}
           descriptionClassName="leading-relaxed text-foreground"
           headingLevel={2}
+          action={
+            // The first year is the one that needs it: red days and the year's lov, proposed and shown before they are saved.
+            <Button data-writes="PLANERING DRIFT" onClick={openCalendar}>
+              <CalendarPlus aria-hidden="true" />
+              {t("calendar.open")}
+            </Button>
+          }
         />
       ) : (
         /*
@@ -812,6 +841,35 @@ export default function BreaksPage() {
             prefill={creditDialog.prefill}
           />
         </Suspense>
+        </DialogLoadBoundary>
+      ) : null}
+
+      {calendarUsed && year ? (
+        <DialogLoadBoundary
+          key={calendarLoad}
+          onError={() => {
+            toast.error(tCommon("formLoadFailed"));
+            CalendarDialog = lazyCalendarDialog();
+            setCalendarOpen(false);
+            setCalendarUsed(false);
+            setCalendarLoad((attempt) => attempt + 1);
+          }}
+        >
+          <Suspense fallback={null}>
+            <CalendarDialog
+              open={calendarOpen}
+              onOpenChange={setCalendarOpen}
+              year={year}
+              breaks={breaks ?? []}
+              onSaved={(result: SchoolCalendarResult) =>
+                setNotice({
+                  name: "",
+                  removed: result.removedCalendarLessons,
+                  calendar: { created: result.created, updated: result.updated },
+                })
+              }
+            />
+          </Suspense>
         </DialogLoadBoundary>
       ) : null}
 

@@ -64,11 +64,17 @@ export function isFrameReason(value: unknown): value is FrameReason {
  */
 export { LESSON_IS_PLACED };
 
-/** Why a lesson is not the klasslärare's to change: the frame's reasons, and the one the gateway adds. */
-export type RefusalReason = FrameReason | typeof LESSON_IS_PLACED;
+/**
+ * The other reason the gateway adds (DIRECT_REACH_UNANSWERED_REASON in the gateway's file): the editor asks the school once before the first
+ * change in Direkt that reaches families, and a klasslärare's publication cannot answer for the school, so the draft waits for an administrator.
+ */
+export const DIRECT_REACH_UNANSWERED_REASON = "DIRECT_REACH_UNANSWERED";
+
+/** Why a lesson is not the klasslärare's to change: the frame's reasons, and the two the gateway adds. */
+export type RefusalReason = FrameReason | typeof LESSON_IS_PLACED | typeof DIRECT_REACH_UNANSWERED_REASON;
 
 export function isRefusalReason(value: unknown): value is RefusalReason {
-  return value === LESSON_IS_PLACED || isFrameReason(value);
+  return value === LESSON_IS_PLACED || value === DIRECT_REACH_UNANSWERED_REASON || isFrameReason(value);
 }
 
 export const CHANGE_KINDS = ["OCCASION_MOVE", "OCCASION_CANCEL", "OCCASION_ROOM", "TEMPLATE_MOVE", "TEMPLATE_SPLIT"] as const;

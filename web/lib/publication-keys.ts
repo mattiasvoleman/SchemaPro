@@ -11,6 +11,8 @@
  */
 export const PUBLICATION_KEYS = {
   settings: ["publicationSettings"],
+  /** The question before a change in Direkt that reaches families (lib/direct-reach.ts): a switch of mode makes the answer stale. */
+  directReach: ["directReach"],
   timeline: ["publicationTimeline"],
   state: ["publicationState"],
   preview: ["publicationPreview"],

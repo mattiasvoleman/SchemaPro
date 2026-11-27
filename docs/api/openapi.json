@@ -17213,6 +17213,110 @@
         }
       }
     },
+    "/api/v1/publication-settings/direct-reach": {
+      "get": {
+        "tags": [
+          "Publications"
+        ],
+        "operationId": "PublicationsController_directReachQuestion",
+        "parameters": [
+          {
+            "name": "academicYearId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/publication-settings/direct-reach/acknowledge": {
+      "post": {
+        "tags": [
+          "Publications"
+        ],
+        "operationId": "PublicationsController_acknowledgeDirectReach",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectReachQueryDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PUBLICERING"
+          ]
+        }
+      }
+    },
     "/api/v1/publication-settings/mode": {
       "post": {
         "tags": [
@@ -21050,6 +21154,62 @@
         "responses": {
           "201": {
             "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PLANERING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/school-breaks/calendar": {
+      "post": {
+        "tags": [
+          "SchoolBreaks"
+        ],
+        "operationId": "SchoolBreaksController_applyCalendar",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplySchoolCalendarDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
@@ -29323,6 +29483,29 @@
           "basisHash"
         ]
       },
+      "ApplySchoolCalendarDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "breaks": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/CalendarBreakDto"
+            }
+          },
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "academicYearId",
+          "breaks"
+        ]
+      },
       "ApplyStaffingDto": {
         "type": "object",
         "properties": {
@@ -29668,6 +29851,50 @@
           "changes",
           "ids",
           "dryRun"
+        ]
+      },
+      "CalendarBreakDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "HOLIDAY",
+              "STAFF_DAY"
+            ]
+          },
+          "startDate": {
+            "type": "string"
+          },
+          "endDate": {
+            "type": "string"
+          },
+          "minGradeLevel": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 12
+          },
+          "maxGradeLevel": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 12
+          }
+        },
+        "required": [
+          "name",
+          "startDate",
+          "endDate"
         ]
       },
       "CancelLessonDto": {
@@ -32088,6 +32315,15 @@
         "required": [
           "token"
         ]
+      },
+      "DirectReachQueryDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
       },
       "DiscardDraftDto": {
         "type": "object",

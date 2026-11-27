@@ -125,6 +125,8 @@ export function useSwitchPublishMode() {
       void queryClient.invalidateQueries({ queryKey: PUBLICATION_KEYS.settings });
       void queryClient.invalidateQueries({ queryKey: PUBLICATION_KEYS.timeline });
       void queryClient.invalidateQueries({ queryKey: PUBLICATION_KEYS.state });
+      // A switch of mode is a new decision about who is reached: the gateway has taken the school's answer back.
+      void queryClient.invalidateQueries({ queryKey: PUBLICATION_KEYS.directReach });
     },
   });
 }

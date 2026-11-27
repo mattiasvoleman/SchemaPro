@@ -65,6 +65,17 @@ export class PublicationListQueryDto {
   academicYearId!: string;
 }
 
+/**
+ * GET /publication-settings/direct-reach and POST …/acknowledge: the läsår the question is about, the active one when it is left out
+ * (direct-reach.service.ts).
+ */
+export class DirectReachQueryDto {
+  @IsOptional()
+  @Transform(lower)
+  @IsUUID('4', { message: 'academicYearId: läsåret anges med sitt id.' })
+  academicYearId?: string;
+}
+
 const GATE_MODES = ['WARN', 'REFUSE'] as const;
 
 /**
