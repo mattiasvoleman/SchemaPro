@@ -74,8 +74,9 @@ export function failureOf(error: unknown): SuggestionsFailure | 'REFUSED' {
  * lease of its own (suggestions.ts ANALYSIS_LEASE_SECONDS) that the process renews every half minute, and a RUNNING whose lease has
  * run out is read as abandoned: a process that went away (a deploy of the API happens at every merge) leaves nothing that finishes it,
  * and that must read as what it is. A restart that can say so itself writes it at once (onModuleDestroy, as the staffing search does),
- * and no sweep writes the rest: every reader and the claim judge the lease themselves, and nothing waits on the row (a Generera run's
- * sweep is there because its row holds a unique index's place). A second press while one runs is the same answer, not a second analysis.
+ * and the sweep writes the rest (app.optimization_jobs_sweep, 20270313090000, the one Generera's runs have), though nothing waits for it:
+ * every reader and the claim judge the lease themselves, as the sweep does, and no unique index holds a place for this row as it does for a
+ * Generera run's. A second press while one runs is the same answer, not a second analysis.
  *
  * IT WRITES NOTHING BUT THAT COLUMN. No timetable is placed, no setting changed, no row but the run's own touched: what a school does
  * with a suggestion it does on the page that owns the data.
