@@ -12,8 +12,8 @@ import { SUGGESTION_FAILURES, SUGGESTION_STATES, type SuggestionChangeView, type
  * enums); either half failing means the two sides have parted company. Fix the code, not the list, and change both halves in the commit that
  * deploys the engine.
  */
-const RESPONSE_FIELDS = ['changes', 'conflicts', 'elapsedMs', 'requestId', 'searchSeconds', 'verdict', 'verified', 'verifySeconds'];
-const CHANGE_FIELDS = ['cost', 'current', 'needed', 'proof', 'requirementIds', 'resourceIds', 'roomIds', 'rule', 'weekdays'];
+const RESPONSE_FIELDS = ['changes', 'conflicts', 'elapsedMs', 'report', 'requestId', 'searchSeconds', 'verdict', 'verified', 'verifySeconds'];
+const CHANGE_FIELDS = ['cost', 'current', 'needed', 'neededIsLeast', 'proof', 'requirementIds', 'resourceIds', 'roomIds', 'rule', 'weekdays'];
 
 describe('Åtgärdsförslag vid vägran: the wire contract', () => {
   it('names the engine\'s five rules, mildest first, as relaxation.RELAXABLE_RULES does', () => {
@@ -30,13 +30,14 @@ describe('Åtgärdsförslag vid vägran: the wire contract', () => {
       requestId: '55555555-5555-4555-8555-555555555555',
       verdict: 'CHANGES',
       changes: [{
-        rule: 'TEACHER_DAILY_CAP', cost: 168, current: 300, needed: 330, weekdays: [3], requirementIds: [], roomIds: [], resourceIds: [], proof: 'SOLVED',
+        rule: 'TEACHER_DAILY_CAP', cost: 168, current: 300, needed: 330, neededIsLeast: true, weekdays: [3], requirementIds: [], roomIds: [], resourceIds: [], proof: 'SOLVED',
       }],
       verified: true,
       searchSeconds: 60,
       verifySeconds: 2.5,
       elapsedMs: 70_000,
       conflicts: null,
+      report: null,
     };
     expect(Object.keys(reply).sort()).toEqual(RESPONSE_FIELDS);
     expect(Object.keys(reply.changes[0]!).sort()).toEqual(CHANGE_FIELDS);
