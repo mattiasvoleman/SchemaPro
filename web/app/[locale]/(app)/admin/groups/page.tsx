@@ -8,7 +8,7 @@ import { Link } from "@/i18n/navigation";
 import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { LazyClassHalvesDialog } from "@/components/groups/lazy-class-halves-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
-import { classesToCsv, membershipsToCsv } from "@/lib/csv-export";
+import { classesToCsv, membersWithoutAddress, membershipsToCsv } from "@/lib/csv-export";
 import {
   useAcademicYears,
   useCrudMutations,
@@ -444,9 +444,15 @@ export default function GroupsPage() {
                   // a module loaded only then (lib/protected-people.ts).
                   build: () =>
                     import("@/lib/protected-people")
-                      .then(({ withoutMarked }) =>
-                        withoutMarked(people ?? [], "STUDENT", (kept) => membershipsToCsv(activeGroups, kept, memberships ?? [])),
-                      )
+                      .then(async ({ withoutMarked }) => {
+                        // The file names a pupil by address: a pupil with none is in the group and not in the file, and the page says how many.
+                        let withoutAddress = 0;
+                        const file = await withoutMarked(people ?? [], "STUDENT", (kept) => {
+                          withoutAddress = membersWithoutAddress(activeGroups, kept, memberships ?? []);
+                          return membershipsToCsv(activeGroups, kept, memberships ?? []);
+                        });
+                        return { ...file, withoutAddress, withoutAddressUnit: "members" as const };
+                      })
                       .catch(() => {
                         toast.error(tCommon("error"));
                         return null;

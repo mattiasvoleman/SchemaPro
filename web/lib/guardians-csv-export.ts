@@ -38,6 +38,8 @@ export function guardiansToCsv(rows: GuardianExportRow[]): string {
 export interface GuardianExport {
   rows: GuardianExportRow[];
   heldOut: number;
+  /** Links the file cannot name: the pupil or the guardian has no address. Absent from a gateway older than the web. */
+  withoutAddress?: number;
 }
 
 /**
@@ -45,6 +47,6 @@ export interface GuardianExport {
  * and how many were held out; no file (null content) when no link is left.
  */
 export async function guardiansCsvFor(): Promise<HeldOutFile> {
-  const { rows, heldOut } = await api.get<GuardianExport>("/api/v1/guardian-links/export");
-  return { content: rows.length === 0 ? null : guardiansToCsv(rows), heldOut, unit: "links" };
+  const { rows, heldOut, withoutAddress } = await api.get<GuardianExport>("/api/v1/guardian-links/export");
+  return { content: rows.length === 0 ? null : guardiansToCsv(rows), heldOut, unit: "links", ...(withoutAddress ? { withoutAddress } : {}) };
 }

@@ -13,6 +13,10 @@ const demo = (overrides: Partial<SchoolFacts> = {}): SchoolFacts => ({
 });
 
 describe('isDemoAddress', () => {
+  it('is not a person with no address (Personer utan e-postadress): no address is no address at the demo\'s domain', () => {
+    expect(isDemoAddress(null)).toBe(false);
+  });
+
   it.each([
     'admin@demo-skola.example.com',
     'ADMIN@Demo-Skola.Example.COM',
@@ -53,6 +57,8 @@ describe('judgeDemoSchool', () => {
 
   it('refuses a school with the demo\'s slug and a real person: the name is what a person types, the address is not', () => {
     expect(judgeDemoSchool(demo({ emails: [...demo().emails, 'rektor@kommun.se'] }))).toEqual({ code: 'PEOPLE_OUTSIDE_THE_DEMO', count: 1 });
+    // A person added with no address (Personer utan e-postadress) is not a demo person either: the school is refused, not crashed on.
+    expect(judgeDemoSchool(demo({ emails: [...demo().emails, null] }))).toEqual({ code: 'PEOPLE_OUTSIDE_THE_DEMO', count: 1 });
   });
 
   it('counts every person outside the demo, so that the refusal says how many and not who', () => {

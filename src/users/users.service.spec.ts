@@ -120,6 +120,50 @@ describe('UsersService', () => {
   });
 
   describe('create', () => {
+    // Personer utan e-postadress (20270310090000): a pupil or a guardian is added with no address, and has no login until there is one.
+    describe('with no address', () => {
+      it.each([
+        [UserRole.STUDENT, { studentGroupId: GROUP_ID }],
+        [UserRole.GUARDIAN, {}],
+      ] as const)('adds a %s with no address as a person nobody has invited, and contacts nobody', async (role, extra) => {
+        tx.user.create.mockResolvedValue({ id: USER_ID, email: null });
+        if (role === UserRole.STUDENT) tx.studentGroup.findUnique.mockResolvedValue({ kind: 'CLASS' });
+
+        await service.create(createDto({ role, email: undefined, ...extra }), testUser());
+
+        const { data } = tx.user.create.mock.calls[0][0] as { data: { email: string | null; invitedAt: Date | null; authId: string; role: UserRole } };
+        expect(data).toMatchObject({ role, email: null, invitedAt: null });
+        // The placeholder login matches nobody, as for every uninvited person.
+        expect(data.authId).toMatch(/^[0-9a-f-]{36}$/);
+        expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
+      });
+
+      it('reads null and a missing address alike', async () => {
+        tx.user.create.mockResolvedValue({ id: USER_ID });
+        await service.create(createDto({ role: UserRole.GUARDIAN, email: null }), testUser());
+        await service.create(createDto({ role: UserRole.GUARDIAN }, ), testUser());
+        const addresses = tx.user.create.mock.calls.map((call) => (call[0] as { data: { email: unknown } }).data.email);
+        expect(addresses).toEqual([null, 'anna@school.se']);
+      });
+
+      it.each([UserRole.TEACHER, UserRole.SCHOOL_ADMIN])('refuses a %s with no address, with a code, before anything is written', async (role) => {
+        const refusal = await service.create(createDto({ role, email: undefined }), testUser()).catch((error: unknown) => error);
+        expect(refusal).toBeInstanceOf(BadRequestException);
+        expect((refusal as BadRequestException).getResponse()).toMatchObject({ code: 'ADDRESS_REQUIRED' });
+        expect(tx.user.create).not.toHaveBeenCalled();
+      });
+
+      it('refuses an invitation asked with no address to send it to: nothing is written and nobody is invited', async () => {
+        const refusal = await service
+          .create(createDto({ role: UserRole.STUDENT, email: null, sendInvitation: true }), testUser())
+          .catch((error: unknown) => error);
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect((refusal as ConflictException).getResponse()).toMatchObject({ code: 'PERSON_HAS_NO_ADDRESS' });
+        expect(tx.user.create).not.toHaveBeenCalled();
+        expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
+      });
+    });
+
     it('emails nobody by default — adding a person is not contacting them', async () => {
       tx.user.create.mockResolvedValue({ id: USER_ID });
       const user = testUser();
@@ -364,6 +408,17 @@ describe('UsersService', () => {
   });
 
   describe('invite', () => {
+    it('refuses a person with no address: there is nowhere to send it, and no login is made', async () => {
+      arrangeUser({ id: USER_ID, email: null, isActive: true, authId: AUTH_ID, invitedAt: null, role: UserRole.STUDENT });
+
+      const refusal = await service.invite(USER_ID, testUser()).catch((error: unknown) => error);
+
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({ code: 'PERSON_HAS_NO_ADDRESS' });
+      expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
     /** Somebody added and never invited: the placeholder create() wrote. */
     const target = (overrides: Record<string, unknown> = {}) => ({
       id: USER_ID,
@@ -396,6 +451,34 @@ describe('UsersService', () => {
       expect(args.where).toEqual({ id: USER_ID });
       expect(args.data.authId).toBe(AUTH_ID);
       expect(args.data.invitedAt).toBeInstanceOf(Date);
+    });
+
+    it('does not put a login on a row whose address was corrected while the invitation was on its way', async () => {
+      // The invitation went to anna@school.se; before the login was written the address was changed, so the login is for an address
+      // the row no longer has (the mail is with whoever owns the old one). Nothing is written, and the retry invites the new one.
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      arrangeUser(target());
+      tx.$queryRaw.mockImplementation((...call: unknown[]) =>
+        Promise.resolve(rawSql(call).includes('FOR NO KEY UPDATE') ? [{ email: 'anna.rattad@school.se' }] : []),
+      );
+
+      const refusal = await service.invite(USER_ID, testUser()).catch((error: unknown) => error);
+
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({ code: 'ADDRESS_CHANGED_WHILE_INVITING' });
+      expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna@school.se', USER_ID);
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
+    it('puts the login on the row when its address is the one the invitation went to, in any case', async () => {
+      arrangeUser(target());
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+      tx.$queryRaw.mockImplementation((...call: unknown[]) =>
+        Promise.resolve(rawSql(call).includes('FOR NO KEY UPDATE') ? [{ email: 'Anna@School.se' }] : [{ held: false }]),
+      );
+
+      await expect(service.invite(USER_ID, testUser())).resolves.toMatchObject({ id: USER_ID, emailSent: true });
+      expect(tx.user.update).toHaveBeenCalledTimes(1);
     });
 
     it('reports honestly when the address already had an identity', async () => {
@@ -818,6 +901,20 @@ describe('UsersService', () => {
   describe('inviteMany', () => {
     const ids = ['id-1', 'id-2', 'id-3'];
 
+    it('counts the people with no address apart, as nobody\'s failure, and invites the rest', async () => {
+      const rows: Record<string, Record<string, unknown>> = {
+        'id-1': { id: 'id-1', email: 'anna@school.se', isActive: true, authId: AUTH_ID, invitedAt: null, role: UserRole.STUDENT },
+        'id-2': { id: 'id-2', email: null, isActive: true, authId: AUTH_ID, invitedAt: null, role: UserRole.STUDENT },
+        'id-3': { id: 'id-3', email: null, isActive: true, authId: AUTH_ID, invitedAt: null, role: UserRole.GUARDIAN },
+      };
+      tx.user.findUnique.mockImplementation(({ where, select }: { where: { id: string }; select?: Record<string, unknown> }) =>
+        Promise.resolve(asSelected(rows[where.id], select)),
+      );
+
+      await expect(service.inviteMany(ids, testUser())).resolves.toEqual({ sent: 1, alreadyRegistered: 0, noAddress: 2, errors: [] });
+      expect(supabaseAdmin.inviteUser).toHaveBeenCalledTimes(1);
+    });
+
     beforeEach(() => {
       tx.user.update.mockResolvedValue({ id: USER_ID });
     });
@@ -836,6 +933,7 @@ describe('UsersService', () => {
       await expect(service.inviteMany(ids, testUser())).resolves.toEqual({
         sent: 2,
         alreadyRegistered: 1,
+        noAddress: 0,
         errors: [],
       });
     });
@@ -928,6 +1026,78 @@ describe('UsersService', () => {
         role: UserRole.STUDENT,
         studentGroupId: null,
         pseudonymisedAt: null,
+      });
+    });
+
+    // Personer utan e-postadress (20270310090000).
+    describe('the address', () => {
+      const withNoAddress = (extra: Record<string, unknown> = {}) =>
+        storeUser({ role: UserRole.STUDENT, studentGroupId: null, pseudonymisedAt: null, email: null, invitedAt: null, ...extra });
+      const written = () => (tx.user.update.mock.calls[0]![0] as { data: Record<string, unknown> }).data;
+
+      it('gives a person with none an address, and nothing else: they are an ordinary uninvited person, and nobody is invited', async () => {
+        withNoAddress();
+        tx.user.update.mockResolvedValue({ id: USER_ID });
+
+        await service.update(USER_ID, { email: 'alva@school.se' }, testUser());
+
+        expect(written()).toEqual({ email: 'alva@school.se' });
+        expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
+      });
+
+      it('corrects the address of a person who was never invited: there is no login to move', async () => {
+        withNoAddress({ email: 'alva@skool.se' });
+        tx.user.update.mockResolvedValue({ id: USER_ID });
+
+        await service.update(USER_ID, { email: 'alva@school.se' }, testUser());
+
+        expect(written()).toEqual({ email: 'alva@school.se' });
+      });
+
+      it('does not write the address a person has already, whatever its case', async () => {
+        withNoAddress({ email: 'Alva@School.se' });
+        tx.user.update.mockResolvedValue({ id: USER_ID });
+
+        await service.update(USER_ID, { email: 'alva@school.se', firstName: 'Alva' }, testUser());
+
+        expect(written()).toEqual({ firstName: 'Alva' });
+      });
+
+      it('leaves the address of a person who was invited to their login: 409, with a code, and nothing written', async () => {
+        withNoAddress({ email: 'alva@school.se', invitedAt: new Date('2026-11-01T00:00:00.000Z') });
+
+        const refusal = await service.update(USER_ID, { email: 'alva2@school.se' }, testUser()).catch((error: unknown) => error);
+
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect((refusal as ConflictException).getResponse()).toMatchObject({ code: 'ADDRESS_OF_AN_INVITED_PERSON' });
+        expect(tx.user.update).not.toHaveBeenCalled();
+      });
+
+      it('does not make a person with no address a teacher, or an administrator: the role goes with the address', async () => {
+        withNoAddress();
+        const refusal = await service.update(USER_ID, { role: UserRole.TEACHER }, testUser()).catch((error: unknown) => error);
+
+        expect(refusal).toBeInstanceOf(BadRequestException);
+        expect((refusal as BadRequestException).getResponse()).toMatchObject({ code: 'ADDRESS_REQUIRED' });
+        expect(tx.user.update).not.toHaveBeenCalled();
+      });
+
+      it('makes them a teacher when the address comes in the same patch', async () => {
+        withNoAddress();
+        tx.user.update.mockResolvedValue({ id: USER_ID });
+
+        await service.update(USER_ID, { role: UserRole.TEACHER, email: 'alva@school.se' }, testUser());
+
+        expect(written()).toEqual({ role: UserRole.TEACHER, email: 'alva@school.se' });
+      });
+
+      it('lets a guardian change role to a pupil with no address: both may have none', async () => {
+        withNoAddress({ role: UserRole.GUARDIAN });
+        tx.user.update.mockResolvedValue({ id: USER_ID });
+
+        await service.update(USER_ID, { role: UserRole.STUDENT }, testUser());
+
+        expect(written()).toEqual({ role: UserRole.STUDENT });
       });
     });
 
@@ -1186,7 +1356,7 @@ describe('UsersService', () => {
       expect(writtenIn).toEqual(readIn);
       const [call] = queryRaw.mock.calls;
       expect(rawSql(call)).toMatch(
-        /SELECT "role", "studentGroupId", "pseudonymisedAt", "adminProfile", "hrRead", "teaches", "isActive", "schoolId"\s+FROM "Users"\s+WHERE "id" = \?::uuid\s+FOR NO KEY UPDATE/,
+        /SELECT "role", "studentGroupId", "pseudonymisedAt", "adminProfile", "hrRead", "teaches", "isActive", "schoolId", "email", "invitedAt"\s+FROM "Users"\s+WHERE "id" = \?::uuid\s+FOR NO KEY UPDATE/,
       );
       expect(call.slice(1)).toEqual([USER_ID]);
       expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1632,6 +1802,16 @@ describe('UsersService', () => {
   });
 
   describe('remove', () => {
+    it('removes a person with no address like any uninvited person: nothing to delete at the provider', async () => {
+      tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: null, role: UserRole.STUDENT, adminProfile: null, isActive: true, schoolId: SCHOOL_ID });
+      tx.user.delete.mockResolvedValue({ id: USER_ID });
+
+      await expect(service.remove(USER_ID, testUser())).resolves.toBeUndefined();
+
+      expect(tx.user.delete).toHaveBeenCalledWith({ where: { id: USER_ID } });
+      expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+    });
+
     it('deletes the tenant row, then the Supabase identity, in the caller RLS context', async () => {
       tx.user.findUnique.mockResolvedValue({
         authId: AUTH_ID,
@@ -2814,7 +2994,7 @@ describe('UsersService', () => {
   describe('roles and profiles', () => {
     const USERS: LockedTable = {
       name: 'Users',
-      columns: ['role', 'studentGroupId', 'pseudonymisedAt', 'adminProfile', 'hrRead', 'teaches', 'isActive', 'schoolId'],
+      columns: ['role', 'studentGroupId', 'pseudonymisedAt', 'adminProfile', 'hrRead', 'teaches', 'isActive', 'schoolId', 'email', 'invitedAt'],
       lock: 'FOR NO KEY UPDATE',
     };
     const expedition = testUser({ adminProfile: 'EXPEDITION' });
@@ -2832,6 +3012,8 @@ describe('UsersService', () => {
         hrRead: false,
         isActive: true,
         schoolId: SCHOOL_ID,
+        email: 'person@skolan.example',
+        invitedAt: null,
       };
       otherDeciders = [{ id: 'another-decider' }];
       Object.assign(tx, {

@@ -42,7 +42,8 @@ export interface ListedPerson {
   role: string;
   firstName: string;
   lastName: string;
-  email: string;
+  /** Empty in the file for a person with no address (Personer utan e-postadress). */
+  email: string | null;
   phone: string | null;
   studentGroupId: string | null;
   isActive: boolean;

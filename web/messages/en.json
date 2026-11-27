@@ -986,6 +986,11 @@
     "invitationsSent": "{sent} invitations sent. {skipped} already had an account.",
     "invitationsFailed": "{count} invitations could not be sent.",
     "inviteAll": "Invite {count} not yet invited",
+    "noAddress": "No address",
+    "noLogin": "No login",
+    "emailOptionalHint": "Optional for pupils and guardians. Without one the person is in lists, attendance and the timetable, but cannot sign in until there is an address.",
+    "withoutAddressNote": "{count, plural, one {# person with no address cannot be invited} other {# people with no address cannot be invited}}",
+    "addressGivenAndInvited": "The address is saved and the invitation sent.",
     "homeClassLabel": "Class",
     "teachingGroupsLabel": "Teaching groups",
     "noTeachingGroups": "This student is not in any teaching group.",
@@ -4123,6 +4128,8 @@
     "guardiansNotice": "A row is a link between a guardian and a pupil: the pupil's e-mail address is in the column elev_epost, and the pupil must exist and be active. A guardian who does not exist is created without an invitation. One who does exist only gets the link, so their name and phone number are not changed.",
     "noGuardianLinks": "There are no links between guardians and pupils to export.",
     "keptProtected": "{count, plural, one {One person in the file has a protected identity. They are in it because whoever receives the file is to have everyone, so handle the file accordingly.} other {# people in the file have a protected identity. They are in it because whoever receives the file is to have everyone, so handle the file accordingly.}}",
+    "withoutAddressLinks": "{count, plural, one {# link is not in the file, because the pupil or the guardian has no e-mail address and the file names people by it.} other {# links are not in the file, because the pupil or the guardian has no e-mail address and the file names people by it.}} The links are still under People.",
+    "withoutAddressMembers": "{count, plural, one {# pupil in a group is not in the file, because the pupil has no e-mail address and the file names pupils by it.} other {# pupils in groups are not in the file, because the pupils have no e-mail address and the file names pupils by it.}} The groups are unchanged under Groups.",
     "heldOut": {
       "people": "{count, plural, =0 {Nobody was kept out of the file: none of them is marked as having a protected identity. Anyone with a protected identity who is not marked under People is in it.} one {One person with a protected identity was kept out of the file, and every row naming them. Anyone with a protected identity who is not marked under People is in it.} other {# people with a protected identity were kept out of the file, and every row naming any of them. Anyone with a protected identity who is not marked under People is in it.}}",
       "links": "{count, plural, =0 {No link was kept out of the file: no pupil or guardian in it is marked as having a protected identity. Anyone with a protected identity who is not marked under People is in it.} one {One link was kept out of the file, because the pupil or the guardian has a protected identity. Anyone with a protected identity who is not marked under People is in it.} other {# links were kept out of the file, because the pupil or the guardian has a protected identity. Anyone with a protected identity who is not marked under People is in it.}}"
@@ -4140,6 +4147,8 @@
     "readAs": "The file is not UTF-8 and was read as {encoding}. Check that å, ä and ö look right in the preview.",
     "withoutClass": "{count, plural, one {# student has no class in the file and is created without one.} other {# students have no class in the file and are created without one.}} The import cannot give them a class afterwards, so fill in the class in the file unless that is intended.",
     "createdWithoutClass": "{count, plural, one {# student was created without a class.} other {# students were created without a class.}} Give them a class under People.",
+    "withoutAddress": "{count, plural, one {# student has no e-mail address in the file and is created with no login.} other {# students have no e-mail address in the file and are created with no login.}} They are in lists, attendance and the timetable. A later file with the address gives it to the student with the same first name, last name and class.",
+    "createdWithoutAddress": "{count, plural, one {# student was created without an e-mail address.} other {# students were created without an e-mail address.}} They cannot be invited until there is an address: give them one under People, or import a file with the addresses.",
     "rejectedByServer": "The server did not accept the file, because a cell holds a value that cannot be saved. Nothing was imported. Compare the file with the template."
   },
   "grades": {

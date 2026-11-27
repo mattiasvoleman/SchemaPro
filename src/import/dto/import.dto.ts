@@ -70,9 +70,18 @@ export class ImportStudentRowDto {
   @MaxLength(120)
   lastName!: string;
 
+  /**
+   * The pupil's address, or none (Personer utan e-postadress): a pupil the school has no address for is a pupil the register holds, in
+   * its lists, attendance and timetable, with no login. A blank cell is none, whether the client posts null, leaves it out or posts the
+   * empty string (the people page exports the cell empty). A pupil with none is known by first name, last name and class: a second
+   * upload skips them as known, and an upload that now has the address gives it to the one pupil of that name in that class who had
+   * none. A cell that is filled in must be an address.
+   */
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' && value.trim() === '' ? null : value))
+  @IsOptional()
   @IsEmail()
   @MaxLength(254)
-  email!: string;
+  email?: string | null;
 
   /**
    * As the person form takes it (CreateUserDto): text, up to 40 characters.
