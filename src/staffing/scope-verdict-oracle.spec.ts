@@ -1,4 +1,4 @@
-import { buildTeacherLoadReport, DEFAULT_LOAD_POLICY, targetMinutesPerWeek, type LoadEmployment, type LoadInput, type LoadRequirement } from './teacher-load';
+import { buildTeacherLoadReport, DEFAULT_LOAD_POLICY, targetMinutesPerWeek, type LoadEmployment, type LoadInput, type LoadRequirement, type LoadScopeAssessment } from './teacher-load';
 import { hideScopeHr, scopeOfTeacher, type ScopeBand, type ScopeVersion } from './assignment-scope';
 import { overScopeFinding, staffingSentence, STAFF_TEACHER_OVER_SCOPE_HIDDEN, type CheckPolicy } from './staffing-checks';
 
@@ -262,5 +262,40 @@ describe('what a reader without HR-läs can learn of a colleague from the yes or
     expect(yes.writeSaysOver).toBe(false);
     expect(ask(post, 725).writeSaysOver).toBe(false);
     expect(ask(post, 726).writeSaysOver).toBe(true);
+  });
+});
+
+/*
+ * THE OTHER VERDICT (g494). The report keeps `verdict` for a reader without HR-läs, and OVER_OWN is "over the level the rektor set": it
+ * flips at the rektor's level times the active share, where OVER_MAX flips at the ordinance's edge times the same share. A reader who
+ * places lessons and reads the row finds both edges in thirteen reads each, and the level is their ratio times the ordinance's 650.
+ * The rektor's level is what hideScopeHr takes out of `assessment` for that reader, so the row must not say it by another road.
+ */
+describe('what a reader without HR-läs can learn of the rektor’s level from the verdict of the report’s row', () => {
+  const assessed = (levelHours: number | null): ReadonlyMap<string, LoadScopeAssessment> =>
+    new Map([[ANNA, { levelHours, exceptionKind: null, ownInitiativeOn: null, note: 'skäl', decidedAt: '2026-03-05T08:00:00.000Z' }]]);
+  /** The row the reader is handed after placing `minutes` a week for the teacher. */
+  const rowAfter = (post: LoadEmployment, level: number | null, minutes: number) =>
+    hideScopeHr(scopeOfTeacher({ ...inputOf(post, [placed(minutes)]), scopeAssessments: assessed(level) }, [VERSION], ANNA)!);
+  const MINUTES = Array.from({ length: 4096 / 8 }, (_, index) => 1 + index * 8);
+
+  it.each([
+    ['80 %', employment(80, 0), 561],
+    ['100 %', employment(100, 0), 572],
+    ['60 % less 10 %', employment(60, 10), 600],
+  ])('never says OVER_OWN to the reader, for a post of %s and a level of %s h', (_label, post, level) => {
+    // Without the rektor's level at 561 the row says INSIDE or OVER_MAX; with it the unhidden row says OVER_OWN between the two edges.
+    const seen = new Set(MINUTES.map((minutes) => rowAfter(post, level, minutes).verdict));
+    expect(seen.has('OVER_OWN')).toBe(false);
+  });
+
+  it('answers a teacher the rektor has given a level of 561 and one who has none, or one of 640, with the same verdict at every write', () => {
+    for (const post of [employment(80, 0), employment(100, 0), employment(50, 0)]) {
+      for (const minutes of MINUTES) {
+        const none = rowAfter(post, null, minutes).verdict;
+        expect(rowAfter(post, 561, minutes).verdict).toBe(none);
+        expect(rowAfter(post, 640, minutes).verdict).toBe(none);
+      }
+    }
   });
 });
