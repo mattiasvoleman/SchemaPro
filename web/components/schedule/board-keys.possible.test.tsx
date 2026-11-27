@@ -156,6 +156,29 @@ describe("the line says what the gateway says of the marker's square", () => {
     expect(onLessonChange).toHaveBeenLastCalledWith("a", { dayOfWeek: 3, startMinutes: 630, endMinutes: 690, roomId: "r2" });
   });
 
+  it("lays a square the gateway answers for only after the marker is on it, in the room it names: the room is read when the lesson is put down (granskaren g503)", async () => {
+    // The answer is asked a moment after the lesson is taken up and takes its time: a marker that has already been moved onto the square when it
+    // comes was given no room then, and Enter asked the page's own check, which knows only the lesson's own (taken) room and refused a square the
+    // board now paints as free in another.
+    let answer!: (times: typeof TIMES) => void;
+    post.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const onLessonChange = vi.fn();
+    const onInvalidDrop = vi.fn();
+    const validateChange = vi.fn().mockImplementation((_id: string, change: { dayOfWeek: number }) => change.dayOfWeek !== 3);
+    await board("sv", { onLessonChange, onInvalidDrop, validateChange });
+    key("a", { key: " " });
+    await waitFor(() => expect(post).toHaveBeenCalled(), { timeout: HOLD_BEFORE_ASKING_MS * 20 });
+    key("a", { key: "ArrowRight" });
+    key("a", { key: "ArrowRight" });
+    for (let i = 0; i < 5; i++) key("a", { key: "ArrowDown" }); // Wednesday 10:15, which the gateway has not yet said anything of
+    expect(said()).toContain("går inte att lägga här");
+    await act(async () => answer(TIMES));
+    await waitFor(() => expect(document.querySelector("[data-possible-day]")).not.toBeNull());
+    key("a", { key: "Enter" });
+    expect(onInvalidDrop).not.toHaveBeenCalled();
+    expect(onLessonChange).toHaveBeenLastCalledWith("a", { dayOfWeek: 3, startMinutes: 615, endMinutes: 675, roomId: "r2" });
+  });
+
   it("says how many are in the way when several are", async () => {
     await board();
     await takeUp();

@@ -242,8 +242,11 @@ export function BoardKeys(props: BoardKeysProps) {
       return ok;
     };
 
-    const put = (lesson: BoardLesson, square: Marker, room?: string | null) => {
+    const put = (lesson: BoardLesson, square: Marker, given?: string | null) => {
       const { props: p } = live.current;
+      // The room is read again here and not only when the marker moved onto the square: the gateway is asked a moment after the lesson is
+      // taken up, and an answer that came after the marker was on the square found it with no room (granskaren g503).
+      const room = given !== undefined ? given : roomOf(lesson.id, square);
       // A numbered time is one the gateway's judge let through, in the room it named: the page's own check knows nothing of another room,
       // and would refuse the lesson's own taken one. Every other square is asked as before.
       const ok = room !== undefined ? true : p.validateChange ? p.validateChange(lesson.id, square) : true;
