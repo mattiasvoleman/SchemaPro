@@ -182,6 +182,9 @@ const secondsOrNull = (value: unknown): number | null | undefined => {
     : undefined;
 };
 
+/** The text the service writes a lease as (an ISO-8601 time in UTC to the millisecond): the shape the sweep and the claim match in SQL. */
+const LEASE_TEXT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
 const isoOf = (value: unknown): string | null => {
   if (typeof value !== 'string') return null;
   const time = Date.parse(value);
@@ -288,8 +291,12 @@ export function suggestionsOf(value: unknown): SuggestionsStored | null {
   // A list the strict model did not accept holds MAY_HELP and nothing more: suggestionsFromEngine stores it so, and a column that says
   // SOLVED over an unverified list was written by something else (the review of #388, U-1).
   if (!value.verified && changes.some((change) => change.proof !== 'MAY_HELP')) return null;
-  // The lease is a RUNNING analysis's: on one that has ended it is not shown, and a value that is no time is no lease (the old rule judges it).
-  const leaseUntil = state === 'RUNNING' && value.leaseUntil != null ? isoOf(value.leaseUntil) : null;
+  // The lease is a RUNNING analysis's: on one that has ended it is not shown, and a value that is not in the shape the service writes is no
+  // lease (the old rule judges it). The sweep and the claim (20270313090000, suggestions-running.ts) read the same shape as text and never
+  // cast, so a time written another way ("2027-03-13T09:00:00Z", an offset) must be no lease here too, or the reader and the sweep judge
+  // the same analysis by two rules.
+  const leaseUntil =
+    state === 'RUNNING' && typeof value.leaseUntil === 'string' && LEASE_TEXT.test(value.leaseUntil) ? isoOf(value.leaseUntil) : null;
   // The analysis a RUNNING one was asked over: one level, and a finished one. Whatever else is there is not shown (nor is the analysis).
   let previous: SuggestionsStored | null = null;
   if (value.previous !== null && value.previous !== undefined) {

@@ -468,6 +468,11 @@ describe('an analysis whose process went away', () => {
     expect(suggestionsOf(ended)?.leaseUntil).toBeNull();
     // A value that is no time is no lease: the old rule judges it, and the analysis is still read.
     expect(suggestionsOf({ ...JSON.parse(JSON.stringify(running)), leaseUntil: 'soon' })).toMatchObject({ state: 'RUNNING', leaseUntil: null });
+    // ... and so is a time the service never writes, whatever Date.parse makes of it: the sweep and the claim match the shape as text (the
+    // sweep's section g6b 1 has the same value), so a lease here that SQL does not see would judge one analysis by two rules.
+    for (const written of ['2027-03-13T09:00:00Z', '2027-03-13T09:00:00.000+01:00', '2027-03-13', '2027-03-13T09:00:00.0000Z', 1_800_000_000_000]) {
+      expect(suggestionsOf({ ...JSON.parse(JSON.stringify(running)), leaseUntil: written })).toMatchObject({ state: 'RUNNING', leaseUntil: null });
+    }
     // An analysis written before the field has none.
     const { leaseUntil: _gone, ...older } = JSON.parse(JSON.stringify(running));
     expect(suggestionsOf(older)).toMatchObject({ state: 'RUNNING', leaseUntil: null });
