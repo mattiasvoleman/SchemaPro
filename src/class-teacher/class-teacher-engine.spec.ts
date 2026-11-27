@@ -610,6 +610,18 @@ describe('ClassTeacherEngine.publishOne', () => {
       expect(tx['$queryRaw']!.mock.calls.filter((call) => sql(call[0]).includes('class_teacher_frame'))).toHaveLength(1);
     });
 
+    it('is a REFUSED with its own reason, and not a CONFLICT with no clash in it, when the school has not answered the question before a change in Direkt (P5)', async () => {
+      const { engine, tx, masters } = setup();
+      claims(tx, move);
+      tx['masterLesson']!['findUnique']!.mockResolvedValue({ id: 'master-1', academicYearId: 'year-1', schoolId: 'school-1', studentGroupId: 'class-1', subjectId: 'subject-1', teacherId: 'teacher-1', coTeacherId: null, roomId: 'room-1', dayOfWeek: 1, startTime: time('08:30'), endTime: time('09:30'), recurrence: 'ALL_WEEKS', startDate: null, endDate: null, extraGroups: [], participants: [], subject: { name: 'Matte' } });
+      tx['masterLesson']!['findMany']!.mockResolvedValue([]);
+      // The editor's own guard (src/publication/direct-reach.ts) rolled the move back: a klasslärare cannot answer the question, an administrator does.
+      masters.update.mockRejectedValueOnce(new ConflictException({ message: 'Ändringen når elever och vårdnadshavare i en publicerad period.', code: 'DIRECT_REACH_UNANSWERED', params: { validFrom: '2027-01-11', validTo: '2027-06-11' } }));
+      expect(await engine.publishOne(actor, move)).toEqual({ id: 'change-1', outcome: 'REFUSED', reason: 'DIRECT_REACH_UNANSWERED' });
+      // Nothing is judged again for a clash that is not there.
+      expect(tx['$queryRaw']!.mock.calls.filter((call) => sql(call[0]).includes('class_teacher_frame'))).toHaveLength(1);
+    });
+
     it('still asks again about a clash the editor found that carries no code of its own', async () => {
       const { engine, tx, masters } = setup();
       claims(tx, move);

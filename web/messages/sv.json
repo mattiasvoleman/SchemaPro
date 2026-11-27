@@ -46,6 +46,7 @@
       "CLASS_HAS_HALVES": "Klassen är delad i halvor och kan inte byta typ eller läsår. Ta bort halvorna först.",
       "CLASS_HAS_ONE_HALF": "Klassen har bara en av sina två halvor. Ta bort den under Klasser och försök igen, så delas klassen i två nya halvor.",
       "DATABASE_BUSY": "Servern är upptagen just nu, och inget har gjorts. Försök igen om en stund.",
+      "DIRECT_REACH_UNANSWERED": "Ändringen når elever och vårdnadshavare i den publicerade perioden {validFrom}–{validTo}, och skolan har inte svarat på frågan om det ännu. Inget har ändrats. Gör ändringen i Schema, där frågan ställs.",
       "EMPLOYMENT_PERIOD_OVERLAP": "Perioden överlappar en annan period av tjänsten. Ändra eller ta bort den först: en dag har en tjänst.",
       "EXAM_CAPS": "Gränsen per vecka kan inte vara lägre än gränsen per dag: en vecka rymmer minst lika många prov som en dag.",
       "EXAM_GROUPS": "En vald klass eller grupp finns inte i läsåret.",
@@ -1163,7 +1164,7 @@
       "toggle": "Mål",
       "loading": "Hämtar läsårets timplan…",
       "failed": "Läsårets timplan kunde inte hämtas, så inga mål visas. Slå av och på Mål för att försöka igen.",
-      "legend": "Varje klassruta visar planerat / mål i minuter per standardvecka: en post som går udda eller jämna veckor räknas till hälften, en post med datum efter sin andel av läsårets undervisningsveckor. Gult är under mål, rött har inga poster. Undervisningsgrupper har inget eget mål — deras elever räknas mot klassens mål på täckningssidan.",
+      "legend": "Varje klassruta visar planerat / mål i minuter per standardvecka: en post som går udda eller jämna veckor räknas till hälften, en post med datum efter sin andel av läsårets undervisningsveckor. Gult är under mål, rött har inga poster. Undervisningsgrupper har inget eget mål — deras elever räknas mot klassens mål på täckningssidan. Timmarna per läsår räknas i hela veckor: en vecka med minst en skoldag i läsåret räknas som en hel. Omfattningen enligt förordningen, i Tjänstefördelning och Min tjänst, räknar skoldagar, så samma lektion kan vara en vecka mindre där i ett läsår som börjar eller slutar mitt i en vecka.",
       "grade": "{grade, select, 0 {förskoleklass} other {åk {grade}}}",
       "unattached": "Läsåret har ingen lokal timplan för {grades}, så de klasserna har inga mål.",
       "draft": "{name} är ett utkast — inte beslutad. Målen för {grades} gäller utkastet.",
@@ -2546,6 +2547,7 @@
     "markerTaken": "{day} {from}–{to}: går inte att lägga här. Enter visar de närmaste lediga tiderna.",
     "markerRank": "{day} {from}–{to}: förslag {rank}. Enter lägger.",
     "markerChange": "{day} {from}–{to}: ledigt, men i en annan sal än lektionens egen. Lägg den med ett av de bästa förslagen eller i Justera lektion, där salen väljs.",
+    "markerChangeHere": "{day} {from}–{to}: ledigt i en annan sal än lektionens egen. Enter lägger den där.",
     "markerClosed": "{day} {from}–{to}: stängt av {code, select, FRAME {ramtiden} LUNCH {klassens lunch} GRADE_RULE {en regel för årskursen} OTHER_SCHOOL {en annan skolas tid} AVAILABILITY {en markering om att något inte är tillgängligt} other {en regel}}. Enter visar de närmaste lediga tiderna.",
     "markerInTheWay": "{day} {from}–{to}: {subject} {className} ligger i vägen. Enter visar de närmaste lediga tiderna.",
     "markerCrowded": "{day} {from}–{to}: {units, plural, =0 {något är i vägen} one {en lektion ligger i vägen} other {# lektioner ligger i vägen}}. Enter visar de närmaste lediga tiderna.",
@@ -5308,6 +5310,7 @@
       "span": "{low}–{high} h",
       "stage": "Årskurs {from}–{to}",
       "unregulated": "Förskoleklass (omfattas inte)",
+      "outsideStages": "Årskurser utan nivå i förordningen",
       "unknownGrade": "Grupper utan årskurs",
       "planningFloor": "Planering och uppföljning, minst (4–5 §)",
       "remaining": "Kvar av årsarbetstiden efter undervisning och uppdrag",
@@ -5321,6 +5324,7 @@
       "verdictNoStage": "Undervisningen ligger i förskoleklass, som förordningen inte omfattar. Ingen nivå prövas.",
       "verdictNoStageUnknown": "Undervisningen ligger i grupper utan årskurs, så den kan inte placeras i något stadium. Ingen nivå prövas.",
       "verdictNoStageBoth": "Undervisningen ligger i förskoleklass, som förordningen inte omfattar, och i grupper utan årskurs. Ingen nivå prövas.",
+      "verdictNoStageOutside": "Undervisningen ligger i årskurser som förordningens stadier inte omfattar (och kanske i förskoleklass eller grupper utan årskurs). Ingen nivå prövas.",
       "verdictNumbering": "Förordningen anger inga nivåer för tioårig grundskola än. Timmarna visas, men prövas inte mot något spann.",
       "blended": "Läraren undervisar i flera stadier, så spannet är viktat efter timmar.",
       "fits": "Årsarbetstiden rymmer planeringens golv. Möten och annat som inte är undervisning eller uppdrag i Rastra Schema ingår inte, så ett ja är inget löfte.",
@@ -5328,9 +5332,15 @@
       "overOnlyWithUnregulated": "Över förordningens högsta nivå först när timmarna utanför stadierna räknas med (förskoleklass eller grupper utan årskurs). Förordningen anger ingen nivå för de timmarna, så läraren räknas inte som över: en tolkning, som står nedan.",
       "unknownGradeNote": "Timmar i grupper utan årskurs räknas i undervisningstiden men kan inte placeras i ett stadium.",
       "unregulatedNote": "Timmar i förskoleklass räknas i undervisningstiden men ligger utanför stadierna: förordningen anger ingen nivå för dem.",
+      "outsideStagesNote": "Timmar i årskurser som förordningens stadier inte omfattar räknas i undervisningstiden men ligger utanför stadierna: förordningen anger ingen nivå för dem.",
       "planningFloorOnStages": "Planeringens golv räknas på timmarna i stadierna: förordningen anger ingen nivå för de andra timmarna, så de ger inget golv.",
       "fitsNotShown": "Om årsarbetstiden rymmer planeringens golv visas inte här: det räknas bara för en ferietjänst, och visas bara för den som får se tjänstens omfattning.",
       "interpretation": "{note} ({section})",
+      "interpretationTranslated": "{text} ({section})",
+      "knownInterpretation": {
+        "band7to9": "Tolkning: 5 § säger \"Utöver den tid som anges i 4 §\" men 4 § räknar inte upp årskurs 7-9. Läst som 100 % (4 §) och ytterligare minst 10 % (5 §), vilket är utredningens egen sammanfattning (prop. 2025/26:196 bilaga 1 s. 125).",
+        "unregulated": "Tolkning (T7): timmar i förskoleklass och i grupper utan årskurs ligger utanför förordningens stadier (3 § nämner årskurs 1-6 och 7-9, och propositionen säger att förskoleklassen inte omfattas) men är undervisningstid enligt 2 §. Räknas de med är undervisningstiden över högsta nivån, och räknas de inte med är den det inte. Rastra Schema säger över högsta nivån bara när timmarna i stadierna ensamma går över, och visar annars den här orsaken."
+      },
       "notAnnual": "Kan skilja sig från raden för undervisning per läsår under Årsarbetstid, som räknar med procent och faktor. Den här siffran är lektionernas egen tid, oviktad. Båda räknar skoldagar.",
       "caption": "Räknat ur timplansposterna: lektionernas egen tid över de veckor de löper, oviktad och utan uppdrag. Inte riktmärket, som är skolens eget mått. Källa: {sfs}, i kraft från {from}.",
       "source": "Läs förordningen",
@@ -5345,8 +5355,10 @@
       "exceptionRegisteredOn": "Undantag registrerat enligt 11 §: {kind}, den {day}.",
       "exceptionKeepsVerdict": "Ett undantag ändrar inte utlåtandet ovan. Det betyder bara att en tilldelning över den högsta nivån varnar och inte vägras.",
       "assessmentNote": "Anteckning: {note}",
+      "levelAboveEdge": "Nivån {level} h ligger över förordningens högsta nivå för lärarens stadium, {edge} h vid heltid. Den räknas som högst {edge} h.",
       "opensInNewTab": "(öppnas i en ny flik)",
       "own": {
+        "levelAboveEdge": "Din nivå {level} h ligger över förordningens högsta nivå för ditt stadium, {edge} h vid heltid. Den räknas som högst {edge} h.",
         "exceptionKindOWN_INITIATIVE": "på ditt eget initiativ (11 § p. 1)",
         "exceptionKindSMALL_GROUP": "du undervisar en enskild elev eller en mindre grupp (11 § p. 3)",
         "overOnlyWithUnregulated": "Över förordningens högsta nivå först när timmarna utanför stadierna räknas med (förskoleklass eller grupper utan årskurs). Förordningen anger ingen nivå för de timmarna, så du räknas inte som över: en tolkning, som står nedan.",
@@ -5374,6 +5386,7 @@
       "level": "Lärarens högsta nivå vid heltid (timmar per läsår)",
       "levelHint": "Lämna tomt om förordningens högsta nivå ska gälla: {edge} h vid heltid för det här stadiet. Nivån kan ligga var som helst i spannet eller under det, och räknas om efter tjänstens omfattning.",
       "levelHintNoEdge": "Lämna tomt om förordningens högsta nivå ska gälla. Nivån kan ligga var som helst i spannet eller under det, och räknas om efter tjänstens omfattning.",
+      "levelOverStageEdge": "Nivån är över förordningens högsta nivå för lärarens stadium ({edge} h vid heltid). Ligger den inom högsta nivån för något annat stadium sparas den ändå, eftersom lärarens stadier ändras med schemat, men den räknas som högst {edge} h. Ligger den över alla stadiers högsta nivå vägras den.",
       "exceptionLabel": "Undantag enligt 11 §",
       "exceptionNone": "Inget undantag",
       "exceptionOptionOWN_INITIATIVE": "På lärarens eget initiativ (11 § p. 1)",
@@ -5396,6 +5409,7 @@
         "initiativeNeedsDay": "Ett undantag på lärarens eget initiativ anges med dagen läraren tog initiativet.",
         "dayNeedsInitiative": "Dagen gäller bara ett undantag på lärarens eget initiativ.",
         "dayInvalid": "Dagen måste finnas.",
+        "dayInFuture": "Dagen kan inte ligga efter i dag: undantaget registreras när initiativet har tagits.",
         "noteLong": "Anteckningen kan vara högst {max} tecken."
       }
     },
@@ -5407,6 +5421,9 @@
     "scopeOverOwnBadgeTitle": "Mer undervisningstid än den nivå som är satt för läraren, men inte mer än förordningens högsta nivå (SFS 2026:1487 3 §, 8 §). Öppna läraren för siffrorna.",
     "scopeOwnNoticeTitle": "{count, plural, one {# lärare har} other {# lärare har}} mer undervisningstid än den nivå som är satt för läraren",
     "scopeOwnNoticeBody": "Rektorn har satt en lägre nivå än förordningens för de lärare som är markerade. Förordningens högsta nivå är inte passerad (3 §). Det är en varning och hindrar ingenting.",
+    "scopeYearNotInForce": "Förordningen om omfattning ({sfs}) gäller från {from}. Det här läsåret börjar före det, så ingen lärares undervisningstid prövas mot förordningens nivåer.",
+    "scopeYearNotInForceNoDate": "Ingen lydelse av förordningen om omfattning gäller det här läsåret, så ingen lärares undervisningstid prövas mot förordningens nivåer.",
+    "scopeYearNumbering": "Förordningen om omfattning anger inga nivåer för det här läsårets årskursnumrering (tioårig grundskola). Timmarna visas, men prövas inte mot något spann.",
     "history": {
       "title": "Historik",
       "show": "Visa",
@@ -6762,6 +6779,17 @@
     "stampSupervision": "Rastvakten enligt rastvaktsschemat den dag sidan skrevs ut; passen har ingen version i historiken.",
     "supervisionLine": "Rastvakt enligt rastvaktsschemat: {shifts, plural, one {# pass} other {# pass}}, {minutes} min/v.",
     "dutyRam": "ram för rastvaktsschemat, räknas de veckor läraren saknar pass"
+  },
+  "directReach": {
+    "title": "Ändringen når familjerna direkt",
+    "published": "Skolan publicerar i läget Direkt, och schemat är publicerat {from}–{to}. En ändring flyttar eller tar bort de publicerade lektionerna i kalendern på en gång.",
+    "publishedNoPeriod": "Skolan publicerar i läget Direkt. En ändring flyttar eller tar bort de publicerade lektionerna i kalendern på en gång.",
+    "who": "När en lektion flyttas får eleverna i den och deras vårdnadshavare en notis om att schemat har ändrats. Lärarna ser ändringen i sin kalender.",
+    "audience": "I skolan finns {pupils, plural, one {# elev} other {# elever}} och {guardians, plural, one {# vårdnadshavare} other {# vårdnadshavare}} som kan få en notis. En ändring når bara dem som har lektionen.",
+    "draftOffer": "Vill du arbeta med schemat utan att något når familjerna förrän du publicerar, byt till utkast. Då ligger ändringarna som ett utkast tills du publicerar dem.",
+    "onlyOnce": "Frågan ställs en gång. Den ställs igen om skolan byter läge.",
+    "stayDirect": "Fortsätt i Direkt",
+    "useDraft": "Använd utkast"
   },
   "publishing": {
     "title": "Publicering",
@@ -11389,6 +11417,7 @@
       "ROOM_NEEDS_APPROVAL": "Salen kräver godkännande och bokas i stället av expeditionen.",
       "SPLIT_MINUTES": "Delarna ska vara minst 15 minuter var och tillsammans lika långa som lektionen.",
       "LESSON_IS_PLACED": "Lektionen är förlagd på timplanen och skrivs om därifrån vid varje Generera. Den ändras av schemaläggaren, på timplansposten.",
+      "DIRECT_REACH_UNANSWERED": "Skolan har ännu inte svarat på frågan om att fortsätta i Direkt, och ändringen når familjerna. En administratör svarar på frågan när hon ändrar något i Schema, och därefter går ändringen att publicera.",
       "UNKNOWN": "Lektionen kan inte ändras av klassläraren."
     },
     "problem": {

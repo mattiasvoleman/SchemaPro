@@ -4,6 +4,7 @@ import {
   SCOPE_LEVEL_MAX,
   SCOPE_NOTE_MAX,
   isIsoDay,
+  schoolToday,
   scopeDraftToBody,
   scopeToDraft,
   validateScopeDraft,
@@ -98,5 +99,40 @@ describe("scopeToDraft", () => {
       ownInitiativeOn: "",
       note: "",
     });
+  });
+});
+
+describe("the day of an own initiative is not after the school's today (the review of #413, U-2)", () => {
+  const initiative = (day: string) => draft({ exceptionKind: "OWN_INITIATIVE", ownInitiativeOn: day });
+
+  it("takes today and the days before it, and says tomorrow is not a day it can take", () => {
+    expect(validateScopeDraft(initiative("2027-09-01"), "2027-09-01")).toBeNull();
+    expect(validateScopeDraft(initiative("2027-08-31"), "2027-09-01")).toBeNull();
+    expect(validateScopeDraft(initiative("2027-09-02"), "2027-09-01")).toEqual({ reason: "dayInFuture" });
+  });
+
+  it("holds the day to nothing but being a day when no today is given, as before", () => {
+    expect(validateScopeDraft(initiative("2099-01-01"))).toBeNull();
+  });
+
+  it("says a day that does not exist is not a day before it says it is late: 2027-02-30 is invalid, not future", () => {
+    expect(validateScopeDraft(initiative("2027-02-30"), "2027-01-01")).toEqual({ reason: "dayInvalid" });
+  });
+
+  it("has no opinion on the day of a draft that has no own-initiative exception: that is the day-needs-initiative problem, as before", () => {
+    expect(validateScopeDraft(draft({ exceptionKind: "SMALL_GROUP", ownInitiativeOn: "2099-01-01" }), "2027-09-01")).toEqual({ reason: "dayNeedsInitiative" });
+  });
+});
+
+describe("schoolToday", () => {
+  it("is the school's day and not UTC's: half past midnight on the 2nd in Stockholm is the 1st in UTC", () => {
+    const instant = new Date("2027-09-01T22:30:00.000Z");
+    expect(schoolToday("Europe/Stockholm", instant)).toBe("2027-09-02");
+    expect(schoolToday("UTC", instant)).toBe("2027-09-01");
+    expect(schoolToday("Pacific/Honolulu", instant)).toBe("2027-09-01");
+  });
+
+  it("is the UTC day for a zone Intl does not know, and never throws", () => {
+    expect(schoolToday("Not/AZone", new Date("2027-09-01T22:30:00.000Z"))).toBe("2027-09-01");
   });
 });

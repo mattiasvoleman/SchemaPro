@@ -42,7 +42,7 @@
 // use for.
 
 import { lazy, Suspense, useMemo } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { CalendarClock, CalendarRange, Printer, Scale } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { useProfile } from "@/components/profile-context";
@@ -50,7 +50,7 @@ import { useActiveYear, useGroups, useSubjects } from "@/lib/queries";
 import { useStaffingLoad, useTeacherDuties } from "@/lib/staffing-queries";
 import { travelOf } from "@/lib/staffing-travel";
 import { supervisionOf } from "@/lib/staffing-supervision";
-import { scopeCardOf } from "@/lib/assignment-scope";
+import { scopeCardOf, scopeDayText, scopeYearNote } from "@/lib/assignment-scope";
 import { dutyPeriodLine, dutySlotsLine } from "@/lib/duty-lines";
 import { useLastYearTjanst } from "./use-last-year-tjanst";
 import { isJudged, postAtStart } from "@/lib/period-view";
@@ -82,6 +82,7 @@ const ScopeCard = lazy<React.ComponentType<ScopeCardProps>>(() =>
 export default function MyStaffingPage() {
   const t = useTranslations("myStaffing");
   const tStaffing = useTranslations("staffing");
+  const locale = useLocale();
   const tDays = useTranslations("days");
   const { profile } = useProfile();
   const { data: years, activeYear, isLoading: yearLoading, isError: yearError } = useActiveYear();
@@ -98,6 +99,8 @@ export default function MyStaffingPage() {
   );
   // The ordinance's omfattning for the teacher's own row (null for a läsår it does not reach, and with no teaching to judge).
   const scope = useMemo(() => scopeCardOf(load.data, profile.id), [load.data, profile.id]);
+  // Why there is no card for a läsår the ordinance does not judge, in one line under the tjänst and not a card for every teacher (the review of #397, L-1).
+  const yearNote = useMemo(() => scopeYearNote(load.data), [load.data]);
   const ownDuties = useMemo(
     () => (duties.data ?? []).filter((duty) => duty.userId === profile.id),
     [duties.data, profile.id],
@@ -306,6 +309,16 @@ export default function MyStaffingPage() {
         <Suspense fallback={null}>
           <ScopeCard data={scope} headingLevel="h2" own />
         </Suspense>
+      ) : yearNote ? (
+        // No card, and the reason in one quiet line: a läsår the ordinance does not judge (every one before 2027-07-01) or a numbering it has no
+        // levels for. The same sentence the rektor's page says.
+        <p id="scope-year-note" className="text-xs text-muted-foreground">
+          {yearNote.kind === "NUMBERING_NOT_COVERED"
+            ? tStaffing("scopeYearNumbering")
+            : yearNote.from !== null && yearNote.sfs !== null
+              ? tStaffing("scopeYearNotInForce", { sfs: yearNote.sfs, from: scopeDayText(yearNote.from, locale) })
+              : tStaffing("scopeYearNotInForceNoDate")}
+        </p>
       ) : null}
 
       <SectionCard id="tjanst-teaching" title={t("teachingTitle")}>

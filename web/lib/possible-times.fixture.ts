@@ -32,7 +32,7 @@ export const TIMES: PossibleTimes = {
         { dayOfWeek: 2, fromMinutes: 585, toMinutes: 600, kind: "CLOSED", code: "OTHER_SCHOOL", params: { schools: "Norra skolan" } },
       ],
     },
-    { dayOfWeek: 3, runs: [{ dayOfWeek: 3, fromMinutes: 600, toMinutes: 660, kind: "CHANGE" }] },
+    { dayOfWeek: 3, runs: [{ dayOfWeek: 3, fromMinutes: 600, toMinutes: 660, kind: "CHANGE", rooms: [{ lessonId: "a", roomId: "r2" }] }] },
   ],
   blockers: { b: { lessonId: "b", className: "7B", subjectName: "Svenska", dayOfWeek: 1, startMinutes: 570, endMinutes: 630, isLocked: false } },
 };

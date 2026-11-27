@@ -240,6 +240,25 @@ describe('readBoardFacts', () => {
     expect((await read(tx, { gradeNumbering: 'TIOARIG' })).spans.get('4A')).toEqual([7, 7]);
   });
 
+  it('reads the year’s classes with the asked groups, so that a teaching group has the years of its pupils’ classes (E3, the fall file’s richer worlds)', async () => {
+    // A teaching group has no årskurs of its own: its years are its pupils' home classes', which the rosters know only when the reader
+    // has told them each class's year. The judge of a hand edit asked for the group alone and so never held a lesson of a teaching group
+    // to a ramtid or to a rule on årskurser, where a swap (whose snapshot reads every group of the year) did.
+    const tx = world();
+    const rows = [
+      { id: 'G', gradeLevel: null, halfOfId: null },
+      { id: '7A', gradeLevel: 7, halfOfId: null },
+      { id: '8B', gradeLevel: 8, halfOfId: null },
+    ];
+    tx['studentGroup']!['findMany']!.mockResolvedValue(rows);
+    (gradeSpanOf as jest.Mock).mockImplementation((_rosters: unknown, ids: string[]) => (ids[0] === 'G' ? { min: 7, max: 8 } : { min: 0, max: 0 }));
+    const read2 = await read(tx, { groupIds: ['G'] });
+    expect(tx['studentGroup']!['findMany']!.mock.calls[0]![0].where).toEqual({ OR: [{ id: { in: ['G'] } }, { academicYearId: 'year-1', kind: 'CLASS' }] });
+    expect(loadRosters).toHaveBeenCalledWith(tx, basis, ['G'], rows);
+    // The years stated are the asked groups' alone: the classes read for their grades are not groups the judge was asked about.
+    expect([...read2.spans]).toEqual([['G', [7, 8]]]);
+  });
+
   it('knows no years for a group that has no pupils and no year of its own', async () => {
     const tx = world();
     (gradeSpanOf as jest.Mock).mockReturnValue(null);

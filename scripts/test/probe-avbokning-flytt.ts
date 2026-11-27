@@ -90,6 +90,8 @@ async function givenSchool(owner: Client, marker: string, suffix: string, opts: 
     `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
     [slug, slug],
   );
+  // The question before a change in Direkt that reaches families (P5): these checks edit published lessons, so the school has answered it.
+  await owner.query(`INSERT INTO "PublicationSettings" ("schoolId", "directReachAcknowledgedAt") VALUES ($1, now())`, [school.id]);
   const person = (role: string, key: string, groupId: string | null = null) =>
     one<{ id: string; authId: string }>(
       `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")

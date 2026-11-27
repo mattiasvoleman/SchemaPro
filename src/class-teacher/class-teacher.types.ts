@@ -82,8 +82,19 @@ export const LESSON_IS_PLACED_REASON = 'LESSON_IS_PLACED' as const;
 export const LESSON_IS_PLACED_MESSAGE =
   'Lektionen är förlagd på timplanen och skrivs om därifrån vid varje Generera. Den ändras av schemaläggaren, på timplansposten.';
 
+/**
+ * The other refusal of the gateway's own (P5, beslut 8): the editor asks the school once, before the first change in Direkt that reaches
+ * families in a published period (src/publication/direct-reach.ts), and rolls the change back with 409 DIRECT_REACH_UNANSWERED when the school
+ * has not answered. A klasslärare's publication of a change of the template runs through that editor and cannot answer for the school (the
+ * answer is the area Publicering's), so it is said so, with the way on, and not as "krockar i schemat" with nothing to point at.
+ */
+export const DIRECT_REACH_UNANSWERED_REASON = 'DIRECT_REACH_UNANSWERED' as const;
+
 /** Why a lesson is not the class teacher's to change: the frame's reasons, and the one the gateway adds. */
 export type RefusalReason = FrameReason | typeof LESSON_IS_PLACED_REASON;
+
+/** Why a publication refused a draft: a refusal of the lesson, or the school's question that is not answered (not a 403 of the frame's, so not in RefusalReason). */
+export type PublishRefusal = RefusalReason | typeof DIRECT_REACH_UNANSWERED_REASON;
 
 export const CHANGE_KINDS = ['OCCASION_MOVE', 'OCCASION_CANCEL', 'OCCASION_ROOM', 'TEMPLATE_MOVE', 'TEMPLATE_SPLIT'] as const;
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
@@ -186,7 +197,7 @@ export interface ChangeView {
 export interface PublishOutcome {
   id: string;
   outcome: 'PUBLISHED' | 'REFUSED' | 'STALE' | 'CONFLICT' | 'GONE' | 'FAILED';
-  reason?: RefusalReason;
+  reason?: PublishRefusal;
   changed?: FieldChange[];
   conflicts?: ConflictView[];
 }

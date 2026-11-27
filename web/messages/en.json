@@ -46,6 +46,7 @@
       "CLASS_HAS_HALVES": "The class is split into halves and cannot change type or school year. Remove the halves first.",
       "CLASS_HAS_ONE_HALF": "The class has only one of its two halves. Remove it under Classes and try again, and the class is split into two new halves.",
       "DATABASE_BUSY": "The server is busy right now, and nothing was done. Try again in a moment.",
+      "DIRECT_REACH_UNANSWERED": "The change reaches pupils and guardians in the published period {validFrom}–{validTo}, and the school has not answered the question about that yet. Nothing was changed. Make the change in Schema, where the question is asked.",
       "EMPLOYMENT_PERIOD_OVERLAP": "The period overlaps another period of the post. Change or remove that one first: a day has one post.",
       "EXAM_CAPS": "The weekly limit cannot be lower than the daily limit: a week holds at least as many exams as a day.",
       "EXAM_GROUPS": "A chosen class or group is not in the school year.",
@@ -1163,7 +1164,7 @@
       "toggle": "Target",
       "loading": "Loading the year's timplan…",
       "failed": "The year's timplan could not be loaded, so no targets are shown. Turn Target off and on to try again.",
-      "legend": "Each class cell shows planned / target in minutes per standard week: an entry that runs odd or even weeks counts half, a dated entry by its share of the year's teaching weeks. Amber is below target, red has no entries. Teaching groups have no target of their own — their pupils are counted against their class's target on the coverage page.",
+      "legend": "Each class cell shows planned / target in minutes per standard week: an entry that runs odd or even weeks counts half, a dated entry by its share of the year's teaching weeks. Amber is below target, red has no entries. Teaching groups have no target of their own — their pupils are counted against their class's target on the coverage page. The hours per year are counted in whole weeks: a week with at least one school day in the year counts as a whole one. The scope under the ordinance, in Tjänstefördelning and Min tjänst, counts school days, so the same lesson can be a week less there in a year that begins or ends in the middle of a week.",
       "grade": "{grade, select, 0 {preschool class} other {year {grade}}}",
       "unattached": "The academic year has no local timplan for {grades}, so those classes have no targets.",
       "draft": "{name} is a draft — not decided. The targets for {grades} are the draft's.",
@@ -2546,6 +2547,7 @@
     "markerTaken": "{day} {from}–{to}: cannot go here. Enter shows the nearest free times.",
     "markerRank": "{day} {from}–{to}: suggestion {rank}. Enter places it.",
     "markerChange": "{day} {from}–{to}: free, but in a room other than the lesson's own. Place it with one of the best suggestions, or in Edit lesson, where the room is chosen.",
+    "markerChangeHere": "{day} {from}–{to}: free in a room other than the lesson's own. Enter places it there.",
     "markerClosed": "{day} {from}–{to}: closed by {code, select, FRAME {the school day's frame} LUNCH {the class's lunch} GRADE_RULE {a rule for the year group} OTHER_SCHOOL {another school's time} AVAILABILITY {a mark that something is unavailable} other {a rule}}. Enter shows the nearest free times.",
     "markerInTheWay": "{day} {from}–{to}: {subject} {className} is in the way. Enter shows the nearest free times.",
     "markerCrowded": "{day} {from}–{to}: {units, plural, =0 {something is in the way} one {a lesson is in the way} other {# lessons are in the way}}. Enter shows the nearest free times.",
@@ -5308,6 +5310,7 @@
       "span": "{low}–{high} h",
       "stage": "Grades {from}–{to}",
       "unregulated": "Preschool class (not covered)",
+      "outsideStages": "Years the ordinance gives no level for",
       "unknownGrade": "Groups with no grade",
       "planningFloor": "Planning and follow-up, at least (§§ 4–5)",
       "remaining": "Left of the annual working time after teaching and duties",
@@ -5321,6 +5324,7 @@
       "verdictNoStage": "The teaching is in the preschool class, which the ordinance does not cover. No level is judged.",
       "verdictNoStageUnknown": "The teaching is in groups with no grade, so it cannot be placed in a stage. No level is judged.",
       "verdictNoStageBoth": "The teaching is in the preschool class, which the ordinance does not cover, and in groups with no grade. No level is judged.",
+      "verdictNoStageOutside": "The teaching is in years the ordinance's stages do not cover (and perhaps in the preschool class or groups with no grade). No level is judged.",
       "verdictNumbering": "The ordinance gives no levels for the ten-year grundskola yet. The hours are shown but not judged against any span.",
       "blended": "The teacher teaches in several stages, so the span is weighted by hours.",
       "fits": "The annual working time holds the planning floor. Meetings and anything that is not teaching or a duty in Rastra timetable are not included, so a yes is no promise.",
@@ -5328,9 +5332,15 @@
       "overOnlyWithUnregulated": "Over the ordinance's highest level only when the hours outside the stages are counted in (preschool class or groups with no grade). The ordinance gives no level for those hours, so the teacher is not counted as over: an interpretation, stated below.",
       "unknownGradeNote": "Hours in groups with no grade count in the teaching time but cannot be placed in a stage.",
       "unregulatedNote": "Hours in preschool class count in the teaching time but lie outside the stages: the ordinance gives no level for them.",
+      "outsideStagesNote": "Hours in years the ordinance's stages do not cover count in the teaching time but lie outside the stages: the ordinance gives no level for them.",
       "planningFloorOnStages": "The planning floor is worked out on the hours in the stages: the ordinance gives no level for the other hours, so they add nothing to the floor.",
       "fitsNotShown": "Whether the annual working time holds the planning floor is not shown here: it is only worked out for a term-time contract, and only shown to someone who may see the size of the post.",
       "interpretation": "Interpretation ({section}), as recorded in Swedish: {note}",
+      "interpretationTranslated": "{text} ({section})",
+      "knownInterpretation": {
+        "band7to9": "Interpretation: § 5 says \"in addition to the time stated in § 4\", but § 4 does not list years 7-9. Read as 100 % (§ 4) and at least a further 10 % (§ 5), which is the inquiry's own summary (prop. 2025/26:196 appendix 1 p. 125).",
+        "unregulated": "Interpretation (T7): hours in the preschool class and in groups with no grade are outside the ordinance's stages (§ 3 names years 1-6 and 7-9, and the proposition says the preschool class is not covered) but are teaching time under § 2. Counted, the teaching time is over the highest level; not counted, it is not. Rastra timetable says over the highest level only when the hours in the stages alone go over, and shows this reason otherwise."
+      },
       "notAnnual": "May differ from the row for teaching per school year under Annual working time, which applies percentage and factor. This figure is the lessons' own time, unweighted. Both count school days.",
       "caption": "Computed from the teaching posts: the lessons' own time over the weeks they run, unweighted and without duties. Not the target, which is the school's own measure. Source: {sfs}, in force from {from}.",
       "source": "Read the ordinance",
@@ -5345,8 +5355,10 @@
       "exceptionRegisteredOn": "Exception registered under § 11: {kind}, on {day}.",
       "exceptionKeepsVerdict": "An exception does not change the verdict above. It only means that an assignment over the highest level is warned of and not refused.",
       "assessmentNote": "Note: {note}",
+      "levelAboveEdge": "The level {level} h is above the ordinance's highest level for the teacher's stage, {edge} h at full time. It counts as {edge} h at the most.",
       "opensInNewTab": "(opens in a new tab)",
       "own": {
+        "levelAboveEdge": "Your level {level} h is above the ordinance's highest level for your stage, {edge} h at full time. It counts as {edge} h at the most.",
         "exceptionKindOWN_INITIATIVE": "at your own initiative (§ 11 point 1)",
         "exceptionKindSMALL_GROUP": "you teach a single pupil or a small group (§ 11 point 3)",
         "overOnlyWithUnregulated": "Over the ordinance's highest level only when the hours outside the stages are counted in (preschool class or groups with no grade). The ordinance gives no level for those hours, so you are not counted as over: an interpretation, stated below.",
@@ -5374,6 +5386,7 @@
       "level": "The teacher's highest level at full time (hours per school year)",
       "levelHint": "Leave empty for the ordinance's highest level to apply: {edge} h at full time for this stage. The level may lie anywhere in the span or under it, and is scaled by the size of the post.",
       "levelHintNoEdge": "Leave empty for the ordinance's highest level to apply. The level may lie anywhere in the span or under it, and is scaled by the size of the post.",
+      "levelOverStageEdge": "The level is above the ordinance's highest level for the teacher's stage ({edge} h at full time). If it is within the highest level of another stage it is saved all the same, because the teacher's stages change with the schedule, but it counts as {edge} h at the most. If it is above the highest level of every stage it is refused.",
       "exceptionLabel": "Exception under § 11",
       "exceptionNone": "No exception",
       "exceptionOptionOWN_INITIATIVE": "At the teacher's own initiative (§ 11 point 1)",
@@ -5396,6 +5409,7 @@
         "initiativeNeedsDay": "An exception at the teacher's own initiative is given with the day the teacher took the initiative.",
         "dayNeedsInitiative": "The day only applies to an exception at the teacher's own initiative.",
         "dayInvalid": "The day must exist.",
+        "dayInFuture": "The day cannot be after today: the exception is registered once the initiative has been taken.",
         "noteLong": "The note can be at most {max} characters."
       }
     },
@@ -5407,6 +5421,9 @@
     "scopeOverOwnBadgeTitle": "More teaching time than the level set for the teacher, but not more than the ordinance's highest level (SFS 2026:1487 § 3, § 8). Open the teacher for the figures.",
     "scopeOwnNoticeTitle": "{count, plural, one {# teacher has} other {# teachers have}} more teaching time than the level set for the teacher",
     "scopeOwnNoticeBody": "The principal has set a lower level than the ordinance's for the marked teachers. The ordinance's highest level is not passed (§ 3). It is a warning and stops nothing.",
+    "scopeYearNotInForce": "The ordinance on the extent of teaching time ({sfs}) applies from {from}. This school year begins before that, so no teacher's teaching time is judged against the ordinance's levels.",
+    "scopeYearNotInForceNoDate": "No version of the ordinance on the extent of teaching time applies to this school year, so no teacher's teaching time is judged against the ordinance's levels.",
+    "scopeYearNumbering": "The ordinance on the extent of teaching time gives no levels for this school year's grade numbering (ten-year grundskola). The hours are shown, but not judged against any span.",
     "history": {
       "title": "History",
       "show": "Show",
@@ -6762,6 +6779,17 @@
     "stampSupervision": "Break duty as the supervision rota stood on the day printed; shifts have no version in the history.",
     "supervisionLine": "Break duty by the supervision rota: {shifts, plural, one {# shift} other {# shifts}}, {minutes} min/wk.",
     "dutyRam": "budget for the supervision rota, counts in weeks the teacher has no shift"
+  },
+  "directReach": {
+    "title": "The change reaches families straight away",
+    "published": "The school publishes in Direkt mode, and the timetable is published {from}–{to}. A change moves or removes the published lessons in the calendar at once.",
+    "publishedNoPeriod": "The school publishes in Direkt mode. A change moves or removes the published lessons in the calendar at once.",
+    "who": "When a lesson is moved, the pupils in it and their guardians get a notice that the timetable has changed. Teachers see the change in their calendar.",
+    "audience": "The school has {pupils, plural, one {# pupil} other {# pupils}} and {guardians, plural, one {# guardian} other {# guardians}} who can get a notice. A change reaches only those who have the lesson.",
+    "draftOffer": "If you want to work on the timetable without anything reaching families until you publish, switch to draft. Your changes are then kept as a draft until you publish them.",
+    "onlyOnce": "The question is asked once. It is asked again if the school switches mode.",
+    "stayDirect": "Continue in Direkt",
+    "useDraft": "Use draft"
   },
   "publishing": {
     "title": "Publishing",
@@ -11389,6 +11417,7 @@
       "ROOM_NEEDS_APPROVAL": "The room requires approval and is booked by the office instead.",
       "SPLIT_MINUTES": "The parts must be at least 15 minutes each and together as long as the lesson.",
       "LESSON_IS_PLACED": "The lesson is placed on the curriculum and is written again from there at every Generera. The scheduler changes it, on its curriculum entry.",
+      "DIRECT_REACH_UNANSWERED": "The school has not yet answered the question about staying in Direkt, and this change reaches families. An administrator answers it when she changes something in Schema, and then the change can be published.",
       "UNKNOWN": "The lesson cannot be changed by the class teacher."
     },
     "problem": {

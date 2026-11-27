@@ -13,6 +13,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
 import { enterGrundschemaWrite, publishModeOf, type PublishMode } from '../publication/publish-mode';
+import { DIRECT_REACH_UNANSWERED } from '../publication/direct-reach';
 import { lockLessons } from '../cover/cover-decisions';
 import { schoolTimezone } from '../cover/cover-context';
 import { scopeOf } from '../calendar/lesson-roster';
@@ -22,6 +23,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { datedConflicts, localMinutes, type DatedContext } from './dated-conflicts';
 import {
   isOccasionKind,
+  DIRECT_REACH_UNANSWERED_REASON,
   LESSON_IS_PLACED_REASON,
   type ChangeKind,
   type ChangeView,
@@ -531,6 +533,11 @@ export class ClassTeacherEngine {
       if (error instanceof ConflictException && conflictCodeOf(error) === LESSON_IS_PLACED) {
         // Written from a förläggning in between the judging and the writing: not a clash, and said as what it is.
         return { id: change.id, outcome: 'REFUSED', reason: LESSON_IS_PLACED_REASON };
+      }
+      if (error instanceof ConflictException && conflictCodeOf(error) === DIRECT_REACH_UNANSWERED) {
+        // The editor's guard (P5): the change would have reached families in Direkt and the school has not been asked. Not a clash, and nothing
+        // a retry changes: an administrator answers the question when she makes a change in Schema.
+        return { id: change.id, outcome: 'REFUSED', reason: DIRECT_REACH_UNANSWERED_REASON };
       }
       if (error instanceof ConflictException) {
         // The editor's own check found a clash this one did not (a write in between): named by asking again.

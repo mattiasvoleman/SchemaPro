@@ -25,6 +25,7 @@ const sentencesOf = (messages: typeof sv): Record<string, string> => messages.co
 const SENT: Record<string, Record<string, string | number>> = {
   ACTIVITY_OWNS_BATCH: { activityId: "0d4c0e1e-6a53-4d37-9d06-0a6a1c9d7e11" },
   CLASS_BOOK_RANGE: { max: 92 },
+  DIRECT_REACH_UNANSWERED: { validFrom: "2026-08-01", validTo: "2027-06-11" },
   EXAM_ROOM: { capacity: 30 },
   EXAM_TOO_MANY: { limit: 50 },
   EXTERNAL_BOOKINGS_REGISTERED: { date: "2026-12-04" },
