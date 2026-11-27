@@ -68,4 +68,10 @@ describe('the README', () => {
     expect(text).toContain('Enheter som tar emot push-notiser');
     expect(text).not.toContain('72 timmar');
   });
+
+  it('says what a substitute gets of a covered lesson and a covered pass: the pass\'s place and time, and only which lesson (the extract has no lesson\'s time)', () => {
+    const text = readmeText({ schoolName: 'S', createdAt: at, kind: 'person', markedPeople: 0 });
+    expect(text).toContain('för en vikarie var och när passet låg och vilken lektion beslutet gällde');
+    expect(text).not.toContain('passet eller lektionen låg');
+  });
 });
