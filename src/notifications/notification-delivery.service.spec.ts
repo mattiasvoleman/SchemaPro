@@ -135,11 +135,43 @@ describe('NotificationDeliveryService (e-mail)', () => {
     expect(bccOf(0)).toEqual(['u1@example.invalid', 'u2@example.invalid']);
   });
 
-  it('never mails a teacher’s absence report, wants nothing for it and does not even queue it', async () => {
+  it('mails a teacher’s absence report to the administrators who have not switched it off (K6), and wants nothing for it without a mail', async () => {
+    expect(delivery.wants({ type: 'TEACHER_ABSENCE_REPORTED', email: { subject: 's', body: 'b' } })).toBe(true);
+    expect(delivery.wants({ type: 'TEACHER_ABSENCE_REPORTED' })).toBe(false);
+    tx.$queryRaw.mockResolvedValue([{ user_id: 'u2' }]);
+    await enqueue([entry({ type: 'TEACHER_ABSENCE_REPORTED', meta: { teacherName: 'Karin Ek' } })]);
+    await delivery.idle();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Opted out like any other type, by user.
+    const sql = tx.$queryRaw.mock.calls[0]![0] as { strings: string[]; values: unknown[] };
+    expect(sql.values).toEqual([SCHOOL, ['u1', 'u2'], 'TEACHER_ABSENCE_REPORTED']);
+    expect(bccOf(0)).toEqual(['u1@example.invalid']);
+  });
+
+  it('never pushes a teacher’s absence report, also when push is on: only its mail goes, and a notice with no mail is not even queued', async () => {
+    const config = { get: (key: string) => (key === 'push' ? { enabled: true, apiUrl: 'https://x.invalid' } : undefined) };
+    const expo = { send: jest.fn(async (messages: unknown[]) => messages.map(() => ({ status: 'ok', id: 'ticket-abcdefgh' }))), receipts: jest.fn() };
+    const both = new NotificationDeliveryService(prisma as unknown as PrismaService, config as never, expo as never, undefined, store);
+    both.emailIntervalMs = 0;
+    both.pushIntervalMs = 0;
+    expect(both.wants({ type: 'TEACHER_ABSENCE_REPORTED' })).toBe(false);
+    expect(both.wants({ type: 'TEACHER_ABSENCE_REPORTED', email: { subject: 's', body: 'b' } })).toBe(true);
+    withAddresses(store, [entry()]);
+    await both.enqueue([entry({ type: 'TEACHER_ABSENCE_REPORTED', email: undefined })]);
+    await both.idle();
+    expect(store.rows).toHaveLength(0);
+    await both.enqueue([entry({ type: 'TEACHER_ABSENCE_REPORTED' })]);
+    await both.idle();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(expo.send).not.toHaveBeenCalled();
+    expect(tx.$queryRaw.mock.calls.map((call) => JSON.stringify((call[0] as { strings: string[] }).strings)).join(' ')).not.toContain('push_targets');
+  });
+
+  it('never mails nor queues anything for a notice with neither a mail nor push configured', async () => {
+    delete process.env.RESEND_API_KEY;
     expect(delivery.wants({ type: 'TEACHER_ABSENCE_REPORTED', email: { subject: 's', body: 'b' } })).toBe(false);
     await enqueue([entry({ type: 'TEACHER_ABSENCE_REPORTED' })]);
     await delivery.idle();
-    expect(fetchMock).not.toHaveBeenCalled();
     expect(store.rows).toHaveLength(0);
   });
 

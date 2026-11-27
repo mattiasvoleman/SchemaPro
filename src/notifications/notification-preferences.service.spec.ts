@@ -64,6 +64,24 @@ describe('NotificationPreferencesService', () => {
     expect(pupil.types.map((t) => t.type)).not.toContain('ABSENCE_UNREPORTED');
   });
 
+  // K6: the types are read from the role's own list in the specs above, so a type missing from it would still equal itself. These name it.
+  it('offers the mail about a teacher’s absence report to an administrator, on and not required, and to nobody else', async () => {
+    tx.notificationOptOut.findMany.mockResolvedValue([]);
+    const admin = await service.get(as('SCHOOL_ADMIN'));
+    expect(admin.types).toContainEqual({ type: 'TEACHER_ABSENCE_REPORTED', enabled: true, required: false });
+    for (const role of ['TEACHER', 'GUARDIAN', 'STUDENT']) {
+      expect((await service.get(as(role))).types.map((t) => t.type)).not.toContain('TEACHER_ABSENCE_REPORTED');
+    }
+    tx.notificationOptOut.findMany.mockResolvedValue([{ type: 'TEACHER_ABSENCE_REPORTED' }]);
+    expect((await service.get(as('SCHOOL_ADMIN'))).types).toContainEqual({ type: 'TEACHER_ABSENCE_REPORTED', enabled: false, required: false });
+  });
+
+  it('stores an administrator’s choice to switch the mail about a teacher’s absence report off', async () => {
+    const result = await service.put({ optOut: ['TEACHER_ABSENCE_REPORTED'] }, as('SCHOOL_ADMIN'));
+    expect(tx.notificationOptOut.createMany).toHaveBeenCalledWith({ data: [{ userId: USER, schoolId: SCHOOL, type: 'TEACHER_ABSENCE_REPORTED' }] });
+    expect(result.types).toContainEqual({ type: 'TEACHER_ABSENCE_REPORTED', enabled: false, required: false });
+  });
+
   it('lists the huvudman’s läsare the school administrator’s types, all on, and reads no row (Huvudman)', async () => {
     const reader = testUser({ role: 'SCHOOL_ADMIN' as never, userId: undefined, schoolId: SCHOOL });
     (reader as { huvudman?: unknown }).huvudman = { huvudmanId: 'h', memberId: 'm' };
@@ -104,7 +122,10 @@ describe('NotificationPreferencesService', () => {
     ['STUDENT', 'ABSENCE_UNREPORTED', NOTIFICATION_TYPE_NOT_OFFERED],
     ['GUARDIAN', 'ROOM_BOOKING_DECIDED', NOTIFICATION_TYPE_NOT_OFFERED],
     ['TEACHER', 'SCHEDULE_CHANGED', NOTIFICATION_TYPE_NOT_OFFERED],
-    ['SCHOOL_ADMIN', 'TEACHER_ABSENCE_REPORTED', NOTIFICATION_TYPE_NOT_OFFERED],
+    // A teacher's own report of an absence is offered to the school's administrators (the e-mail, K6), and to nobody else.
+    ['TEACHER', 'TEACHER_ABSENCE_REPORTED', NOTIFICATION_TYPE_NOT_OFFERED],
+    ['GUARDIAN', 'TEACHER_ABSENCE_REPORTED', NOTIFICATION_TYPE_NOT_OFFERED],
+    ['STUDENT', 'TEACHER_ABSENCE_REPORTED', NOTIFICATION_TYPE_NOT_OFFERED],
   ])('refuses a %s choosing %s with %s, writing nothing', async (role, type, code) => {
     const error = await service.put({ optOut: [type] }, as(role)).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(BadRequestException);

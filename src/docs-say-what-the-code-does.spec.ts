@@ -107,6 +107,16 @@ describe('PRODUCT.md says what the schema, the gateway, the web and the app hold
   });
 });
 
+describe('the user manual says what leaves the system about a teacher’s own absence report (K6)', () => {
+  const manual = flat(read('docs/manual/anvandarmanual.html'));
+
+  it('does not say the notice is never mailed, since an administrator is offered the mail', () => {
+    expect(read('src/notifications/notification-types.ts')).toMatch(/SCHOOL_ADMIN: \[[^\]]*'TEACHER_ABSENCE_REPORTED'/);
+    expect(manual).not.toContain('den mejlas inte');
+    expect(manual).toContain('En lärare har anmält frånvaro</em> skickas aldrig som push. Den kan mejlas till skolans administratörer');
+  });
+});
+
 describe('the baseline counts its own scorecard, and PRODUCT.md quotes the count', () => {
   const scorecard = baseline.slice(baseline.indexOf('## Scorecard'), baseline.indexOf('## Where the harness stands'));
   const rows = scorecard.split('\n').filter((line) => /^\| (?!Gate\b|:?-)/.test(line));

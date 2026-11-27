@@ -38,6 +38,12 @@ export const ABSENCE_WITHDRAWN = 'ABSENCE_WITHDRAWN';
 export const ABSENCE_WITHDRAW_TOO_LATE = 'ABSENCE_WITHDRAW_TOO_LATE';
 export const ABSENCE_END = 'ABSENCE_END';
 
+/** The e-mail to the school's administrators when a teacher reports an absence (K6): that it happened, and nothing about it. */
+export const ABSENCE_REPORTED_MAIL_SUBJECT = 'A teacher has reported an absence / En lärare har anmält frånvaro';
+export const ABSENCE_REPORTED_MAIL_BODY =
+  'A teacher has reported an absence. Log in to Rastra timetable to see who it is and whether lessons need cover.\n\n' +
+  'En lärare har anmält frånvaro. Logga in i Rastra Schema för att se vem det är och om lektioner behöver täckas.';
+
 /** Half a year of school-local days, inclusive (the CHECK allows the DST hour on top). */
 export const MAX_ABSENCE_DAYS = 186;
 /** How far back an admin may register an absence. */
@@ -511,7 +517,10 @@ export class TeacherAbsencesService {
    * A self-report: the school's active admins are told who and when — the
    * teacher's name (their own row, read under their RLS), the period and
    * whether it is whole days, so the bell can say "Karin Ek, 12 okt" — and
-   * never why.
+   * never why. The e-mail (K6), when the school has one set up and the
+   * administrator has not switched it off, says only that a teacher has
+   * reported an absence: no name, no day, no reason, since a mail is read
+   * on any screen. It is never pushed (NEVER_PUSHED).
    */
   private async tellAdmins(user: AuthenticatedUser, row: AbsenceRow): Promise<void> {
     const schoolId = requireSchoolId(user);
@@ -519,6 +528,15 @@ export class TeacherAbsencesService {
       .withRls(user, async (tx) => {
         const admins = await tx.user.findMany({ where: { role: 'SCHOOL_ADMIN', isActive: true }, select: { id: true } });
         const teacher = await tx.user.findUnique({ where: { id: row.userId }, select: { firstName: true, lastName: true } });
+        // One mail for a teacher's reports within ABSENCE_MAIL_QUIET_MS (withdrawn ones count: they stay as rows), so that
+        // reporting and withdrawing again does not mail every administrator every time. The inbox notice is written each time.
+        const earlier = await tx.teacherAbsence.count({
+          where: {
+            userId: row.userId,
+            id: { not: row.id },
+            createdAt: { gte: new Date(row.createdAt.getTime() - ABSENCE_MAIL_QUIET_MS), lte: row.createdAt },
+          },
+        });
         await this.notifications.notifyUsers(tx, {
           schoolId,
           userIds: admins.map((admin) => admin.id),
@@ -531,6 +549,7 @@ export class TeacherAbsencesService {
             endsAt: row.endsAt.toISOString(),
             wholeDays: row.wholeDays,
           },
+          ...(earlier > 0 ? {} : { email: { subject: ABSENCE_REPORTED_MAIL_SUBJECT, body: ABSENCE_REPORTED_MAIL_BODY } }),
         });
       })
       .catch(() => this.logger.warn(`Absence report notice failed [absence=${row.id}]`));
@@ -661,6 +680,9 @@ function paramsOf(
   const pass = passes[0]!;
   return { count: passes.length, lessons: 0, passes: passes.length, date: pass.date, decision: pass.decision };
 }
+
+/** How long after a teacher's report another of theirs goes to the administrators' inbox only (K6): ten minutes. */
+const ABSENCE_MAIL_QUIET_MS = 10 * 60_000;
 
 function selfReportOff(): ForbiddenException {
   return new ForbiddenException({
