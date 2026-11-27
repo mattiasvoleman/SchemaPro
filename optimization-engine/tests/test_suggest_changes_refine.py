@@ -95,22 +95,23 @@ class TestTheDescent:
 
         assert (change.needed, change.needed_is_least) == (180, True)
         assert 175 in oracle.asked, "the value below it was asked, and it is the proof"
-        assert spent <= 6, "halving, not a step at a time (36 values between 60 and 240)"
+        assert oracle.asked[0] == 235, "the value one step below `needed` is asked first (g493)"
+        assert spent <= 7, "one step below first, then halving, not a step at a time (36 values between 60 and 240)"
         assert spent == len(oracle.asked)
 
     def test_it_does_not_claim_the_least_where_the_value_below_was_never_decided(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Between 60 and 100 the values back are 95 … 65 and the halving asks 75 first (accepted: it holds from 70), then 65, which the
-        # check does not decide: it got down to 75, and says nothing of 70, which would have held.
+        # Between 60 and 100 the values back are 95 … 60: the step below `needed` (95) is asked first and accepted, the halving then asks 75
+        # (accepted: it holds from 70), then 65, which the check does not decide: it got down to 75, and says nothing of 70, which would have held.
         oracle = _Oracle(least=70, undecided_at=69)
         monkeypatch.setattr(suggestions, "strict_check", oracle)
 
         (change,), _ = _run(oracle, [_cap(60, 100)])
 
-        assert oracle.asked == [75, 65]
+        assert oracle.asked == [95, 75, 65]
         assert (change.needed, change.needed_is_least) == (75, False)
 
     def test_a_first_check_that_is_not_decided_leaves_the_value_and_claims_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        oracle = _Oracle(least=180, undecided_at=175)
+        oracle = _Oracle(least=180, undecided_at=235)
         monkeypatch.setattr(suggestions, "strict_check", oracle)
 
         (change,), spent = _run(oracle, [_cap(60, 240)])
@@ -225,6 +226,49 @@ class TestTheDescent:
 
         edited = apply_changes(_week(), changes)
         assert edited.teacher_work_rules[0].max_teaching_minutes_per_day == 150
+
+
+class TestTheStepBelowFirst:
+    """g493: `needed` is the least on nearly every week, so the one check that proves it is the value one step below it, asked first.
+
+    Halving from the middle of the way back needs five or six checks to say the same thing, and the eight checks of a list (and the one
+    or none that a long week has time for) then all went to the dearest change: the others carried no claim at all."""
+
+    @staticmethod
+    def _three(monkeypatch: pytest.MonkeyPatch) -> tuple[list[SuggestedChange], list[int]]:
+        asked: list[int] = []
+
+        def nothing_below_holds(request, lessons, settings, *, seconds, workers=None):  # noqa: ANN001, ANN202
+            asked.append(request.teacher_work_rules[0].max_teaching_minutes_per_day)
+            return "INFEASIBLE"
+
+        monkeypatch.setattr(suggestions, "strict_check", nothing_below_holds)
+        changes = [
+            _cap(60, 240, cost=900),
+            _change("SUBJECT_PER_DAY", 1, 3, cost=50, requirementIds=[uuid4()]),
+            _change("SUBJECT_DAYS_APART", 3, 1, cost=10, requirementIds=[uuid4()]),
+        ]
+        return changes, asked
+
+    def test_every_change_of_a_list_that_is_already_the_least_is_proved_with_one_check_each(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        changes, asked = self._three(monkeypatch)
+
+        lowered, spent = refine(_week(), [], changes, _settings(), left=lambda: 500.0)
+
+        assert [(c.rule, c.needed, c.needed_is_least) for c in lowered] == [
+            ("TEACHER_DAILY_CAP", 240, True), ("SUBJECT_PER_DAY", 3, True), ("SUBJECT_DAYS_APART", 1, True),
+        ]
+        assert spent == 3, "the dearest change took six of the eight checks and the cheapest none, with the halving from the middle"
+        assert asked[0] == 235
+
+    def test_one_check_is_all_a_long_week_has_time_for_and_it_is_the_one_that_proves(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        changes, _ = self._three(monkeypatch)
+        # `left` allows exactly one check: it falls under what a check needs after the first.
+        seconds = iter([500.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0])
+        lowered, spent = refine(_week(), [], changes, _settings(), left=lambda: next(seconds))
+
+        assert spent == 1
+        assert lowered[0].needed_is_least is True, "the one check that fits asks the value below `needed`, and says so"
 
 
 class TestAgainstTheRealStrictSolver:

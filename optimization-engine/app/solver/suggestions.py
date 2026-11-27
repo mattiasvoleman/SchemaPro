@@ -512,7 +512,7 @@ def refine(
 
     `needed` IS WHAT THE SEARCH'S TIMETABLE NEEDED, and the search is not looking for the least (docs/DEPLOYMENT.md §33.2: on 3 of 59 weeks
     the strict solver laid the week a step below it, a cap of 240 where 180 holds). For each change the values back toward the school's own
-    are tried by halving, each a strict check of the whole list with that one change at the value (the others as they then are), warm
+    are tried (the value one step below `needed` first, then by halving), each a strict check of the whole list with that one change at the value (the others as they then are), warm
     started from the search's timetable: a value that is ACCEPTED is the new `needed`; one that is INFEASIBLE ends the way (and proves the
     value above it the least, for a list with the others as they then are: `needed_is_least`); one that is not decided ends it without a
     claim. A list that holds with a change at the school's own value does not need the change, and it is dropped.
@@ -537,7 +537,11 @@ def refine(
             top = len(values) - 1 if bad is None else bad - 1
             if good >= top:
                 break
-            probe = (good + top + 2) // 2
+            # THE VALUE ONE STEP BELOW `needed` IS ASKED FIRST, then the halving (g493). `needed` is already the least on nearly every week
+            # (56 of 59 in the review of #384), and one check of the value below it is then the whole proof: INFEASIBLE says `needed_is_least`.
+            # Halving from the middle needs five or six checks to say the same, and on a week whose builds take ten seconds the route has
+            # time for one, so the lowering would prove nothing and the checks would all go to the dearest change.
+            probe = 0 if good < 0 and bad is None else (good + top + 2) // 2
             available = min(float(REFINE_CHECK_SECONDS), left() - BUILD_HEADROOM_SECONDS)
             if available < MIN_VERIFY_SECONDS:
                 break
