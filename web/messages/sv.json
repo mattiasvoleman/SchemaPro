@@ -46,6 +46,7 @@
       "CLASS_HAS_HALVES": "Klassen är delad i halvor och kan inte byta typ eller läsår. Ta bort halvorna först.",
       "CLASS_HAS_ONE_HALF": "Klassen har bara en av sina två halvor. Ta bort den under Klasser och försök igen, så delas klassen i två nya halvor.",
       "DATABASE_BUSY": "Servern är upptagen just nu, och inget har gjorts. Försök igen om en stund.",
+      "DIRECT_REACH_UNANSWERED": "Ändringen når elever och vårdnadshavare i den publicerade perioden {validFrom}–{validTo}, och skolan har inte svarat på frågan om det ännu. Inget har ändrats. Gör ändringen i Schema, där frågan ställs.",
       "EMPLOYMENT_PERIOD_OVERLAP": "Perioden överlappar en annan period av tjänsten. Ändra eller ta bort den först: en dag har en tjänst.",
       "EXAM_CAPS": "Gränsen per vecka kan inte vara lägre än gränsen per dag: en vecka rymmer minst lika många prov som en dag.",
       "EXAM_GROUPS": "En vald klass eller grupp finns inte i läsåret.",
@@ -6755,6 +6756,17 @@
     "supervisionLine": "Rastvakt enligt rastvaktsschemat: {shifts, plural, one {# pass} other {# pass}}, {minutes} min/v.",
     "dutyRam": "ram för rastvaktsschemat, räknas de veckor läraren saknar pass"
   },
+  "directReach": {
+    "title": "Ändringen når familjerna direkt",
+    "published": "Skolan publicerar i läget Direkt, och schemat är publicerat {from}–{to}. En ändring flyttar eller tar bort de publicerade lektionerna i kalendern på en gång.",
+    "publishedNoPeriod": "Skolan publicerar i läget Direkt. En ändring flyttar eller tar bort de publicerade lektionerna i kalendern på en gång.",
+    "who": "När en lektion flyttas får eleverna i den och deras vårdnadshavare en notis om att schemat har ändrats. Lärarna ser ändringen i sin kalender.",
+    "audience": "I skolan finns {pupils, plural, one {# elev} other {# elever}} och {guardians, plural, one {# vårdnadshavare} other {# vårdnadshavare}} som kan få en notis. En ändring når bara dem som har lektionen.",
+    "draftOffer": "Vill du arbeta med schemat utan att något når familjerna förrän du publicerar, byt till utkast. Då ligger ändringarna som ett utkast tills du publicerar dem.",
+    "onlyOnce": "Frågan ställs en gång. Den ställs igen om skolan byter läge.",
+    "stayDirect": "Fortsätt i Direkt",
+    "useDraft": "Använd utkast"
+  },
   "publishing": {
     "title": "Publicering",
     "yearLabel": "Läsår",
@@ -11381,6 +11393,7 @@
       "ROOM_NEEDS_APPROVAL": "Salen kräver godkännande och bokas i stället av expeditionen.",
       "SPLIT_MINUTES": "Delarna ska vara minst 15 minuter var och tillsammans lika långa som lektionen.",
       "LESSON_IS_PLACED": "Lektionen är förlagd på timplanen och skrivs om därifrån vid varje Generera. Den ändras av schemaläggaren, på timplansposten.",
+      "DIRECT_REACH_UNANSWERED": "Skolan har ännu inte svarat på frågan om att fortsätta i Direkt, och ändringen når familjerna. En administratör svarar på frågan när hon ändrar något i Schema, och därefter går ändringen att publicera.",
       "UNKNOWN": "Lektionen kan inte ändras av klassläraren."
     },
     "problem": {

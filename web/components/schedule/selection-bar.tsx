@@ -36,6 +36,12 @@ export interface SelectionBarProps {
   createLesson: ReturnType<typeof useCreateMasterLesson>;
   history: ScheduleHistory;
   showError: (error: unknown) => void;
+  /**
+   * The question before a change in Direkt that reaches families (lib/use-direct-reach-ask.tsx), asked around each delete: the first one asks
+   * when the school has not answered, and the answer holds for the rest. Left out, a delete is run as it is and the gateway's own guard
+   * answers 409 DIRECT_REACH_UNANSWERED when it reached families unasked.
+   */
+  guard?: <T>(run: () => Promise<T>) => Promise<T>;
   /** Lets the selection go. */
   onClear: () => void;
   /** Ta bort's icon, from the page's first load (see where the page draws this bar). */
@@ -50,6 +56,7 @@ export function SelectionBar({
   createLesson,
   history,
   showError,
+  guard,
   onClear,
   deleteIcon,
 }: SelectionBarProps) {
@@ -100,8 +107,11 @@ export function SelectionBar({
       // have them.
       const inputs: CreateMasterLessonInput[] = targets.map(restorableInput);
       const refs = targets.map((lesson) => ({ id: lesson.id }));
+      // One request per lesson, each asked on its own: a request that the gateway rolls back for the question is run again once it is
+      // answered, which a loop of them cannot be (the lessons it had deleted are gone). Undo and redo are never asked.
       for (const lesson of targets) {
-        await deleteLesson.mutateAsync(lesson.id);
+        const remove = () => deleteLesson.mutateAsync(lesson.id);
+        await (guard ? guard(remove) : remove());
       }
       history.push({
         label: "bulk-delete",
