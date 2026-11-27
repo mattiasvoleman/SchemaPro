@@ -2136,14 +2136,14 @@
     },
     "suggestions": {
       "title": "Vad kan jag ändra?",
-      "offer": "Motorn kan räkna fram upp till tre ändringar som kan låta veckan läggas, och kontrollera dem mot reglerna. Det tar ungefär en och en halv minut. Den lägger inget schema och ändrar ingenting.",
-      "offerTimeout": "Tiden tog slut, så ingenting är bevisat om veckan än. Motorn kan göra en kortare körning där fem av skolans egna regler får ge vika, och säga om veckan då går att lägga och med vilka ändringar. Det tar ungefär en och en halv minut, lägger inget schema och ändrar ingenting.",
+      "offer": "Motorn kan räkna fram upp till tre ändringar som kan låta veckan läggas, och kontrollera dem mot reglerna. Det tar cirka två minuter. Den lägger inget schema och ändrar ingenting.",
+      "offerTimeout": "Tiden tog slut, så ingenting är bevisat om veckan än. Motorn kan göra en kortare körning där fem av skolans egna regler får ge vika, och säga om veckan då går att lägga och med vilka ändringar. Det tar cirka två minuter, lägger inget schema och ändrar ingenting.",
       "offerAction": "Räkna fram förslag",
       "again": "Räkna om",
-      "running": "Motorn räknar fram förslag. Det tar ungefär en och en halv minut. Du kan lämna sidan: svaret sparas på körningen och visas under Senaste körning när du kommer tillbaka och har samma läsår valt, så länge körningen är årets senaste.",
+      "running": "Motorn räknar fram förslag. Det tar cirka två minuter. Du kan lämna sidan: svaret sparas på körningen och visas under Senaste körning när du kommer tillbaka och har samma läsår valt, så länge körningen är årets senaste.",
       "failed": {
         "ENGINE_LACKS_SUGGESTIONS": "Förslag kan inte räknas fram just nu: schemamotorn har inte den funktionen än. Försök igen om några minuter.",
-        "ENGINE_BUSY": "Motorn räknar fram förslag åt någon annan just nu. Försök igen om en stund.",
+        "ENGINE_BUSY": "Motorn har något annat att räkna på just nu: ett schema, en tjänstefördelning, en provplan eller ett salförslag. Försök igen om en stund.",
         "ENGINE_FAILED": "Förslagen kunde inte räknas fram. Försök igen.",
         "NOTHING_TO_PLACE": "Alla poster är handlagda, så det finns inget för motorn att räkna på.",
         "ABANDONED": "Beräkningen avbröts innan den blev klar, troligen av en omstart. Räkna om för att försöka igen."
@@ -2177,14 +2177,22 @@
         "ROOM_LOCK": "Låt {post} också få använda {rooms}.",
         "ROOM_LOCK_UNNAMED": "Låt {post} också få använda en sal till."
       },
+      "least": {
+        "PROVED": "Mindre räcker inte: motorn har prövat ett steg lägre, och veckan går då inte att lägga.",
+        "PROVED_TOGETHER": "Mindre räcker inte med de andra ändringarna i listan som de är: motorn har prövat ett steg lägre, och veckan går då inte att lägga.",
+        "UNDECIDED": "Motorn prövade också ett steg lägre men hann inte avgöra om det räcker. Värdet här är det lägsta den hittade en vecka för, inte säkert det lägsta som går."
+      },
+      "time": {
+        "title": "Så gick analysens tid"
+      },
       "hidden": "Vilken tjänst det gäller visas inte på det här kortet, för någon. Under Tjänstefördelning ser rektor, en administratör med full behörighet och den med HR-läs tjänsternas dagar.",
       "weekdays": "Motorn behövde det på {days}.",
       "more": "Ytterligare {count, plural, one {# ändring hör} other {# ändringar hör}} till samma lösning och visas inte här. Beviset gäller hela listan: de ändringar som visas är inte visade räcka utan {count, plural, one {den} other {dem}}.",
       "moreMayHelp": "Motorns lista hade {count, plural, one {# ändring} other {# ändringar}} till. De visas inte här, och inget i listan är kontrollerat.",
       "caveat": "Räknat {when}, på veckan som den såg ut då. Det visar att veckan går att lägga, inte hur lång tid nästa Generera tar på den. Motorn hittade de här ändringarna, och det är inte säkert att de är de billigaste. Ingenting ändras förrän du sparar på sidan som äger uppgiften.",
       "verdict": {
-        "SOLVABLE_AS_IS": "Motorn hittade ett schema som håller alla regler, utan att något behövde ändras. Veckan går alltså att lägga: körningen som tog slut hann bara inte hitta det. Kör Generera igen.",
-        "SOLVABLE_AS_IS_CHANGED": "Motorn hittade ett schema som håller alla regler, utan att något behövde ändras. Veckan som den ser ut nu går alltså att lägga, och körningen som vägrades gjordes på en vecka som sedan har ändrats. Kör Generera igen.",
+        "SOLVABLE_AS_IS": "Motorn hittade ett schema som håller alla regler, utan att något behövde ändras. Veckan går alltså att lägga: körningen som tog slut hann bara inte hitta det. Det visar inte att nästa Generera hittar schemat på sin tid, för analysen sökte med de fem reglerna fria. Kör Generera igen.",
+        "SOLVABLE_AS_IS_CHANGED": "Motorn hittade ett schema som håller alla regler, utan att något behövde ändras. Veckan som den ser ut nu går alltså att lägga, och körningen som vägrades gjordes på en vecka som sedan har ändrats. Det visar inte att nästa Generera hittar schemat på sin tid, för analysen sökte med de fem reglerna fria. Kör Generera igen.",
         "UNCHECKED": "Motorn hittade ett schema utan att någon regel behövde ge vika, men hann inte kontrollera det mot reglerna. Kör Generera igen.",
         "NOT_FOUND": "Motorn hittade inget schema inom {seconds, number} s, inte ens med de fem reglerna som får ge vika. Det är inget bevis för att veckan är omöjlig.",
         "HARD_REFUSAL": "En regel som aldrig får ge vika hindrar veckan, så ingen ändring av de fem reglerna kan hjälpa. Orsaken står under Upptäckta konflikter."

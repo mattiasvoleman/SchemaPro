@@ -10,6 +10,7 @@ import type { OptimizationJob } from "@/lib/queries";
 import type { SuggestionChange, SuggestionProof, Suggestions } from "@/lib/suggestion-types";
 import { hintsOf, type Hint } from "./suggestion-hints";
 import { linkOfChange, linkOfRule, linkOfWorkRule, type SuggestionLink, type SuggestionPage } from "./suggestion-links";
+import { SuggestionTime } from "./suggestion-time";
 
 /*
  * WHAT TO CHANGE, FOR A WEEK THAT WAS REFUSED OR RAN OUT OF TIME (omgång 13, G6 Åtgärdsförslag vid vägran).
@@ -26,6 +27,11 @@ import { linkOfChange, linkOfRule, linkOfWorkRule, type SuggestionLink, type Sug
  * it is: a floor ("minst") or a measurement ("mätt"), never a figure that sounds like a promise.
  *
  * A part-timer's days are the hidden form for every reader: the card says a post needs a day more and not whose.
+ *
+ * HOW FAR A NUMBER IS KNOWN is said under it where the engine said it (`neededIsLeast`, G6b): "mindre räcker inte" only where the engine
+ * PROVED the step below holds no timetable, "hann inte avgöra" where it tried and did not finish, and nothing where it did not try. It is a
+ * fact about a checked list, so nothing is said of an unchecked one, and nothing of a part-timer's days, whose figure is hidden.
+ * A search that found nothing says where its time went (SuggestionTime), as a run that ran out of time does.
  */
 
 /** How many changes are drawn: the page's three, and a line for the rest of the list. */
@@ -145,7 +151,13 @@ function Answer({ suggestions, timedOut, yearId }: { suggestions: Suggestions; t
         </p>
       );
     case "NOT_FOUND":
-      return <p className="max-w-prose text-sm">{t("verdict.NOT_FOUND", { seconds: suggestions.searchSeconds ?? 0 })}</p>;
+      return (
+        <div className="space-y-3">
+          <p className="max-w-prose text-sm">{t("verdict.NOT_FOUND", { seconds: suggestions.searchSeconds ?? 0 })}</p>
+          {/* Absent from a gateway that does not send it yet, and from an analysis made before it did. */}
+          {suggestions.report != null ? <SuggestionTime report={suggestions.report} /> : null}
+        </div>
+      );
     case "HARD_REFUSAL":
       return <p className="max-w-prose text-sm">{t("verdict.HARD_REFUSAL")}</p>;
     default:
@@ -169,7 +181,7 @@ function ChangesList({ suggestions, yearId }: { suggestions: Suggestions; yearId
       <ol className="space-y-2">
         {shown.map((change, index) => (
           <li key={`${change.rule}-${index}`}>
-            <ChangeCard change={change} index={index + 1} proof={proof} yearId={yearId} />
+            <ChangeCard change={change} index={index + 1} proof={proof} yearId={yearId} least={leastOf(suggestions, change)} />
           </li>
         ))}
       </ol>
@@ -179,7 +191,21 @@ function ChangesList({ suggestions, yearId }: { suggestions: Suggestions; yearId
   );
 }
 
-function ChangeCard({ change, index, proof, yearId }: { change: SuggestionChange; index: number; proof: SuggestionProof; yearId: string | null }) {
+/** What the card says of how far a change's number is known: only for a list the engine checked, and never for a part-timer's days. */
+export type Least = "PROVED" | "PROVED_TOGETHER" | "UNDECIDED" | null;
+
+/**
+ * "Mindre räcker inte" is the engine's PROOF that the step below holds no timetable, with the other changes of the list as they are, so a list
+ * of several says that. The gateway already keeps the field null for an unchecked list and for a part-timer's days; the card does not rest on
+ * it, because a proof it did not get is the one thing it may not say by mistake.
+ */
+export function leastOf(suggestions: Pick<Suggestions, "verified" | "total">, change: Pick<SuggestionChange, "hidden" | "neededIsLeast" | "needed">): Least {
+  if (!suggestions.verified || change.hidden || change.needed === null || change.neededIsLeast == null) return null;
+  if (!change.neededIsLeast) return "UNDECIDED";
+  return suggestions.total === 1 ? "PROVED" : "PROVED_TOGETHER";
+}
+
+function ChangeCard({ change, index, proof, yearId, least }: { change: SuggestionChange; index: number; proof: SuggestionProof; yearId: string | null; least: Least }) {
   const t = useTranslations("generate.suggestions");
   const tDays = useTranslations("days");
   const locale = useLocale();
@@ -194,6 +220,7 @@ function ChangeCard({ change, index, proof, yearId }: { change: SuggestionChange
         <Badge variant={proof === "MAY_HELP" ? "warning" : "success"}>{t(`proof.${proof}` as never)}</Badge>
       </div>
       <p className="max-w-prose">{sentence}</p>
+      {least !== null ? <p className="max-w-prose text-muted-foreground">{t(`least.${least}` as never)}</p> : null}
       {change.hidden ? <p className="max-w-prose text-muted-foreground">{t("hidden")}</p> : null}
       {days !== "" && !change.hidden ? <p className="max-w-prose text-muted-foreground">{t("weekdays", { days })}</p> : null}
       <OwnerLink link={link} sentence={sentence} />

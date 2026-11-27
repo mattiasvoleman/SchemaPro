@@ -2136,14 +2136,14 @@
     },
     "suggestions": {
       "title": "What can I change?",
-      "offer": "The engine can work out up to three changes that could let the week be laid, and check them against the rules. It takes about a minute and a half. It places no timetable and changes nothing.",
-      "offerTimeout": "Time ran out, so nothing is proved about the week yet. The engine can make a shorter run in which five of the school's own rules may give way, and say whether the week can then be laid and with which changes. It takes about a minute and a half, places no timetable and changes nothing.",
+      "offer": "The engine can work out up to three changes that could let the week be laid, and check them against the rules. It takes about two minutes. It places no timetable and changes nothing.",
+      "offerTimeout": "Time ran out, so nothing is proved about the week yet. The engine can make a shorter run in which five of the school's own rules may give way, and say whether the week can then be laid and with which changes. It takes about two minutes, places no timetable and changes nothing.",
       "offerAction": "Work out suggestions",
       "again": "Work out again",
-      "running": "The engine is working out suggestions. It takes about a minute and a half. You can leave the page: the answer is saved on the run and shown under Last run when you come back with the same school year chosen, as long as the run is the year's newest.",
+      "running": "The engine is working out suggestions. It takes about two minutes. You can leave the page: the answer is saved on the run and shown under Last run when you come back with the same school year chosen, as long as the run is the year's newest.",
       "failed": {
         "ENGINE_LACKS_SUGGESTIONS": "Suggestions cannot be worked out right now: the scheduling engine does not have that function yet. Try again in a few minutes.",
-        "ENGINE_BUSY": "The engine is working out suggestions for someone else right now. Try again in a moment.",
+        "ENGINE_BUSY": "The engine has something else to work on right now: a timetable, a staffing proposal, an exam plan or a room proposal. Try again in a moment.",
         "ENGINE_FAILED": "The suggestions could not be worked out. Try again.",
         "NOTHING_TO_PLACE": "Every post is placed by hand, so there is nothing for the engine to work on.",
         "ABANDONED": "The calculation stopped before it was done, probably because of a restart. Work out again to try once more."
@@ -2177,14 +2177,22 @@
         "ROOM_LOCK": "Let {post} also use {rooms}.",
         "ROOM_LOCK_UNNAMED": "Let {post} also use one more room."
       },
+      "least": {
+        "PROVED": "Less will not do: the engine tried one step lower, and the week cannot be laid then.",
+        "PROVED_TOGETHER": "Less will not do with the other changes of the list as they are: the engine tried one step lower, and the week cannot be laid then.",
+        "UNDECIDED": "The engine also tried one step lower but did not get to decide whether it is enough. The value here is the lowest it found a week for, not necessarily the lowest that works."
+      },
+      "time": {
+        "title": "Where the analysis' time went"
+      },
       "hidden": "Which post it concerns is not shown on this card, to anyone. Under Staffing the principal, a full administrator and anyone with HR read access see the posts' days.",
       "weekdays": "The engine needed it on {days}.",
       "more": "{count, plural, one {# more change belongs} other {# more changes belong}} to the same solution and {count, plural, one {is not} other {are not}} shown here. The proof covers the whole list: the changes shown are not shown to be enough without the rest.",
       "moreMayHelp": "The engine's list had {count, plural, one {# more change, which is} other {# more changes, which are}} not shown here. Nothing in the list has been checked.",
       "caveat": "Worked out {when}, on the week as it was then. It shows that the week can be laid, not how long the next Generera takes on it. The engine found these changes, and they are not necessarily the cheapest. Nothing changes until you save on the page that owns the data.",
       "verdict": {
-        "SOLVABLE_AS_IS": "The engine found a timetable that keeps every rule, with nothing changed. The week can be laid: the run that ended just did not get to find it. Run Generera again.",
-        "SOLVABLE_AS_IS_CHANGED": "The engine found a timetable that keeps every rule, with nothing changed. The week as it looks now can be laid, and the run that was refused was made on a week that has been changed since. Run Generera again.",
+        "SOLVABLE_AS_IS": "The engine found a timetable that keeps every rule, with nothing changed. The week can be laid: the run that ended just did not get to find it. This does not show that the next Generera finds the timetable in its time, because the analysis searched with the five rules free. Run Generera again.",
+        "SOLVABLE_AS_IS_CHANGED": "The engine found a timetable that keeps every rule, with nothing changed. The week as it looks now can be laid, and the run that was refused was made on a week that has been changed since. This does not show that the next Generera finds the timetable in its time, because the analysis searched with the five rules free. Run Generera again.",
         "UNCHECKED": "The engine found a timetable without any rule giving way, but did not get to check it against the rules. Run Generera again.",
         "NOT_FOUND": "The engine found no timetable within {seconds, number} s, not even with the five rules that may give way. That is no proof that the week is impossible.",
         "HARD_REFUSAL": "A rule that never gives way is in the way of the week, so no change to the five rules can help. The cause is under Detected conflicts."
