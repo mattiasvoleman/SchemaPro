@@ -2644,6 +2644,10 @@ async function runChecks(
         (await stateOf(ids)).map((row) => [row.dayOfWeek, row.start, row.isGenerated]),
         [[2, '09:00', true], [2, '09:00', true]],
       );
+      // A card moved by hand locks its block whole (låset vid en flytt, E4): the lessons are the school's now. Taken off again, as the checks
+      // below are about the owner and about the block's own lock.
+      assert.deepEqual((await stateOf(ids)).map((row) => row.isLocked), [true, true]);
+      await lessons.lockBlock({ blockId: block.id, isLocked: false }, admin);
 
       // Tyska alone to Wednesday: the block read off the database names the
       // block, and Tyska is the school's from now on.
@@ -3090,6 +3094,10 @@ async function runChecks(
       );
       assert.deepEqual([...moved.followed].sort(), springLessons);
       assert.deepEqual(new Set((await placedNow()).map((row) => row.at)), new Set(['2 10:00']));
+      // The card is moved by hand, so the block is locked whole, and the block on its times with it (låset vid en flytt, E4).
+      assert.equal(moved.lockedByMove, true);
+      assert.deepEqual([...moved.lockedLessonIds].sort(), [...autumnLessons, ...springLessons].sort());
+      assert.ok((await placedNow()).every((row) => row.locked), 'a card moved by hand locked the block and the one on its times whole');
       // Its undo names what the move took, and takes it back.
       await grundschema.moveBlockCard(
         { lessonIds: autumnLessons, dayOfWeek: 1, startTime: '08:00', endTime: '09:00', follow: moved.followed } as never,

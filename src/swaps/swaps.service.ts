@@ -116,6 +116,13 @@ export interface SwapApplyResult {
    * time it was given for). `rules` are the names, comma-joined, as on a PATCH's EXEMPTION_ENDED. Empty when no moved lesson had one.
    */
   exemptionsEnded: Array<{ lessonId: string; rules: string }>;
+  /**
+   * Låset vid en flytt (E4, beslut 2), as a PATCH says it: the swap locked the lessons it moved that were not locked, so that the next Generera does
+   * not lay them where they stood. `lockedLessonIds` are those lessons (not one that was locked already); `lockedByMove` is said only when there
+   * are any. The undo (the same moves reversed) takes the lock off what the swap locked.
+   */
+  lockedLessonIds: string[];
+  lockedByMove?: true;
 }
 
 const WEEKDAY_MAX = 7;
@@ -456,7 +463,10 @@ export class SwapsService {
 
       const data = await readSwapData(tx, user, leader.academicYearId);
       const context = new SwapContext(data);
-      this.assertWhole(context, dto.lessonId, moves);
+      // Ångra: the lock a swap put on a lesson goes with the swap, so a request that takes the last move of a locked lesson back (where that move
+      // found it, and that move was what locked it) is let move it and takes the lock off again. The undo is the same moves reversed.
+      const takenBack = await this.locksTakenBack(tx, rows, moves);
+      this.assertWhole(context, dto.lessonId, moves, takenBack);
 
       const board = context.boardVerdict(moves);
       if (board !== null) {
@@ -498,6 +508,7 @@ export class SwapsService {
 
       const results: MasterLessonResult[] = [];
       const exemptionsEnded: Array<{ lessonId: string; rules: string }> = [];
+      const lockedLessonIds: string[] = [];
       let propagatedLessons = 0;
       let removedCalendarLessons = 0;
       const notices: Array<{ before: (typeof rows)[number]; after: MasterLessonResult }> = [];
@@ -505,6 +516,10 @@ export class SwapsService {
         const row = byId.get(move.lessonId)!;
         const startTime = parseTimeString(clockOf(move.to.startMinutes));
         const endTime = parseTimeString(clockOf(move.to.endMinutes));
+        // Låset vid en flytt (E4, beslut 2): a lesson moved by hand is the school's and is locked (a lesson that was locked stays so), or the next
+        // Generera lays it again where it stood. An undo that takes back the move that locked it takes the lock off.
+        const locks = !row.isLocked;
+        const unlocks = takenBack.has(row.id);
         const { count } = await tx.masterLesson.updateMany({
           where: {
             id: row.id,
@@ -513,13 +528,14 @@ export class SwapsService {
             endTime: row.endTime,
             isParked: false,
           },
-          data: { dayOfWeek: move.to.dayOfWeek, startTime, endTime },
+          data: { dayOfWeek: move.to.dayOfWeek, startTime, endTime, ...(locks ? { isLocked: true } : unlocks ? { isLocked: false } : {}) },
         });
         if (count !== 1) throw swapStale();
+        if (locks) lockedLessonIds.push(row.id);
         // The trigger takes an exemption away from a lesson whose day or clock changes: the answer and the log say so.
         const ended = exemptionsOf(row.exemptFrom);
         if (ended.length > 0) exemptionsEnded.push({ lessonId: row.id, rules: ended.join(',') });
-        const updated = { ...row, dayOfWeek: move.to.dayOfWeek, startTime, endTime };
+        const updated = { ...row, dayOfWeek: move.to.dayOfWeek, startTime, endTime, ...(locks ? { isLocked: true } : unlocks ? { isLocked: false } : {}) };
         const { moved, removed } =
           dto.propagate === false || mode === 'DRAFT'
             ? { moved: 0, removed: 0 }
@@ -578,8 +594,39 @@ export class SwapsService {
         versionId: version.id,
         undo: moves.map((move) => ({ lessonId: move.lessonId, from: move.to, to: move.from })),
         exemptionsEnded,
+        lockedLessonIds,
+        ...(lockedLessonIds.length > 0 ? { lockedByMove: true as const } : {}),
       };
     });
+  }
+
+  /**
+   * The locked lessons among the moves whose lock this request takes back: the lesson's last logged change locked it (it was unlocked before and
+   * locked after) and the request moves it from where that change put it to where that change found it. Nothing else lifts a lock a swap must
+   * keep its hands off: a lesson locked by hand, or one moved since, is not taken back.
+   */
+  private async locksTakenBack(
+    tx: PrismaClient,
+    rows: ReadonlyArray<{ id: string; isLocked: boolean }>,
+    moves: readonly SwapMove[],
+  ): Promise<Set<string>> {
+    const taken = new Set<string>();
+    const lockedIds = new Set(rows.filter((row) => row.isLocked).map((row) => row.id));
+    for (const move of moves) {
+      if (!lockedIds.has(move.lessonId)) continue;
+      const last = await tx.scheduleChangeLog.findFirst({
+        where: { masterLessonId: move.lessonId },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { action: true, before: true, after: true },
+      });
+      if (!last || last.action !== 'UPDATE') continue;
+      const before = last.before as LoggedSlot | null;
+      const after = last.after as LoggedSlot | null;
+      if (!before || !after || before.isLocked !== false || after.isLocked !== true) continue;
+      if (!isLoggedAt(after, move.from) || !isLoggedAt(before, move.to)) continue;
+      taken.add(move.lessonId);
+    }
+    return taken;
   }
 
   /**
@@ -589,7 +636,7 @@ export class SwapsService {
    * what the generation keeps, is refused by name — never finished on the
    * page's behalf.
    */
-  private assertWhole(context: SwapContext, pickedId: string, moves: readonly SwapMove[]): void {
+  private assertWhole(context: SwapContext, pickedId: string, moves: readonly SwapMove[], takenBack: ReadonlySet<string> = new Set()): void {
     const moved = new Map(moves.map((move) => [move.lessonId, move]));
     const pickedUnit = context.unitOf.get(pickedId);
     if (!pickedUnit) throw swapStale();
@@ -614,11 +661,13 @@ export class SwapsService {
           lessonIds: [...missing, ...apart].map((lesson) => lesson.id),
         });
       }
-      if (unit.locked && unit.id !== pickedUnit.id) {
+      // A lock the swap this one takes back put there is no lock to keep (takenBack).
+      const kept = unit.members.filter((member) => member.isLocked && !takenBack.has(member.id));
+      if (kept.length > 0 && unit.id !== pickedUnit.id) {
         throw new ConflictException({
           message: 'Bytet skulle flytta en låst lektion. Inget ändrades.',
           code: SWAP_LOCKED,
-          lessonIds: unit.members.filter((member) => member.isLocked).map((member) => member.id),
+          lessonIds: kept.map((member) => member.id),
         });
       }
     }
@@ -642,6 +691,17 @@ function clockMinutes(value: string): number {
   if (clockOf(minutes) !== value) throw new BadRequestException(`moves: ${value} is not a clock of the day (HH:MM, 00:00–23:59).`);
   return minutes;
 }
+
+/** A lesson as the change log holds it (resultOf): what a swap's before and after rows say of where it stood and whether it was locked. */
+interface LoggedSlot {
+  isLocked?: boolean;
+  dayOfWeek?: number;
+  startTime?: string;
+  endTime?: string;
+}
+
+const isLoggedAt = (logged: LoggedSlot, slot: SwapSlot): boolean =>
+  logged.dayOfWeek === slot.dayOfWeek && logged.startTime === clockOf(slot.startMinutes) && logged.endTime === clockOf(slot.endMinutes);
 
 function swapStale(): ConflictException {
   return new ConflictException({

@@ -5364,6 +5364,20 @@ describe('MasterLessonsService', () => {
           testUser(),
         );
 
+      /**
+       * The two reads of a block a moved card makes. The card's own: whether the block stands on another's times (sameTimesAsBlockId, sameTimes). And
+       * the one it ends with (låset vid en flytt: lockBlock's own write): the block's members, whose lessons are the block's to lock.
+       */
+      const blockRead = (linked: Row | null, members: Row = {}) =>
+        tx.teachingBlock.findUnique.mockImplementation((query: Query = {}) =>
+          Promise.resolve(
+            query.select && 'requirements' in query.select
+              ? { id: BLOCK_ID, schoolId: SCHOOL_ID, academicYearId: YEAR_ID, requirements: [], sameTimesAs: null, sameTimes: [], ...members }
+              : linked,
+          ),
+        );
+      beforeEach(() => blockRead(null));
+
       it('refuses a card whose lessons a run wrote from a block\u2019s förläggning (LESSON_IS_PLACED), before anything is written', async () => {
         // One member's lesson is enough: the card is the block's, which the next Generera writes again at its day and start.
         arrangeCard([tyska(), franskaLesson({ fromPlacement: true })]);
@@ -5420,6 +5434,79 @@ describe('MasterLessonsService', () => {
         // Every lesson the card moved, the lessons that followed it included, and nothing else.
         await afterCommit();
         expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { lessonIds: [LESSON_ID, FR_LESSON] });
+      });
+
+      describe('låset vid en flytt (E4): a card moved by hand locks its block whole', () => {
+        // The generation refuses a block with some lessons locked and the rest still to place (BLOCK_PARTLY_LOCKED), so the lock a moved card gets
+        // is the block's: every placed lesson of every member, as lockBlock does it, and the next Generera keeps the block where the hand put it.
+        const OTHER_CARD = () => lessonRecord({ id: OTHER_LESSON_ID, dayOfWeek: 3, startTime: t('13:00'), endTime: t('14:00') });
+        const arrangeBlockRead = (over: Record<string, unknown> = {}) =>
+          blockRead(
+            { sameTimesAsBlockId: null, sameTimes: [] },
+            { requirements: posts.map(({ studentGroupId, subjectId }) => ({ studentGroupId, subjectId })), ...over },
+          );
+
+        it('locks every placed lesson of the block that is not locked, the card\'s and the block\'s other cards, and says so', async () => {
+          arrangeCard([tyska(), franskaLesson()], [tyska(), franskaLesson(), OTHER_CARD(), lessonRecord({ id: CAL_LESSON_ID, isParked: true })]);
+          arrangeBlockRead();
+
+          const result = await move();
+
+          expect(tx.masterLesson.updateMany).toHaveBeenLastCalledWith({
+            where: { id: { in: [LESSON_ID, FR_LESSON, OTHER_LESSON_ID] } },
+            data: { isLocked: true },
+          });
+          expect(result.lockedByMove).toBe(true);
+          expect(result.lockedLessonIds).toEqual([LESSON_ID, FR_LESSON, OTHER_LESSON_ID]);
+          // The answer's lessons are the card's, as they stand now: locked.
+          expect(result.lessons.map((lesson) => [lesson.id, lesson.isLocked])).toEqual([
+            [LESSON_ID, true],
+            [FR_LESSON, true],
+          ]);
+          // One row for the move of each member and one for each lock, so the undo has what it needs; and one notice, naming every lesson that changed.
+          expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(5);
+          await afterCommit();
+          expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+          expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { lessonIds: expect.arrayContaining([LESSON_ID, FR_LESSON, OTHER_LESSON_ID]) });
+        });
+
+        it('says nothing of a lock when the whole block was locked already', async () => {
+          arrangeCard([tyska({ isLocked: true }), franskaLesson({ isLocked: true })], [tyska({ isLocked: true }), franskaLesson({ isLocked: true }), { ...OTHER_CARD(), isLocked: true }]);
+          arrangeBlockRead();
+
+          const result = await move();
+
+          expect(result.lockedLessonIds).toEqual([]);
+          expect(result).not.toHaveProperty('lockedByMove');
+          expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
+        });
+
+        it('locks nothing for a card dropped where it stood: that is no move', async () => {
+          arrangeCard([tyska(), franskaLesson()], [tyska(), franskaLesson(), OTHER_CARD()]);
+          arrangeBlockRead();
+
+          const result = await move({ dayOfWeek: 1, startTime: '10:00', endTime: '11:00' });
+
+          expect(result.lockedLessonIds).toEqual([]);
+          expect(result).not.toHaveProperty('lockedByMove');
+          expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
+        });
+
+        it('takes the block on the same times with it, as lockBlock does: the generation takes the two as one', async () => {
+          const SPRING_GROUP = '1b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b';
+          const SPRING_SUBJECT = '1c1c1c1c-1c1c-4c1c-8c1c-1c1c1c1c1c1c';
+          arrangeCard([tyska(), franskaLesson()], [tyska(), franskaLesson(), OTHER_CARD()]);
+          arrangeBlockRead({ sameTimes: [{ requirements: [{ studentGroupId: SPRING_GROUP, subjectId: SPRING_SUBJECT }] }] });
+
+          await move();
+
+          const read = tx.masterLesson.findMany.mock.calls.map((call) => (call as [Query])[0]).find((query) => query.where && 'OR' in query.where && 'academicYearId' in query.where);
+          expect(read!.where!.OR).toEqual([
+            { studentGroupId: GROUP_ID, subjectId: SUBJECT_ID },
+            { studentGroupId: FR_GROUP, subjectId: FR_SUBJECT },
+            { studentGroupId: SPRING_GROUP, subjectId: SPRING_SUBJECT },
+          ]);
+        });
       });
 
       describe('the board’s rules (En domare med ord)', () => {
@@ -5640,7 +5727,7 @@ describe('MasterLessonsService', () => {
         ];
         const arrangeHalves = (block: Row[], linked: Row | null) => {
           arrangeCard([tyska(autumn), spring], [spring], [posts[0]!], block);
-          tx.teachingBlock.findUnique.mockResolvedValue(linked);
+          blockRead(linked);
           tx.teachingRequirement.findMany.mockImplementation((query: Query = {}) =>
             Promise.resolve(
               query.select && 'blockId' in query.select
@@ -5710,7 +5797,7 @@ describe('MasterLessonsService', () => {
         ];
         const arrangeTerms = (spring: Row[], locked: Row[] = spring) => {
           arrangeCard([tyska(autumn), franskaLesson(autumn), ...locked], spring);
-          tx.teachingBlock.findUnique.mockResolvedValue({ sameTimesAsBlockId: null, sameTimes: [{ id: SPRING_BLOCK }] });
+          blockRead({ sameTimesAsBlockId: null, sameTimes: [{ id: SPRING_BLOCK }] });
           tx.teachingRequirement.findMany.mockImplementation((query: Query = {}) =>
             Promise.resolve(
               query.select && 'blockId' in query.select
