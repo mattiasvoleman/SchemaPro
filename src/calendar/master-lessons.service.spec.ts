@@ -2939,6 +2939,8 @@ describe('MasterLessonsService', () => {
         removedCalendarLessons: 0,
         // Nobody new on the lesson, so nothing for the staffing policy to say.
         warnings: [],
+        // Moved by hand, so the server locked it and says so (E4, beslut 2).
+        lockedByMove: true,
       });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
@@ -2996,7 +2998,8 @@ describe('MasterLessonsService', () => {
       // Untouched fields are absent from the update payload.
       expect(tx.masterLesson.update).toHaveBeenCalledWith({
         where: { id: LESSON_ID },
-        data: { dayOfWeek: 4 },
+        // Moved by hand, so locked (E4, beslut 2).
+        data: { dayOfWeek: 4, isLocked: true },
         select: expect.any(Object),
       });
     });
@@ -3050,7 +3053,7 @@ describe('MasterLessonsService', () => {
       ]);
 
       await expect(
-        service.update(LESSON_ID, { dayOfWeek: 1 }, testUser()),
+        service.update(LESSON_ID, { dayOfWeek: 2 }, testUser()),
       ).rejects.toThrow(ConflictException);
       expect(tx.masterLesson.update).not.toHaveBeenCalled();
       await afterCommit();
@@ -3142,7 +3145,7 @@ describe('MasterLessonsService', () => {
 
         expect(tx.masterLesson.update).toHaveBeenCalledWith({
           where: { id: LESSON_ID },
-          data: { dayOfWeek: 1, ...written, isGenerated: false },
+          data: { dayOfWeek: 1, ...written, isLocked: true, isGenerated: false },
           select: expect.any(Object),
         });
       },
@@ -3158,7 +3161,7 @@ describe('MasterLessonsService', () => {
       // alternative is that undoing an edit quietly re-arms the delete.
       expect(tx.masterLesson.update).toHaveBeenCalledWith({
         where: { id: LESSON_ID },
-        data: { dayOfWeek: 1, recurrence: 'ALL_WEEKS', isGenerated: false },
+        data: { dayOfWeek: 1, recurrence: 'ALL_WEEKS', isLocked: true, isGenerated: false },
         select: expect.any(Object),
       });
     });
@@ -3406,6 +3409,7 @@ describe('MasterLessonsService', () => {
         data: {
           dayOfWeek: 1,
           endDate: new Date('2026-09-07T00:00:00.000Z'),
+          isLocked: true,
           isGenerated: false,
         },
         select: expect.any(Object),
@@ -4834,7 +4838,7 @@ describe('MasterLessonsService', () => {
 
       expect(tx.masterLesson.update).toHaveBeenCalledWith({
         where: { id: LESSON_ID },
-        data: { dayOfWeek: 1, startTime: t('12:00'), endTime: t('13:00') },
+        data: { dayOfWeek: 1, startTime: t('12:00'), endTime: t('13:00'), isLocked: true },
         select: expect.any(Object),
       });
     });
@@ -4853,7 +4857,7 @@ describe('MasterLessonsService', () => {
       arrangeUpdate();
       sameDay([otherLesson({ teacherId: TEACHER_ID, roomId: ROOM_ID })]);
 
-      await expect(service.update(LESSON_ID, { dayOfWeek: 1 }, testUser())).rejects.toMatchObject({
+      await expect(service.update(LESSON_ID, { dayOfWeek: 2 }, testUser())).rejects.toMatchObject({
         ...refusedAs('TEACHER', { reasons: 'TEACHER,ROOM' }),
         message: expect.stringMatching(/^Läraren har redan Math 8B.*Salen är redan upptagen av Math 8B/),
       });
@@ -4877,7 +4881,7 @@ describe('MasterLessonsService', () => {
 
     it.each([
       ['a room the patch names', { roomId: NEW_ROOM_ID }, NEW_ROOM_ID],
-      ['the room a lesson already has', { dayOfWeek: 1 }, ROOM_ID],
+      ['the room a lesson already has', { dayOfWeek: 2 }, ROOM_ID],
     ])('checks %s', async (_label, patch, bookedRoom) => {
       arrangeUpdate();
       sameDay([otherLesson({ roomId: bookedRoom })]);
@@ -4889,7 +4893,7 @@ describe('MasterLessonsService', () => {
       arrangeUpdate({ extraGroups: [{ studentGroupId: EXTRA_GROUP_ID }] });
       sameDay([otherLesson({ studentGroupId: EXTRA_GROUP_ID })]);
 
-      await expect(service.update(LESSON_ID, { dayOfWeek: 1 }, testUser())).rejects.toMatchObject(refusedAs('GROUP'));
+      await expect(service.update(LESSON_ID, { dayOfWeek: 2 }, testUser())).rejects.toMatchObject(refusedAs('GROUP'));
     });
 
     it.each([
@@ -4929,7 +4933,7 @@ describe('MasterLessonsService', () => {
 
       expect(tx.masterLesson.update).toHaveBeenCalledWith({
         where: { id: LESSON_ID },
-        data: { dayOfWeek: 1, startDate: null, isGenerated: false },
+        data: { dayOfWeek: 1, startDate: null, isLocked: true, isGenerated: false },
         select: expect.any(Object),
       });
     });
@@ -4941,7 +4945,7 @@ describe('MasterLessonsService', () => {
 
       expect(tx.masterLesson.update).toHaveBeenCalledWith({
         where: { id: LESSON_ID },
-        data: { dayOfWeek: 1, endDate: day('2026-09-07'), isGenerated: false },
+        data: { dayOfWeek: 1, endDate: day('2026-09-07'), isLocked: true, isGenerated: false },
         select: expect.any(Object),
       });
     });
@@ -5374,6 +5378,17 @@ describe('MasterLessonsService', () => {
         arrangeCard([tyska({ fromPlacement: false }), franskaLesson({ fromPlacement: false })]);
         await expect(move()).resolves.toBeDefined();
         expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
+      });
+
+      it('says the exemption a moved member loses, and nothing of the kind for a card that stays (Undantag med flit)', async () => {
+        arrangeCard([tyska({ isLocked: true, exemptFrom: ['FRAME'] }), franskaLesson()]);
+        const moved = await move();
+        expect(moved.warnings).toEqual(expect.arrayContaining([{ code: 'EXEMPTION_ENDED', params: { rules: 'FRAME' } }]));
+        // The same card put where it stands is no move, and loses nothing.
+        tx.masterLesson.findMany.mockReset();
+        arrangeCard([tyska({ isLocked: true, exemptFrom: ['FRAME'] }), franskaLesson()]);
+        const stayed = await move({ dayOfWeek: 1, startTime: '10:00', endTime: '11:00' });
+        expect(stayed.warnings.filter((warning) => warning.code === 'EXEMPTION_ENDED')).toEqual([]);
       });
 
       it('moves every member in one statement held to the slot it was read in, and leaves the owner be', async () => {

@@ -78,6 +78,117 @@ describe('Scheduling surface (e2e)', () => {
     });
 
     /*
+     * Ett schema som start (omgång 15, M9), as an administrator meets it over HTTP: the request's `startFrom`, what a click
+     * refuses with its code through the real exception filter, and what a stored run says of its start on the wire.
+     */
+    describe('a run that starts from a schedule', () => {
+      const startedFrom = {
+        source: 'CURRENT',
+        versionName: null,
+        engine: 'USED',
+        offered: 120,
+        used: 118,
+        held: 104,
+        moved: 12,
+        laid: 2,
+        dropped: { NO_POST: 2 },
+      };
+
+      afterEach(() => {
+        harness.tx['optimizationJob']!['create']!.mockReset();
+        harness.tx['optimizationJob']!['findUnique']!.mockReset();
+        harness.tx['scheduleVersion']!['findFirst']!.mockReset();
+        harness.tx['academicYear']!['findUnique']!.mockReset();
+      });
+
+      it('accepts startFrom CURRENT with 202, and queues one run', async () => {
+        harness.tx['optimizationJob']!['create']!.mockResolvedValue({ id: VERSION_ID });
+
+        await request(http())
+          .post('/api/v1/optimization/jobs')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID, startFrom: { source: 'CURRENT' } })
+          .expect(202);
+
+        expect(harness.tx['optimizationJob']!['create']).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses a version that is not the year’s with 404 and its code, and queues no run', async () => {
+        harness.tx['scheduleVersion']!['findFirst']!.mockResolvedValue(null);
+
+        const response = await request(http())
+          .post('/api/v1/optimization/jobs')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID, startFrom: { source: 'VERSION', versionId: VERSION_ID } })
+          .expect(404);
+
+        expect(response.body).toMatchObject({ code: 'START_VERSION_NOT_FOUND' });
+        expect(harness.tx['optimizationJob']!['create']).not.toHaveBeenCalled();
+        expect(harness.http.post).not.toHaveBeenCalled();
+      });
+
+      it('refuses last year’s schedule for a year that was not rolled over from another with 409 and its code', async () => {
+        harness.tx['academicYear']!['findUnique']!.mockResolvedValue({ predecessorId: null });
+
+        const response = await request(http())
+          .post('/api/v1/optimization/jobs')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID, startFrom: { source: 'PREVIOUS_YEAR' } })
+          .expect(409);
+
+        expect(response.body).toMatchObject({ code: 'START_NO_PREVIOUS_YEAR' });
+        expect(harness.tx['optimizationJob']!['create']).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['a source the gateway does not know', { source: 'FILE' }],
+        ['VERSION with no version', { source: 'VERSION' }],
+        ['a version that is not a UUID', { source: 'VERSION', versionId: 'v-1' }],
+        ['a start that is not an object', 'CURRENT'],
+      ])('refuses %s with 400, before anything is read', async (_what, startFrom) => {
+        await request(http())
+          .post('/api/v1/optimization/jobs')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID, startFrom })
+          .expect(400);
+
+        expect(harness.tx['optimizationJob']!['create']).not.toHaveBeenCalled();
+      });
+
+      it('refuses the synchronous trigger’s startFrom the same way', async () => {
+        await request(http())
+          .post('/api/v1/optimization/trigger')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID, startFrom: { source: 'FILE' } })
+          .expect(400);
+      });
+
+      it('carries what a stored run did with its start on the wire, whitelisted, and null for a run that started from nothing', async () => {
+        const row = (over: Record<string, unknown>) => ({
+          id: VERSION_ID,
+          academicYearId: YEAR_ID,
+          status: 'SUCCEEDED',
+          solverStatus: 'OPTIMAL',
+          lessonsGenerated: 118,
+          conflictSummary: null,
+          conflicts: [],
+          error: null,
+          createdAt: new Date('2026-08-07T10:00:00.000Z'),
+          finishedAt: new Date('2026-08-07T10:00:42.000Z'),
+          ...over,
+        });
+        harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(row({ startedFrom: { ...startedFrom, leaked: 'x' } }));
+
+        const started = await request(http()).get(`/api/v1/optimization/jobs/${VERSION_ID}`).set('x-test-user', admin()).expect(200);
+        expect(started.body.startedFrom).toEqual(startedFrom);
+
+        harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(row({}));
+        const plain = await request(http()).get(`/api/v1/optimization/jobs/${VERSION_ID}`).set('x-test-user', admin()).expect(200);
+        expect(plain.body.startedFrom).toBeNull();
+      });
+    });
+
+    /*
      * The queue entry (omgång 12, M4), as an administrator meets it over HTTP:
      * the first start, the second start of the same year, and a run whose
      * process is gone. The database half (the partial unique index, the lease,
@@ -1220,6 +1331,82 @@ describe('Scheduling surface (e2e)', () => {
         for (const body of [{}, { moves: [] }, { moves: [{}] }, { moves: [{ lessonId: 'nope' }] }, { moves: [{ lessonId: LESSON_ID, startTime: '34:00' }] }, { moves: [{ lessonId: LESSON_ID, dayOfWeek: 8 }] }, { moves: [{ lessonId: LESSON_ID, extra: 1 }] }]) {
           await ask(body).expect(400);
         }
+      });
+    });
+
+    describe('possible times (E3): where can this lesson stand', () => {
+      const ask = (body: object, user: string = admin()) => request(http()).post('/api/v1/master-lessons/possible-times').set('x-test-user', user).send(body);
+      const BRICK = { academicYearId: YEAR_ID, studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, minutes: 60 };
+
+      it('is the scheduler’s door, as the judge is: no caller is 401, a teacher is 403', async () => {
+        await request(http()).post('/api/v1/master-lessons/possible-times').send({ lessonId: LESSON_ID }).expect(401);
+        await ask({ lessonId: LESSON_ID }, asUser({ role: 'TEACHER' as never })).expect(403);
+      });
+
+      it('asks for a lesson or a brick, and for nothing it does not know', async () => {
+        for (const body of [
+          { lessonId: 'nope' },
+          { brick: {} },
+          { brick: { ...BRICK, minutes: 2 } },
+          { brick: { ...BRICK, minutes: 1000 } },
+          { brick: { ...BRICK, studentGroupId: 'x' } },
+          { lessonId: LESSON_ID, days: [] },
+          { lessonId: LESSON_ID, days: [6] },
+          { lessonId: LESSON_ID, days: [1, 2, 3, 4, 5, 1] },
+          { lessonId: LESSON_ID, from: '34:00' },
+          { lessonId: LESSON_ID, to: '8.20' },
+          { lessonId: LESSON_ID, stepMinutes: 0 },
+          { lessonId: LESSON_ID, stepMinutes: 61 },
+          { lessonId: LESSON_ID, limit: 0 },
+          { lessonId: LESSON_ID, limit: 41 },
+          { lessonId: LESSON_ID, extra: 1 },
+        ]) {
+          await ask(body).expect(400);
+        }
+      });
+
+      it('names the one it is asked about: both, or neither, is a 400', async () => {
+        await ask({}).expect(400);
+        await ask({ lessonId: LESSON_ID, brick: BRICK }).expect(400);
+      });
+    });
+
+    describe('what can lie here, and the room chooser (E3)', () => {
+      const post = (route: string, body: object, user: string = admin()) => request(http()).post(`/api/v1/master-lessons/${route}`).set('x-test-user', user).send(body);
+      const BRICK = { academicYearId: YEAR_ID, studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, minutes: 60 };
+
+      it.each(['what-fits-here', 'room-choices'])('%s is the scheduler’s door, as the judge is: no caller is 401, a teacher is 403', async (route) => {
+        await request(http()).post(`/api/v1/master-lessons/${route}`).send({}).expect(401);
+        await post(route, {}, asUser({ role: 'TEACHER' as never })).expect(403);
+      });
+
+      it('asks what fits with candidates that are lessons or bricks, at a school day and a clock', async () => {
+        const ok = { academicYearId: YEAR_ID, dayOfWeek: 2, startTime: '09:00' };
+        for (const body of [
+          {},
+          { ...ok },
+          { ...ok, candidates: [] },
+          { ...ok, candidates: [{ lessonId: 'nope' }] },
+          { ...ok, candidates: [{ brick: { ...BRICK, minutes: 2 } }] },
+          { ...ok, candidates: Array.from({ length: 201 }, () => ({ lessonId: LESSON_ID })) },
+          { ...ok, dayOfWeek: 6, candidates: [{ lessonId: LESSON_ID }] },
+          { ...ok, startTime: '34:00', candidates: [{ lessonId: LESSON_ID }] },
+          { ...ok, candidates: [{ lessonId: LESSON_ID, extra: 1 }] },
+        ]) {
+          await post('what-fits-here', body).expect(400);
+        }
+        // Both or neither of lessonId and brick is the service's 400, before it reads anything.
+        await post('what-fits-here', { ...ok, candidates: [{}] }).expect(400);
+        await post('what-fits-here', { ...ok, candidates: [{ lessonId: LESSON_ID, brick: BRICK }] }).expect(400);
+      });
+
+      it('asks for the rooms of one lesson or brick at a school day and a clock', async () => {
+        const ok = { dayOfWeek: 2, startTime: '09:00' };
+        for (const body of [{}, { ...ok, lessonId: 'nope' }, { ...ok, lessonId: LESSON_ID, dayOfWeek: 0 }, { ...ok, lessonId: LESSON_ID, startTime: '9.00' }, { ...ok, lessonId: LESSON_ID, extra: 1 }, { ...ok, brick: {} }]) {
+          await post('room-choices', body).expect(400);
+        }
+        await post('room-choices', { ...ok }).expect(400);
+        await post('room-choices', { ...ok, lessonId: LESSON_ID, brick: BRICK }).expect(400);
       });
     });
 

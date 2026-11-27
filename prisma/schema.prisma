@@ -253,6 +253,7 @@ model School {
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
   users                   User[]
+  outboundNotices         OutboundNotice[]
   rooms                   Room[]
   roomTypes               RoomType[]
   subjects                Subject[]
@@ -1719,6 +1720,9 @@ model PublishedLesson {
   /// Förlagda poster: the lesson's MasterLesson.fromPlacement, written back
   /// when the draft is discarded (20270207090000).
   fromPlacement  Boolean          @default(false)
+  /// E1b: the lesson's MasterLesson.exemptFrom, written back when the draft
+  /// is discarded (20270307090000).
+  exemptFrom     String[]         @default([])
   recurrence     LessonRecurrence
   startDate      DateTime?        @db.Date
   endDate        DateTime?        @db.Date
@@ -2801,6 +2805,15 @@ model MasterLesson {
   /// lesson placed freely once nothing pins it. False on every other lesson,
   /// and set by Generera alone.
   fromPlacement Boolean @default(false)
+  /// E1b Undantag med flit: the rules the lesson breaks on purpose, by name
+  /// (FRAME: the stage's ramtid, LUNCH: the class's meal), given by an
+  /// administrator who answered "Lägg ändå" for the time the lesson stands at.
+  /// The lesson is locked in the same moment. Only a request that names the
+  /// rule writes it (PATCH and POST with `exempt`, a file that names it in the
+  /// column Undantag); a restore or a discarded draft gives it back. Ended by
+  /// the trigger MasterLessons_exemption_ends when day, clock, dates or the
+  /// lock change. Empty on every other lesson (20270307090000).
+  exemptFrom  String[]  @default([])
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @db.Timestamptz(6)
 
@@ -3284,6 +3297,11 @@ model OptimizationJob {
   /// run before the column. No person's name and no figure of a post is in it (a part-timer's days are stored in their hidden form). DB CHECK:
   /// a JSON object, at most 8 KiB.
   suggestions           Json?
+  /// The schedule a run was asked to start from and what became of its lessons (omgång 15, M9 Ett schema som start; 20270308090000):
+  /// {source: CURRENT | PREVIOUS_YEAR | VERSION, versionName, engine: USED | OLDER, offered, used, held, moved, laid, dropped: {reason: count}},
+  /// as the gateway whitelisted it (src/optimization/start-schedule.ts startedFromOf). No lesson and no person is in it. Null when the run
+  /// started from nothing, as every run before the column did. DB CHECK: a JSON object, at most 2 KiB.
+  startedFrom           Json?
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
@@ -3940,6 +3958,48 @@ model PushTicket {
 
   @@index([tokenId, schoolId])
   @@map("PushTickets")
+}
+
+/// The outgoing queue of e-mail and push (H3, 20270309090000): one row per lane and school of one committed transaction's
+/// notices. Leased per row (claimedBy, leaseUntil), planned once (plan), stepped by two counters (mailDone, pushDone), and
+/// emptied of everything about a person when it is DONE or GAVE_UP (a CHECK holds it). RLS on with no arm and no grant: only
+/// the app.outbound_* functions touch it, so the gateway reads and writes it through them and never through this model.
+/// The partial indexes and the CHECKs live in the migration.
+model OutboundNotice {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String    @db.Uuid
+  urgent          Boolean   @default(false)
+  entries         Json
+  recipientIds    String[]  @db.Uuid
+  notificationIds String[]  @db.Uuid
+  status          String    @default("PENDING")
+  createdAt       DateTime  @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  notBefore       DateTime  @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  claimedBy       String?
+  leaseUntil      DateTime? @db.Timestamptz(6)
+  attempts        Int       @default(0)
+  plan            Json?
+  mailDone        Int       @default(0)
+  pushDone        Int       @default(0)
+  mailsSent       Int       @default(0)
+  mailsFailed     Int       @default(0)
+  pushSent        Int       @default(0)
+  pushFailed      Int       @default(0)
+  finishedAt      DateTime? @db.Timestamptz(6)
+  reason          String?
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId])
+  @@map("OutboundNotices")
+}
+
+/// When the next mail (EMAIL) and the next push request (PUSH) may go, whichever API instance sends it (app.outbound_slot).
+model OutboundPace {
+  channel String   @id
+  nextAt  DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  @@map("OutboundPace")
 }
 
 // -----------------------------------------------------------------------------

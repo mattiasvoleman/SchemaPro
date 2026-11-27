@@ -56,6 +56,8 @@ import {
   leaseSecondsFor,
 } from './generate-runs';
 import { timeoutReportOf, type TimeoutReportView } from './timeout-report';
+import { startedFromOf, type StartedFrom, type StartRequest } from './start-schedule';
+import { assertStartable } from './start-sources';
 import {
   readAs,
   suggestionsMayBeAskedFor,
@@ -189,6 +191,11 @@ export interface OptimizationJobView {
   /** Whether the page may offer the button: the run ended with no timetable, and the end is one the five rules can have given. */
   suggestionsOffered: boolean;
   /**
+   * Ett schema som start (M9): the schedule the run was asked to start from and what it did with it (held, moved, laid),
+   * or null: the run started from nothing, as every run before the column did. Read through startedFromOf.
+   */
+  startedFrom: StartedFrom | null;
+  /**
    * The schemaförslag applied over the year since this run — the newest —
    * whose timetable its notes no longer describe, as the apply's own
    * REGENERATE entry names it; null when none was. Read by GET jobs/:id for a
@@ -243,6 +250,8 @@ const JOB_SELECT = {
   report: true,
   // The changes that would let a refused or timed-out week be laid (suggestions.ts); null when nobody asked.
   suggestions: true,
+  // The schedule a run started from, and what became of its lessons (start-schedule.ts); null when it started from nothing.
+  startedFrom: true,
   // For a run whose lease has run out before the sweep has come round (abandonedAt).
   leaseUntil: true,
   // The last sign of life, for how long an abandoned run had gone on (lastSeenParams).
@@ -270,6 +279,8 @@ interface JobRow {
   report?: unknown;
   /** The analysis of the run, as stored: read through suggestionsOf, never as it stands. Absent before the column. */
   suggestions?: unknown;
+  /** The schedule the run started from, as stored: read through startedFromOf, never as it stands. Absent before the column. */
+  startedFrom?: unknown;
   /** Absent from a row read before the column: such a run is never read as abandoned. */
   leaseUntil?: Date | null;
   /** The database's clock at the run's last sign of life; absent from a row read before the column. */
@@ -505,6 +516,7 @@ export function jobView(
         errorCode: failure.code,
       }),
       supersededBy: null,
+      startedFrom: startedFromOf(job.startedFrom),
       createdAt: job.createdAt.toISOString(),
       finishedAt: abandoned ? abandoned.toISOString() : job.finishedAt ? job.finishedAt.toISOString() : null,
     },
@@ -665,6 +677,7 @@ export class OptimizationJobsService implements OnModuleInit, OnModuleDestroy {
     user: AuthenticatedUser,
     weights?: ObjectiveWeights,
     rules?: ScheduleRules,
+    startFrom?: StartRequest,
   ): Promise<{ jobId: string }> {
     if (!user.schoolId) {
       throw new NotFoundException('School context missing from token.');
@@ -687,6 +700,9 @@ export class OptimizationJobsService implements OnModuleInit, OnModuleDestroy {
       if (await yearHasActiveCandidateRun(tx, academicYearId)) throw candidatesRunning();
       // Nor beside the analysis of a refused run (G6, D2: the engine's cores are shared, and the analysis takes the same year start lock).
       if (await yearHasRunningSuggestions(tx, academicYearId)) throw suggestionsRunning();
+      // A schedule to start from that cannot be one is answered at the click (a version that is not this year's, a year with
+      // no year before it), not in a job that fails later. What needs the week waits for the run.
+      if (startFrom) await assertStartable(tx, academicYearId, startFrom);
       try {
         return await tx.optimizationJob.create({
           data: {
@@ -711,7 +727,7 @@ export class OptimizationJobsService implements OnModuleInit, OnModuleDestroy {
     // deliberately unawaited, and Node answers an unhandled rejection by
     // terminating the process, so one slip inside run() would take the API down
     // for every school on the instance instead of failing a single job.
-    void this.run(job.id, academicYearId, user, weights, rules).catch(
+    void this.run(job.id, academicYearId, user, weights, rules, startFrom).catch(
       (error: unknown) => {
         this.untrack(job.id);
         this.logger.error(
@@ -977,6 +993,7 @@ export class OptimizationJobsService implements OnModuleInit, OnModuleDestroy {
     user: AuthenticatedUser,
     weights?: ObjectiveWeights,
     rules?: ScheduleRules,
+    startFrom?: StartRequest,
   ): Promise<void> {
     try {
       // Inside the try, not before it. This is the first database write after
@@ -998,6 +1015,8 @@ export class OptimizationJobsService implements OnModuleInit, OnModuleDestroy {
         user,
         weights ?? null,
         rules ?? null,
+        // Only a run that asked for a start carries the argument, so every other run calls the proxy as it always did.
+        ...(startFrom ? ([startFrom] as const) : ([] as const)),
       );
       const conflicts: AiEngineConflictAnalysis | null | undefined = response.conflicts;
       await this.update(jobId, user, {
@@ -1027,6 +1046,9 @@ export class OptimizationJobsService implements OnModuleInit, OnModuleDestroy {
         // Where a TIMEOUT's time went, whitelisted (timeout-report.ts): only on a TIMEOUT, so no other run carries
         // one, and null where the engine sent none (an older one) or what it sent is not wholly well formed.
         report: reportToStore(response.status, response.report),
+        // What the run did with the schedule it was asked to start from. Only a run that asked for one writes it: the
+        // column is null for every other, and a row is written once.
+        ...(response.startedFrom ? { startedFrom: response.startedFrom as unknown as Prisma.InputJsonValue } : {}),
         finishedAt: new Date(),
       });
     } catch (error) {

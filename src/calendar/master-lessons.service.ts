@@ -73,7 +73,8 @@ import { EMPTY_SITE_MAP, hasTravel, readSiteMap, type SiteMap } from '../common/
 import { travelWarningsOf, type TravelDayLesson, type TravelWarning } from './travel-warnings';
 import { shareBreaches, shareWarning, type ShareWarning } from './share-warnings';
 import { storedSharesOf } from '../resources/requirement-shares';
-import { judgeLessons, type JudgedCandidate, type LessonJudgement, type MoveJudgement } from './lesson-judge';
+import { judgeLessons, placementChanged, type JudgedCandidate, type LessonJudgement, type MoveJudgement } from './lesson-judge';
+import { exemptionsOf, keepExemptions, type ExemptableRule } from './lesson-exemption';
 import { lessonRefusalText, lessonRefusedConflict } from './lesson-refusal';
 import type { JudgeLessonsDto } from './dto/judge-lessons.dto';
 import { ConflictReads } from './conflict-reads';
@@ -178,6 +179,11 @@ export interface MasterLessonResult {
   endDate: string | null;
   extraGroupIds: string[];
   studentIds: string[];
+  /**
+   * The rules of the board the lesson stands against on purpose, by name (Undantag med flit): `FRAME`, `LUNCH`. Said only when it has any, so a
+   * lesson without one is the object it was before the column. It is for the time it was given for (MasterLessons_exemption_ends).
+   */
+  exemptFrom?: string[];
 }
 
 /**
@@ -187,6 +193,15 @@ export interface MasterLessonResult {
 export interface BlockSplitWarning {
   code: typeof BLOCK_SPLIT;
   params: { block: string };
+}
+
+/**
+ * A lesson stood against a rule of the board on purpose (Undantag med flit), and this edit ended it: the time it was given for is no
+ * more, or the lock it rests on is off, or the lesson went to the tray. `rules` are the names, comma-joined (flat params).
+ */
+export interface ExemptionEndedWarning {
+  code: typeof EXEMPTION_ENDED;
+  params: { rules: string };
 }
 
 /** Which of the lesson's two teachers a Lärarens dag warning is about. */
@@ -254,6 +269,7 @@ export type TeacherDayWarning =
  * none is a refusal.
  */
 export type LessonWarning =
+  | ExemptionEndedWarning
   | StaffingWarning
   | DistributionWarning
   | ShareWarning
@@ -285,6 +301,12 @@ export interface UpdateMasterLessonResult extends MasterLessonResult {
    * TEACHER_WEEK_*). Empty when nothing was found.
    */
   warnings: LessonWarning[];
+  /**
+   * Låset vid en flytt (E4, beslut 2): this PATCH moved an unlocked lesson (another day, clock or weeks, or back from the tray) and the
+   * server locked it, so that the next Generera does not lay it again where the hand edit moved it from. Said only when the server did it, never for
+   * a lock the request asked for or a lesson that was locked: the page tells the reader "Flyttad och låst" and gives Lås upp.
+   */
+  lockedByMove?: true;
 }
 
 /** A block card moved as one (moveBlockCard): every member, as written. */
@@ -318,6 +340,8 @@ export interface LockBlockResult {
   parked: number;
 }
 
+/** The warning `code` of an exemption an edit ended. */
+export const EXEMPTION_ENDED = 'EXEMPTION_ENDED';
 /** The problem `code` of a card whose lessons no longer stand together. */
 export const BLOCK_CARD_STALE = 'BLOCK_CARD_STALE';
 /** The problem `code` of lessons that are not one block's card. */
@@ -468,9 +492,13 @@ export class MasterLessonsService {
         tx,
         this,
         { academicYearId: dto.academicYearId, schoolId: year.schoolId, basis: rosters, gradeNumbering: year.gradeNumbering },
-        [{ lesson: { id: null, studentGroupId: dto.studentGroupId, subjectId: dto.subjectId }, candidate }],
+        [{ lesson: { id: null, studentGroupId: dto.studentGroupId, subjectId: dto.subjectId }, candidate, exempt: dto.exempt }],
       );
       if (!verdict!.ok) throw lessonRefusedConflict([{ verdict: verdict! }]);
+      // Undantag med flit: the rules the request named that the time really breaks, saved on the lesson by name. The lesson is locked in the
+      // same breath (an exemption rests on the lock), so a request that says the opposite is no request.
+      const exempted = verdict!.exempted;
+      if (exempted.length > 0 && dto.isLocked === false) throw new BadRequestException(EXEMPTION_NEEDS_LOCK);
 
       const created = await tx.masterLesson.create({
         data: {
@@ -484,7 +512,8 @@ export class MasterLessonsService {
           dayOfWeek: dto.dayOfWeek,
           startTime: parseTimeString(dto.startTime),
           endTime: parseTimeString(dto.endTime),
-          isLocked: dto.isLocked ?? false,
+          isLocked: exempted.length > 0 ? true : dto.isLocked ?? false,
+          ...(exempted.length > 0 ? { exemptFrom: exempted } : {}),
           // Said out loud although the column already defaults to false. This
           // is the hand-placed lesson — the one regeneration must never take
           // for its own — and the claim reads here, where an admin's intent
@@ -667,7 +696,9 @@ export class MasterLessonsService {
           }
         }
         if (candidate.startMinutes >= candidate.endMinutes) throw new BadRequestException('startTime must be before endTime.');
-        return { lesson, candidate, stands, landing, parking, occupies, placed };
+        // An exemption is asked of a lesson that is placed, not of one on the tray or going there (granskaren g467, L-3: the PATCH refuses it).
+        const exempt = parking || (lesson.isParked && move.isParked !== false) ? undefined : move.exempt;
+        return { lesson, candidate, stands, landing, parking, occupies, placed, exempt };
       });
 
       const judged = planned.flatMap((entry, index) => (entry.parking || entry.placed ? [] : [index]));
@@ -676,11 +707,12 @@ export class MasterLessonsService {
         this,
         { academicYearId: leader.academicYearId, schoolId: leader.school.id, basis: rosters },
         judged.map((index) => {
-          const { lesson, candidate, stands } = planned[index]!;
+          const { lesson, candidate, stands, exempt } = planned[index]!;
           return {
             lesson: { id: lesson.id, studentGroupId: lesson.studentGroupId, subjectId: lesson.subjectId },
             candidate,
             stands,
+            exempt,
             excludeIds: ids,
             // The others as they would stand, and only the ones that land on this candidate's own day.
             alongside: planned
@@ -697,6 +729,9 @@ export class MasterLessonsService {
           ok: !entry.placed && (verdict ? verdict.ok : true),
           ...(entry.placed ? { placed: true as const } : {}),
           refusals: (verdict?.refusals ?? []).map((refusal) => ({ ...refusal, text: lessonRefusalText(refusal) })),
+          // What the answer yes to the move's `exempt` would save, and whether a refusal could be let through by one at all.
+          exempted: verdict?.exempted ?? [],
+          exemptable: verdict?.exemptable ?? false,
         };
       });
       return { ok: moves.every((move) => move.ok), moves };
@@ -803,29 +838,57 @@ export class MasterLessonsService {
         throw new BadRequestException('startTime must be before endTime.');
       }
       if (lesson.fromPlacement) assertPlacedLessonStands(lesson, candidate);
+      // Undantag med flit: a lesson from a förläggning stands as the post says, and no exemption is given it here.
+      if (lesson.fromPlacement && (dto.exempt?.length ?? 0) > 0) throw new BadRequestException(EXEMPTION_NOT_FOR_PLACED);
+      // Only for a lesson that stays on the tray. The request that parks a lesson may carry `exempt` (Gör om of a parking sends the snapshot of the
+      // lesson as it stood, exemption and all): parking is not judged and ends the exemption, so nothing is saved and nothing is refused.
+      if ((dto.exempt?.length ?? 0) > 0 && lesson.isParked && dto.isParked !== false) {
+        throw new BadRequestException(EXEMPTION_NOT_FOR_TRAY);
+      }
+
+      // Where the lesson stands now, as the judge reads it: for LÅT STÅ below, and for whether an exemption it carries is still for this time.
+      const was: JudgedCandidate = {
+        dayOfWeek: lesson.dayOfWeek,
+        startMinutes: toMinutes(lesson.startTime),
+        endMinutes: toMinutes(lesson.endTime),
+        teacherId: lesson.teacherId,
+        coTeacherId: lesson.coTeacherId,
+        roomId: lesson.roomId,
+        extraGroupIds: lesson.extraGroups.map((entry) => entry.studentGroupId),
+        recurrence: lesson.recurrence,
+        startDate: lesson.startDate,
+        endDate: lesson.endDate,
+      };
+      // The rules the request answered yes to that the time really breaks (the judge's `exempted`): what is saved on the lesson.
+      let granted: ExemptableRule[] = [];
 
       // A lesson being set aside occupies nothing, so there is nothing for it
       // to clash with — the whole point of the tray is that A can leave slot X
       // while B is still there. Everything else, including putting a parked
       // lesson back, is a placement and is checked like one.
       const parking = dto.isParked === true;
-      if (!parking) {
+      // A lock, an unlock or an empty save moves nothing and changes neither who nor what is in the way: the clash rule has nothing to be asked
+      // that it did not find before the edit, and a lesson that is double-booked may be locked or unlocked all the same (granskaren g461, L-5:
+      // "lås allt jag har ändrat" met a refusal for each such lesson). A move, a room, a teacher, classes or pupils, and an exemption named, are asked.
+      const changesNothingJudged =
+        !lesson.isParked &&
+        dto.exempt === undefined &&
+        candidate.dayOfWeek === was.dayOfWeek &&
+        candidate.startMinutes === was.startMinutes &&
+        candidate.endMinutes === was.endMinutes &&
+        candidate.teacherId === was.teacherId &&
+        (candidate.coTeacherId ?? null) === (was.coTeacherId ?? null) &&
+        candidate.roomId === was.roomId &&
+        candidate.recurrence === was.recurrence &&
+        (candidate.startDate?.getTime() ?? null) === (was.startDate?.getTime() ?? null) &&
+        (candidate.endDate?.getTime() ?? null) === (was.endDate?.getTime() ?? null) &&
+        sameIds(candidate.extraGroupIds, was.extraGroupIds ?? []) &&
+        sameIds(candidate.studentIds, lesson.participants.map((entry) => entry.studentId));
+      if (!parking && !changesNothingJudged) {
         // LÅT STÅ (lesson-judge.ts): the board's and the other schools' rules are asked of what the edit moves, so a
         // lesson that already stands against one of them may be given another room or lock. A lesson put back from
         // the tray stands nowhere, and is asked everything; one edited while it stays on the tray occupies nothing,
         // and its remembered place is asked nothing.
-        const was: JudgedCandidate = {
-          dayOfWeek: lesson.dayOfWeek,
-          startMinutes: toMinutes(lesson.startTime),
-          endMinutes: toMinutes(lesson.endTime),
-          teacherId: lesson.teacherId,
-          coTeacherId: lesson.coTeacherId,
-          roomId: lesson.roomId,
-          extraGroupIds: lesson.extraGroups.map((entry) => entry.studentGroupId),
-          recurrence: lesson.recurrence,
-          startDate: lesson.startDate,
-          endDate: lesson.endDate,
-        };
         const [verdict] = await judgeLessons(
           tx,
           this,
@@ -841,12 +904,27 @@ export class MasterLessonsService {
               },
               candidate,
               stands: lesson.isParked ? (dto.isParked === false ? null : candidate) : was,
+              exempt: dto.exempt,
             },
           ],
         );
         // The exception filter forwards `message` as the problem detail, and a code with flat params beside it.
         if (!verdict!.ok) throw lessonRefusedConflict([{ verdict: verdict! }]);
+        granted = verdict!.exempted;
       }
+      if (granted.length > 0 && dto.isLocked === false) throw new BadRequestException(EXEMPTION_NEEDS_LOCK);
+      /*
+       * UNDANTAG MED FLIT, for the time it was given for. An exemption the lesson carries ends with an edit that is not asked yes again:
+       * it moved (another day, clock, weeks or classes: a placement the judge asked everything of, and which holds), its lock is taken
+       * off, or it goes to the tray. A request that names `exempt` says what the lesson is exempt from NOW, whatever it was before: the
+       * rules it named that the time breaks, and `[]` takes it back. The trigger MasterLessons_exemption_ends ends it for any writer that
+       * leaves it standing across such an edit; this is the same rule said by the writer that knows.
+       */
+      const stored = exemptionsOf(lesson.exemptFrom);
+      const placedAgain = lesson.isParked ? dto.isParked === false : placementChanged(candidate, was);
+      const endsExemption =
+        stored.length > 0 && dto.exempt === undefined && (placedAgain || dto.isLocked === false || dto.isParked === true);
+      if (granted.length > 0) await keepExemptions(tx);
 
       /*
        * Behörighet for whoever this PATCH puts on the lesson — the timplan's
@@ -928,6 +1006,7 @@ export class MasterLessonsService {
       // move: the dialog's every save. Handing it to the school here would
       // leave its whole block refused as partly locked by a room change.
       const restatesWindow = inBlock && !movesTheLesson;
+      const locksByMove = movesTheLesson && !inBlock && !lesson.isLocked && !lesson.fromPlacement && dto.isLocked !== true;
       if (block && blockMove?.kind === 'split') {
         warnings.push({ code: BLOCK_SPLIT, params: { block: block.name } });
       }
@@ -947,6 +1026,10 @@ export class MasterLessonsService {
           ...(dto.teacherId !== undefined ? { teacherId: dto.teacherId } : {}),
           ...(dto.coTeacherId !== undefined ? { coTeacherId: dto.coTeacherId } : {}),
           ...(dto.isLocked !== undefined ? { isLocked: dto.isLocked } : {}),
+          // Låset vid en flytt (E4, beslut 2): a lesson moved by hand is the school's and is locked, in sight (`lockedByMove`), or the next Generera
+          // lays it where it was. Not for a lock the request set or took off itself, and not for a lesson of a parallel block, whose lock is the block's.
+          ...(locksByMove ? { isLocked: true } : {}),
+          ...(dto.exempt !== undefined || endsExemption ? { exemptFrom: dto.exempt !== undefined ? granted : [] } : {}),
           ...(dto.recurrence !== undefined ? { recurrence: dto.recurrence } : {}),
           ...(dto.startDate !== undefined
             ? { startDate: parseDateOrNull(dto.startDate) }
@@ -995,6 +1078,8 @@ export class MasterLessonsService {
             : blockMove?.kind === 'split'
               ? { isGenerated: false }
               : {}),
+          // An exemption rests on the lock: granted, the lesson is locked whatever the block's card said of it.
+          ...(granted.length > 0 ? { isLocked: true } : {}),
           ...(dto.extraGroupIds !== undefined
             ? {
                 extraGroups: {
@@ -1018,6 +1103,9 @@ export class MasterLessonsService {
         },
         select: LESSON_SELECT,
       });
+      // What the edit ended, said from the row as it is now (the trigger's say included), unless the request itself took it back.
+      const lostRules = dto.exempt === undefined ? stored.filter((rule) => !exemptionsOf(updated.exemptFrom).includes(rule)) : [];
+      if (lostRules.length > 0) warnings.push({ code: EXEMPTION_ENDED, params: { rules: lostRules.join(',') } });
 
       // In DRAFT the edit is a draft: the calendar keeps what was published
       // until a publish carries the change over (src/publication).
@@ -1150,7 +1238,7 @@ export class MasterLessonsService {
         });
       }
 
-      return { ...after, propagatedLessons, removedCalendarLessons, warnings };
+      return { ...after, propagatedLessons, removedCalendarLessons, warnings, ...(locksByMove ? { lockedByMove: true as const } : {}) };
     });
   }
 
@@ -1524,7 +1612,11 @@ export class MasterLessonsService {
       const results: MasterLessonResult[] = [];
       const notices: { lesson: (typeof lessons)[number]; after: MasterLessonResult }[] = [];
       for (const lesson of moving) {
-        const updated = { ...lesson, dayOfWeek: dto.dayOfWeek, startTime, endTime };
+        // A member that moves loses an exemption it carried (MasterLessons_exemption_ends): the card is judged against every rule, asked of
+        // no one's yes, and an exemption is for the time it was given for. The row the trigger wrote is not read back here, so it is said here.
+        const endedRules = sameSlot(landing, origin) ? [] : exemptionsOf(lesson.exemptFrom);
+        const updated = { ...lesson, dayOfWeek: dto.dayOfWeek, startTime, endTime, ...(endedRules.length > 0 ? { exemptFrom: [] } : {}) };
+        if (endedRules.length > 0) warnings.push({ code: EXEMPTION_ENDED, params: { rules: endedRules.join(',') } });
         const { moved, removed } =
           dto.propagate === false || mode === 'DRAFT'
             ? { moved: 0, removed: 0 }
@@ -3075,6 +3167,12 @@ export class MasterLessonsService {
 
 /** The problem `code` of an edit that would move or change a förlagd lesson (Förlagda poster). */
 export const LESSON_IS_PLACED = 'LESSON_IS_PLACED';
+/** An exemption rests on the lock: a request that grants one and takes the lock off in the same breath contradicts itself. */
+const EXEMPTION_NEEDS_LOCK = 'exempt: an exemption is a locked lesson; isLocked cannot be false in the same request.';
+/** A lesson on the tray occupies nothing, so it stands against no rule and is given no exemption (granskaren g467, L-3). */
+const EXEMPTION_NOT_FOR_TRAY = 'exempt: a lesson on the tray is given no exemption; put it back first.';
+/** A lesson Generera wrote from a förläggning stands as the post says, and no exemption is given it here. */
+const EXEMPTION_NOT_FOR_PLACED = 'exempt: a lesson Generera wrote from a förläggning is given no exemption; change the förläggning.';
 
 /**
  * FÖRLAGDA POSTER: a lesson Generera wrote from a förläggning on its
@@ -3158,6 +3256,7 @@ const LESSON_SELECT = {
   endTime: true,
   isLocked: true,
   isParked: true,
+  exemptFrom: true,
   recurrence: true,
   startDate: true,
   endDate: true,
@@ -3281,6 +3380,8 @@ interface LessonRecord {
   endTime: Date;
   isLocked: boolean;
   isParked: boolean;
+  /** Optional for a record built by hand (a fake); the row always has it. */
+  exemptFrom?: readonly string[];
   recurrence: LessonRecurrence;
   startDate: Date | null;
   endDate: Date | null;
@@ -3309,6 +3410,8 @@ function toResult(lesson: LessonRecord): MasterLessonResult {
     endDate: toDateStringOrNull(lesson.endDate),
     extraGroupIds: lesson.extraGroups.map((entry) => entry.studentGroupId),
     studentIds: lesson.participants.map((entry) => entry.studentId),
+    // Only a lesson with an exemption says so: every other lesson is the object it was before the column (versions, the change log, a diff).
+    ...(exemptionsOf(lesson.exemptFrom).length > 0 ? { exemptFrom: exemptionsOf(lesson.exemptFrom) } : {}),
   };
 }
 
@@ -3320,6 +3423,11 @@ function toDateStringOrNull(value: Date | null): string | null {
 function parseDateOrNull(value: string | null | undefined): Date | null {
   if (value === null || value === undefined || value === '') return null;
   return new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
+}
+
+/** The same ids, whatever the order. */
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && [...a].sort().join(',') === [...b].sort().join(',');
 }
 
 function toMinutes(time: Date): number {

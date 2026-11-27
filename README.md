@@ -18,8 +18,8 @@ teacher/student schedule views and offline-first attendance tracking.
 ┌──────────────┐   reads (RLS)    ┌────────────────────┐
 │  Next.js web │─────────────────▶│                    │
 │  (sv/en)     │   mutations      │  Supabase Postgres │
-└──────┬───────┘        │         │  (RLS on all       │
-       │                ▼         │   12 tables)       │
+└──────┬───────┘        │         │  (RLS on every     │
+       │                ▼         │   table)           │
 ┌──────────────┐   ┌─────────┐    │                    │
 │ Expo mobile  │──▶│ NestJS  │───▶└────────────────────┘
 │ (attendance) │   │ gateway │ Prisma withRls()
@@ -46,8 +46,9 @@ teacher/student schedule views and offline-first attendance tracking.
   guardians. Supabase sign-in, tokens in `expo-secure-store`, offline
   attendance queue in local SQLite with exponential-backoff sync, read-only
   schedule tab.
-- **Database** (`prisma/`): 12-table multi-tenant schema; RLS enabled on every
-  table (see “Security model” below).
+- **Database** (`prisma/`): multi-tenant schema (`prisma/schema.prisma`, 184
+  models on 2026-11-25); RLS enabled on every table (see “Security model”
+  below).
 
 ## The core workflow
 
@@ -165,10 +166,11 @@ the API on `:4000` and the solver on `:8000`.
 
 ## Bootstrapping the first admin
 
-Migrations create the schema but no data. Create a `Schools` row, sign up a
-user through Supabase Auth, then insert a `Users` row with `role =
-'SCHOOL_ADMIN'` and `authId` set to the Supabase `auth.users.id`. From there,
-everything else happens in the web UI.
+Migrations create the schema but no data. `npm run operator:new-school`
+makes a school and its first administrator (a `Schools` row, a `Users` row with
+`role = 'SCHOOL_ADMIN'` and the Supabase login's `authId`, and the invitation
+mail), against the database the operator names and reading no `.env` file; see
+`docs/DEPLOYMENT.md` §7. From there, everything else happens in the web UI.
 
 ## Security model
 
@@ -177,7 +179,10 @@ Follows the non-negotiable constraints in `.cursorrules`:
 - **Privacy by design.** All keys are anonymized UUIDv4. PII lives exclusively
   on `Users` and is stripped at the gateway — the AI engine and any external
   service only ever see fresh, per-request anonymous ids.
-- **RLS everywhere.** All 12 tables have row-level security: students see
+- **RLS everywhere.** Every table in the schema has row-level security (section
+  12 of the RLS suite, `scripts/test/rls-policies.sql`, fails the build for a
+  table that has it off, and for a table with it on and no policy unless the
+  table is reached only through functions): students see
   their own data and their group's schedule; teachers see their school and may
   write attendance only for lessons they are assigned to; admins are scoped to
   their school. Clients read directly from Supabase under RLS; mutations go

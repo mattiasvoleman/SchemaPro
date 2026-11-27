@@ -57,7 +57,7 @@ from app.solver.relaxation import (
     upper_bound,
 )
 from app.solver.servings import allowed_starts
-from app.solver import staged
+from app.solver import cliques, staged, years
 from app.solver.stage_clock import StageClock
 from app.schemas.schedule import (
     PlaceLimits,
@@ -79,6 +79,7 @@ from app.schemas.schedule import (
     LunchServing,
     OptimizeScheduleRequest,
     OptimizeScheduleResponse,
+    PinnedLesson,
     PreviousLesson,
     Rast,
     ScheduledLesson,
@@ -1673,6 +1674,7 @@ class SchedulerSolver:
         use_assumptions: bool,
         include_objective: bool = True,
         relax: Relax | None = None,
+        by_cliques: bool = False,
     ) -> tuple[
         cp_model.CpModel,
         AssumptionRegistry,
@@ -1681,6 +1683,10 @@ class SchedulerSolver:
         dict[tuple[UUID, int], cp_model.IntVar],
     ]:
         """Construct the CP-SAT model.
+
+        `by_cliques` posts the pairs of groups that share a pupil as rows over cliques of them (`_add_group_no_overlap`,
+        app/solver/cliques.py): the same rule in fewer rows. Only the full model of a strict solve is built so; every
+        other build, phase 1a's satisfaction model among them, keeps one row per pair.
 
         `relax` is Bästa möjliga schema's: when given, the rules on the list in
         app/solver/relaxation.py are built as priced rows (a slack at the
@@ -1730,7 +1736,7 @@ class SchedulerSolver:
         add_pins(model, registry, decisions, rooms, self._grid)
         self._add_capacity_constraints(model, registry, decisions, rooms)
         self._add_teacher_no_overlap(model, decisions)
-        self._add_group_no_overlap(model, decisions, request.group_conflicts)
+        self._add_group_no_overlap(model, decisions, request.group_conflicts, by_cliques=by_cliques)
         room_plan = self._add_room_allocation(
             model,
             decisions,
@@ -5361,6 +5367,106 @@ class SchedulerSolver:
     # See _solve_on_planned_sites.
     TRAVEL_PLANNED_SHARE = 0.6
     SITE_PLAN_CAP_SECONDS = 5.0
+    # Årskurs för årskurs (M8 PR 5), the road between phase 1a and 1b: the share of what is left of the budget that all the
+    # years' steps may take together, and the most seconds they may take. Past either the week goes on to phase 1b as it always
+    # did. A third because phase 1b is the search that has found a timetable where 1a had not (the clone), and a week years
+    # lays is laid in a minute: the measured weeks took 1 to 5 deterministic seconds, 27 s of clock on eight cores. See _lay_by_years.
+    YEARS_SHARE = 1.0 / 3.0
+    YEARS_CAP_SECONDS = 90.0
+
+    def _years_solver(self, request: OptimizeScheduleRequest, seconds: float) -> cp_model.CpSolver:
+        """The CpSolver of one year's step (`_lay_by_years`): the generation solver, under a name of its own.
+
+        A STEP IS NOT THE WEEK'S SEARCH. A solution of one year's step is a timetable of a part of the week, and a
+        measurement that took the first solution of any generation solver for the week's first timetable (benchmarks/
+        corpus_measure.py) would stop at the first year. So the steps ask for their solver here, the seed and the workers are
+        the request's as for any generation solve, and what a measurement does with them is its own."""
+        return self._generation_solver(request, seconds)
+
+    def _lay_by_years(self, request: OptimizeScheduleRequest, seconds: float) -> list[PreviousLesson] | None:
+        """Lay the week one year at a time, each year held where it was laid; the timetable as hints, None where it did not come.
+
+        THE ROAD BETWEEN PHASE 1a AND 1b (M8 PR 5, app/solver/years.py for the idea and the measurement). The week is cut
+        into its years (`years.units_of`), the one that is hardest to lay first, and each step is the engine's own satisfaction
+        model of the years so far: the ones already laid pinned where they were laid (rooms free), the year being laid free,
+        every later year left out. The last step is the whole week, with every year but the last held, and what it finds is a
+        timetable of the whole week that keeps every rule of the week.
+
+        WHY BETWEEN, AND NOT BEFORE 1a. A week that phase 1a lays is laid exactly as it was: no week the engine lays today
+        takes another road, and the nightly gate (which stops at the first timetable a search finds) measures the same
+        search it always did. What the road costs is phase 1a's whole slice on a week it then lays (at most
+        CLEAN_SAT_CAP_SECONDS, of a budget of many times that), and what it buys is a first timetable for weeks that neither
+        encoding finds in their time.
+
+        THE STEPS ARE GIVEN NO LUNCH HINTS, and that is measured: phase 1a's model is hinted with the meals the lunch stage settled
+        (a warm start worth 1.3x there), and the same hints, the week's or a step's own, laid 6 of 15 cases of five weeks at three
+        seeds where steps with none laid 11 (DEPLOYMENT §35.9). The meals are placed by the week's last step like everything else.
+
+        NOTHING IS PROVED AND NOTHING IS REFUSED HERE. A step that finds no timetable (in its time, or INFEASIBLE with the
+        years above it held, which says only that those years were a bad place to start), a step the engine refuses to build, or
+        a year whose lessons are not the requirement's places: None, and phase 1b goes on as it would have, on what is left of
+        the budget. `seconds` is all of it, the builds included. What comes back is a hint for phase 1b's model: a complete
+        timetable of starts, so that phase 1b's search begins in a solution of the week and finishes it (the rooms and the
+        meals), where it would have searched for one.
+        """
+        units = years.units_of(request)
+        if units is None:
+            return None
+        self._enter_stage("YEARS")
+        began = time.monotonic()
+        edge = began + seconds
+        by_id = {requirement.id: requirement for requirement in request.requirements}
+        held: dict[UUID, list[PinnedLesson]] = {}
+        laid: list[PreviousLesson] = []
+        logger.info(
+            "years steps=%d requirements=%s budget=%.1f [requestId=%s]",
+            len(units), [len(unit.ids) for unit in units], seconds, request.request_id,
+        )
+        for number, unit in enumerate(units, start=1):
+            step = years.step_request(request, unit.ids, held, f"years-{number}")
+            step_began = time.monotonic()
+            try:
+                model, _, decisions, plan, _ = self._build_model(step, use_assumptions=False, include_objective=False)
+            except InvalidScheduleInputError as refusal:
+                logger.info("years step=%d/%d refused to build: %s [requestId=%s]", number, len(units), refusal.code, request.request_id)
+                return None
+            # The meals the week's lunch stage settled, for the classes this step has: the same warm start phase 1a's model is
+            # given, and the lessons are searched around meals that have a place.
+            # The previous schedule's slots of the year being laid: where phase 1b would have started (the steps are built
+            # without the objective, so no hint of the disruption term is in them and none is named twice).
+            self._hint_previous_lessons(model, decisions, step.previous_lessons)
+            left = edge - time.monotonic()
+            if left < self.MIN_PHASE_SECONDS:
+                logger.info("years step=%d/%d: no time left for its search [requestId=%s]", number, len(units), request.request_id)
+                return None
+            solver = self._years_solver(step, left)
+            code = _solve_guarded(solver, model, what=f"year step {number}", request_id=request.request_id)
+            logger.info(
+                "years step=%d/%d years=%s free=%d held=%d status=%s seconds=%.1f [requestId=%s]",
+                number, len(units), list(unit.years), len(unit.ids), len(held), solver.StatusName(code),
+                time.monotonic() - step_began, request.request_id,
+            )
+            if code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                return None
+            placed: dict[UUID, list[ScheduledLesson]] = defaultdict(list)
+            for lesson in self._extract_lessons(solver, decisions, step.rooms, plan):
+                if lesson.requirement_id in unit.ids:
+                    placed[lesson.requirement_id].append(lesson)
+            for requirement_id in unit.ids:
+                requirement = by_id[requirement_id]
+                try:
+                    held[requirement_id] = years.held_of(requirement, placed[requirement_id])
+                except ValueError as odd:
+                    logger.warning("years step=%d/%d: %s [requestId=%s]", number, len(units), odd, request.request_id)
+                    return None
+                laid.extend(
+                    PreviousLesson(
+                        requirementId=lesson.requirement_id, dayOfWeek=lesson.day_of_week, startTime=lesson.start_time,
+                    )
+                    for lesson in placed[requirement_id]
+                )
+        logger.info("years laid %d lessons in %.1f s [requestId=%s]", len(laid), time.monotonic() - began, request.request_id)
+        return laid
 
     def _solve_on_planned_sites(
         self,
@@ -6296,6 +6402,7 @@ class SchedulerSolver:
         rooms = request.rooms
         model, _, decisions, room_plan, lunch_full = self._build_model(
             request, use_assumptions=False, include_objective=True,
+            by_cliques=self._settings.solver_group_cliques,
         )
         feas_model, _, feas_decisions, feas_plan, lunch_feas = self._build_model(
             request, use_assumptions=False, include_objective=False,
@@ -6497,9 +6604,36 @@ class SchedulerSolver:
                 return self._timeout_answer(
                     request, _timeout_conflicts(), week_load_cut=bool(week_load_cut),
                 )
+            # ---- phase 1y: the week a year at a time -----------------------
+            # Between the two searches, on a week without the walk (whose planned sites it does not plan) that phase 1a
+            # did not lay: a timetable it finds is the hint phase 1b starts from. See _lay_by_years.
+            on_the_road = travel is None and remaining >= 2 * self.MIN_PHASE_SECONDS
+            laid = (
+                self._lay_by_years(request, min(remaining * self.YEARS_SHARE, self.YEARS_CAP_SECONDS))
+                if on_the_road
+                else None
+            )
+            if on_the_road:
+                # WHAT THE ROAD TOOK IS GONE FROM THE BUDGET WHETHER IT LAID A WEEK OR NOT: a road that ended in nothing (a step
+                # out of time, INFEASIBLE with the years above it held) has spent up to YEARS_CAP_SECONDS, and phase 1b has what
+                # is LEFT. `remaining` was read before the road, and phase 1b given it as it stood ran that long past the budget,
+                # and past the ceiling (budget + probe + headroom) with it: a 503 where the week's TIMEOUT and its account were due.
+                remaining = _remaining()
+                if remaining < self.MIN_PHASE_SECONDS:
+                    logger.warning(self._timeout_diagnosis(
+                        request, "phase 1a and the years' steps used the whole budget",
+                    ))
+                    return self._timeout_answer(
+                        request, _timeout_conflicts(), week_load_cut=bool(week_load_cut),
+                    )
             self._enter_stage("SEARCH_CLONE")
             clone_model = model.Clone()
             clone_model.ClearObjective()
+            if laid is not None:
+                # The clone inherits the hints the full model's disruption term made (the previous schedule's); a variable
+                # hinted twice is a model CP-SAT rejects, so the years' timetable replaces them.
+                clone_model.ClearHints()
+                self._hint_previous_lessons(clone_model, decisions, laid)
             phase1b = self._generation_solver(request, remaining)
             # Raised, not degraded, when both attempts throw: its UNKNOWN
             # would be the TIMEOUT below. See _solve_guarded.
@@ -12657,6 +12791,8 @@ class SchedulerSolver:
         model: cp_model.CpModel,
         decisions: list[LessonDecision],
         group_conflicts: list[tuple[UUID, UUID]] | None = None,
+        *,
+        by_cliques: bool = False,
     ) -> None:
         """One student group is one set of students: no overlapping lessons.
 
@@ -12694,6 +12830,11 @@ class SchedulerSolver:
         BOTH LAYERS ONCE PER WEEK THE PUPILS HAVE (week_parts), as the
         teacher's: 7A's slöjd udda veckor and hemkunskap jämna veckor share an
         hour, and nothing of 7A's every week may sit beside either.
+
+        `by_cliques` WRITES THE SECOND LAYER AS FEWER ROWS (M8 PR 6, app/solver/cliques.py): a NoOverlap over the lessons of
+        a CLIQUE of the pair graph (groups that all pair, two and two) says exactly what its pairs say, so a cover of the
+        relation by cliques is the same rule. Nothing a pair does not say is said: a path (A–B, B–C) is two rows, since A and
+        C may sit at once.
         """
         grouped: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
@@ -12706,6 +12847,16 @@ class SchedulerSolver:
                     model.AddNoOverlap(
                         [pupil_padded_of(model, decision) for decision in part],
                     )
+
+        if by_cliques:
+            for clique in cliques.cover(list(group_conflicts or []), set(grouped)):
+                combined = [decision for group_id in clique for decision in grouped[group_id]]
+                # NEVER JOINED (capped=False): week_parts joins the parts of a LARGE row into unions, stricter than the rule,
+                # and a row over a clique holds the lessons of many pairs at once, so it can be large where no pair's row is.
+                for _, part in week_parts(combined, _parity, capped=False):
+                    if len(part) > 1:
+                        model.AddNoOverlap([pupil_padded_of(model, decision) for decision in part])
+            return
 
         for first_id, second_id in group_conflicts or []:
             if first_id == second_id:

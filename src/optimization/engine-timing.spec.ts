@@ -17,6 +17,7 @@ import {
   isEngineCeilingBody,
   parseEngineTiming,
   routeOf,
+  startLessonsCapability,
   supportsDeadline,
   waitMsAtLeast,
   waitMsFor,
@@ -96,6 +97,19 @@ describe('parseEngineTiming', () => {
     // A capability of some later engine is not this one: only the field this gateway sends counts.
     expect(supportsDeadline(parseEngineTiming({ ...PRODUCTION_BODY, capabilities: ['somethingElse'] }))).toBe(false);
     expect(supportsDeadline(null)).toBe(false);
+  });
+
+  it('tells an engine that can be sent startLessons from one that said what it can take without it, and from one that said nothing', () => {
+    const says = (capabilities: string[]) => startLessonsCapability(parseEngineTiming({ ...PRODUCTION_BODY, capabilities }));
+
+    expect(says(['deadlineSeconds', 'startLessons'])).toBe('YES');
+    // An engine that said what it can take and did not list the field is never sent it.
+    expect(says(['deadlineSeconds'])).toBe('NO');
+    expect(says([])).toBe('NO');
+    // Only the field this gateway sends counts, spelled as it is sent.
+    expect(says(['startlessons', 'start'])).toBe('NO');
+    // An engine that said nothing (not up when the API started, or older than /timing) is sent it once and answers for itself.
+    expect(startLessonsCapability(null)).toBe('UNKNOWN');
   });
 });
 

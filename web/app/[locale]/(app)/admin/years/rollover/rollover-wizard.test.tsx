@@ -64,6 +64,8 @@ vi.mock("@/i18n/navigation", () => ({
 }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
+/** The offer the created-toast carries (Ett schema som start): lay the new year's schedule from this year's. */
+const OFFER = expect.objectContaining({ action: expect.objectContaining({ label: "Lägg schemat för 2027/28 från 2026/27" }) });
 // The reader's profile (Roller i skolan): none read reads as a full administrator.
 const me = vi.hoisted(() => ({ adminProfile: undefined as string | undefined }));
 vi.mock("@/components/profile-context", () => ({
@@ -417,7 +419,7 @@ describe("RolloverWizard", () => {
       graduatingGradeLevel: 9,
       planHash: HASH,
     });
-    expect(toast.success).toHaveBeenCalledWith("2027/28 skapades med 3 grupper och 24 timplansposter.");
+    expect(toast.success).toHaveBeenCalledWith("2027/28 skapades med 3 grupper och 24 timplansposter.", OFFER);
   });
 
   it("does not preview again once the year is created, where the gateway would answer that it already has a successor", async () => {
@@ -562,6 +564,7 @@ describe("RolloverWizard", () => {
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(
         "2027/28 skapades med 3 grupper, 24 timplansposter, 2 tjänster och 3 uppdrag.",
+        OFFER,
       ),
     );
   });
@@ -585,8 +588,90 @@ describe("RolloverWizard", () => {
     await waitFor(() => expect(create).toBeEnabled());
     await user.click(create);
     await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith("2027/28 skapades med 3 grupper och 24 timplansposter."),
+      expect(toast.success).toHaveBeenCalledWith("2027/28 skapades med 3 grupper och 24 timplansposter.", OFFER),
     );
+  });
+
+  it("offers, in the toast, to lay the new year's schedule from this year's: the action opens Generera on the new year with last year's schedule chosen", async () => {
+    post.mockImplementation(async (path: string, body: RolloverOptions) =>
+      path.endsWith("/preview")
+        ? previewFor(body)
+        : {
+            academicYear: { id: "y-new", name: body.name },
+            counts: { groups: 3, requirements: 24 },
+            staffing: { employments: 0, duties: 0, dutySlots: 0 },
+            planHash: HASH,
+          },
+    );
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: /Granska/ }));
+    const create = await screen.findByRole("button", { name: "Skapa 2027/28" });
+    await waitFor(() => expect(create).toBeEnabled());
+    await user.click(create);
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+
+    const options = toast.success.mock.calls[0]![1] as { duration: number; action: { label: string; onClick: () => void } };
+    // Long enough to be read and chosen: the page goes on to the list of years behind it.
+    expect(options.duration).toBeGreaterThanOrEqual(10_000);
+    expect(push).toHaveBeenCalledWith("/admin/years");
+    push.mockClear();
+    options.action.onClick();
+    expect(push).toHaveBeenCalledWith("/admin/generate?year=y-new&start=PREVIOUS_YEAR");
+  });
+
+  it("makes no offer to lay the schedule when the year rolled from is not the active one: Generera plans only the year after the active, so the link would open another year", async () => {
+    post.mockImplementation(async (path: string, body: RolloverOptions) =>
+      path.endsWith("/preview")
+        ? previewFor(body)
+        : {
+            academicYear: { id: "y-new", name: body.name },
+            counts: { groups: 3, requirements: 24 },
+            staffing: { employments: 0, duties: 0, dutySlots: 0 },
+            planHash: HASH,
+          },
+    );
+    // The year being rolled is the year after the active one (the active year is another): its successor is two years ahead.
+    const was = year.isActive;
+    year.isActive = false;
+    try {
+      const user = userEvent.setup();
+      renderWizard();
+      await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+      await user.click(screen.getByRole("button", { name: /Granska/ }));
+      const create = await screen.findByRole("button", { name: "Skapa 2027/28" });
+      await waitFor(() => expect(create).toBeEnabled());
+      await user.click(create);
+      await waitFor(() => expect(toast.success).toHaveBeenCalled());
+
+      expect(toast.success).toHaveBeenCalledWith("2027/28 skapades med 3 grupper och 24 timplansposter.", undefined);
+    } finally {
+      year.isActive = was;
+    }
+  });
+
+  it("makes no offer to lay the schedule from a year that has no lesson to lay it from", async () => {
+    post.mockImplementation(async (path: string, body: RolloverOptions) =>
+      path.endsWith("/preview")
+        ? previewFor(body, { skipped: [{ model: "MasterLesson", reason: "…", count: 0 }] })
+        : {
+            academicYear: { id: "y-new", name: body.name },
+            counts: { groups: 3, requirements: 24 },
+            staffing: { employments: 0, duties: 0, dutySlots: 0 },
+            planHash: HASH,
+          },
+    );
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: /Granska/ }));
+    const create = await screen.findByRole("button", { name: "Skapa 2027/28" });
+    await waitFor(() => expect(create).toBeEnabled());
+    await user.click(create);
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+
+    expect(toast.success).toHaveBeenCalledWith("2027/28 skapades med 3 grupper och 24 timplansposter.", undefined);
   });
 
   it("does not create on the second click of a double click on Nästa, and moves focus to the review", async () => {
