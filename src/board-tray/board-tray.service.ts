@@ -6,6 +6,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { MasterLessonsService, type CreateMasterLessonResult, type UpdateMasterLessonResult } from '../calendar/master-lessons.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
+import { lockCoversDemand } from '../optimization/locked-coverage';
 import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { REQUIREMENT_PLACEMENTS_STALE } from '../requirement-placements/placement-refusal';
@@ -240,8 +241,17 @@ export class BoardTrayService {
         tally.left += part.left;
         leftOfGroup.set(view.studentGroupId, (leftOfGroup.get(view.studentGroupId) ?? 0) + part.left);
         if (groupId !== undefined && view.studentGroupId !== groupId) continue;
+        // Of the post's own kind, and one that answers the post when it stands: the weeks it runs enclose the post's (lockCoversDemand, as the count
+        // reads a standing lesson). A parked lesson of every week beside a post of odd weeks is laid back as itself and answers nothing of the post,
+        // so the post would show the same brick again after the lay.
+        const shape = boardPostShape(posts.find((entry) => entry.id === view.id)!);
         const own = parked.filter(
-          (lesson) => lesson.studentGroupId === view.studentGroupId && lesson.subjectId === view.subjectId && lesson.teacherId === part.teacherId && lesson.minutes === part.minutes,
+          (lesson) =>
+            lesson.studentGroupId === view.studentGroupId &&
+            lesson.subjectId === view.subjectId &&
+            lesson.teacherId === part.teacherId &&
+            lesson.minutes === part.minutes &&
+            lockCoversDemand(lesson, shape),
         );
         const taken = own.slice(0, part.left);
         const partKey = createHash('sha256')
