@@ -28,7 +28,7 @@ export const ANALYSIS_ALIVE_SECONDS = 240;
 const ISO_TEXT = Prisma.raw(`'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'`);
 /**
  * What a lease looks like in the column: the time the service writes, to the millisecond. Anything else is no lease and the old rule judges
- * the analysis (the sweep of 20270313090000 reads it the same way). Not a cast: a value nobody wrote through the service cannot fail a start.
+ * the analysis (the sweep of 20270314090000 reads it the same way). Not a cast: a value nobody wrote through the service cannot fail a start.
  */
 const LEASE_SHAPE = Prisma.raw(String.raw`'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$'`);
 
