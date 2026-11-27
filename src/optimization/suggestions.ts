@@ -506,7 +506,10 @@ export function viewOf(stored: SuggestionsStored, teacherNames: ReadonlyMap<stri
 
 /** The Users ids a stored analysis names: whom the read has to look up. */
 export function teachersOfSuggestions(stored: SuggestionsStored | null): string[] {
-  return stored === null ? [] : [...new Set(stored.changes.flatMap((change) => change.teacherIds))];
+  // The analysis a RUNNING one was asked over is read in its place when the RUNNING one is abandoned (readAs), so its caps' teachers are named too.
+  return stored === null
+    ? []
+    : [...new Set([...stored.changes, ...(stored.previous?.changes ?? [])].flatMap((change) => change.teacherIds))];
 }
 
 /** The refusals of the engine's prechecks that a rule of the five gives (messages.py), by the families their codes are in. */

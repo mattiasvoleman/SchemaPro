@@ -143,6 +143,19 @@ describe('a run read with its analysis', () => {
       expect(view.suggestions!.changes[0]!.teacherNames).toEqual(['Anna Andersson']);
     });
 
+    it('names the teacher of a cap in the analysis an abandoned one was asked over, which is what the read gives back in its place (G6b)', async () => {
+      // The service reads the clock itself, so the analysis is made old by it and not by NOW.
+      const abandoned = runningSuggestions(new Date(Date.now() - 10 * 60 * 1000), done);
+      tx.optimizationJob.findUnique.mockResolvedValue(row({ suggestions: abandoned }));
+      tx.user.findMany.mockResolvedValue([{ id: TEACHER, firstName: 'Anna', lastName: 'Andersson' }]);
+
+      const view = await service.get(JOB_ID, testUser());
+
+      expect(tx.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: [TEACHER] } } }));
+      expect(view.suggestions).toMatchObject({ state: 'DONE', verdict: 'CHANGES' });
+      expect(view.suggestions!.changes[0]!.teacherNames).toEqual(['Anna Andersson']);
+    });
+
     it('reads no name for a run with no analysis', async () => {
       tx.optimizationJob.findUnique.mockResolvedValue(row());
       await service.get(JOB_ID, testUser());
