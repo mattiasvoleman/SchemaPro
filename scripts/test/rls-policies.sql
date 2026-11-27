@@ -18480,7 +18480,7 @@ BEGIN
        WHERE n.nspname = 'app' AND p.proname LIKE 'leave\_%' AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')) <> 15 THEN
     -- Six of the mentor's delegation, and eight of Ledighetspolicyn (20270205091000): the policy, the
     -- filing check, the policies' question about consent, its facts, the filing's notices, the answer, the job's pass and
-    -- the guardians' answers for the export, and the one of K6 (20270312090100): the person who filed a request takes it back.
+    -- the guardians' answers for the export, and the one of K6 (20270315090100): the person who filed a request takes it back.
     RAISE EXCEPTION 'functions: the API runs a leave function beyond its fifteen';
   END IF;
   IF (SELECT string_agg(conname || (CASE WHEN convalidated THEN '' ELSE ' (not valid)' END), ',' ORDER BY conname) FROM pg_constraint
@@ -70300,7 +70300,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Ledighetsansökan som familjen drar tillbaka (K6, 20270312090000 och 20270312090100), avsnitt 600 och 601. Ägarens sida är 600o i
+-- Ledighetsansökan som familjen drar tillbaka (K6, 20270315090000 och 20270315090100), avsnitt 600 och 601. Ägarens sida är 600o i
 -- rls-owner-checks.sql: vad som läses av notiser och vad CHECK:en och triggern nekar när ingen inloggad person finns.
 --
 --   600  den som ansökte drar tillbaka en ansökan som väntar, och ingen annan: inte en lärare, inte en administratör, inte efter ett beslut

@@ -7922,8 +7922,8 @@ Until now a family that had applied for leave and thought better of it had to as
 
 ### 42.1 What the migrations are
 
-- **`20270312090000`**: `ALTER TYPE "LeaveRequestStatus" ADD VALUE 'WITHDRAWN'`, alone in its file (a new enum value cannot be used in the transaction that adds it, so the second file may name it).
-- **`20270312090100`**:
+- **`20270315090000`**: `ALTER TYPE "LeaveRequestStatus" ADD VALUE 'WITHDRAWN'`, alone in its file (a new enum value cannot be used in the transaction that adds it, so the second file may name it).
+- **`20270315090100`**:
   - a `CHECK`, `LeaveRequests_a_withdrawn_request_has_no_decider`: a taken-back request has no decider (`decidedById` and `decidedAs` empty) and has the moment it was taken back in `decidedAt`, as `GUARDIAN_DECLINED` has its end there;
   - the trigger function `app.leave_requests_gate()` replaced with the K4 body **word for word** and three more rules (below);
   - the door **`app.leave_request_withdraw(p_request)`**, `SECURITY DEFINER`, `EXECUTE` for the API's role alone: `anon`, `authenticated` (PostgREST) and `service_role` have none. It needs a signed-in person (`LV403`, the opposite of the job doors of §40.1). It changes the row only if it is in the caller's school, the caller **filed it**, and it is `PENDING`, and answers whether it did, so the gateway can answer 409 without a second read.

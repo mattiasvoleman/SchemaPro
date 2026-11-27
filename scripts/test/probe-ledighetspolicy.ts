@@ -28,7 +28,7 @@
  *       once, forty rounds: a request is never decided without its consent, and nothing deadlocks
  *   mi  a pupil with a protected identity: the guardian is asked like any other; the staff's overview names
  *       nobody who answered
- *   mk  a request taken back (K6, 20270312090100): only by whoever filed it, only while it waits, nobody is told,
+ *   mk  a request taken back (K6, 20270315090100): only by whoever filed it, only while it waits, nobody is told,
  *       the notices that asked something of anybody are read, the mentor no longer reads it; a decision and a
  *       taking back at once: exactly one wins
  *

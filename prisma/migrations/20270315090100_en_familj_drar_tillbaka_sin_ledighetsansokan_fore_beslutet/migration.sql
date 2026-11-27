@@ -9,7 +9,7 @@
 --
 -- ## Vad det blir
 --
--- Den som ansökte kan dra tillbaka en ansökan som ännu väntar (PENDING). Ansökan får statusen WITHDRAWN (20270312090000) och tidpunkten i
+-- Den som ansökte kan dra tillbaka en ansökan som ännu väntar (PENDING). Ansökan får statusen WITHDRAWN (20270315090000) och tidpunkten i
 -- decidedAt, som GUARDIAN_DECLINEDs slut har den, och ingen beslutsfattare: en CHECK håller det. Regeln för det som redan är beslutat är att
 -- det inte dras tillbaka: en beviljad ansökan har skrivit frånvaro, och att ta tillbaka den är skolans beslut. Familjen ber skolan om det, som
 -- förut. En ansökan som en vårdnadshavares nej har avslutat (GUARDIAN_DECLINED) eller en som redan är tillbakadragen dras inte tillbaka igen.

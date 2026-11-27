@@ -8690,7 +8690,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Ledighetsansökan som familjen drar tillbaka (K6, 20270312090100), avsnitt 600o: det bara ägaren kan fråga. Raderna skrivs som ägaren
+-- Ledighetsansökan som familjen drar tillbaka (K6, 20270315090100), avsnitt 600o: det bara ägaren kan fråga. Raderna skrivs som ägaren
 -- (utan en inloggad person, så att triggern inte släpper in något annat än funktionen), funktionen körs med den ansökandes claims, och
 -- notiserna läses som ägaren, eftersom ingen API-roll läser en annan persons notiser.
 -- ---------------------------------------------------------------------------
