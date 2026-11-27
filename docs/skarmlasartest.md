@@ -161,6 +161,30 @@ Gör det här med VoiceOver på iPhone, eller i en smal webbläsare.
 | 5.3 | Öppna en tabell som är bredare än skärmen (till exempel Personer) | Tabellen går att nå med Tabb, och piltangenterna rullar den i sidled |
 | 5.4 | Öppna Tillgänglighetsredogörelse | Rubrik nivå 1 "Tillgänglighetsredogörelse för Rastra Schema", rubriker nivå 2 och 3 i den ordning Diggs mall har dem, och länken "göra en anmälan till Digg" |
 
+## 6. Utan inloggning: Pseudonymisera en fil
+
+Den öppna sidan `/sv/pseudonymisera` (och `/en/pseudonymisera`) har ingen inloggning och ingen meny. Gör avsnittet utan testkonton, med en liten påhittad CSV-fil som innehåller två namn, ett personnummer, en e-postadress och ett telefonnummer (till exempel `Lärare;Klass;Notis`, `Anna Exempel;7A;ring 070-123 45 67`). Använd aldrig en riktig skolfil.
+
+Avsnittet är skrivet för den som ska göra testet och har inte gjorts av någon: protokollet ska vara tomt tills en människa med skärmläsare har fyllt i det. Sidans automatiska granskning (axe, i dator- och mobilbredd, ljust och mörkt) är gjord och visar inte vad en skärmläsare säger.
+
+| Steg | Gör | Ska höra |
+| :-- | :-- | :-- |
+| 6.1 | Öppna sidan och lista landmärken och rubriker | Sidans titel "Pseudonymisera en fil", landmärkena huvudinnehåll (och sidhuvud och sidfot), rubrik nivå 1 "Pseudonymisera en fil" och rubrik nivå 2 för löftet "Filen lämnar aldrig din dator" och för "1. Lägg till filer" |
+| 6.2 | Tabba till filfältet | Fältet "Välj en eller flera filer" med beskrivningen om vilka filer som tas, sedan fältet "Eller klistra in en tabell" med sin beskrivning |
+| 6.3 | Välj filen | Rubrik nivå 2 "2. Bestäm vad som händer med varje kolumn" och rubrik nivå 3 för filen. Läs meddelandet "Läser…" och sedan filens kort. |
+| 6.4 | Gå till kolumntabellen | Tabell "Kolumner i fil 1" med kolumnrubrikerna Nummer, Rubrik, Exempel, Innehåll, Förslag och Val. Där en kolumn kräver ett val sägs "Behöver ditt val". |
+| 6.5 | Gå till valet för en kolumn | Kombinationsruta med namnet "Vad ska hända med kolumn 3?" (eller vilken kolumn det är) och dess nuvarande val |
+| 6.6 | Tabba mot körknappen innan alla kolumner har ett val | Knappen "Ta bort personuppgifter" och meddelandet om hur många kolumner som väntar på ditt val |
+| 6.7 | Lägg in en kolumn med datum från en och samma årskull (till exempel `2013-02-14`) under en rubrik som inte säger att det är ett födelsedatum | Innehållet säger "ett datum som är äldre än tre år: kan vara födelsedatum" och förslaget "Behöver ditt val" |
+| 6.8 | Välj "Ta bort personuppgifter" när alla kolumner har ett val | "Arbetar…" och sedan "Resultatet finns nedan." Fokus flyttas till rubrik nivå 2 "5. Resultat". |
+| 6.9 | Gå igenom resultatet | Antal per slag av personuppgift som lästa tabellrader (slag, förekomster, olika), kontrollen "…hittade inget kvar" eller att den hittade något, förhandsvisningen som tabell med filens namn, och listan över det verktyget inte kan bedöma |
+| 6.10 | Gå till rutan "Jag har tittat igenom förhandsvisningen" | Kryssrutan med sin text. Knappen "Hämta säker fil 1" är inaktiv tills rutan är ikryssad. |
+| 6.11 | Välj "Hämta säker fil 1" | Nedladdningen börjar utan att fokus går förlorat |
+| 6.12 | Välj "Rensa allt" | Meddelandet "Allt du lagt in är borta: filerna, texten, orden och resultatet." sägs, och fokus står på fältet "Välj en eller flera filer" |
+| 6.13 | Byt språk med länken "English" och gå igenom 6.1–6.3 | Samma sida på engelska, med `lang="en"` så att skärmläsaren byter röst |
+
+Skriv i protokollet också om filens innehåll (namnen i exempelcellerna) läses upp som svenska eller engelska ord: sidan märker filens text som `translate="no"` men säger inte vilket språk den är på.
+
 ## Efter testet
 
 1. Spara protokollen och inspelningarna där huvudmannen sparar sitt tillgänglighetsarbete. Lägg dem inte i kodförrådet, som är publikt.

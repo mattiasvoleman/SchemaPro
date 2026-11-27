@@ -36,6 +36,7 @@
       - listitem: Tester av tangentbordsanvändning, synligt fokus och kontrast för inloggningen och schemaläggningen.
       - listitem: Ett manus för testet med skärmläsare, med vad som ska höras i varje steg för de fyra rollerna. Själva testet återstår (se ovan).
     - paragraph: Senaste bedömningen gjordes den <datum>.
+    - paragraph: "Sidan Pseudonymisera en fil lades till efter det datumet och ingår inte i den bedömningen: för den finns bara den automatiska granskningen ovan, och inget test med skärmläsare."
     - paragraph: Redogörelsen uppdaterades senast den <datum>.
 - contentinfo:
   - link "Till Rastra Schema":

@@ -27,7 +27,8 @@ describe("markerText", () => {
         expect(findPersonalData(marker), marker).toEqual([]);
       }
     }
-  });
+    // 30 000 markers and three assertions each took four to five seconds, the whole of the default limit, and the search has views since X1b (exponent numbers, control characters): the limit is the test's own.
+  }, 60_000);
 });
 
 describe("isMarker", () => {
