@@ -698,6 +698,8 @@ export interface MasterLesson {
   isParked: boolean;
   /** Written by Generera from a förläggning: changed in Förlägg i veckan and never here. Absent reads as false. */
   fromPlacement?: boolean;
+  /** Laid by Generera (true) or made by hand (false): with the lock it says whether the next run keeps the lesson (lib/motor-owner.ts). Absent: not read. */
+  isGenerated?: boolean;
   /**
    * Undantag med flit: the rules of the board the lesson stands against on purpose, by name, for the time it was given for. An administrator
    * gave it by answering "Lägg ändå"; it locks the lesson and ends when the lesson's time, lock or place changes. Absent or empty is none.

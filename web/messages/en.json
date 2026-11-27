@@ -2430,6 +2430,73 @@
       }
     }
   },
+  "boardTray": {
+    "button": "To place",
+    "head": "{laid} of {of} lessons placed",
+    "headPlaced": "{laid} of {of} lessons placed, {placed} pre-placed",
+    "title": "To place",
+    "hint": "One brick for each lesson missing from the base timetable, counted as Generera counts it, the longest first. A brick you place becomes a locked lesson at once: it is in the timetable and Generera leaves it where it is.",
+    "loading": "Fetching the bricks …",
+    "failed": "The bricks could not be fetched.",
+    "retry": "Try again",
+    "empty": "Everything is placed: no lesson is missing from the base timetable.",
+    "emptyClass": "The class has no bricks left.",
+    "classLabel": "Class",
+    "allClasses": "All classes ({count})",
+    "classOption": "{name} ({count})",
+    "close": "Close To place",
+    "listLabel": "{count, plural, one {# brick} other {# bricks}}",
+    "brick": "{subject} {className}",
+    "detail": "{teacher}, {minutes} min",
+    "noTeacher": "no teacher",
+    "weeks": {
+      "ALL_WEEKS": "every week",
+      "ODD_WEEKS": "odd weeks",
+      "EVEN_WEEKS": "even weeks"
+    },
+    "parked": "On the parking",
+    "block": "Placed with its block",
+    "noTeacherBadge": "No teacher",
+    "possible": "{count, plural, =0 {no free time} one {# free time} other {# free times}}",
+    "lay": "Place …",
+    "layLabel": "Place {lesson}",
+    "formLabel": "Place {lesson}",
+    "timesTitle": "Possible times",
+    "timesNone": "There is no time in the week to place {lesson}.",
+    "day": "Day",
+    "start": "Start",
+    "startHint": "HH:MM",
+    "room": "Room",
+    "roomsLoading": "Fetching the rooms …",
+    "noRoom": "No room",
+    "laid": "Placed and locked: {lesson} {day} {from}–{to}",
+    "laidNoRoom": "Placed and locked, with no room: {lesson} {day} {from}–{to}",
+    "layWithoutRoom": "Place with no room",
+    "layAnyway": "Place anyway",
+    "submit": "Place",
+    "cancel": "Cancel",
+    "errors": {
+      "stale": "Someone else has placed or changed lessons of this brick's kind. The list has been read again: choose the brick again.",
+      "ROOM": {
+        "title": "The room does not suit",
+        "SEATS": "The room has too few seats for the lesson. Choose another room, or place the lesson with no room.",
+        "TYPE": "The room is not the type the subject needs. Choose another room, or place the lesson with no room.",
+        "YEARS": "The room is not for the group's years. Choose another room, or place the lesson with no room."
+      },
+      "CANNOT": {
+        "title": "The brick cannot be placed alone",
+        "text": "A lesson in a parallel block is placed with its block, and a lesson with no teacher needs one first."
+      },
+      "REFUSED": {
+        "title": "That time does not work",
+        "text": "The week does not hold that time."
+      },
+      "OTHER": {
+        "title": "The brick was not placed",
+        "text": "The brick could not be placed."
+      }
+    }
+  },
   "boardKeys": {
     "clash": "Clash",
     "blockDialog": "{lesson} is a block: its own dialog opens, where lock, park and remove apply to the whole block.",
@@ -2745,7 +2812,26 @@
       "unnamed": "Parallel block",
       "refusedSlot": "{name} cannot move there: one of the card's lessons clashes at that time. Open the card to move one lesson at a time.",
       "refusedTray": "{name} is not parked as a card. Open the card and park its lessons one at a time from their dialogs.",
-      "lockedParked": "{parked, plural, one {# of the block's lessons is on the tray and was not locked. The next generation refuses the block as partly locked until it is placed.} other {# of the block's lessons are on the tray and were not locked. The next generation refuses the block as partly locked until they are placed.}}"
+      "lockedParked": "{parked, plural, one {# of the block's lessons is on the tray and was not locked. The next generation refuses the block as partly locked until it is placed.} other {# of the block's lessons are on the tray and were not locked. The next generation refuses the block as partly locked until they are placed.}}",
+      "lockedByMoveNote": "Moved and locked: the whole block is locked ({count, plural, one {# lesson} other {# lessons}}), so the next Generera does not move it.",
+      "lockedByMoveUnlock": "Unlock",
+      "lockedByMoveUnlocked": "Unlocked: Generera may move the block again ({count, plural, one {# lesson} other {# lessons}})."
+    },
+    "lockedByMove": {
+      "note": "Moved and locked: the next Generera does not move {count, plural, one {the lesson} other {the lessons}} again.",
+      "unlock": "Unlock",
+      "unlocked": "Unlocked: Generera may move {count, plural, one {the lesson} other {the lessons}} again."
+    },
+    "motor": {
+      "kept": {
+        "LOCKED": "Locked for the generator: Generera leaves the lesson where it is.",
+        "HANDMADE": "Locked for the generator: the lesson is made by hand, and Generera leaves it.",
+        "PUPILS": "Locked for the generator: the lesson has an extra class or chosen pupils, and Generera leaves it."
+      },
+      "free": {
+        "FREE": "Free for the generator: the next Generera lays the lesson again.",
+        "PLACED": "Free for the generator: the next Generera writes the lesson again from its förläggning."
+      }
     }
   },
   "placementWeek": {
@@ -3056,7 +3142,8 @@
     "splitsParallel": "The swap would part lessons that stand in parallel, so nothing changed. The proposals are fetched again.",
     "lockedPartner": "The swap would move a locked lesson, so nothing changed. The proposals are fetched again.",
     "undoStale": "The timetable has changed since the swap, so it cannot be undone from here. Restore the version “Före byte” under Versions.",
-    "openButton": "Suggest swaps"
+    "openButton": "Suggest swaps",
+    "lockedByMove": "{count, plural, one {The lesson is locked} other {# lessons are locked}}, so the next Generera does not move {count, plural, one {it} other {them}}. Undo takes the lock off."
   },
   "dayPlanner": {
     "title": "Day planner",

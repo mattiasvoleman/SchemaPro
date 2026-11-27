@@ -115,6 +115,9 @@ export interface SwapApplyResult {
   removedCalendarLessons: number;
   versionId: string;
   undo: SwapMove[];
+  /** Låset vid en flytt (E4): the swap locked the lessons it moved that were not locked; the undo takes the lock off again. */
+  lockedByMove?: true;
+  lockedLessonIds?: string[];
 }
 
 /** The gateway's codes for a proposal it will not apply. */

@@ -26,7 +26,7 @@ import { PlanningYearPicker, ProjectedRostersBanner } from "@/components/schedul
 import type { LessonCommand } from "@/components/schedule/board-keys";
 import { useConflictNotes } from "./use-conflict-notes";
 import type { MessageLookup } from "@/lib/engine-message";
-import { savedToast } from "@/lib/staffing-warnings";
+import { savedToast, type LockedNote } from "@/lib/staffing-warnings";
 import { FilterPicker } from "@/components/schedule/filter-picker";
 import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
 import type { CreateDraft } from "@/components/schedule/create-lesson-dialog";
@@ -145,11 +145,33 @@ export default function TimetablePage() {
    * English reader gets English. Held longer than a plain save: it names
    * something the admin may want to undo.
    */
-  const announceSaved = (result: {
-    propagatedLessons: number;
-    removedCalendarLessons?: number;
-    warnings?: StaffingWarning[];
-  }): void => savedToast(tEngine, editSavedMessage(result), result.warnings);
+  const announceSaved = (
+    result: {
+      id?: string;
+      propagatedLessons: number;
+      removedCalendarLessons?: number;
+      warnings?: StaffingWarning[];
+      lockedByMove?: true;
+    },
+    lock?: LockedNote,
+  ): void => {
+    // Låset vid en flytt (E4): the move locked the lesson, said in sight with the button that takes the lock off again (a block card's own, when it gives it).
+    const id = result.lockedByMove ? result.id : undefined;
+    savedToast(
+      tEngine,
+      editSavedMessage(result),
+      result.warnings,
+      lock ??
+        (id === undefined
+          ? undefined
+          : {
+              text: t("lockedByMove.note", { count: 1 }),
+              unlock: t("lockedByMove.unlock"),
+              onUnlock: () =>
+                void updateLesson.mutateAsync({ id, isLocked: false }).then(() => toast.success(t("lockedByMove.unlocked", { count: 1 })), showError),
+            }),
+    );
+  };
   const updateLesson = useUpdateMasterLesson();
   const createLesson = useCreateMasterLesson();
   const deleteLesson = useDeleteMasterLesson();
@@ -280,6 +302,8 @@ export default function TimetablePage() {
     SharedMoveDialog,
     SuggestPlacementsDialog,
     ConflictList,
+    TrayHead,
+    TrayPanel,
   } = lazyDialogs;
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   /*
@@ -361,6 +385,9 @@ export default function TimetablePage() {
       setLessonTimeOpen(sessionStorage.getItem("timetable.lessonTime") === "1");
     } catch {}
   }, []);
+  // Att lägga: open or not (the panel's code arrives with the lesson dialogs' chunk, the head's with it), and whether the head failed to.
+  const [trayOpen, setTrayOpen] = useState(false);
+  const [trayFailed, setTrayFailed] = useState(false);
   const toggleLessonTime = () => {
     const open = !lessonTimeOpen;
     setLessonTimeOpen(open);
@@ -1194,6 +1221,13 @@ export default function TimetablePage() {
             {lunchMode ? t("placeLunchOn") : t("placeLunch")}
           </Button>
         ) : null}
+        {shownYear && !trayFailed ? (
+          <DialogLoadBoundary onError={() => setTrayFailed(true)}>
+            <Suspense fallback={null}>
+              <TrayHead yearId={shownYear.id} revision={lessonsReadAt} open={trayOpen} onToggle={() => setTrayOpen((open) => !open)} />
+            </Suspense>
+          </DialogLoadBoundary>
+        ) : null}
         <Button
           size="sm"
           variant={lessonTimeOpen ? "default" : "outline"}
@@ -1249,6 +1283,22 @@ export default function TimetablePage() {
           </span>
         ) : null}
       </FilterBar>
+
+      {trayOpen && shownYear && !trayFailed ? (
+        <DialogLoadBoundary onError={() => setTrayFailed(true)}>
+          <Suspense fallback={null}>
+            <TrayPanel
+              yearId={shownYear.id}
+              revision={lessonsReadAt}
+              groupById={groupById}
+              subjectById={subjectById}
+              teacherById={teacherById}
+              writable={!readOnly}
+              onClose={() => setTrayOpen(false)}
+            />
+          </Suspense>
+        </DialogLoadBoundary>
+      ) : null}
 
       {lessonTimeOpen && shownYear ? (
         <DialogLoadBoundary

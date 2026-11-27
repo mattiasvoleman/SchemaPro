@@ -40,6 +40,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
+import type { LockedNote } from "@/lib/staffing-warnings";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type { MessageLookup } from "@/lib/engine-message";
@@ -82,6 +83,9 @@ export interface SavedWrite {
   joined?: { id: string; isGenerated: boolean }[];
   /** PATCH block-card: the lessons of a block on the same times that moved with the card. */
   followed?: string[];
+  /** Låset vid en flytt (E4): the card's move locked its block whole; these are the lessons it locked. */
+  lockedByMove?: true;
+  lockedLessonIds?: string[];
 }
 
 /**
@@ -125,8 +129,8 @@ export interface BlockActions {
   validate: (id: string, change: LessonChange, without?: ReadonlySet<string>) => boolean;
   history: { push: (entry: HistoryEntry) => void };
   showError: (error: unknown) => void;
-  /** The page's saved toast. */
-  announce: (result: SavedWrite) => void;
+  /** The page's saved toast, with the sentence that says the move locked the block and the button that takes the lock off, when it did. */
+  announce: (result: SavedWrite, lock?: LockedNote) => void;
   /** The page's saved sentence ("Sparat. 3 lektioner i kalendern flyttades."). */
   title: (result: SavedWrite) => string;
   /** "Tyska · Ty7 · K. Ek · A12": a lesson as the page names it. */
@@ -361,10 +365,25 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
             result = await patchCard(to);
           },
         });
-        acts.current.announce(result);
+        acts.current.announce(result, lockNoteOf(card.blockId, result));
       } catch (error) {
         acts.current.showError(error);
       }
+    };
+
+    /** Låset vid en flytt (E4): the card's move locked the block, said in sight, and the button takes exactly those lessons' lock off (lockBlock). */
+    const lockNoteOf = (blockId: string, result: SavedWrite): LockedNote | undefined => {
+      const lessonIds = result.lockedLessonIds;
+      if (!result.lockedByMove || !lessonIds || lessonIds.length === 0) return undefined;
+      return {
+        text: say.current.t("lockedByMoveNote", { count: lessonIds.length }),
+        unlock: say.current.t("lockedByMoveUnlock"),
+        onUnlock: () =>
+          void api
+            .patch("/api/v1/master-lessons/block-lock", { blockId, isLocked: false, lessonIds })
+            .then(() => toast.success(say.current.t("lockedByMoveUnlocked", { count: lessonIds.length })), acts.current.showError)
+            .finally(() => void queryClient.invalidateQueries({ queryKey: ["masterLessons"] })),
+      };
     };
 
     /** A save that split a block: its sentence, and the way back with the block. */

@@ -41,6 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { keptByMotor, motorOwner } from "@/lib/motor-owner";
 import {
   Dialog,
   DialogContent,
@@ -387,6 +388,10 @@ export function LessonEditDialog({
                 </label>
                 <div id="edit-lock-hint" className="text-xs text-muted-foreground">
                   {holdsLock ? t("lockHintExempt") : t("lockHint")}
+                  {/* Låst eller fri för motorn (E4): what the next Generera does with the lesson as it is saved. */}
+                  {lesson && motorOwner(lesson) !== null ? (
+                    <span className="mt-0.5 block">{t(`motor.${keptByMotor(motorOwner(lesson)!) ? "kept" : "free"}.${motorOwner(lesson)}`)}</span>
+                  ) : null}
                 </div>
               </div>
             </div>
