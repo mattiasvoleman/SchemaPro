@@ -529,9 +529,22 @@ export function scopeOfTeacher(
  * The same teacher's figures for a reader who may not read the post's percentages (hr-visibility.ts): the verdict
  * stays, and every figure that is the span × the post, or the working time less the teaching, goes, because with the
  * ordinance's span known either gives the percentage back.
+ *
+ * OVER_OWN is the one verdict that does not stay: it is "over the level the rektor set", so the hours at which it flips
+ * are the rektor's level times the active share, and the hours at which OVER_MAX flips are the ordinance's edge times the
+ * same share. A reader who places lessons and reads this row finds both edges, and their ratio is the level the reader
+ * may not read (the level is null in `assessment` just below). The reader is told INSIDE, which is what they are told
+ * about a teacher the rektor has not assessed: at or under the ordinance's edge.
  */
 export function hideScopeHr(teacher: TeacherScope): TeacherScope {
-  const hidden: TeacherScope = { ...teacher, highestHours: null, ordinanceHighestHours: null, remainingHours: null, planningFits: null };
+  const hidden: TeacherScope = {
+    ...teacher,
+    verdict: teacher.verdict === 'OVER_OWN' ? 'INSIDE' : teacher.verdict,
+    highestHours: null,
+    ordinanceHighestHours: null,
+    remainingHours: null,
+    planningFits: null,
+  };
   if (teacher.assessment) {
     hidden.assessment = { levelHours: null, exceptionKind: teacher.assessment.exceptionKind, ownInitiativeOn: null, note: null, decidedAt: null };
   }

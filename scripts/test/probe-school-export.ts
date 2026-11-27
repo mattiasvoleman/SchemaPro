@@ -56,6 +56,10 @@
  *          without a key that the extract has not decided;
  *   (k-r)  a teacher named only in the json of a Generera run is in her extract with her own entries of it and a
  *          colleague's note about a limit on teaching in a row is not;
+ *   (k-s)  a rektor who assessed teachers and an administrator who changed their posts get the act in their extract
+ *          (which row, who decided, when) and not the colleague, the level, the exception, the day, the note or the
+ *          post before and after; the colleague's own extract has the row whole, and the rektor who assessed
+ *          themself keeps their own (g409-L-5, K7);
  *   (k-p)  a lesson held by someone who is neither teacher nor administrator by role is in the
  *          grundschema with the holder named, and with a protected holder it is without them in
  *          every file of the school's export, said in the README, the manifest and the order.
@@ -938,6 +942,114 @@ async function main(): Promise<void> {
       const theirText = csvLines(theirs.files.get('data/person/optimizationjobs.csv')).join('\n');
       assert.ok(theirText.includes('TEACHER_CONSECUTIVE_TEACHING_NOT_KEPT') && theirText.includes(colleague.id), "the colleague's own extract has their note");
       assert.ok(!theirText.includes('TEACHER_FREE_DAY_WISH_NOT_KEPT'), "and not hers");
+    });
+
+    await check("(k-s) a rektor's extract has the act of an assessment and of a change to a post, and not the colleague's level, exception, note or post", async () => {
+      // g409-L-5 and K7. The rektor decides about teachers, the administrator who writes a post changes it, and both are written by the
+      // database from the session: the rows are made the way the application makes them, as the API role under row-level security.
+      const rektor = a.admins.REKTOR;
+      const colleague = await owner.user.create({
+        data: { schoolId: a.schoolId, authId: randomUUID(), role: 'TEACHER', firstName: 'Kollegas', lastName: 'Kollegaefternamn', email: `kollegas@${a.slug}.example.com` },
+      });
+      cleanup.push(async () => void (await owner.user.deleteMany({ where: { id: colleague.id } })));
+      const noteText = 'Hen vill undervisa mindre efter tjänstledigheten';
+      const postNote = 'Nedsatt för föräldraledighet';
+      await api.withRls(rektor, async (tx) => {
+        await tx.teacherEmployment.create({
+          data: {
+            schoolId: a.schoolId, userId: colleague.id, academicYearId: a.yearId, employmentPercent: 80, reductionPercent: 20,
+            contractKind: 'FERIE', signature: `KO${tag.slice(0, 2)}`, note: postNote,
+          },
+        });
+        await tx.assignmentScopeAssessment.create({
+          data: {
+            schoolId: a.schoolId, userId: colleague.id, academicYearId: a.yearId, teachingLevelHours: 561, exceptionKind: 'OWN_INITIATIVE',
+            ownInitiativeOn: new Date('2026-10-14'), note: noteText,
+          },
+        });
+        await tx.assignmentScopeAssessment.create({
+          data: { schoolId: a.schoolId, userId: a.teacher, academicYearId: a.yearId, teachingLevelHours: 572, note: 'Mentor för åk 7' },
+        });
+      });
+      const ask = async (who: AuthenticatedUser, personId: string) => {
+        const answer = await access.extract(who, personId, false);
+        const { dir, files } = unzip(Buffer.from(answer.contentBase64, 'base64'));
+        cleanup.push(async () => rmSync(dir, { recursive: true, force: true }));
+        return { files, manifest: JSON.parse(files.get('manifest.json')!.toString('utf8')) as { files: Array<{ path: string; rader?: number; tommaCeller?: number }> } };
+      };
+
+      const theirs = await ask(a.admins.FULL, rektor.userId!);
+      const assessments = csvLines(theirs.files.get('data/person/assignmentscopeassessments.csv'));
+      assert.equal(assessments.length - 1, 2, "the two assessments the rektor made are in the rektor's extract");
+      const header = assessments[0]!.split(';');
+      const col = (line: string, name: string) => line.split(';')[header.indexOf(name)];
+      for (const line of assessments.slice(1)) {
+        assert.equal(col(line, 'decidedById'), rektor.userId, 'who decided is the act');
+        assert.ok(col(line, 'decidedAt'), 'and when');
+        for (const hidden of ['userId', 'teachingLevelHours', 'exceptionKind', 'ownInitiativeOn', 'note']) assert.equal(col(line, hidden), '', `${hidden} is empty`);
+      }
+      const logs = csvLines(theirs.files.get('data/person/teacheremploymentlogs.csv'));
+      assert.ok(logs.length - 1 >= 1, 'the change to the post is in it as an act');
+      const logHeader = logs[0]!.split(';');
+      for (const line of logs.slice(1)) {
+        assert.equal(line.split(';')[logHeader.indexOf('actorId')], rektor.userId);
+        for (const hidden of ['userId', 'entityId', 'version', 'before', 'after']) assert.equal(line.split(';')[logHeader.indexOf(hidden)], '', `${hidden} is empty in the log`);
+      }
+      for (const [name, content] of theirs.files) {
+        const text = content.toString('utf8');
+        for (const token of [colleague.id, a.teacher, noteText, postNote, 'OWN_INITIATIVE', 'Mentor för åk 7', 'employmentPercent', 'reductionPercent', 'Kollegas', 'Kollegaefternamn', `kollegas@${a.slug}`]) {
+          assert.ok(!text.includes(token), `${name} holds a colleague's ${token}`);
+        }
+        // A level in hours is three digits, and three digits are in any hash, byte count or microsecond of a timestamp: the manifest holds
+        // a hash for each file and the tables a timestamp for each row, so as a substring 561 or 572 failed this check in about one run in
+        // four with nothing wrong. It is looked for as a whole cell of a table, which is where the level would stand.
+        if (name.endsWith('.csv')) {
+          const cells = new Set(text.split(/\r?\n/).flatMap((line) => line.split(';')).map((cell) => cell.replace(/^"|"$/g, '')));
+          for (const level of ['561', '572']) assert.ok(!cells.has(level), `${name} has a colleague's level ${level} as a cell`);
+        }
+      }
+      const blanked = theirs.manifest.files.find((file) => file.path === 'data/person/assignmentscopeassessments.csv');
+      assert.ok((blanked?.tommaCeller ?? 0) >= 8, 'the manifest counts the cells it emptied');
+
+      // The colleague's own extract has the row whole, and who decided it.
+      const own = await ask(a.admins.FULL, colleague.id);
+      const ownText = csvLines(own.files.get('data/person/assignmentscopeassessments.csv')).join('\n');
+      for (const token of ['561', 'OWN_INITIATIVE', noteText, rektor.userId!, colleague.id]) assert.ok(ownText.includes(token), `the colleague's own row has ${token}`);
+      const ownLogs = csvLines(own.files.get('data/person/teacheremploymentlogs.csv')).join('\n');
+      assert.ok(ownLogs.includes('""employmentPercent"":80') && ownLogs.includes('""reductionPercent"":20') && ownLogs.includes(colleague.id), "and the history of their own post, before and after");
+
+      // A rektor who assessed themself keeps their own row.
+      await api.withRls(rektor, async (tx) => {
+        await tx.assignmentScopeAssessment.create({ data: { schoolId: a.schoolId, userId: rektor.userId!, academicYearId: a.yearId, teachingLevelHours: 540, note: 'Egen bedömning' } });
+      });
+      const self = await ask(a.admins.FULL, rektor.userId!);
+      const selfLines = csvLines(self.files.get('data/person/assignmentscopeassessments.csv'));
+      assert.equal(selfLines.length - 1, 3);
+      assert.ok(selfLines.join('\n').includes('Egen bedömning') && selfLines.join('\n').includes('540'), "the rektor's assessment of themself is whole");
+    });
+
+    await check("(k-s2) a colleague asking for their own extract by an upper-case id (the API accepts both spellings) has the row whole", async () => {
+      const colleague = await owner.user.create({
+        data: { schoolId: a.schoolId, authId: randomUUID(), role: 'TEACHER', firstName: 'Versal', lastName: 'EfternamnB', email: `versal@${a.slug}.example.com` },
+      });
+      cleanup.push(async () => void (await owner.user.deleteMany({ where: { id: colleague.id } })));
+      const noteText = 'Egen anteckning om versalt id';
+      await api.withRls(a.admins.REKTOR, async (tx) => {
+        await tx.assignmentScopeAssessment.create({
+          data: { schoolId: a.schoolId, userId: colleague.id, academicYearId: a.yearId, teachingLevelHours: 561, note: noteText },
+        });
+      });
+      for (const id of [colleague.id, colleague.id.toUpperCase()]) {
+        const answer = await access.extract(a.admins.FULL, id, false);
+        const { dir, files } = unzip(Buffer.from(answer.contentBase64, 'base64'));
+        cleanup.push(async () => rmSync(dir, { recursive: true, force: true }));
+        const text = csvLines(files.get('data/person/assignmentscopeassessments.csv')).join('\n');
+        for (const token of ['561', noteText, colleague.id]) assert.ok(text.includes(token), `the row asked for as ${id} has ${token}`);
+      }
+      // The same id in capitals for a protected person: the extract is still the protected person's own and brings no one else.
+      const shielded = await access.extract(a.admins.FULL, protectedPupil.id.toUpperCase(), true);
+      assert.equal(shielded.subjectIsMarked, true, 'a protected person asked for in capitals is still protected');
+      assert.equal(shielded.relatedIncluded, 0, 'and brings no guardian');
     });
 
     await check('(k-j) only those who decide ask for one, and only about their own school', async () => {
