@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Optional } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma, type SchoolBreak } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -9,6 +9,7 @@ import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseDateString } from '../common/utils/time';
 import { readYearBoundsForShare } from './academic-year-bounds';
 import type {
+  ApplySchoolCalendarDto,
   CreateSchoolBreakDto,
   UpdateSchoolBreakDto,
 } from './dto/school-break.dto';
@@ -42,6 +43,32 @@ export type SchoolBreakResponse = Omit<SchoolBreak, 'startDate' | 'endDate'> & {
 export type SchoolBreakWriteResult = SchoolBreakResponse & {
   removedCalendarLessons: number;
 };
+
+/** What one row of an applied calendar came to. */
+export interface SchoolCalendarItemResult {
+  /** The row's place in the list that was sent. */
+  index: number;
+  /** The lov it made or changed or already was; null for a made one in a dry run. */
+  id: string | null;
+  action: 'CREATED' | 'UPDATED' | 'UNCHANGED';
+  /** Lessons it took (or, in a dry run, would take) out of the published calendar, the other rows not counted. */
+  removedCalendarLessons: number;
+}
+
+/**
+ * What applying a calendar answers with: the rows, and the lessons it took
+ * out of the published calendar in all, a lesson on two overlapping rows
+ * counted once. With `dryRun` nothing was written, and the numbers are what
+ * would have been.
+ */
+export interface SchoolCalendarResult {
+  dryRun: boolean;
+  created: number;
+  updated: number;
+  unchanged: number;
+  removedCalendarLessons: number;
+  items: SchoolCalendarItemResult[];
+}
 
 /**
  * A lov closes the pupils' days it covers, so a lov written may bring a
@@ -130,6 +157,209 @@ export class SchoolBreaksService {
         const removedCalendarLessons = await this.removeLessonsInside(tx, created);
         if (this.notifications) await tellNewMentors(this.notifications, tx, schoolId);
         return { ...this.toResponse(created), removedCalendarLessons };
+      });
+    } catch (error) {
+      rethrowPrismaError(error);
+    }
+  }
+
+  /**
+   * A whole calendar in one write (Skolans kalender): the red days the year
+   * has, a proposal for its lov, a municipality's file, each row a lov to make
+   * or, with an `id`, one to move.
+   *
+   * ONE TRANSACTION, ALL OR NOTHING. A list that stopped at its seventh row
+   * would leave a year with half a calendar and an admin who has to find which
+   * half; one row outside the läsår refuses all of them, and says which. The
+   * year is read FOR SHARE once (readYearBoundsForShare), as create does.
+   *
+   * A ROW THAT IS ALREADY THERE IS NOT WRITTEN AGAIN. The same name, kind, days
+   * and årskurser as a lov of the year (a file read twice, a double click) is
+   * `UNCHANGED`, writes nothing and takes no lesson: its lessons went when it
+   * was made. Two equal rows in one list are one.
+   *
+   * THE LESSONS ARE COUNTED THE WAY A SINGLE WRITE COUNTS THEM
+   * (removeLessonsInside, the same protection rule), after every row is
+   * written, so a lesson on two overlapping rows is taken once and counted
+   * once. `dryRun` counts the same lessons with a `count` and writes nothing:
+   * the number the admin reads before the rows are saved is the one the save
+   * then answers with, to the lesson, which the page that saves a lov one at a
+   * time cannot say (its count comes after the write).
+   *
+   * The mentors are told once, as a create tells them (leave-notices.ts).
+   */
+  async applyCalendar(
+    dto: ApplySchoolCalendarDto,
+    user: AuthenticatedUser,
+  ): Promise<SchoolCalendarResult> {
+    const schoolId = requireSchoolId(user);
+    const dryRun = dto.dryRun === true;
+    const wanted = dto.breaks.map((row) => ({
+      id: row.id ?? null,
+      name: row.name,
+      kind: row.kind ?? ('HOLIDAY' as const),
+      startDate: parseDateString(row.startDate),
+      endDate: parseDateString(row.endDate),
+      minGradeLevel: row.minGradeLevel ?? null,
+      maxGradeLevel: row.maxGradeLevel ?? null,
+    }));
+    for (const row of wanted) {
+      this.assertGradeSpanIsWhole(row.minGradeLevel, row.maxGradeLevel);
+    }
+
+    try {
+      return await this.prisma.withRls(user, async (tx) => {
+        const year = await readYearBoundsForShare(tx, dto.academicYearId);
+        wanted.forEach((row, index) => {
+          try {
+            this.assertRangeFitsYear(year, row.startDate, row.endDate);
+          } catch (error) {
+            // Which row, because a list of sixty with one outside the year is
+            // otherwise a refusal to find by eye.
+            if (error instanceof BadRequestException) {
+              throw new BadRequestException(`breaks[${index}]: ${error.message}`);
+            }
+            throw error;
+          }
+        });
+
+        const stored = await tx.schoolBreak.findMany({
+          where: { academicYearId: dto.academicYearId },
+        });
+        const storedById = new Map(stored.map((row) => [row.id, row]));
+        const keyOf = (row: {
+          name: string;
+          kind: string;
+          startDate: Date;
+          endDate: Date;
+          minGradeLevel: number | null;
+          maxGradeLevel: number | null;
+        }): string =>
+          [
+            row.name.trim().toLowerCase(),
+            row.kind,
+            row.startDate.getTime(),
+            row.endDate.getTime(),
+            row.minGradeLevel,
+            row.maxGradeLevel,
+          ].join('|');
+        const alreadyThere = new Map(stored.map((row) => [keyOf(row), row]));
+
+        const items: SchoolCalendarItemResult[] = [];
+        const touched: SchoolBreak[] = [];
+        const touchedIndex: number[] = [];
+        const madeInThisList = new Map<string, number>();
+        let datesMoved = false;
+
+        for (const [index, row] of wanted.entries()) {
+          if (row.id !== null) {
+            const current = storedById.get(row.id);
+            // Another school's lov and a missing one answer alike, as update does.
+            if (!current) throw new NotFoundException('The requested record does not exist.');
+            if (keyOf(current) === keyOf(row)) {
+              items.push({ index, id: current.id, action: 'UNCHANGED', removedCalendarLessons: 0 });
+              continue;
+            }
+            const next = dryRun
+              ? { ...current, ...row, id: current.id }
+              : await tx.schoolBreak.update({
+                  where: { id: current.id },
+                  data: {
+                    name: row.name,
+                    kind: row.kind,
+                    startDate: row.startDate,
+                    endDate: row.endDate,
+                    minGradeLevel: row.minGradeLevel,
+                    maxGradeLevel: row.maxGradeLevel,
+                  },
+                });
+            datesMoved ||=
+              current.startDate.getTime() !== row.startDate.getTime() ||
+              current.endDate.getTime() !== row.endDate.getTime() ||
+              current.minGradeLevel !== row.minGradeLevel ||
+              current.maxGradeLevel !== row.maxGradeLevel;
+            touched.push(next as SchoolBreak);
+            touchedIndex.push(items.length);
+            items.push({ index, id: current.id, action: 'UPDATED', removedCalendarLessons: 0 });
+            continue;
+          }
+
+          const key = keyOf(row);
+          const there = alreadyThere.get(key);
+          if (there) {
+            items.push({ index, id: there.id, action: 'UNCHANGED', removedCalendarLessons: 0 });
+            continue;
+          }
+          const twin = madeInThisList.get(key);
+          if (twin !== undefined) {
+            items.push({ index, id: items[twin]!.id, action: 'UNCHANGED', removedCalendarLessons: 0 });
+            continue;
+          }
+          madeInThisList.set(key, items.length);
+          datesMoved = true;
+          if (dryRun) {
+            touched.push({ ...row, id: '', schoolId, academicYearId: dto.academicYearId } as unknown as SchoolBreak);
+            touchedIndex.push(items.length);
+            items.push({ index, id: null, action: 'CREATED', removedCalendarLessons: 0 });
+            continue;
+          }
+          const created = await tx.schoolBreak.create({
+            data: {
+              schoolId,
+              academicYearId: dto.academicYearId,
+              name: row.name,
+              kind: row.kind,
+              startDate: row.startDate,
+              endDate: row.endDate,
+              minGradeLevel: row.minGradeLevel,
+              maxGradeLevel: row.maxGradeLevel,
+            },
+          });
+          touched.push(created);
+          touchedIndex.push(items.length);
+          items.push({ index, id: created.id, action: 'CREATED', removedCalendarLessons: 0 });
+        }
+
+        let removedCalendarLessons = 0;
+        if (dryRun) {
+          // ONE statement for every row, then each row's own number and the sum worked out here. A count per row and
+          // one over the OR of them all was a NOT EXISTS over the attendance register per row (Prisma gives each arm
+          // its own subquery, which the planner cannot share): on a school with a term of attendance the question
+          // took longer than the transaction's 15 s, held its connection until the 30 s statement limit, and the
+          // dialog asks it again at every tick.
+          const candidates =
+            touched.length === 0
+              ? []
+              : await tx.calendarLesson.findMany({
+                  where: this.lessonsInsideAny(touched),
+                  select: { date: true, studentGroup: { select: { gradeLevel: true } } },
+                });
+          for (const [place, row] of touched.entries()) {
+            items[touchedIndex[place]!]!.removedCalendarLessons = candidates.filter((lesson) =>
+              this.takes(row, lesson),
+            ).length;
+          }
+          // Each candidate is a lesson some row takes, and is here once: a lesson on two rows is counted once.
+          removedCalendarLessons = candidates.length;
+        } else {
+          for (const [place, row] of touched.entries()) {
+            const count = await this.removeLessonsInside(tx, row);
+            items[touchedIndex[place]!]!.removedCalendarLessons = count;
+            removedCalendarLessons += count;
+          }
+          if (this.notifications && datesMoved) await tellNewMentors(this.notifications, tx, schoolId);
+        }
+
+        const count = (action: SchoolCalendarItemResult['action']) =>
+          items.filter((item) => item.action === action).length;
+        return {
+          dryRun,
+          created: count('CREATED'),
+          updated: count('UPDATED'),
+          unchanged: count('UNCHANGED'),
+          removedCalendarLessons,
+          items,
+        };
       });
     } catch (error) {
       rethrowPrismaError(error);
@@ -310,15 +540,69 @@ export class SchoolBreaksService {
     >,
   ): Promise<number> {
     const { count } = await tx.calendarLesson.deleteMany({
-      where: {
-        date: { gte: breakRow.startDate, lte: breakRow.endDate },
-        status: 'SCHEDULED',
-        startsAt: { gt: new Date() },
-        attendanceRecords: { none: {} },
-        ...this.gradeLevelFilter(breakRow),
-      },
+      where: this.lessonsInside(breakRow),
     });
     return count;
+  }
+
+  /**
+   * The lessons a break takes, as a filter: removeLessonsInside deletes them
+   * and a dry run counts them, by one rule written once.
+   */
+  private lessonsInside(
+    breakRow: Pick<
+      SchoolBreak,
+      'startDate' | 'endDate' | 'minGradeLevel' | 'maxGradeLevel'
+    >,
+  ): Prisma.CalendarLessonWhereInput {
+    return {
+      date: { gte: breakRow.startDate, lte: breakRow.endDate },
+      ...this.takeable(),
+      ...this.gradeLevelFilter(breakRow),
+    };
+  }
+
+  /** What no lov takes: the protection rule, written once for the purge and for the counts. */
+  private takeable(): Prisma.CalendarLessonWhereInput {
+    return {
+      status: 'SCHEDULED',
+      startsAt: { gt: new Date() },
+      attendanceRecords: { none: {} },
+    };
+  }
+
+  /**
+   * The lessons ANY of the rows takes, as one filter: the protection rule once, and the rows' days and årskurser
+   * under it. The same rule as lessonsInside for each row alone, so the union a dry run counts is the union the
+   * writes take.
+   */
+  private lessonsInsideAny(
+    rows: ReadonlyArray<
+      Pick<SchoolBreak, 'startDate' | 'endDate' | 'minGradeLevel' | 'maxGradeLevel'>
+    >,
+  ): Prisma.CalendarLessonWhereInput {
+    const bySpan = new Map<string, { grades: Prisma.CalendarLessonWhereInput; days: Prisma.CalendarLessonWhereInput[] }>();
+    for (const row of rows) {
+      const key = `${row.minGradeLevel ?? ''}|${row.maxGradeLevel ?? ''}`;
+      const entry = bySpan.get(key) ?? { grades: this.gradeLevelFilter(row), days: [] };
+      entry.days.push({ date: { gte: row.startDate, lte: row.endDate } });
+      bySpan.set(key, entry);
+    }
+    return {
+      ...this.takeable(),
+      OR: [...bySpan.values()].map(({ grades, days }) => ({ ...grades, OR: days })),
+    };
+  }
+
+  /** Whether a row takes a lesson (its day and its group's årskurs), for the counts a dry run makes in memory. */
+  private takes(
+    row: Pick<SchoolBreak, 'startDate' | 'endDate' | 'minGradeLevel' | 'maxGradeLevel'>,
+    lesson: { date: Date; studentGroup: { gradeLevel: number | null } | null },
+  ): boolean {
+    if (lesson.date < row.startDate || lesson.date > row.endDate) return false;
+    if (row.minGradeLevel === null || row.maxGradeLevel === null) return true;
+    const grade = lesson.studentGroup?.gradeLevel ?? null;
+    return grade !== null && grade >= row.minGradeLevel && grade <= row.maxGradeLevel;
   }
 
   /**

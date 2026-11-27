@@ -894,6 +894,44 @@
     har ett blir därför inaktivt om du inte själv slår på
     <span class="ui">Aktivt</span>.
   </p>
+  <h4>Röda dagar och lov: Skolans kalender</h4>
+  <p>
+    Läsårets röda dagar och lov skrivs inte för hand. Under
+    <span class="path">Planering › Lov och studiedagar</span> öppnar
+    <span class="ui">Skolans kalender</span> en förhandsvisning av tre källor,
+    och inget sparas förrän du trycker <span class="ui">Lägg till</span>:
+  </p>
+  <ul>
+    <li><strong>Röda dagar</strong> räknas fram för läsåret: nyårsdagen,
+      trettondedag jul, långfredagen, annandag påsk, första maj, Kristi
+      himmelsfärdsdag, nationaldagen, juldagen och annandag jul, samt julafton,
+      midsommarafton och nyårsafton, eftersom skolan är stängd de dagarna.
+      Påsk, Kristi himmelsfärd och midsommar beräknas för varje år. En röd dag
+      på en lördag eller söndag blir inget lov.</li>
+    <li><strong>Förslag på lov</strong>: höstlov vecka 44, jullov från 21–23
+      december till trettondedagen, sportlov vecka 9 och påsklov veckan med
+      annandag påsk. Det är förslag av samma slag som årsrullningen ger för
+      nästa år. Din kommun kan ha en annan vecka för sportlovet, och då gäller
+      kommunens fil. Studiedagar föreslås inte: de är skolans egna.</li>
+    <li><strong>Kommunens läsårstider</strong> läses in som en kalenderfil
+      (<em>.ics</em>) eller som en CSV med kolumnerna <em>namn</em>,
+      <em>start</em> och <em>slut</em> och gärna <em>typ</em>, <em>från
+      årskurs</em> och <em>till årskurs</em>. Datum skrivs ÅÅÅÅ-MM-DD (eller
+      dag först: 22.2.2027). Filen läses i webbläsaren och skickas ingenstans
+      förrän du sparar. Terminsstart och terminsslut i filen är avbockade, eftersom
+      de inte är lov, och en återkommande händelse hoppas över. Programmet
+      har ingen lista över Sveriges kommuner: filen är kommunens egen.</li>
+  </ul>
+  <p>
+    Varje rad i förhandsvisningen säger vad den gör mot de lov skolan redan
+    har: <em>Läggs till</em>, <em>Finns redan</em>, <em>Flyttas från</em> (samma
+    namn på andra dagar, och raden flyttar lovet när den är ibockad),
+    <em>Ligger inom</em> (annandag påsk inom påsklovet), <em>Utanför läsåret</em>
+    eller <em>Bara helg</em>. Lov som skolan har men filen saknar tas aldrig bort.
+    Under tabellen står hur många publicerade lektioner som tas bort ur
+    kalendern när lovet sparas, räknat av servern innan något skrivs. De kommer
+    inte tillbaka.
+  </p>
 
   <h3 id="s32"><span class="num">3.2</span>Ämnen</h3>
   <p>
