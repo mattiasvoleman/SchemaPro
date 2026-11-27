@@ -160,6 +160,9 @@
       "name": "PersonProtections"
     },
     {
+      "name": "PlacementWriteIn"
+    },
+    {
       "name": "Print"
     },
     {
@@ -16713,6 +16716,109 @@
         ],
         "x-admin-write": {
           "decides": true
+        }
+      }
+    },
+    "/api/v1/placement-write-in": {
+      "get": {
+        "tags": [
+          "PlacementWriteIn"
+        ],
+        "operationId": "PlacementWriteInController_preview",
+        "parameters": [
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "post": {
+        "tags": [
+          "PlacementWriteIn"
+        ],
+        "operationId": "PlacementWriteInController_write",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WriteInPlacementsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
         }
       }
     },
@@ -37845,6 +37951,18 @@
             "type": "boolean"
           }
         }
+      },
+      "WriteInPlacementsDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "academicYearId"
+        ]
       },
       "YearTimplanDto": {
         "type": "object",

@@ -153,6 +153,29 @@ whatever the request names (decision 5: no forced clash).
 - **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, och en dubbelbokad
   lektion kan låsas) och `src/calendar/master-lessons.lock-at-move.spec.ts`.
 
+## Skriv in förläggningarna (E4b)
+
+En skola som har förlagt lektioner och inte får Generera att gå klart behöver ett schema att arbeta i. `POST /api/v1/placement-write-in` (`{ academicYearId }`) skriver årets förläggningar
+till grundschemat som de lektioner Generera hade skrivit ur dem, och frågar inte motorn. `GET /api/v1/placement-write-in?academicYearId=…` svarar vad en skrivning skulle göra utan att
+skriva något (varje administratör får läsa det, skrivningen är schemaläggarens som en handredigering). Svaret har `lessonsWritten`, `lessonsReplaced`, `postsWritten`,
+`calendarLessonsRemoved`, `safetyVersionId` och `notWritten`.
+
+- **Vad som skrivs.** En förläggning som veckan håller (samma dom som brädet och Generera ger, `RequirementPlacementsService.judgedYear`, mot de lektioner Generera behåller och mot varandra) och som
+  anger en sal. Lektionen är postens vid radens dag, klockslag, sal och veckor, **låst, Genereras egen och märkt från en förläggning** (`placedLessonWritesOf`, den enda platsen utanför hämtningen som gör en
+  förläggning till en lektion), så nästa Generera skriver om den ur raderna som de då står och en handredigering kan inte flytta den (`LESSON_IS_PLACED`).
+- **Vad som lämnas, med skäl i `notWritten`.** `REFUSED`: veckan håller inte raden (domen följer med; en krock nekar båda raderna, som Generera nekar hela körningen). `NO_ROOM`: raden lämnar salen åt motorn,
+  och bara motorn väljer sal. `BLOCK`: ett blocks förläggningar är motorns (ett lås i ett block är ett delvis låst block). De ligger kvar som förläggningar och Generera lägger dem.
+- **Vad den ersätter.** De lektioner en tidigare körning skrev ur förläggningar för en post bron skriver för, som Generera raderar dem före sin skrivning: en rad som flyttats skrivs inte bredvid sin gamla lektion.
+  Det som svarar en rad bron inte skriver (motorns sal, eller en rad som slutat hålla) står kvar, tid för tid, annars tar bron bort det bara motorn kan lägga tillbaka. En post bron inte skriver för rörs inte.
+  En lektion som redan är precis det raden skulle skriva (samma lärare, sal, klockslag och veckor) lämnas, och raden skriver ingen kopia: en andra skrivning över samma rader ändrar ingenting
+  (inga nya id, ingen version, ingen loggrad, inget i kalendern).
+- **Hur.** Som varje omskrivning av året: läget, sedan årets regenereringslås (exklusivt, högst 5 s, annars `409 SCHEDULE_BUSY`), sedan läsningarna den bestämmer av, en återställningspunkt (en version, som ett byte tar en),
+  kalenderns daterade lektioner för de ersatta från skolans idag (i läget Direkt, som en regenerering), ersättningen, skrivningen och en loggrad per lektion som gick (`DELETE`) och per lektion som kom (`CREATE`).
+  Säges efter commit som en ändring av mastertidtabellen.
+- **Hålls av** `src/requirement-placements/placement-write-in.spec.ts` (vad som skrivs, lämnas och ersätts), `placement-write-in.service.spec.ts` (ordningen, förhandsvisning, utkast, 409),
+  `test/placement-write-in.e2e-spec.ts` (vägarna och vem som får), `scripts/test/probe-skriv-in.ts` (mot riktig Postgres, i CI) och, för hand mot en riktig motor, `scripts/test/probe-skriv-in-motor.ts`:
+  Generera, körd efter bron, skriver samma lektioner ur samma rader, och bron efter Generera ändrar ingenting.
+
 ## Tier 3
 
 - **Minimal-disruption re-optimization** — the gateway sends the current unlocked placements as `previousLessons`; the solver is rewarded (weight `disruption`) for keeping lessons on those slots and warm-started with them as hints. Mid-term re-runs now change as little as possible.

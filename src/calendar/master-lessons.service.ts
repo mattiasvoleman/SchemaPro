@@ -3367,7 +3367,7 @@ export function teacherDayWarning(
     : { code: 'TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN', params: { role, requirement } };
 }
 
-interface LessonRecord {
+export interface LessonRecord {
   id: string;
   academicYearId: string;
   subjectId: string;
@@ -3389,7 +3389,7 @@ interface LessonRecord {
   participants: Array<{ studentId: string }>;
 }
 
-function toResult(lesson: LessonRecord): MasterLessonResult {
+export function toResult(lesson: LessonRecord): MasterLessonResult {
   return {
     id: lesson.id,
     academicYearId: lesson.academicYearId,
