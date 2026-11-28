@@ -902,3 +902,41 @@ describe('SwapsService.apply: a swap of two marked lessons, and the moves that m
     expect(written).toHaveLength(0);
   });
 });
+
+describe('SwapsService.apply: a lesson is moved to a school day and no other (g514)', () => {
+  const clock = (slot: { startMinutes: number; endMinutes: number }) => ({ startTime: clockOf(slot.startMinutes), endTime: clockOf(slot.endMinutes) });
+
+  it.each([6, 7])('refuses a move to day %i, for one move that makes room for a brick and for a swap, and writes nothing', async (day) => {
+    const world = makeWorld({ seed: 7 });
+    const [mover] = world.data.lessons as [SwapLesson];
+    const move = {
+      lessonId: mover.id,
+      from: { dayOfWeek: mover.dayOfWeek, ...clock(mover) },
+      to: { dayOfWeek: day, startTime: '09:00', endTime: '10:00' },
+    };
+    const brick = applyTx(world);
+    await expect(build(world, brick.tx).swaps.apply({ forBrick: true, moves: [move] } as never, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(brick.written).toHaveLength(0);
+    const { lesson, swap } = await aGoodSwap(world);
+    const request = {
+      lessonId: lesson.id,
+      moves: swap.moves.map((m, index) => ({
+        lessonId: m.lessonId,
+        from: { dayOfWeek: m.from.dayOfWeek, ...clock(m.from) },
+        to: index === 0 ? { dayOfWeek: day, ...clock(m.to) } : { dayOfWeek: m.to.dayOfWeek, ...clock(m.to) },
+      })),
+    };
+    const pair = applyTx(world);
+    await expect(build(world, pair.tx).swaps.apply(request as never, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(pair.written).toHaveLength(0);
+  });
+
+  it('still takes Friday', async () => {
+    const world = makeWorld({ seed: 7 });
+    const [mover] = world.data.lessons as [SwapLesson];
+    const { tx, written } = applyTx(world);
+    const move = { lessonId: mover.id, from: { dayOfWeek: mover.dayOfWeek, ...clock(mover) }, to: { dayOfWeek: 5, startTime: '19:00', endTime: '20:00' } };
+    await build(world, tx).swaps.apply({ forBrick: true, moves: [move] } as never, user);
+    expect(written).toHaveLength(1);
+  });
+});

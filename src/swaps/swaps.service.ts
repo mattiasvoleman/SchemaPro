@@ -59,6 +59,7 @@ const ROOM_PER_UNIT = 8;
 const ROOM_MAX_CANDIDATES = 1200;
 const ROOM_DEPTH = 3;
 const SCHOOL_DAYS = [1, 2, 3, 4, 5];
+const SCHOOL_WEEK_END = 5;
 
 const clockOf = (minutes: number): string =>
   `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
@@ -849,6 +850,9 @@ export class SwapsService {
           throw new BadRequestException('moves: a lesson keeps its length.');
         }
         if (move.to.dayOfWeek < 1 || move.to.dayOfWeek > WEEKDAY_MAX) throw new BadRequestException('moves: no such weekday.');
+        // The school week is Monday to Friday: the judge refuses a Saturday (SCHOOL_DAY) on every other road, and a lesson written there is locked by
+        // this very write and sent to the engine as a fixed lesson on a day it does not schedule. Since `forBrick` one move is enough to ask for it (g514).
+        if (move.to.dayOfWeek > SCHOOL_WEEK_END) throw new BadRequestException('moves: not a school day (Monday to Friday).');
         // Where the page saw it, or the proposal is about a timetable that has moved.
         if (
           row.isParked ||
