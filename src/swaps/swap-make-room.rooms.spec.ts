@@ -86,7 +86,7 @@ function miniWorld(seed: number, lockedShare = 0.12): Mini {
         if (next() > 0.62) continue;
         const key = `${day}|${start}`;
         const teacher = ['t1', 't2', 't3'].sort(() => next() - 0.5).find((id) => !taken.has(`${id}|${key}`));
-        const room = ROOMS.sort(() => next() - 0.5).find((id) => !taken.has(`${id}|${key}`) && !roomShut(id, day));
+        const room = [...ROOMS].sort(() => next() - 0.5).find((id) => !taken.has(`${id}|${key}`) && !roomShut(id, day));
         if (!teacher || !room) continue;
         taken.add(`${teacher}|${key}`);
         taken.add(`${room}|${key}`);
@@ -434,6 +434,26 @@ describe('E5a, Annan ledig sal: Gör plats with rooms finds exactly the proposal
     expect(walled.stuck).toBe('LOCKED_IN_THE_WAY');
     expect(walled.proposals).toEqual([]);
     expect(walled.blockers.map((unit) => unit.id)).toEqual(['h']);
+  });
+
+  it('with a cap on the landings, keeps the nearest one that stands in the way of fewest, and that is a landing in another room when it is the nearest', async () => {
+    // P (class c1) is asked to Monday 08:00, where H (class c1) stands: H must go. H's nearest landing is Monday 09:00, where Z holds H's own room r2 and
+    // r1 is free: in r1 it stands in the way of no one, in r2 of Z. Every other landing of the week stands in the way of no one either, and is further off.
+    const p = lesson('p', 1, 660, { studentGroupId: 'c1', teacherId: 't1', roomId: 'r1' });
+    const h = lesson('h', 1, 480, { studentGroupId: 'c1', teacherId: 't2', roomId: 'r2' });
+    const z = lesson('z', 1, 540, { studentGroupId: 'c2', teacherId: 't3', roomId: 'r2' });
+    const lessons = [p, h, z];
+    const unitOf = buildUnits(lessons, { blockOf: () => null, sameTimesOf: () => null, groupFacts: new Map(), sharesPupils: () => false });
+    const mini: Mini = { lessons, unitOf, units: [...new Map([...unitOf.values()].map((u) => [u.id, u])).values()] };
+    const ask: Ask = { picked: unitOf.get('p')!, placed: true, target: { dayOfWeek: 1, startMinutes: 480 }, depth: 2, maxUnits: 3 };
+    const full = await search(mini, ask);
+    expect(full.proposals.length).toBeGreaterThan(6);
+    const capped = await search(mini, ask, { perUnit: 1 });
+    expect(capped.landingsCut).toBe(true);
+    expect(capped.proposals).toHaveLength(1);
+    const moved = capped.proposals[0]!.moves.find((move) => move.lessonId === 'h')!;
+    expect(moved.to).toMatchObject({ dayOfWeek: 1, startMinutes: 540 });
+    expect(moved.room).toEqual({ from: 'r2', to: 'r1' });
   });
 
   it('says TOO_MANY when more units stand in the way than a proposal may move, and offers nothing', async () => {

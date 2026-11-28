@@ -285,7 +285,9 @@ export async function searchMakeRoom(input: MakeRoomInput): Promise<MakeRoomResu
           options.push({
             placement,
             found,
-            weight: [found.length, placement.rooms ? 1 : 0, dayOfWeek === unit.slot.dayOfWeek ? 0 : 1, Math.abs(startMinutes - unit.slot.startMinutes)],
+            // The cap keeps what stands in the way of fewest, then the nearest: a landing in another room competes by where it is like any other, and
+            // only between the two ways to ONE landing does the own room come first (g524: a cap of eight on a school with room to spare cut every room change).
+            weight: [found.length, dayOfWeek === unit.slot.dayOfWeek ? 0 : 1, Math.abs(startMinutes - unit.slot.startMinutes), placement.rooms ? 1 : 0],
           });
         }
       }
