@@ -1,4 +1,5 @@
-import { useCallback } from "react";
+import { useCallback, useContext, useRef } from "react";
+import { QueryClientContext } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type {
   CreateMasterLessonInput,
@@ -9,6 +10,7 @@ import type {
 import { ApiError } from "@/lib/api";
 import { DirectReachDeclined } from "@/lib/direct-reach";
 import { LESSON_IS_PLACED } from "@/lib/lesson-is-placed";
+import { seenOf } from "@/lib/lesson-expected";
 import { staffingRefusal, refusalText } from "@/lib/staffing-warnings";
 import type { MasterLesson } from "@/lib/types";
 import { restorableInput } from "@/lib/lesson-restore";
@@ -27,6 +29,13 @@ type Translator = ReturnType<typeof useTranslations>;
  * create or delete meets is another matter, and a redo is a move like the first.
  */
 const undoOfAMove = new WeakSet<object>();
+
+/**
+ * A write the gateway refused because somebody else had changed the lesson since the page read it (409 LESSON_CHANGED, E9), with what was asked of
+ * which lesson: the sentence that says what happened (lib/lesson-changed.ts) reads the lesson again and offers the change once more on what is there.
+ */
+const changedLessons = new WeakMap<object, { lesson: MasterLesson; patch: Partial<LessonSnapshot> }>();
+const isLessonChanged = (error: unknown): error is ApiError => error instanceof ApiError && error.code === "LESSON_CHANGED";
 
 /** A write that is asked nothing first: one function for every render, so the callbacks below keep their identity. */
 const runAsIs = <T>(run: () => Promise<T>): Promise<T> => run();
@@ -52,6 +61,10 @@ export function useUndoableEdits(inputs: {
 }) {
   const { tEngine, t, tCommon, updateLesson, history, createLesson, deleteLesson } = inputs;
   const ask = inputs.ask ?? runAsIs;
+  // Not `useQueryClient`, which throws without a provider: a page that is drawn without one (its tests) has no refusal to tell either.
+  const queryClient = useContext(QueryClientContext);
+  // The change of a lesson that was refused is offered again from the toast (showError, which is made before undoableUpdate is).
+  const offerAgain = useRef<(lesson: MasterLesson, patch: Partial<LessonSnapshot>) => Promise<unknown>>(async () => undefined);
 
   // -------------------------------------------------------------------
   // Undoable mutations
@@ -79,42 +92,63 @@ export function useUndoableEdits(inputs: {
         const reasons = typeof error.params?.["reasons"] === "string" ? new Set(error.params["reasons"].split(",").filter(Boolean)) : new Set<string>();
         const more = reasons.size > 1 ? ` ${t("moreReasons", { count: reasons.size - 1 })}` : "";
         toast.error(undoOfAMove.has(error) ? t("undoRefused", { why: `${why}${more}` }) : `${why}${more}`);
+      } else if (isLessonChanged(error)) {
+        // Somebody else changed the lesson since the page read it (E9): said as it is, in a module of its own that comes with the first such refusal.
+        void import("@/lib/lesson-changed")
+          .then((later) =>
+            later.told({ queryClient, error, asked: changedLessons.get(error), undo: undoOfAMove.has(error), t, tCommon, again: (fresh, patch) => offerAgain.current(fresh, patch) }),
+          )
+          .catch(() => toast.error(apiErrorText(error, tCommon)));
       } else if (error instanceof ApiError && error.status === 409) {
         toast.error(`${t("editConflict")}: ${apiErrorText(error, tCommon)}`);
       } else {
         toast.error(apiErrorText(error, tCommon));
       }
     },
-    [t, tCommon, tEngine],
+    [t, tCommon, tEngine, queryClient],
   );
 
   /** Applies a patch and registers the inverse operation in history. */
   const undoableUpdate = useCallback(
     async (lesson: MasterLesson, patch: Partial<LessonSnapshot>) => {
       const before = snapshotOf(lesson);
-      const result = await ask(() => updateLesson.mutateAsync({ id: lesson.id, ...patch }));
+      // What the page saw of the fields it sets (E9): somebody else's change of one of them is refused, and not written over.
+      const seen = seenOf(before, patch);
+      let result;
+      try {
+        result = await ask(() => updateLesson.mutateAsync({ id: lesson.id, ...patch, expected: seen }));
+      } catch (error) {
+        if (isLessonChanged(error)) changedLessons.set(error, { lesson, patch });
+        throw error;
+      }
       const after = { ...before, ...patch };
+      // What the lesson holds of EVERY field the undo writes (the whole snapshot, not only what the patch set), as the gateway answered (what it did not say is what the page
+      // had): the undo is held to it, so that a colleague's later change of the lesson, of any field, is not put back, and the lock a move set is what it waits for.
+      const written = seenOf({ ...before, ...patch, ...result, exempt: undefined }, after);
+      // And the redo, which writes the same snapshot, to what the lesson holds once the undo has put it back: what the page saw before.
+      const sawBefore = seenOf(before, after);
       history.push({
         label: "update",
-        // The judge's final no (a lesson put back on a time that breaks a rule, beslut 4) is dropped from the history, so that the older
-        // steps are not shut behind it; the toast says so (t("undoRefused")).
-        refusedUndo: (error) => error instanceof ApiError && error.code === "MASTER_LESSON_REFUSED",
+        // The judge's final no (a lesson put back on a time that breaks a rule, beslut 4) and a lesson somebody else has changed since are
+        // dropped from the history, so that the older steps are not shut behind them; the toast says so (t("undoRefused")).
+        refusedUndo: (error) => error instanceof ApiError && (error.code === "MASTER_LESSON_REFUSED" || error.code === "LESSON_CHANGED"),
         undo: async () => {
           try {
-            await updateLesson.mutateAsync({ id: lesson.id, ...before });
+            await updateLesson.mutateAsync({ id: lesson.id, ...before, expected: written });
           } catch (error) {
             if (typeof error === "object" && error !== null) undoOfAMove.add(error);
             throw error;
           }
         },
         redo: async () => {
-          await updateLesson.mutateAsync({ id: lesson.id, ...after });
+          await updateLesson.mutateAsync({ id: lesson.id, ...after, expected: sawBefore });
         },
       });
       return result;
     },
     [updateLesson, history, ask],
   );
+  offerAgain.current = undoableUpdate;
 
   const undoableCreate = useCallback(
     async (input: CreateMasterLessonInput) => {
