@@ -198,6 +198,27 @@ describe('Byten och flyttar (e2e)', () => {
       expect(harness.tx['masterLesson']!['updateMany']).not.toHaveBeenCalled();
     });
 
+    it('takes a move that gives a lesson another room, refuses one that names the rooms wrongly before the service, and the service says SWAP_STALE when the lesson is not there', async () => {
+      const R1 = '77777777-7777-4777-8777-777777777777';
+      const R2 = '88888888-8888-4888-8888-888888888888';
+      for (const room of [{ from: R1 }, { to: R2 }, { from: 'nope', to: R2 }, 'r1', { from: R1, to: R2, extra: 1 }]) {
+        await request(http())
+          .post('/api/v1/swaps/apply')
+          .set('x-test-user', admin())
+          .send({ lessonId: A, moves: [{ ...move(A, 1, 2), room }, move(B, 2, 1)] })
+          .expect(400);
+      }
+      expect(harness.tx['masterLesson']!['updateMany']).not.toHaveBeenCalled();
+      harness.tx.$queryRaw.mockResolvedValue([{ mode: 'DIRECT' }]);
+      harness.tx['masterLesson']!['findMany']!.mockResolvedValue([]);
+      const response = await request(http())
+        .post('/api/v1/swaps/apply')
+        .set('x-test-user', admin())
+        .send({ lessonId: A, moves: [{ ...move(A, 1, 2), room: { from: R1, to: R2 } }, move(B, 2, 1)] })
+        .expect(409);
+      expect(response.body).toMatchObject({ code: 'SWAP_STALE' });
+    });
+
     it('takes one move for a lesson that stands nowhere, and the service answers SWAP_STALE when it is not there to move', async () => {
       harness.tx.$queryRaw.mockResolvedValue([{ mode: 'DIRECT' }]);
       harness.tx['masterLesson']!['findMany']!.mockResolvedValue([]);

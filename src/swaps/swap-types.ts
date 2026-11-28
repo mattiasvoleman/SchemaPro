@@ -84,6 +84,12 @@ export interface SwapMove {
   lessonId: string;
   from: SwapSlot;
   to: SwapSlot;
+  /**
+   * Annan ledig sal (E5a): the lesson also changes room, because its own is held at the new time and another that fits is free. Absent when it
+   * keeps its room, which is every move of a swap of two and every lesson without a room. `from` is the room it stands in, `to` the one it is
+   * given; an undo is the same move reversed.
+   */
+  room?: { from: string; to: string };
 }
 
 export type SoftCode =
