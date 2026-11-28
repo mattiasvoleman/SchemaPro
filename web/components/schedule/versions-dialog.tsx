@@ -319,6 +319,15 @@ export function VersionsDialog({
     [t, nameOfTeacher, roomText, groupLabel, personById, periodText],
   );
 
+  /**
+   * The classes of a lesson that more than one class has, on the line that says it moved or changed: the line stands under the lesson's own class, and the other
+   * classes would otherwise not know it is theirs too ("Idrott · 4.2 + 4.1"). A lesson of one class says nothing, as the heading says it.
+   */
+  const sharedText = useCallback(
+    (lesson: DiffLesson): string[] => ((lesson.extraGroupIds ?? []).length === 0 ? [] : [groupLabel({ studentGroupId: lesson.studentGroupId, extraGroupIds: lesson.extraGroupIds ?? [] })]),
+    [groupLabel],
+  );
+
   /** One entry of the diff as a line. A lesson that moved is told once, from where to where. */
   const entryText = useCallback(
     (entry: DiffEntry): string => {
@@ -330,14 +339,20 @@ export function VersionsDialog({
         case "moved":
           return [
             subjectById.get(entry.to.subjectId)?.name ?? "?",
+            ...sharedText(entry.to),
             `${slotText(entry.from)} → ${slotText(entry.to)}`,
             ...(entry.room ? [`${t("diffAspectRoom")}: ${roomText(entry.from.roomId)} → ${roomText(entry.to.roomId)}`] : []),
           ].join(" · ");
         case "changed":
-          return [subjectById.get(entry.to.subjectId)?.name ?? "?", slotText(entry.to), ...entry.aspects.map((aspect) => aspectText(aspect, entry.from, entry.to))].join(" · ");
+          return [
+            subjectById.get(entry.to.subjectId)?.name ?? "?",
+            ...(entry.aspects.includes("groups") ? [] : sharedText(entry.to)),
+            slotText(entry.to),
+            ...entry.aspects.map((aspect) => aspectText(aspect, entry.from, entry.to)),
+          ].join(" · ");
       }
     },
-    [lessonLabel, subjectById, slotText, roomText, aspectText, t],
+    [lessonLabel, subjectById, sharedText, slotText, roomText, aspectText, t],
   );
 
   /** The classes of a diff, in their own order ("7A" before "7B" before "8A"), each with its entries in the order moved, changed, added, removed. */

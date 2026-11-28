@@ -82,6 +82,28 @@ describe("a version compared with the grid", () => {
   });
 });
 
+describe("a lesson that more than one class has", () => {
+  it("names the classes on the line that says it moved, and on a line that says it changed, but not where the classes are what changed", async () => {
+    const before = DETAILS["v-a"]!;
+    const shared = { subjectId: "ma", studentGroupId: "g-7a", extraGroupIds: ["g-8b"] };
+    DETAILS["v-a"] = { ...before, lessons: [lesson({ ...shared }), lesson({ ...shared, subjectId: "no", dayOfWeek: 2 }), lesson({ studentGroupId: "g-9c", subjectId: "no", dayOfWeek: 4, extraGroupIds: ["g-7a"] })] };
+    try {
+      const live = [lesson({ ...shared, dayOfWeek: 3 }), lesson({ ...shared, subjectId: "no", dayOfWeek: 2, teacherId: "t-bo" }), lesson({ studentGroupId: "g-9c", subjectId: "no", dayOfWeek: 4, extraGroupIds: ["g-7a", "g-8b"] })];
+      const names = { ...props(live), groupLabel: (l: { studentGroupId: string; extraGroupIds?: string[] }) => [l.studentGroupId, ...(l.extraGroupIds ?? [])].map((id) => NAMES[id] ?? "").join(" + ") };
+      render(wrap(<VersionsDialog {...names} teacherById={new Map([["t-anna", { id: "t-anna", firstName: "Anna", lastName: "Ek" }], ["t-bo", { id: "t-bo", firstName: "Bo", lastName: "Lind" }]]) as never} />));
+      await userEvent.click(screen.getByRole("button", { name: "Jämför ”Före lovet” med nuvarande" }));
+      const diff = screen.getByRole("region", { name: /Ändringar sedan/ });
+      expect(entries(diff)).toEqual([
+        "↔ Matematik · 7A + 8B · Måndag 08:00–09:00 → Onsdag 08:00–09:00",
+        "~ Naturkunskap · 7A + 8B · Tisdag 08:00–09:00 · lärare: A. Ek → B. Lind",
+        "~ Naturkunskap · Torsdag 08:00–09:00 · klasser: 9C + 7A → 9C + 7A + 8B",
+      ]);
+    } finally {
+      DETAILS["v-a"] = before;
+    }
+  });
+});
+
 describe("two versions against each other", () => {
   it("compares the version with another one chosen in the list, and reads the other's name in the title", async () => {
     render(wrap(<VersionsDialog {...props([])} />));
