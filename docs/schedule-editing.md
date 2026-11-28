@@ -342,6 +342,18 @@ and what it costs in the soft ones. `POST /api/v1/swaps/apply` writes a
 proposal. Code in `src/swaps/`, dialog in `web/components/schedule/swap-dialog.tsx`
 (button "Föreslå byten" in Justera lektion).
 
+**On the board (E5a, webben).** Two more doors to the same code, in the grundschema's board and not in Justera lektion. *Byt plats*: with exactly
+two lessons marked (Shift+click), the button in the selection's bar asks `POST /api/v1/swaps/pair` and lists the swap with its price, or the
+judge's reasons by lesson (`SwapPairDialog`). *Byt* and *Gör plats*: a lesson put down on a taken time (a drag, or Enter on the marker) is refused
+as before, and the dialog of the nearest free times now also offers the swap with the one lesson that stands there and what makes room
+(`POST /api/v1/swaps/suggest` with `makeRoom`; `SuggestPlacementsDialog`, `SwapProposals`). Both lists are in a dialog that is not modal, so the
+board stays in reach, and the proposal in view is drawn on it (`web/lib/swap-store.ts`, `swap-behind.tsx`, `swap-layer.tsx`: the grid's `behind`
+slot, the only code of it in the route's first load): an outline where each lesson goes and a dotted one where it leaves, with the lesson's
+name and where it is going in words. *Tillämpa* sends `POST /api/v1/swaps/apply` with the picked lesson, and for a swap of two marked lessons
+the other one as `alsoPicked` (a person's own choice, which may be locked); *Ångra* on the toast sends the same moves reversed. A lesson on the
+tray, one written from a förläggning and a brick are not offered Byt and Gör plats here: the gateway answers for them (`lay`, `forBrick`),
+the page lays them by the road a lesson is laid by, which is the next step.
+
 - **One definition of the hard rules.** Every proposal offered has been judged by
   `MasterLessonsService.findConflicts` (teacher, room, class and shared pupils,
   weekly unavailability, pupil buffers, halves, replacing groups) as ONE move —

@@ -2792,6 +2792,8 @@
     "bulkUnlock": "Unlock",
     "bulkDelete": "Delete",
     "bulkClear": "Clear",
+    "bulkSwap": "Swap places",
+    "bulkSwapNeedsTwo": "Mark exactly two lessons to swap their places.",
     "bulkDone": "{count} lessons updated",
     "bulkDeleted": "{count} lessons deleted",
     "selectionReleased": "The bar for the selected lessons could not be loaded, so the selection was released. Select again to try once more.",
@@ -3322,7 +3324,58 @@
     "lockedPartner": "The swap would move a locked lesson, so nothing changed. The proposals are fetched again.",
     "undoStale": "The timetable has changed since the swap, so it cannot be undone from here. Restore the version “Före byte” under Versions.",
     "openButton": "Suggest swaps",
-    "lockedByMove": "{count, plural, one {The lesson is locked} other {# lessons are locked}}, so the next Generera does not move {count, plural, one {it} other {them}}. Undo takes the lock off."
+    "lockedByMove": "{count, plural, one {The lesson is locked} other {# lessons are locked}}, so the next Generera does not move {count, plural, one {it} other {them}}. Undo takes the lock off.",
+    "exemptionsEnded": "{count, plural, one {A lesson stood against a rule on purpose} other {# lessons stood against a rule on purpose}}, and the exemption is gone: it was for the time the lesson had. Undo moves the lesson back but not the exemption.",
+    "makeRoom": "Make room",
+    "level": "moves to make room, level {level}",
+    "showOnBoard": "Show on the board",
+    "shownOnBoard": "Shown on the board",
+    "pair": {
+      "title": "Swap places",
+      "body": "The two marked lessons swap places: each takes the other's day and start and keeps its own length. The proposal is judged by the same rules as a hand move, and you see what it costs before anything changes.",
+      "dropTitle": "Swap with the lesson standing there",
+      "refused": "The swap cannot be made:"
+    },
+    "room": {
+      "title": "Proposals that make room",
+      "standsThere": "What stands there",
+      "none": "No lesson can be moved so that the time is free without a double booking or a broken rule.",
+      "dropNoOne": "No lesson is in the way at that time, so there is none to swap with.",
+      "dropSeveral": "Several lessons are in the way, so there is no single lesson to swap with. Make room instead.",
+      "immovable": {
+        "PARKED": "The lesson is on the tray and has no time to move away from. Put it back in the timetable first.",
+        "PLACED": "The lesson is placed, and Generera writes it again from the placement. Move it by changing the placement.",
+        "NOT_PLACED": "The lesson is not in the master timetable.",
+        "EXEMPT": "The lesson stands against a rule on purpose (an exemption). No automat moves it out of the exemption: move it by hand."
+      },
+      "stuck": {
+        "CLOSED": "The time is shut by a rule (the frame times, the class's lunch, a rule for the year group, another school's time or an unavailability), so no lesson can stand there.",
+        "LOCKED_IN_THE_WAY": "A locked lesson is in the way and an automat does not move it. Unlock it, or move it by hand, if the place is to be free.",
+        "TOO_MANY": "More lessons are in the way than a proposal may move."
+      },
+      "pairImmovable": {
+        "PARKED": "One of the lessons is on the tray and has no time to swap. Put it back in the timetable first.",
+        "PLACED": "One of the lessons is placed, and Generera writes it again from the placement. Change the placement instead.",
+        "NOT_PLACED": "One of the lessons is not in the master timetable.",
+        "SAME_UNIT": "The two lessons stand in parallel and always move together, so they cannot swap places with each other.",
+        "SAME_PLACE": "The two lessons start at the same time, so there is nothing to swap."
+      }
+    },
+    "dropOffers": {
+      "title": "What stands there can move",
+      "body": "Swap places with the lesson standing there, or let it and what is in its way move, so that the place is free. You see the proposals on the board, and what they cost, before anything changes.",
+      "swap": "Swap",
+      "room": "Make room",
+      "swapTitle": "Swap with the lesson standing there",
+      "swapBody": "The lesson you let go and the lesson standing there take each other's start.",
+      "roomTitle": "Make room",
+      "roomBody": "What is in the way moves to an empty place or to a place another lesson leaves, at most three steps deep. No locked lesson is moved.",
+      "back": "Back to the times"
+    }
+  },
+  "swapLayer": {
+    "arrives": "{lesson} comes here",
+    "leaves": "{lesson} leaves, to {to}"
   },
   "dayPlanner": {
     "title": "Day planner",

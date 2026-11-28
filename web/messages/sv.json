@@ -2792,6 +2792,8 @@
     "bulkUnlock": "Lås upp",
     "bulkDelete": "Ta bort",
     "bulkClear": "Rensa",
+    "bulkSwap": "Byt plats",
+    "bulkSwapNeedsTwo": "Markera exakt två lektioner för att byta plats på dem.",
     "bulkDone": "{count} lektioner uppdaterades",
     "bulkDeleted": "{count} lektioner togs bort",
     "selectionReleased": "Raden för de markerade lektionerna kunde inte hämtas, så markeringen släpptes. Markera igen för att försöka på nytt.",
@@ -3322,7 +3324,58 @@
     "lockedPartner": "Bytet skulle flytta en låst lektion, så inget ändrades. Förslagen hämtas på nytt.",
     "undoStale": "Schemat har ändrats sedan bytet, så det går inte att ångra härifrån. Återställ versionen ”Före byte” under Versioner.",
     "openButton": "Föreslå byten",
-    "lockedByMove": "{count, plural, one {Lektionen är låst} other {# lektioner är låsta}}, så nästa Generera lägger inte om {count, plural, one {den} other {dem}}. Ångra tar låset av."
+    "lockedByMove": "{count, plural, one {Lektionen är låst} other {# lektioner är låsta}}, så nästa Generera lägger inte om {count, plural, one {den} other {dem}}. Ångra tar låset av.",
+    "exemptionsEnded": "{count, plural, one {En lektion stod mot en regel med flit} other {# lektioner stod mot en regel med flit}}, och undantaget är borta: det gällde den tid lektionen hade. Ångra flyttar tillbaka lektionen men inte undantaget.",
+    "makeRoom": "Gör plats",
+    "level": "flyttas för att göra plats, nivå {level}",
+    "showOnBoard": "Visa på brädet",
+    "shownOnBoard": "Visas på brädet",
+    "pair": {
+      "title": "Byt plats",
+      "body": "De två markerade lektionerna byter plats: var och en tar den andras dag och starttid och behåller sin längd. Förslaget prövas mot samma regler som en handflytt, och du ser vad det kostar innan något ändras.",
+      "dropTitle": "Byte med lektionen som står där",
+      "refused": "Bytet går inte:"
+    },
+    "room": {
+      "title": "Förslag som gör plats",
+      "standsThere": "Det som står där",
+      "none": "Ingen lektion går att flytta så att tiden blir ledig utan att något dubbelbokas eller bryter en regel.",
+      "dropNoOne": "Ingen lektion står i vägen på den tiden, så det finns ingen att byta med.",
+      "dropSeveral": "Flera lektioner står i vägen, så det finns ingen enskild lektion att byta med. Gör plats i stället.",
+      "immovable": {
+        "PARKED": "Lektionen ligger på Parkering och har ingen tid att flytta bort. Lägg tillbaka den i schemat först.",
+        "PLACED": "Lektionen är förlagd, och Generera skriver om den från förläggningen. Flytta den genom att ändra förläggningen.",
+        "NOT_PLACED": "Lektionen ligger inte i grundschemat.",
+        "EXEMPT": "Lektionen står mot en regel med flit (ett undantag). Ingen automat flyttar den ur undantaget: flytta den för hand."
+      },
+      "stuck": {
+        "CLOSED": "Tiden är stängd av en regel (ramtiden, klassens lunch, en regel för årskursen, en annan skolas tid eller en otillgänglighet), så ingen lektion kan stå där.",
+        "LOCKED_IN_THE_WAY": "En låst lektion står i vägen och flyttas inte av en automat. Lås upp den, eller flytta den för hand, om platsen ska bli ledig.",
+        "TOO_MANY": "Fler lektioner står i vägen än ett förslag får flytta."
+      },
+      "pairImmovable": {
+        "PARKED": "En av lektionerna ligger på Parkering och har ingen tid att byta. Lägg tillbaka den i schemat först.",
+        "PLACED": "En av lektionerna är förlagd, och Generera skriver om den från förläggningen. Ändra förläggningen i stället.",
+        "NOT_PLACED": "En av lektionerna ligger inte i grundschemat.",
+        "SAME_UNIT": "De två lektionerna ligger parallellt och flyttas alltid tillsammans, så de kan inte byta plats med varandra.",
+        "SAME_PLACE": "De två lektionerna börjar samtidigt, så det finns inget att byta."
+      }
+    },
+    "dropOffers": {
+      "title": "Det som står där kan flytta",
+      "body": "Byt plats med lektionen som står där, eller låt den och det som står i vägen för den flytta, så att platsen blir ledig. Du ser förslagen på brädet och vad de kostar innan något ändras.",
+      "swap": "Byt",
+      "room": "Gör plats",
+      "swapTitle": "Byt med lektionen som står där",
+      "swapBody": "Lektionen du släppte och lektionen som står där tar varandras starttid.",
+      "roomTitle": "Gör plats",
+      "roomBody": "Det som står i vägen flyttar till en tom plats eller till en plats en annan lektion lämnar, högst tre led. Ingen låst lektion flyttas.",
+      "back": "Tillbaka till tiderna"
+    }
+  },
+  "swapLayer": {
+    "arrives": "{lesson} kommer hit",
+    "leaves": "{lesson} lämnar, till {to}"
   },
   "dayPlanner": {
     "title": "Dagsplanering",
