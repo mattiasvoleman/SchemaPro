@@ -132,6 +132,11 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
     setPhase("idle");
   };
 
+  /** What a refused or unanswered write leaves stale: the tray and the lessons the board draws. */
+  const readBoardAgain = () => {
+    for (const key of [TRAY_KEY, "masterLessons", "calendarLessons", "teacherLessons", "scheduleVersions"]) void queryClient.invalidateQueries({ queryKey: [key] });
+  };
+
   const take = async () => {
     if (!proposal || phase !== "idle") return;
     setPhase("taking");
@@ -146,9 +151,15 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
       // The reader said no to the question before a change in Direkt: the proposal stands as it was, and nothing is said.
       if (declined?.(failure)) return;
       const found = fillFailureOf(failure);
-      if (found.kind === "STALE" || found.kind === "REFUSED") {
+      if (found.kind === "UNKNOWN") {
+        // No answer: what was written, if anything, is on the board, and the proposal is no picture of it. The board is read again, and the reader asks again.
         show(null);
-        void queryClient.invalidateQueries({ queryKey: [TRAY_KEY] });
+        readBoardAgain();
+        setError({ text: t("errors.unknown"), stale: true });
+      } else if (found.kind === "STALE" || found.kind === "REFUSED") {
+        // The schedule is not the one the proposal was made on: the board is read again too, or the next proposal is drawn over lessons it does not show.
+        show(null);
+        readBoardAgain();
         setError({ text: found.kind === "STALE" ? t("errors.stale") : t("errors.refused"), stale: true });
       } else {
         setError({ text: apiErrorText(failure, tCommon), stale: false });

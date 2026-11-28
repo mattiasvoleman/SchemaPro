@@ -2649,7 +2649,8 @@
     "errors": {
       "proposeFailed": "The proposal could not be made. Try again.",
       "stale": "The schedule has changed since the proposal was made. Nothing was written. Propose again.",
-      "refused": "A time the proposal laid is no longer let through. Nothing was written. Propose again."
+      "refused": "A time the proposal laid is no longer let through. Nothing was written. Propose again.",
+      "unknown": "The server's answer did not arrive, so it is not certain that the proposal was taken in. The board is read again: look at what stands, and propose again if something is missing."
     }
   },
   "fillLayer": {

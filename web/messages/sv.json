@@ -2649,7 +2649,8 @@
     "errors": {
       "proposeFailed": "Förslaget gick inte att få. Försök igen.",
       "stale": "Schemat har ändrats sedan förslaget gjordes. Ingenting skrevs. Föreslå igen.",
-      "refused": "En tid som förslaget lade släpptes inte igenom nu. Ingenting skrevs. Föreslå igen."
+      "refused": "En tid som förslaget lade släpptes inte igenom nu. Ingenting skrevs. Föreslå igen.",
+      "unknown": "Svaret från servern kom inte fram, så det är inte säkert att förslaget togs in. Brädet läses om: titta efter vad som ligger, och föreslå igen om något saknas."
     }
   },
   "fillLayer": {

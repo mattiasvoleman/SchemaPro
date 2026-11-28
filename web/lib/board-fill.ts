@@ -101,12 +101,19 @@ export type FillFailure =
   | { kind: "STALE" }
   /** The judge refused a time it let through when the proposal was made (somebody laid something since): ask again. */
   | { kind: "REFUSED" }
+  /**
+   * No answer came: the connection broke, or the edge gave up (502, 504) over a transaction that runs on. The write may have landed, and a second Ta in on
+   * the same proposal would then be refused as stale, with "nothing was written" said of a schedule that has the lessons. Every other refusal is the
+   * gateway's answer and rolled the write back.
+   */
+  | { kind: "UNKNOWN" }
   | { kind: "OTHER" };
 
 export function fillFailureOf(error: unknown): FillFailure {
   if (!(error instanceof ApiError)) return { kind: "OTHER" };
   if (error.code === BOARD_FILL_STALE) return { kind: "STALE" };
   if (error.code === MASTER_LESSON_REFUSED || error.code === BOARD_ROOM_NOT_ALLOWED) return { kind: "REFUSED" };
+  if (error.status === 0 || error.status === 502 || error.status === 504) return { kind: "UNKNOWN" };
   return { kind: "OTHER" };
 }
 
