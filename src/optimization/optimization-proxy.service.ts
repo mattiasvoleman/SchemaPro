@@ -1780,16 +1780,20 @@ export class OptimizationProxyService {
   /**
    * Tells the staff room that a run has written the master timetable. In DRAFT mode the grundschema is the draft and only the administrators are told (as
    * every writer of it does), otherwise everyone who reads it. Best effort and after the commit: a failure here is logged and never fails a run that has
-   * written the week. The mode is read in a transaction of its own, so that the run's own transaction keeps the statements it has.
+   * written the week. The mode is read in a transaction of its own, so that the run's own transaction keeps the statements it has. A mode that cannot be
+   * read (a pool with no connection in time, which is when a run has just spent minutes on the engine) is told to everyone, as a restore's is
+   * (ScheduleVersionAnnouncer): a client that is told too much reads the year and finds what it had, and one that is told nothing keeps the old week.
    */
   private async announceWritten(user: AuthenticatedUser, academicYearId: string): Promise<void> {
     if (!this.realtime || !user.schoolId) return;
+    let draft = false;
     try {
       const settings = await this.prisma.queryWithRls(user, (db) => db.publicationSettings.findUnique({ where: { schoolId: user.schoolId! }, select: { publishMode: true } }));
-      this.realtime.notifyMasterTimetableChanged(user.schoolId, settings?.publishMode === 'DRAFT' ? { draft: true } : {});
+      draft = settings?.publishMode === 'DRAFT';
     } catch (error) {
-      this.logger.warn(`The staff room was not told that a run wrote the timetable [academicYearId=${academicYearId}]: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(`The publish mode was not read to tell the staff room that a run wrote the timetable; everyone is told [academicYearId=${academicYearId}]: ${error instanceof Error ? error.message : String(error)}`);
     }
+    this.realtime.notifyMasterTimetableChanged(user.schoolId, draft ? { draft: true } : {});
   }
 
   /**

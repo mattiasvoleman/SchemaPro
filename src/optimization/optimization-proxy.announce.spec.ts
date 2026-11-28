@@ -104,10 +104,11 @@ describe('OptimizationProxyService: Generera tells the staff room that it wrote 
     expect(findUnique).not.toHaveBeenCalled();
   });
 
-  it('does not fail a run that has written the week when the mode cannot be read: it carries on and says nothing', async () => {
-    const { service, realtime } = build('DIRECT', [], true);
+  it('does not fail a run that has written the week when the mode cannot be read, and tells everyone: a client told too much reads the year, one told nothing keeps the old week', async () => {
+    const { service, realtime } = build('DRAFT', [], true);
     await expect(service.triggerScheduling('y-1', USER, null, null)).resolves.toHaveProperty('status');
-    expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
+    expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+    expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith('s-1', {});
   });
 
   it('is built by hand without a realtime (the specs and the probes): the run is as it was', async () => {
