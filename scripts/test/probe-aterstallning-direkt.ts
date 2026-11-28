@@ -23,7 +23,9 @@
  *        the lessons, the calendar and the versions are as they were; once the school has answered it goes through;
  *   (rf) a lesson that has already happened is not touched: a past row of a lesson the restore replaces stays and is an orphan, as when a hand
  *        edit removes a lesson;
- *   (rg) in utkast the restore writes no calendar row, and a school with nothing published is asked nothing.
+ *   (rg) in utkast the restore writes no calendar row, and a school with nothing published is asked nothing;
+ *   (rh) a publication of a later window that is inserting rows under the old lessons while the restore is at its last statement is
+ *        waited for: no row of it is stranded (before: every row of the window was an orphan and the next publication doubled it).
  *
  * Each in a school of its own (slug <marker>-<n>), swept whole after, and before the first. The year is in 2096, so every day of it lies ahead.
  */
@@ -31,6 +33,7 @@ import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { HttpException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { Client } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import { CalendarService } from '../../src/calendar/calendar.service';
@@ -358,6 +361,56 @@ async function main(): Promise<void> {
         assert.equal((await owner.masterLesson.findFirstOrThrow({ where: { academicYearId: s.yearId, dayOfWeek: 1 } })).teacherId, s.teacherId);
       });
     });
+    // A publication in Direkt takes no lock on the year, so it can meet a restore at any point. The restore is held at the start of its last
+    // statement (the delete of the old lessons) by a statement trigger that waits for an advisory lock this probe holds; the trigger is made
+    // here and dropped in the finally, and while nobody holds the lock it waits for nothing.
+    const STALL = 7770522;
+    const holder = new Client({ connectionString: requiredEnv('PROBE_OWNER_URL') });
+    await holder.connect();
+    try {
+      await check('(rh) a publication that meets the restore at its last statement is waited for: nothing stranded, nothing doubled', async () => {
+        await inSchool('h', async (s, svc) => {
+          await svc.publications.legacyPublish({ academicYearId: s.yearId, fromDate: YEAR_START, toDate: '2096-09-30' }, s.admin);
+          const version = await svc.versions.create(s.yearId, 'före', s.admin);
+          await svc.reach.acknowledge(s.admin);
+          await owner.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION public.probe_aterstallning_stall() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(${STALL}); RETURN NULL; END $$`);
+          await owner.$executeRawUnsafe(`DROP TRIGGER IF EXISTS probe_aterstallning_stall ON "MasterLessons"`);
+          await owner.$executeRawUnsafe(`CREATE TRIGGER probe_aterstallning_stall BEFORE DELETE ON "MasterLessons" FOR EACH STATEMENT EXECUTE FUNCTION public.probe_aterstallning_stall()`);
+          await holder.query('SELECT pg_advisory_lock($1)', [STALL]);
+          let released = false;
+          const release = async () => {
+            if (!released) {
+              released = true;
+              await holder.query('SELECT pg_advisory_unlock($1)', [STALL]);
+            }
+          };
+          try {
+            const restore = svc.versions.restore(version.id, s.admin).then(() => 'ok', (error: unknown) => error);
+            const until = Date.now() + 15_000;
+            for (;;) {
+              const waiting = await owner.$queryRawUnsafe<Array<{ n: bigint }>>(`SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = ${STALL}`);
+              if (Number(waiting[0]!.n) > 0) break;
+              assert.ok(Date.now() < until, 'the restore never reached its last statement');
+              await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            const publication = svc.publications.legacyPublish({ academicYearId: s.yearId, fromDate: '2096-10-01', toDate: '2096-12-31' }, s.admin).then(() => 'ok', (error: unknown) => error);
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            await release();
+            assert.equal(await restore, 'ok', 'the restore went through');
+            await publication;
+          } finally {
+            await release();
+            await owner.$executeRawUnsafe(`DROP TRIGGER IF EXISTS probe_aterstallning_stall ON "MasterLessons"`);
+          }
+          assert.equal((await calendarOf(s)).orphans.length, 0, 'no published row is left without its lesson');
+          await svc.publications.legacyPublish({ academicYearId: s.yearId, fromDate: YEAR_START }, s.admin);
+          assert.equal((await calendarOf(s)).rows.length, await expectedRows(s), 'a publication after it gives the lessons the grundschema gives, once each');
+        });
+      });
+    } finally {
+      await holder.end().catch(() => undefined);
+      await owner.$executeRawUnsafe(`DROP TRIGGER IF EXISTS probe_aterstallning_stall ON "MasterLessons"`).catch(() => undefined);
+    }
   } finally {
     await sweep().catch((error) => console.error('sweep:', error));
     await api.$disconnect();

@@ -1053,6 +1053,22 @@ describe('ScheduleVersionsService', () => {
         expect(order.sweep).toBeLessThan(order.wipe);
       });
 
+      it('holds the old lessons FOR UPDATE before it makes the new ones or moves a row: a publication that has rows in flight under them is waited for, not stranded (g522)', async () => {
+        arrangeRestore([asVersionLesson(mondayRow())]);
+        timetable([mondayRow(), fridayRow()]);
+        given({ swept: { removed: 0, handChanged: 0 }, answered: true });
+
+        await service.restore(VERSION_ID, testUser());
+
+        const locked = tx.$queryRaw.mock.calls.findIndex((call) => ((call[0] as { strings?: readonly string[] }).strings ?? []).join('?').includes('FOR UPDATE'));
+        expect(locked).toBeGreaterThanOrEqual(0);
+        const lockOrder = tx.$queryRaw.mock.invocationCallOrder[locked]!;
+        const relink = tx.$executeRaw.mock.calls.findIndex((call) => ((call[0] as { strings?: readonly string[] }).strings ?? []).join('?').includes('UPDATE "CalendarLessons"'));
+        expect(lockOrder).toBeLessThan(tx.masterLesson.create.mock.invocationCallOrder[0]!);
+        expect(lockOrder).toBeLessThan(tx.$executeRaw.mock.invocationCallOrder[relink]!);
+        expect((tx.$queryRaw.mock.calls[locked]![0] as { values: unknown[] }).values).toEqual([YEAR_ID]);
+      });
+
       it('writes what the calendar lost into the log of the restore', async () => {
         arrangeRestore([asVersionLesson(mondayRow())]);
         timetable([mondayRow(), fridayRow()]);

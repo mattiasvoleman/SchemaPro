@@ -16,6 +16,7 @@ import { lockYearForRegeneration, scheduleBusy, SCHEDULE_BUSY } from '../optimiz
 import { exemptionsOf } from './lesson-exemption';
 import {
   countSweep,
+  lockYearLessons,
   pairTemplates,
   relinkCalendarRows,
   sweepCalendarRows,
@@ -349,6 +350,8 @@ export class ScheduleVersionsService {
     version: { id: string; schoolId: string; academicYearId: string },
     rows: ReadonlyArray<RestoreRow>,
   ): Promise<RestoredCalendar> {
+    // Before the lessons are read and before a row moves: a publication in Direkt takes no lock on the year (restore-calendar.ts).
+    await lockYearLessons(tx, version.academicYearId);
     const current = await tx.masterLesson.findMany({
       where: { academicYearId: version.academicYearId },
       select: {

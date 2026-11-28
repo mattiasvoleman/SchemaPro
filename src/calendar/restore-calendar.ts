@@ -111,6 +111,21 @@ export async function yearHasCalendarRows(tx: PrismaClient, academicYearId: stri
   return Boolean(row);
 }
 
+/**
+ * The year's lessons, held FOR UPDATE before the restore moves a single row (g522).
+ *
+ * The rows of the calendar hang on a lesson by a key that is checked FOR KEY SHARE, and nothing a publication in Direkt takes stops it
+ * from inserting rows under a lesson the restore is about to delete: a publication takes no lock on the year, only the shared publication
+ * lock the restore takes too. A publication whose rows land between the restore's relink and its delete of the old lessons was never seen by
+ * the relink, and the delete (SET NULL) strands every one of them: the restore leaves the orphans it set out not to leave, and the next
+ * publication lays the same weeks out again. FOR UPDATE conflicts with the key lock: a publication that has rows in flight makes the
+ * restore wait (and answer 409 SCHEDULE_BUSY after 5 s, as for any other writer of the year), and one that comes after waits for the
+ * restore and is refused by the key when it commits, as it always was when the lessons it meant are gone.
+ */
+export async function lockYearLessons(tx: PrismaClient, academicYearId: string): Promise<void> {
+  await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "MasterLessons" WHERE "academicYearId" = ${academicYearId}::uuid ORDER BY "id" FOR UPDATE`);
+}
+
 /** The rows of the lessons that stay, put under the lessons that replace them. Returns how many rows moved over. */
 export async function relinkCalendarRows(
   tx: PrismaClient,
