@@ -79,6 +79,16 @@ describe('E5a: what the doors take', () => {
     expect(await check(PairSwapDto, { lessonId: 'nope', otherLessonId: 'nope' })).toEqual(['lessonId', 'otherLessonId']);
   });
 
+  it('takes the brick to lay as Att lägga takes it, nested, and leaves "only with forBrick" to the service', async () => {
+    const lay = { academicYearId: A, postId: B, minutes: 60, teacherId: null, partKey: 'abcdef0123456789', dayOfWeek: 3, startTime: '10:00' };
+    expect(await check(ApplySwapDto, { forBrick: true, lay, moves: [move(A)] })).toEqual([]);
+    expect(await check(ApplySwapDto, { forBrick: true, lay: { ...lay, partKey: 'nope' }, moves: [move(A)] })).toEqual(['lay.partKey']);
+    expect(await check(ApplySwapDto, { forBrick: true, lay: { ...lay, startTime: '25:00', minutes: 1 }, moves: [move(A)] })).toEqual(['lay.minutes', 'lay.startTime']);
+    expect(await check(ApplySwapDto, { forBrick: true, lay: 'x', moves: [move(A)] })).toEqual(['lay']);
+    // Not for a brick, a lay is the service's 400; the DTO takes the shape.
+    expect(await check(ApplySwapDto, { lessonId: A, lay, moves: [move(A)] })).toEqual([]);
+  });
+
   it('takes alsoPicked as ids, forBrick as a boolean, and a lessonId only when it is not for a brick', async () => {
     const moves = [move(A), move(B)];
     expect(await check(ApplySwapDto, { lessonId: A, alsoPicked: [B], moves })).toEqual([]);

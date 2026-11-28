@@ -29884,6 +29884,9 @@
           "forBrick": {
             "type": "boolean"
           },
+          "lay": {
+            "$ref": "#/components/schemas/LayBrickDto"
+          },
           "moves": {
             "type": "array",
             "minItems": 1,
@@ -29901,7 +29904,6 @@
           }
         },
         "required": [
-          "lessonId",
           "moves"
         ]
       },

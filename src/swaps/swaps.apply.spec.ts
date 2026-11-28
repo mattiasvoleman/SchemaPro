@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BoardTrayService } from '../board-tray/board-tray.service';
 import { MasterLessonsService } from '../calendar/master-lessons.service';
 import { propagateTemplateChange } from '../calendar/propagate-template';
 import { fakeTx, makeWorld, rowOf, SCHOOL, YEAR, type World } from './__fixtures__/swap-world';
@@ -877,19 +878,28 @@ describe('SwapsService.apply: a swap of two marked lessons, and the moves that m
     expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
   });
 
-  it('takes one move as a proposal when it makes room for a lesson that stands nowhere, and says a swap of one is not one', async () => {
+  it('takes one move as a proposal: for a lesson that stands nowhere (forBrick), and for the picked lesson alone, which needs no one else to go (g514 L-4)', async () => {
     const world = makeWorld({ seed: 7 });
     const [mover] = world.data.lessons as [SwapLesson];
+    const to = { dayOfWeek: 5, startMinutes: 19 * 60, endMinutes: 20 * 60 };
     const { tx, written } = applyTx(world);
-    const single = { forBrick: true, moves: [moveOf(mover, { dayOfWeek: 5, startMinutes: 19 * 60, endMinutes: 20 * 60 })] };
+    const single = { forBrick: true, moves: [moveOf(mover, to)] };
     const result = await build(world, tx).swaps.apply(single as never, user);
     expect(written).toHaveLength(1);
     expect(result.lockedLessonIds).toEqual([mover.id]);
-    // Without forBrick one move is no swap, and the answer is said before the transaction is opened.
-    const plain = applyTx(world);
-    await expect(build(world, plain.tx).swaps.apply({ lessonId: mover.id, moves: single.moves } as never, user)).rejects.toBeInstanceOf(BadRequestException);
-    expect(plain.tx.masterLesson.findMany).not.toHaveBeenCalled();
-    expect(plain.tx.masterLesson.updateMany).not.toHaveBeenCalled();
+    // The picked lesson alone, named: the answer a free time gets from Gör plats (one unit, nothing in the way) can be laid by this route too, and a
+    // lesson that is locked may be moved so, because the person picked it.
+    const alone = applyTx(world);
+    const moved = await build(world, alone.tx).swaps.apply({ lessonId: mover.id, moves: single.moves } as never, user);
+    expect(alone.written).toHaveLength(1);
+    expect(moved.undo).toEqual([{ lessonId: mover.id, from: to, to: { dayOfWeek: mover.dayOfWeek, startMinutes: mover.startMinutes, endMinutes: mover.endMinutes } }]);
+    // A request that names no lesson and is not for a brick is the page's mistake, said before anything is read.
+    const nameless = applyTx(world);
+    await expect(build(world, nameless.tx).swaps.apply({ moves: single.moves } as never, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(nameless.tx.masterLesson.findMany).not.toHaveBeenCalled();
+    // And a lesson that is not the picked one is not let off the lock: the lessonId must be among the moves.
+    const other = world.data.lessons[1]!;
+    await expect(build(world, applyTx(world).tx).swaps.apply({ lessonId: other.id, moves: single.moves } as never, user)).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('moves no locked lesson to make room: nobody chose it', async () => {
@@ -938,5 +948,83 @@ describe('SwapsService.apply: a lesson is moved to a school day and no other (g5
     const move = { lessonId: mover.id, from: { dayOfWeek: mover.dayOfWeek, ...clock(mover) }, to: { dayOfWeek: 5, startTime: '19:00', endTime: '20:00' } };
     await build(world, tx).swaps.apply({ forBrick: true, moves: [move] } as never, user);
     expect(written).toHaveLength(1);
+  });
+});
+
+describe('SwapsService.apply: the brick the moves made room for is laid in the same transaction (E5a, g514 L-7)', () => {
+  const clock = (slot: { startMinutes: number; endMinutes: number }) => ({ startTime: clockOf(slot.startMinutes), endTime: clockOf(slot.endMinutes) });
+  const POST = '11111111-1111-4111-8111-111111111111';
+  const lay = { academicYearId: YEAR, postId: POST, minutes: 60, teacherId: null, partKey: 'abcdef0123456789', dayOfWeek: 3, startTime: '10:00' };
+  const moveOf = (lesson: SwapLesson, to: { dayOfWeek: number; startMinutes: number; endMinutes: number }) => ({
+    lessonId: lesson.id,
+    from: { dayOfWeek: lesson.dayOfWeek, ...clock(lesson) },
+    to: { dayOfWeek: to.dayOfWeek, ...clock(to) },
+  });
+  const laidLesson = { id: 'laid-1' } as never;
+  beforeEach(() => {
+    (propagateTemplateChange as jest.Mock).mockClear();
+    directReach.facts = [];
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('writes the moves, then lays the brick through Att lägga’s own checks in the SAME transaction, and answers what was laid', async () => {
+    const world = makeWorld({ seed: 7 });
+    const [mover] = world.data.lessons as [SwapLesson];
+    const { tx, written, calls } = applyTx(world);
+    const layIn = jest.spyOn(BoardTrayService.prototype, 'layIn').mockImplementation(async (seen) => {
+      calls.push('lay');
+      expect(seen).toBe(tx);
+      return { lesson: laidLesson, noRoom: false };
+    });
+    const result = await build(world, tx).swaps.apply({ forBrick: true, lay, moves: [moveOf(mover, { dayOfWeek: 5, startMinutes: 19 * 60, endMinutes: 20 * 60 })] } as never, user);
+    expect(layIn).toHaveBeenCalledTimes(1);
+    expect(layIn).toHaveBeenCalledWith(tx, lay, user);
+    // After the move it made room with, so that the hand edit's judge reads the room that was made.
+    expect(calls.indexOf('write')).toBeGreaterThanOrEqual(0);
+    expect(calls.indexOf('write')).toBeLessThan(calls.indexOf('lay'));
+    expect(written).toHaveLength(1);
+    expect(result.laid).toEqual({ lesson: laidLesson, noRoom: false });
+    // The post is locked before the lessons' rows, the order Att lägga takes them in.
+    const sql = (tx.$queryRaw.mock.calls as unknown as Array<[ReadonlyArray<string> | { sql?: string }]>).map((call) => (Array.isArray(call[0]) ? call[0].join('?') : ((call[0] as { sql?: string })?.sql ?? '')));
+    expect(sql.findIndex((text) => /TeachingRequirements/.test(text))).toBeGreaterThanOrEqual(0);
+    expect(sql.findIndex((text) => /TeachingRequirements/.test(text))).toBeLessThan(sql.findIndex((text) => /MasterLessons/.test(text)));
+  });
+
+  it('is one transaction: a lay that is refused takes the moves back, and nothing is said of them', async () => {
+    const world = makeWorld({ seed: 7 });
+    const [mover] = world.data.lessons as [SwapLesson];
+    const { tx } = applyTx(world);
+    jest.spyOn(BoardTrayService.prototype, 'layIn').mockRejectedValue(new ConflictException({ code: 'REQUIREMENT_PLACEMENTS_STALE' }));
+    const built = build(world, tx);
+    await expect(built.swaps.apply({ forBrick: true, lay, moves: [moveOf(mover, { dayOfWeek: 5, startMinutes: 19 * 60, endMinutes: 20 * 60 })] } as never, user)).rejects.toMatchObject({ response: { code: 'REQUIREMENT_PLACEMENTS_STALE' } });
+    // The refusal is thrown out of the transaction that wrote the moves (withRls rolls the whole of it back), so the announcement that waits for the commit is never made.
+    expect(built.seen.committed).toBe(false);
+    expect(built.realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
+  });
+
+  it('is the swap’s alone without lay (the page lays the brick itself), and lays nothing for a request that is not for a brick', async () => {
+    const world = makeWorld({ seed: 7 });
+    const [mover] = world.data.lessons as [SwapLesson];
+    const layIn = jest.spyOn(BoardTrayService.prototype, 'layIn');
+    const to = { dayOfWeek: 5, startMinutes: 19 * 60, endMinutes: 20 * 60 };
+    const plain = await build(world, applyTx(world).tx).swaps.apply({ forBrick: true, moves: [moveOf(mover, to)] } as never, user);
+    expect(plain.laid).toBeUndefined();
+    expect(layIn).not.toHaveBeenCalled();
+    const refused = applyTx(world);
+    await expect(build(world, refused.tx).swaps.apply({ lessonId: mover.id, lay, moves: [moveOf(mover, to)] } as never, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(refused.tx.masterLesson.findMany).not.toHaveBeenCalled();
+    expect(layIn).not.toHaveBeenCalled();
+  });
+
+  it('refuses a lay of another läsår than the moves’, before anything is written', async () => {
+    const world = makeWorld({ seed: 7 });
+    const [mover] = world.data.lessons as [SwapLesson];
+    const layIn = jest.spyOn(BoardTrayService.prototype, 'layIn');
+    const { tx, written } = applyTx(world);
+    await expect(
+      build(world, tx).swaps.apply({ forBrick: true, lay: { ...lay, academicYearId: '99999999-9999-4999-8999-999999999999' }, moves: [moveOf(mover, { dayOfWeek: 5, startMinutes: 19 * 60, endMinutes: 20 * 60 })] } as never, user),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(written).toHaveLength(0);
+    expect(layIn).not.toHaveBeenCalled();
   });
 });

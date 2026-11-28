@@ -511,6 +511,15 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-lagg-det-som-gar.ts
 
+      # Gör plats för en bricka (E5a, g514 L-7): a swap that makes room for a brick and lays it in ONE transaction. The moves and the lay are written
+      # together or not at all (a lay refused for a part that has changed, or by the judge, takes the moves back: nothing moved, no lesson, no version, no log
+      # row), the lesson is laid in the room that was made, and one lesson's move is a proposal (g514 L-4). It drops its school.
+      - name: Gör plats för en bricka probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=8
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-lagg-i-bytet.ts
+
       # Möjliga tider (E3): the query that says where a lesson can stand, held against the judge. Every lesson of the judge's
       # fall file (src/calendar/__fixtures__/lesson-judge-cases.json), every fifteenth minute of the week, over real Postgres as the
       # API role: a start the judge lets through is free, a start the query calls free the judge lets through, a closed stretch is
