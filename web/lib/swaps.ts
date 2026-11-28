@@ -163,6 +163,11 @@ export interface SwapApplyResult {
   /** Låset vid en flytt (E4): the swap locked the lessons it moved that were not locked; the undo takes the lock off again. */
   lockedByMove?: true;
   lockedLessonIds?: string[];
+  /**
+   * Undantag med flit (E1b): a moved lesson that stood against a rule of the board on purpose lost the exemption, which is for the time it was given
+   * for. `rules` are the names, comma-joined. Ångra moves the lesson back and does not bring the exemption back.
+   */
+  exemptionsEnded?: Array<{ lessonId: string; rules: string }>;
 }
 
 /** The gateway's codes for a proposal it will not apply. */

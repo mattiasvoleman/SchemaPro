@@ -110,6 +110,8 @@ function useApplyProposal({ onApplied, guard, again }: Applying) {
         result.removedCalendarLessons > 0 ? t("calendarRemoved", { count: result.removedCalendarLessons }) : null,
         // Låset vid en flytt (E4): the swap locked what it moved, and Ångra takes the lock off with it.
         result.lockedByMove && result.lockedLessonIds?.length ? t("lockedByMove", { count: result.lockedLessonIds.length }) : null,
+        // Undantag med flit (E1b): a lesson moved by hand loses the exemption it stood on, and Ångra does not give it back.
+        result.exemptionsEnded?.length ? t("exemptionsEnded", { count: result.exemptionsEnded.length }) : null,
       ]
         .filter((part) => part !== null)
         .join(" ");

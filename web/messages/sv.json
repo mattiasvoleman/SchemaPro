@@ -3260,6 +3260,7 @@
     "undoStale": "Schemat har ändrats sedan bytet, så det går inte att ångra härifrån. Återställ versionen ”Före byte” under Versioner.",
     "openButton": "Föreslå byten",
     "lockedByMove": "{count, plural, one {Lektionen är låst} other {# lektioner är låsta}}, så nästa Generera lägger inte om {count, plural, one {den} other {dem}}. Ångra tar låset av.",
+    "exemptionsEnded": "{count, plural, one {En lektion stod mot en regel med flit} other {# lektioner stod mot en regel med flit}}, och undantaget är borta: det gällde den tid lektionen hade. Ångra flyttar tillbaka lektionen men inte undantaget.",
     "makeRoom": "Gör plats",
     "level": "flyttas för att göra plats, nivå {level}",
     "showOnBoard": "Visa på brädet",

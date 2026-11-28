@@ -3260,6 +3260,7 @@
     "undoStale": "The timetable has changed since the swap, so it cannot be undone from here. Restore the version “Före byte” under Versions.",
     "openButton": "Suggest swaps",
     "lockedByMove": "{count, plural, one {The lesson is locked} other {# lessons are locked}}, so the next Generera does not move {count, plural, one {it} other {them}}. Undo takes the lock off.",
+    "exemptionsEnded": "{count, plural, one {A lesson stood against a rule on purpose} other {# lessons stood against a rule on purpose}}, and the exemption is gone: it was for the time the lesson had. Undo moves the lesson back but not the exemption.",
     "makeRoom": "Make room",
     "level": "moves to make room, level {level}",
     "showOnBoard": "Show on the board",
