@@ -27,8 +27,9 @@ import type { PublishMode } from './publish-mode';
  * besvarad; kastet rullar tillbaka skrivningen, så ingenting har ändrats och ingen notis har gått. En ändring som inte nådde någon
  * (en anteckning, en lektion utanför perioden, propagate: false) frågar aldrig.
  *
- * Skrivvägar som anropar vakten i dag: PATCH master-lessons/:id, PATCH master-lessons/block-card, DELETE master-lessons/:id och POST swaps/apply
- * (ett byte flyttar publicerade lektioner på samma sätt och rullas tillbaka med sin säkerhetsversion).
+ * Skrivvägar som anropar vakten i dag: PATCH master-lessons/:id, PATCH master-lessons/block-card, DELETE master-lessons/:id, POST swaps/apply
+ * (ett byte flyttar publicerade lektioner på samma sätt och rullas tillbaka med sin säkerhetsversion) och POST placement-write-in (E4b: förläggningarna skrivs in,
+ * och de lektioner de ersätter tas bort ur kalendern).
  * E4:s läggning går genom PATCHens skrivning och frågar där: en parkerad lektion som läggs tillbaka flyttar sina kalenderrader som ett drag (updateIn), och en ny
  * lektion (createIn) når ingen förrän kalendern nästa gång genereras. En skrivväg som lämnar den skrivningen måste själv anropa funktionen med det antal den nådde.
  */
