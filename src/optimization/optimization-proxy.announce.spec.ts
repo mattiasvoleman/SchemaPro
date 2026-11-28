@@ -42,15 +42,24 @@ function build(publishMode: 'DIRECT' | 'DRAFT' | null, written: unknown[] | null
     if (readFails) throw new Error('no connection');
     return publishMode ? { publishMode } : null;
   });
+  // What happened, in order: the write, the commit of the transaction it ran in (withRls answers after it), and the telling.
+  const order: string[] = [];
   const prisma = {
-    withRls: jest.fn((_user: unknown, run: (t: unknown) => unknown) => run({})),
+    withRls: jest.fn(async (_user: unknown, run: (t: unknown) => unknown) => {
+      const result = await run({});
+      order.push('commit');
+      return result;
+    }),
     queryWithRls: jest.fn((_user: unknown, run: (db: unknown) => unknown) => run({ publicationSettings: { findUnique } })),
   } as unknown as PrismaService;
-  const realtime = { notifyMasterTimetableChanged: jest.fn() };
+  const realtime = { notifyMasterTimetableChanged: jest.fn(() => void order.push('told')) };
   const service = new OptimizationProxyService(prisma, { post } as unknown as HttpService, config, undefined, undefined, realtime as unknown as RealtimeService);
   jest.spyOn(service, 'prepareSchedule').mockResolvedValue(PREPARED);
-  const persist = jest.spyOn(service as unknown as { persistMasterLessons: () => Promise<unknown> }, 'persistMasterLessons').mockResolvedValue(written);
-  return { service, realtime, persist, findUnique };
+  const persist = jest.spyOn(service as unknown as { persistMasterLessons: () => Promise<unknown> }, 'persistMasterLessons').mockImplementation(async () => {
+    order.push('write');
+    return written;
+  });
+  return { service, realtime, persist, findUnique, order };
 }
 
 describe('OptimizationProxyService: Generera tells the staff room that it wrote the week (E9, g465 L-4)', () => {
@@ -66,6 +75,14 @@ describe('OptimizationProxyService: Generera tells the staff room that it wrote 
     expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
     expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith('s-1', {});
     expect(persist.mock.invocationCallOrder[0]).toBeLessThan(realtime.notifyMasterTimetableChanged.mock.invocationCallOrder[0]!);
+  });
+
+  it('tells only once the transaction the write ran in has committed, not from inside it', async () => {
+    // withRls answers after the commit; a telling from inside the write's callback is before it, and a client that reads the year on hearing it would read the old one.
+    const { service, order } = build('DIRECT', []);
+    await service.triggerScheduling('y-1', USER, null, null);
+    // (the fetch before the engine call is a transaction too, and commits first)
+    expect(order.slice(order.indexOf('write'))).toEqual(['write', 'commit', 'told']);
   });
 
   it('tells a school with no settings row as one that publishes directly', async () => {
