@@ -91,3 +91,70 @@ describe("swapBehind: the board's slot for it, which is all the route carries", 
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+describe("SwapLayer: where one lesson arrives and another leaves, the words of both can be read", () => {
+  /** Byt plats: A and B trade places, so each place has one lesson arriving and one leaving, at the same top and the same height. */
+  const TRADE: SwapProposal = {
+    ...PROPOSAL,
+    kind: "SWAP",
+    levels: undefined,
+    depth: undefined,
+    moves: [
+      { lessonId: "l-a", from: slot(1, 480), to: slot(1, 600) },
+      { lessonId: "l-b", from: slot(1, 600), to: slot(1, 480) },
+    ],
+  };
+
+  it("keeps the label of a lesson that arrives at the top of its outline and the label of one that leaves at the bottom, so the two do not lie over one another", () => {
+    const { container } = render(<SwapLayer day={1} scale={scale} proposal={TRADE} />);
+    const at = (top: string) => [...container.querySelectorAll<HTMLElement>("[data-swap-box]")].filter((box) => box.style.top === top);
+    // Each place holds an outline of each kind, one lying over the other, with the same top.
+    expect(at("0px").map((box) => box.getAttribute("data-swap-box")).sort()).toEqual(["arrives", "leaves"]);
+    expect(at("120px").map((box) => box.getAttribute("data-swap-box")).sort()).toEqual(["arrives", "leaves"]);
+    for (const box of container.querySelectorAll<HTMLElement>("[data-swap-box]")) {
+      const label = box.querySelector("[data-swap-label]") as HTMLElement;
+      expect(label.getAttribute("data-swap-label")).toBe(box.getAttribute("data-swap-box") === "arrives" ? "top" : "bottom");
+    }
+  });
+
+  it("draws the lessons that move as one (a parallel block) in one outline with all their names, not one lying over the next", () => {
+    const BLOCK: SwapProposal = {
+      ...TRADE,
+      moves: [
+        { lessonId: "l-a", from: slot(1, 480), to: slot(1, 600) },
+        { lessonId: "l-c", from: slot(1, 480), to: slot(1, 600) },
+        { lessonId: "l-b", from: slot(1, 600), to: slot(1, 480) },
+      ],
+      lessons: [...TRADE.lessons, lesson("l-c", "Svenska", "7C")],
+    };
+    const { container } = render(<SwapLayer day={1} scale={scale} proposal={BLOCK} />);
+    const leaves = container.querySelectorAll<HTMLElement>('[data-swap-box="leaves"]');
+    expect(leaves).toHaveLength(2);
+    const text = [...leaves].map((box) => box.textContent);
+    expect(text.some((entry) => entry?.includes("Matematik 7A") && entry.includes("Svenska 7C"))).toBe(true);
+  });
+
+  it("names what leaves at the bottom of its outline and what arrives at the top", () => {
+    const { container } = render(<SwapLayer day={1} scale={scale} proposal={TRADE} />);
+    for (const box of container.querySelectorAll<HTMLElement>('[data-swap-box="leaves"]')) expect(box.querySelector("[data-swap-label]")!.className).toContain("mt-auto");
+    for (const box of container.querySelectorAll<HTMLElement>('[data-swap-box="arrives"]')) expect(box.querySelector("[data-swap-label]")!.className).not.toContain("mt-auto");
+  });
+
+  it("an outline that holds the picked lesson and one that follows it is the picked one, whichever is named last", () => {
+    const WITH_FOLLOWER: SwapProposal = {
+      ...PROPOSAL,
+      moves: [
+        { lessonId: "l-a", from: slot(1, 480), to: slot(2, 600) },
+        { lessonId: "l-b", from: slot(1, 600), to: slot(2, 600) },
+      ],
+      levels: { "l-a": 0, "l-b": 1 },
+    };
+    for (const moves of [WITH_FOLLOWER.moves, [...WITH_FOLLOWER.moves].reverse()]) {
+      const { container, unmount } = render(<SwapLayer day={2} scale={scale} proposal={{ ...WITH_FOLLOWER, moves }} />);
+      const arrives = container.querySelectorAll<HTMLElement>('[data-swap-box="arrives"]');
+      expect(arrives).toHaveLength(1);
+      expect(arrives[0]).toHaveAttribute("data-swap-picked");
+      unmount();
+    }
+  });
+});
