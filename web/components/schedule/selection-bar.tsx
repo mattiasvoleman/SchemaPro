@@ -1,11 +1,12 @@
 "use client";
 
-import { lazy, Suspense, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ArrowLeftRight, Lock, LockOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { restorableInput } from "@/lib/lesson-restore";
+import { useLazyModule } from "@/lib/use-lazy-module";
 import type {
   CreateMasterLessonInput,
   useCreateMasterLesson,
@@ -14,9 +15,6 @@ import type {
 } from "@/lib/queries";
 import type { MasterLesson } from "@/lib/types";
 import type { ScheduleHistory } from "@/lib/use-schedule-history";
-
-/** Byt plats (E5a): fetched when the button is first pressed, with the lists it shares with Gör plats (swap-dialog.tsx). */
-const SwapPairDialog = lazy(() => import("./swap-dialog").then((module) => ({ default: module.SwapPairDialog })));
 
 /*
  * The timetable's bar for a selection (shift+click): lock, unlock and delete
@@ -67,6 +65,28 @@ export function SelectionBar({
   // Byt plats: whether the dialog is open, and whether it has ever been (its code is fetched at the first press and not before).
   const [pairOpen, setPairOpen] = useState(false);
   const [pairUsed, setPairUsed] = useState(false);
+  /*
+   * Byt plats (E5a): its code (swap-dialog.tsx, shared with the lists of Gör plats) is fetched at the first press. By useLazyModule and not by a
+   * module-level lazy(): a lazy() keeps a rejected fetch for good (a tab left open over a deploy), so the next press would throw the same error into
+   * the page's boundary for as long as the tab lives, and the boundary answers by letting the selection go. Here a chunk that does not arrive is said,
+   * the press is undone, and the next press fetches again.
+   */
+  const pairModule = useLazyModule(
+    () => import("./swap-dialog"),
+    (error) => {
+      setPairOpen(false);
+      setPairUsed(false);
+      showError(error);
+    },
+    pairUsed,
+  );
+  // The dialog is not modal, so the selection can change under it. It is for two lessons, and when the selection leaves two (a lesson marked or
+  // unmarked, Rensa, a year or a filter that drops it) it is closed for good: left open in the state, it opened again by itself, and asked the
+  // gateway about two lessons nobody had asked about, the next time two were marked.
+  const markedCount = shown ? selectedLessons().length : 0;
+  useEffect(() => {
+    if (markedCount !== 2) setPairOpen(false);
+  }, [markedCount]);
 
   const bulkSetLock = async (isLocked: boolean) => {
     // A card's whole block: the generation refuses a block locked in part.
@@ -178,20 +198,18 @@ export function SelectionBar({
         <X />
         {t("bulkClear")}
       </Button>
-      {pairUsed ? (
-        <Suspense fallback={null}>
-          <SwapPairDialog
-            open={pairOpen && marked.length === 2}
-            onOpenChange={setPairOpen}
-            lessons={marked.map((lesson) => ({ id: lesson.id, dayOfWeek: lesson.dayOfWeek, startTime: lesson.startTime }))}
-            // A swap rewrote lessons under the page, as the dialog of Föreslå byten says of its own.
-            onApplied={() => {
-              history.clear();
-              onClear();
-            }}
-            guard={guard}
-          />
-        </Suspense>
+      {pairModule ? (
+        <pairModule.SwapPairDialog
+          open={pairOpen && marked.length === 2}
+          onOpenChange={setPairOpen}
+          lessons={marked.map((lesson) => ({ id: lesson.id, dayOfWeek: lesson.dayOfWeek, startTime: lesson.startTime }))}
+          // A swap rewrote lessons under the page, as the dialog of Föreslå byten says of its own.
+          onApplied={() => {
+            history.clear();
+            onClear();
+          }}
+          guard={guard}
+        />
       ) : null}
     </div>
   );
