@@ -97,17 +97,33 @@ describe("the ghost over a square the board paints free in another room", () => 
     }
   });
 
-  it("leaves a ghost that is valid as it is, and one over the answer of another lesson", () => {
+  it("leaves a ghost that is valid over a square the lesson's own room is free in as it is, and one over the answer of another lesson", () => {
     act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
-    const valid = ghostCell({ ...red(3, 630), valid: true });
+    // Tuesday 08:00 is free in the lesson's own room: nothing of another room to say.
+    const valid = ghostCell({ ...red(2, 480), valid: true });
     render(<PossibleHold lessonId="a" ghost={valid} />);
-    expect(valid.get()).toEqual({ ...red(3, 630), valid: true });
+    expect(valid.get()).toEqual({ ...red(2, 480), valid: true });
     cleanup();
     // The answer in the store is for "a": the lesson in hand is another, and has none yet.
     act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
     const other = ghostCell(red(3, 630));
     render(<PossibleHold lessonId="z" ghost={other} />);
     expect(other.get()).toEqual(red(3, 630));
+  });
+
+  it("carries the room over a square the page says yes to as well: the lesson's own room is lent to another school, which the page's check does not hold", () => {
+    // The gateway paints Wednesday 10:30 "Ledigt, annan sal" because the lesson's own room is not free there, and the page, that holds no loan,
+    // says the ghost is valid: a drop with no room would go to the room the judge refuses (OTHER_SCHOOL).
+    act(() => possibleStore.set({ lessonId: "a", status: "done", times: TIMES }));
+    const ghost = ghostCell({ ...red(3, 630), valid: true });
+    const set = vi.spyOn(ghost, "set");
+    render(<PossibleHold lessonId="a" ghost={ghost} />);
+    expect(ghost.get()).toEqual({ ...red(3, 630), valid: true, roomId: "r2" });
+    // Once: a ghost that carries the room is not set again, and the ghost it sets is not followed round and round.
+    expect(set).toHaveBeenCalledTimes(1);
+    // A pointer that moves on to a square of the lesson's own room gives the ghost a verdict of its own, and it carries no room.
+    act(() => ghost.set({ ...red(2, 480), valid: true }));
+    expect(ghost.get()).toEqual({ ...red(2, 480), valid: true });
   });
 
   it("stops following the ghost and the answer when the lesson is let go", () => {

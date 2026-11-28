@@ -46,11 +46,16 @@ export function PossibleHold({ lessonId, ghost }: { lessonId: string; ghost?: Gh
     const lay = () => {
       const held = ghost.get();
       const state = possibleStore.get();
-      if (!held || held.valid || state?.lessonId !== lessonId || state.status !== "done") return;
+      if (!held || state?.lessonId !== lessonId || state.status !== "done") return;
       // A move of the lesson's own length: the gateway judged each start for that, and a lesson made longer or shorter is not one it judged.
       if (held.endMinutes - held.startMinutes !== state.times.subject.minutes) return;
       const room = roomAt(state.times, lessonId, held.dayOfWeek, held.startMinutes);
-      if (room !== undefined) ghost.set({ ...held, valid: true, roomId: room });
+      // Also over a square the page says yes to: its check holds no room lent to another school, so where the lesson's own room is lent the
+      // page calls the square free and the drop would go to that room, which the judge refuses (OTHER_SCHOOL), on a square the board paints
+      // "Ledigt, annan sal". The room the gateway names goes with the move wherever it names one. Done once per square and room: the ghost
+      // set here is what this follows, and an equal one is not set again.
+      if (room === undefined || (held.valid && held.roomId === room)) return;
+      ghost.set({ ...held, valid: true, roomId: room });
     };
     lay();
     const stops = [ghost.subscribe(lay), possibleStore.subscribe(lay)];

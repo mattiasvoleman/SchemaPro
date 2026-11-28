@@ -112,6 +112,20 @@ describe("a lesson dragged with the mouse onto a stretch that is free in another
     expect(onInvalidDrop).toHaveBeenCalledTimes(1);
   });
 
+  it("is laid there when the page's own check says yes too: the lesson's own room is lent to another school, which the page holds no loan of", async () => {
+    // The page says yes to every square (validateChange true): it does not know the hour the lesson's room is lent out, which is the very
+    // reason the gateway paints the stretch "Ledigt, annan sal". The drop must carry the room, or the save answers OTHER_SCHOOL.
+    const { onLessonChange, onInvalidDrop } = await board(vi.fn().mockReturnValue(true));
+    grab();
+    await answered();
+    over(3, 630);
+    expect(ghostOf()).toHaveClass("border-success");
+    up({ clientX: xOf(3), clientY: yOf(670) });
+    expect(onLessonChange).toHaveBeenCalledTimes(1);
+    expect(onLessonChange).toHaveBeenCalledWith("a", { dayOfWeek: 3, startMinutes: 630, endMinutes: 690, roomId: "r2" });
+    expect(onInvalidDrop).not.toHaveBeenCalled();
+  });
+
   it("goes on being asked of the page where the board paints nothing of another room: the move of a lesson in its own room carries no room", async () => {
     const { onLessonChange } = await board(vi.fn().mockReturnValue(true));
     grab();
