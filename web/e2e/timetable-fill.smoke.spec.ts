@@ -75,11 +75,15 @@ test("Lägg det som går: Ta in sends the proposal's basis and where each lesson
   await expect.poll(() => taken.length).toBe(1);
   expect(taken[0]).toMatchObject({
     basis: "0123456789abcdef0123456789abcdef",
+    // The version saved before is named for what was asked, so that Versioner says what it was a version before.
+    versionName: "Före påfyllning: hela skolan",
     items: [{ key: expect.stringMatching(/^00000000-0000-4000-8000-0000000000a1\|[0-9a-f-]{36}\|60\|1$/), dayOfWeek: 2, startTime: "09:00" }],
   });
   await expect(dialog(page)).toHaveCount(0);
   await expect(page.locator("[data-fill-box]")).toHaveCount(0);
   await expect(page.getByText(/^Lade 1 lektion\. En version sparades före/)).toBeVisible();
+  // The toast offers the way back for a few seconds: the version restored.
+  await expect(page.locator("[data-sonner-toast]").getByRole("button", { name: "Ångra", exact: true })).toBeVisible();
   expect(misses, MISSES).toEqual([]);
 });
 
