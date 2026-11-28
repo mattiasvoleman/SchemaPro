@@ -225,6 +225,15 @@ async function main(): Promise<void> {
       for (const row of stood) assert.deepEqual(now.get(row.id), row, 'a lesson that stood is as it was');
       const written = applied.laid.map((entry) => now.get(entry.lessonId)!);
       assert.ok(written.every((row) => row.isLocked && row.exemptFrom.length === 0), 'locked, and no exemption given');
+      // Where each lesson stands is where the proposal put it: the day, the clock and the room. The judge letting a lesson through (below) says nothing of where it was
+      // put, so a Ta in that wrote every lesson without its room, or an hour off, passed every check here but the number of statements it sent (g523).
+      const proposed = new Map(itemsOf(proposal).map((item) => [item.key, item]));
+      assert.ok(proposal.placed.some((entry) => entry.roomId !== null), 'the proposal puts lessons in rooms, which is what this compares');
+      for (const entry of applied.laid) {
+        const item = proposed.get(entry.key)!;
+        const row = now.get(entry.lessonId)!;
+        assert.deepEqual([row.dayOfWeek, row.startTime.slice(0, 5), row.roomId], [item.dayOfWeek, item.startTime, item.roomId], `the lesson of ${entry.key} stands where the proposal put it`);
+      }
       // The judge's word on each lesson written, as a fresh hand edit, with every other lesson (the fill's too) in the database.
       const rows = await q<{ id: string; studentGroupId: string; subjectId: string; teacherId: string | null; coTeacherId: string | null; roomId: string | null; dayOfWeek: number; start: number; end: number; recurrence: 'ALL_WEEKS' }>(
         `SELECT id, "studentGroupId", "subjectId", "teacherId", "coTeacherId", "roomId", "dayOfWeek", extract(hour from "startTime")*60 + extract(minute from "startTime") AS start, extract(hour from "endTime")*60 + extract(minute from "endTime") AS "end", recurrence FROM "MasterLessons" WHERE id = ANY($1::uuid[])`,

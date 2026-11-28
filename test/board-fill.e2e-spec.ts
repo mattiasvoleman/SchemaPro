@@ -19,6 +19,7 @@ const GROUP_ID = '55555555-5555-4555-8555-555555555555';
 const SUBJECT_ID = '99999999-9999-4999-8999-999999999999';
 const TEACHER_ID = '88888888-8888-4888-8888-888888888888';
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
+const ROOM_ID = '77777777-7777-4777-8777-777777777777';
 
 /** A post as the tray reads it: `lessonsPerWeek` of an hour, taught by one teacher, so that each lesson is a brick that can be laid. */
 const post = (over: Record<string, unknown> = {}) => ({
@@ -156,7 +157,7 @@ describe('Lägg det som går (e2e)', () => {
       const write = jest.spyOn(tray, 'writeBrick').mockResolvedValue({ lesson: { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', isLocked: true, warnings: [] }, noRoom: false } as never);
       const version = jest.spyOn(versions, 'snapshotInTransaction').mockResolvedValue({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' } as never);
       spies.push(write, version);
-      const response = await apply({ academicYearId: YEAR_ID, basis: await basisNow(), items: [{ key: BRICK_KEY, dayOfWeek: 2, startTime: '09:00' }] }).set(as(profile)).expect(200);
+      const response = await apply({ academicYearId: YEAR_ID, basis: await basisNow(), items: [{ key: BRICK_KEY, dayOfWeek: 2, startTime: '09:00', roomId: ROOM_ID }] }).set(as(profile)).expect(200);
       expect(response.body).toEqual({
         academicYearId: YEAR_ID,
         versionId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
@@ -166,7 +167,8 @@ describe('Lägg det som går (e2e)', () => {
       expect(version).toHaveBeenCalledWith(expect.anything(), YEAR_ID, 'Före påfyllning', expect.objectContaining({ role: 'SCHOOL_ADMIN' }));
       expect(version.mock.invocationCallOrder[0]!).toBeLessThan(write.mock.invocationCallOrder[0]!);
       // What was written is what the request said: the brick, the day and the clock as the pipe made them, and no exemption.
-      expect(write.mock.calls[0]![2]).toMatchObject({ academicYearId: YEAR_ID, postId: POST_ID, dayOfWeek: 2, startTime: '09:00', roomId: null });
+      // The room is the proposal's, passed on as it came (a request that names none is the "Utan sal" of the unit spec): a Ta in that dropped it would lay every lesson without a room.
+      expect(write.mock.calls[0]![2]).toMatchObject({ academicYearId: YEAR_ID, postId: POST_ID, dayOfWeek: 2, startTime: '09:00', roomId: ROOM_ID });
     });
 
     // @Area('SCHEMALAGGNING', 'DRIFT') asks for every one of the areas (area.decorator.ts), as the board's tray and the hand edit do; the expedition writes Drift and Personal and
