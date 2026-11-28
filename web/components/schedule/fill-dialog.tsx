@@ -57,7 +57,8 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
   const tDays = useTranslations("days");
   const tCommon = useTranslations("common");
   const queryClient = useQueryClient();
-  const { data: tray } = useQuery({ queryKey: [TRAY_KEY, yearId, revision], queryFn: () => fetchTray(yearId), staleTime: 30_000, enabled: open });
+  const tTray = useTranslations("boardTray");
+  const { data: tray, isLoading: trayLoading, isError: trayFailed, refetch: readTrayAgain } = useQuery({ queryKey: [TRAY_KEY, yearId, revision], queryFn: () => fetchTray(yearId), staleTime: 30_000, enabled: open, placeholderData: (previous) => previous });
 
   const [scope, setScope] = useState<FillScope>("CLASS");
   const [classId, setClassId] = useState("");
@@ -193,6 +194,12 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
         </DialogHeader>
 
         {left === 0 && tray ? <p className="text-sm font-medium">{t("nothingLeft")}</p> : null}
+        {trayLoading ? <p className="text-sm text-muted-foreground">{tTray("loading")}</p> : null}
+        {trayFailed && !tray ? (
+          <Notice tone="warning" action={<Button size="sm" variant="outline" onClick={() => void readTrayAgain()}>{tTray("retry")}</Button>}>
+            {tTray("failed")}
+          </Notice>
+        ) : null}
 
         {left > 0 ? (
           <fieldset className="grid gap-1 text-sm" disabled={phase !== "idle"}>
