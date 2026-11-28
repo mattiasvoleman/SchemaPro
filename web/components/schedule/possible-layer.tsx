@@ -80,7 +80,7 @@ export function PossibleHold({ lessonId, ghost }: { lessonId: string; ghost?: Gh
     return () => {
       clearTimeout(timer);
       asking.abort();
-      if (possibleStore.get()?.lessonId === lessonId) possibleStore.set(null);
+      if (possibleStore.get()?.lessonId === lessonId) possibleStore.release();
     };
   }, [lessonId]);
   return null;

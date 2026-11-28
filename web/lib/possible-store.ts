@@ -15,6 +15,16 @@ export type PossibleState =
 let state: PossibleState | null = null;
 const listeners = new Set<() => void>();
 
+/*
+ * What the lesson that was let go had been told, for a moment longer. The board forgets a lesson's answer when the lesson is let go (the layer
+ * empties the store as it goes), but the dialog of other times that a refused drop opens reads the answer a microtask after the drop, when React has
+ * unmounted the layer: without this it found none and asked the gateway again, on every refused drop, and waited for it.
+ */
+let released: { lessonId: string; times: PossibleTimes; at: number } | null = null;
+
+/** How long an answer of a lesson let go is still read by the dialog of other times. */
+export const RELEASED_FOR_MS = 5000;
+
 export const possibleStore = {
   get(): PossibleState | null {
     return state;
@@ -22,6 +32,11 @@ export const possibleStore = {
   set(next: PossibleState | null): void {
     state = next;
     for (const listener of [...listeners]) listener();
+  },
+  /** The lesson is let go: the store is emptied, and its answer is kept a moment for the dialog of other times (releasedOf). */
+  release(): void {
+    released = state?.status === "done" ? { lessonId: state.lessonId, times: state.times, at: Date.now() } : null;
+    possibleStore.set(null);
   },
   subscribe(listener: () => void): () => void {
     listeners.add(listener);
@@ -50,4 +65,9 @@ export const boardCommands: { current: BoardCommands | null } = { current: null 
 /** What is known of this lesson's possible times: the answer when it has come, else nothing. */
 export function possibleOf(lessonId: string): PossibleTimes | null {
   return state?.lessonId === lessonId && state.status === "done" ? state.times : null;
+}
+
+/** The answer of the lesson that was let go a moment ago (RELEASED_FOR_MS), for the dialog a refused drop opens; null for any other lesson, and later. */
+export function releasedOf(lessonId: string): PossibleTimes | null {
+  return released !== null && released.lessonId === lessonId && Date.now() - released.at <= RELEASED_FOR_MS ? released.times : null;
 }

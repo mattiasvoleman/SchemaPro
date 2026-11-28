@@ -1,5 +1,5 @@
 import { api } from "@/lib/api";
-import { possibleOf } from "@/lib/possible-store";
+import { possibleOf, releasedOf } from "@/lib/possible-store";
 
 /*
  * MÖJLIGA TIDER, AS THE BOARD READS THEM (E3).
@@ -126,7 +126,8 @@ export function letsStartAt(times: PossibleTimes): (dayOfWeek: number, startMinu
  * asked. With no answer in time, or an answer that is not the gateway's shape, every start: the save still says what it says.
  */
 export async function startsTheGatewayLets(lessonId: string, waitMs = OFFER_WAIT_MS): Promise<(dayOfWeek: number, startMinutes: number) => boolean> {
-  const held = possibleOf(lessonId);
+  // Held, or held a moment ago: the page asks this a microtask after the drop, when the layer has been unmounted and has emptied the store.
+  const held = possibleOf(lessonId) ?? releasedOf(lessonId);
   if (held) return letsStartAt(held);
   const asking = new AbortController();
   const timer = setTimeout(() => asking.abort(), waitMs);
