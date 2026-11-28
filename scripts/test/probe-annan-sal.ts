@@ -180,6 +180,23 @@ async function main() {
       assert.deepEqual(await state(), original);
     });
 
+    await check('(as-h) two lessons given the same room at the same time in one apply are a double booking, refused with nothing written (g524)', async () => {
+      // A (7A) and X (8B) both go to Wednesday 09:00, A out of R1 and X out of R2, and both are given R3: no lesson stands in R3 then, so each is clear of the
+      // week, and it is the other mover that holds the room.
+      const versions = await count('ScheduleVersions');
+      const body = {
+        lessonId: lessonA,
+        alsoPicked: [lessonX],
+        moves: [
+          { lessonId: lessonA, from: { dayOfWeek: 2, startTime: '09:00', endTime: '10:00' }, to: { dayOfWeek: 3, startTime: '09:00', endTime: '10:00' }, room: { from: r1, to: r3 } },
+          { lessonId: lessonX, from: { dayOfWeek: 2, startTime: '09:00', endTime: '10:00' }, to: { dayOfWeek: 3, startTime: '09:00', endTime: '10:00' }, room: { from: r2, to: r3 } },
+        ],
+      };
+      assert.deepEqual(await refusal(swaps.apply(body as never, a.caller)), { status: 409, code: 'MASTER_LESSON_REFUSED' });
+      assert.equal(await count('ScheduleVersions'), versions, 'a refused apply keeps no version');
+      assert.deepEqual(await state(), original);
+    });
+
     await check('(as-c) the proposal applied writes the room with the day and the clock, one version, a log row with the room before and after; the undo puts both back', async () => {
       assert.ok(proposal);
       const versions = await count('ScheduleVersions');
