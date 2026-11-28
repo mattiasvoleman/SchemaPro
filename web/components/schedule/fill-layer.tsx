@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import { clockOf, type FillPlaced } from "@/lib/board-fill";
 import type { FillShown } from "@/lib/fill-store";
+import { layoutDay } from "@/lib/day-lanes";
 
 /*
  * THE PROPOSAL OF LÄGG DET SOM GÅR, DRAWN ON ONE DAY OF THE BOARD (E7a, "förslaget ritas på brädet").
@@ -38,12 +39,18 @@ export default function FillLayer({ day, scale, shown, only }: FillLayerProps) {
   if (here.length === 0) return null;
   return (
     <div aria-hidden data-fill-layer={day} className="pointer-events-none absolute inset-0 z-30 overflow-hidden">
-      {here.map((entry) => (
+      {layoutDay(here).map((entry) => (
         <div
           key={entry.key}
           data-fill-box=""
-          className="absolute inset-x-0.5 rounded-sm border-2 border-dashed border-primary bg-primary/10"
-          style={{ top: `${px(entry.startMinutes)}px`, height: `${Math.max(14, (entry.endMinutes - entry.startMinutes) * scale.pxPerMinute)}px` }}
+          className="absolute rounded-sm border-2 border-dashed border-primary bg-primary/10"
+          style={{
+            top: `${px(entry.startMinutes)}px`,
+            height: `${Math.max(14, (entry.endMinutes - entry.startMinutes) * scale.pxPerMinute)}px`,
+            // Bricks of other classes in the same hours stand side by side, as the lessons they lie over do (lib/day-lanes.ts): laid over one another only the last was readable.
+            left: `calc(${(entry.lane * 100) / entry.laneCount}% + 2px)`,
+            width: `calc(${100 / entry.laneCount}% - 4px)`,
+          }}
         >
           <span className="block max-w-full truncate bg-background/90 px-1 text-[10px] font-semibold leading-3 text-foreground">
             {entry.noRoom
