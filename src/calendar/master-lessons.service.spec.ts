@@ -5367,11 +5367,136 @@ describe('MasterLessonsService', () => {
         expect(written()).not.toHaveProperty('isGenerated');
         expect(result.warnings).toEqual([]);
 
-        // A lesson in no block is handed over by the same save, as before.
+        // A lesson in no block is no different: the weeks as they stood are no change of them, so the save of a room leaves it the engine's
+        // (granskaren g509, M-3: the dialog says "Fri för motorn" and used to hand the lesson over at Spara all the same).
         tx.masterLesson.update.mockClear();
         arrangeBlock([]);
         await service.update(LESSON_ID, dialog, testUser());
-        expect(written()).toMatchObject({ isGenerated: false });
+        expect(written()).not.toHaveProperty('isGenerated');
+      });
+
+      describe('the weeks the dialog writes, in no block', () => {
+        const dialog = { dayOfWeek: 1, startTime: '10:00', endTime: '11:00', roomId: FR_ROOM, recurrence: 'ALL_WEEKS' as const, startDate: null, endDate: null };
+
+        it.each([
+          ['odd weeks', {}, { recurrence: 'ODD_WEEKS' as const }],
+          ['a first day', {}, { startDate: '2026-09-01' }],
+          ['a last day', {}, { endDate: '2026-12-18' }],
+          ['no first day, where the lesson had one', { startDate: new Date('2026-08-17T00:00:00.000Z') }, { startDate: null }],
+          ['no last day, where the lesson had one', { endDate: new Date('2026-12-18T00:00:00.000Z') }, { endDate: null }],
+          ['another first day', { startDate: new Date('2026-08-17T00:00:00.000Z') }, { startDate: '2026-08-24' }],
+        ])('hands the lesson to the school when the save writes %s: a window the engine cannot reproduce', async (_what, stored, windowWritten) => {
+          arrangeStored(stored);
+          arrangeBlock([]);
+
+          await service.update(LESSON_ID, { ...dialog, ...windowWritten }, testUser());
+
+          expect(written()).toMatchObject({ isGenerated: false });
+        });
+
+        it('leaves the lesson the engine’s when the save writes the dates it already has', async () => {
+          arrangeStored({
+            recurrence: 'EVEN_WEEKS',
+            startDate: new Date('2026-08-17T00:00:00.000Z'),
+            endDate: new Date('2026-12-18T00:00:00.000Z'),
+          });
+          arrangeBlock([]);
+
+          await service.update(
+            LESSON_ID,
+            { ...dialog, recurrence: 'EVEN_WEEKS', startDate: '2026-08-17', endDate: '2026-12-18' },
+            testUser(),
+          );
+
+          expect(written()).not.toHaveProperty('isGenerated');
+        });
+
+        it('locks a lesson the dialog moves and leaves it the engine’s: the lock is what keeps it, not the window it restated', async () => {
+          arrangeStored();
+          arrangeBlock([]);
+
+          const result = await service.update(LESSON_ID, { ...dialog, dayOfWeek: 2 }, testUser());
+
+          expect(written()).toMatchObject({ dayOfWeek: 2, isLocked: true });
+          expect(written()).not.toHaveProperty('isGenerated');
+          expect(result.lockedByMove).toBe(true);
+        });
+
+        it('gives the lesson back as Generera laid it on the undo of a move: the lock off, the weeks as they stood, no hand-over', async () => {
+          // The undo sends the whole snapshot of the lesson as it stood before the move: its place, its weeks and its lock (off).
+          arrangeStored({ dayOfWeek: 3, isLocked: true });
+          arrangeBlock([]);
+
+          const result = await service.update(LESSON_ID, { ...dialog, dayOfWeek: 1, isLocked: false }, testUser());
+
+          expect(written()).toMatchObject({ dayOfWeek: 1, isLocked: false });
+          expect(written()).not.toHaveProperty('isGenerated');
+          expect(result.lockedByMove).toBeUndefined();
+        });
+
+        it('leaves the lesson the engine’s when only the room changes and the save carries every field', async () => {
+          arrangeStored();
+          const raw = arrangeBlock([]);
+
+          await service.update(LESSON_ID, dialog, testUser());
+
+          expect(written()).not.toHaveProperty('isGenerated');
+          // Nothing moved and no window changed: no block is asked about.
+          expect(blockReads(raw)).toBe(0);
+        });
+
+        it.each([
+          ['a timestamp at midnight UTC', '2026-08-17T00:00:00.000Z', '2026-12-18T00:00:00.000Z'],
+          ['a late evening with an offset', '2026-08-17T23:59:59+02:00', '2026-12-18T23:59:59+02:00'],
+        ])('leaves the lesson the engine’s when the dates it already has are sent as %s: the day is the window, whatever the clock after it says', async (_form, startDate, endDate) => {
+          arrangeStored({
+            recurrence: 'EVEN_WEEKS',
+            startDate: new Date('2026-08-17T00:00:00.000Z'),
+            endDate: new Date('2026-12-18T00:00:00.000Z'),
+          });
+          arrangeBlock([]);
+
+          await service.update(LESSON_ID, { ...dialog, recurrence: 'EVEN_WEEKS', startDate, endDate }, testUser());
+
+          expect(written()).not.toHaveProperty('isGenerated');
+          expect(written()).not.toHaveProperty('isLocked');
+        });
+
+        it('hands a lesson that stays on the tray to the school when the save writes other weeks for it', async () => {
+          // A window written on a lesson nobody stands in is as much a window the engine cannot reproduce as on a placed one.
+          arrangeStored({ isParked: true });
+          arrangeBlock([]);
+
+          await service.update(LESSON_ID, { ...dialog, recurrence: 'ODD_WEEKS' }, testUser());
+
+          expect(written()).toMatchObject({ recurrence: 'ODD_WEEKS', isGenerated: false });
+        });
+
+        it('locks a lesson the dialog gives another length, and leaves it the engine’s: a longer lesson is a move like any other', async () => {
+          arrangeStored();
+          arrangeBlock([]);
+
+          const result = await service.update(LESSON_ID, { ...dialog, endTime: '11:30' }, testUser());
+
+          expect(written()).toMatchObject({ endTime: expect.anything(), isLocked: true });
+          expect(written()).not.toHaveProperty('isGenerated');
+          expect(result.lockedByMove).toBe(true);
+        });
+      });
+
+      it('changes no owner and sets no lock when the dialog moves a lesson that is already apart: it left no card, as for any PATCH', async () => {
+        // The dialog's every save carries the weeks. A lesson of a block that stands in no card, moved on, is held by nothing the dialog can say:
+        // the next Generera places the block again, as it does after a drag (the PATCH above). Written here so that the day this changes, it changes on purpose.
+        arrangeStored({ dayOfWeek: 3 });
+        arrangeBlock([franska()]);
+        const dialog = { dayOfWeek: 4, startTime: '10:00', endTime: '11:00', recurrence: 'ALL_WEEKS' as const, startDate: null, endDate: null };
+
+        const result = await service.update(LESSON_ID, dialog, testUser());
+
+        expect(written()).not.toHaveProperty('isGenerated');
+        expect(written()).not.toHaveProperty('isLocked');
+        expect(result.lockedByMove).toBeUndefined();
+        expect(result.warnings).toEqual([]);
       });
 
       it('puts a member back from the tray beside its card as the card’s', async () => {
