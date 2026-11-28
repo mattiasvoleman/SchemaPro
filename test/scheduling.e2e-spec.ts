@@ -967,7 +967,7 @@ describe('Scheduling surface (e2e)', () => {
 
       expect(response.body).toMatchObject({ version: 1, state: 'RUNNING', verdict: null, verified: false, total: 0, changes: [], failure: null, finishedAt: null });
       expect(Object.keys(response.body).sort()).toEqual([
-        'changes', 'failure', 'finishedAt', 'searchSeconds', 'startedAt', 'state', 'total', 'verdict', 'verified', 'verifySeconds', 'version',
+        'changes', 'failure', 'finishedAt', 'report', 'searchSeconds', 'startedAt', 'state', 'total', 'verdict', 'verified', 'verifySeconds', 'version',
       ]);
       // The claim was one statement.
       expect(harness.tx.$executeRaw).toHaveBeenCalled();
