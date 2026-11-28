@@ -1,9 +1,9 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { lazy, Suspense, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Lock, LockOpen, X } from "lucide-react";
+import { ArrowLeftRight, Lock, LockOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { restorableInput } from "@/lib/lesson-restore";
 import type {
@@ -14,6 +14,9 @@ import type {
 } from "@/lib/queries";
 import type { MasterLesson } from "@/lib/types";
 import type { ScheduleHistory } from "@/lib/use-schedule-history";
+
+/** Byt plats (E5a): fetched when the button is first pressed, with the lists it shares with Gör plats (swap-dialog.tsx). */
+const SwapPairDialog = lazy(() => import("./swap-dialog").then((module) => ({ default: module.SwapPairDialog })));
 
 /*
  * The timetable's bar for a selection (shift+click): lock, unlock and delete
@@ -61,6 +64,9 @@ export function SelectionBar({
   deleteIcon,
 }: SelectionBarProps) {
   const t = useTranslations("timetable");
+  // Byt plats: whether the dialog is open, and whether it has ever been (its code is fetched at the first press and not before).
+  const [pairOpen, setPairOpen] = useState(false);
+  const [pairUsed, setPairUsed] = useState(false);
 
   const bulkSetLock = async (isLocked: boolean) => {
     // A card's whole block: the generation refuses a block locked in part.
@@ -135,11 +141,27 @@ export function SelectionBar({
   };
 
   if (!shown) return null;
+  const marked = selectedLessons();
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-md border bg-accent/40 px-3 py-2">
       <span className="text-sm font-medium">
-        {t("bulkSelected", { count: selectedLessons().length })}
+        {t("bulkSelected", { count: marked.length })}
       </span>
+      {/* Byt plats: exactly two lessons marked, each to take the other's start (E5a). The gateway judges it as one move, and says why when it does not go. */}
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={marked.length !== 2}
+        title={marked.length !== 2 ? t("bulkSwapNeedsTwo") : undefined}
+        onClick={() => {
+          setPairUsed(true);
+          setPairOpen(true);
+        }}
+        data-writes="SCHEMALAGGNING DRIFT"
+      >
+        <ArrowLeftRight />
+        {t("bulkSwap")}
+      </Button>
       <Button size="sm" variant="outline" onClick={() => void bulkSetLock(true)} data-writes="SCHEMALAGGNING DRIFT">
         <Lock />
         {t("bulkLock")}
@@ -156,6 +178,21 @@ export function SelectionBar({
         <X />
         {t("bulkClear")}
       </Button>
+      {pairUsed ? (
+        <Suspense fallback={null}>
+          <SwapPairDialog
+            open={pairOpen && marked.length === 2}
+            onOpenChange={setPairOpen}
+            lessons={marked.map((lesson) => ({ id: lesson.id, dayOfWeek: lesson.dayOfWeek, startTime: lesson.startTime }))}
+            // A swap rewrote lessons under the page, as the dialog of Föreslå byten says of its own.
+            onApplied={() => {
+              history.clear();
+              onClear();
+            }}
+            guard={guard}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }
