@@ -19,7 +19,7 @@ vi.mock("@/lib/queries", () => ({
   useScheduleVersionDetail: (id: string | null) => ({
     data: id === "v-a" ? { id: "v-a", name: "Vår v12 (2026/27)", lessons: [lessonA] } : undefined,
   }),
-  useScheduleVersionActions: () => ({ save: { isPending: false }, restore: { isPending: false }, remove: { isPending: false } }),
+  useScheduleVersionActions: () => ({ save: { isPending: false }, rename: { isPending: false }, restore: { isPending: false }, remove: { isPending: false } }),
 }));
 
 import { VersionsDialog } from "./versions-dialog";
