@@ -146,6 +146,15 @@ describe('MasterLessonsService: förutsättningen (expected)', () => {
     expect(lockedAt).toBeLessThan(tx['masterLesson']!['update']!.mock.invocationCallOrder[0]!);
   });
 
+  it('takes the year\'s share of the regeneration lock before the lesson\'s row lock, never after: Generera holds the year and then every row, so a row held first is a deadlock with it (granskaren g515)', async () => {
+    await service.update(LESSON, { roomId: OTHER_ROOM, expected: SAW }, testUser());
+    const yearLockAt = tx.$executeRaw.mock.calls.findIndex(([query]) => sqlOf(query).includes('lock_years_for_grundschema_edit'));
+    const rowLockAt = tx.$queryRaw.mock.calls.findIndex(([query]) => sqlOf(query).includes('FOR NO KEY UPDATE'));
+    expect(yearLockAt).toBeGreaterThanOrEqual(0);
+    expect(rowLockAt).toBeGreaterThanOrEqual(0);
+    expect(tx.$executeRaw.mock.invocationCallOrder[yearLockAt]!).toBeLessThan(tx.$queryRaw.mock.invocationCallOrder[rowLockAt]!);
+  });
+
   it('writes a request that sends no expectation as it always was, and takes no row lock in advance', async () => {
     await service.update(LESSON, { roomId: OTHER_ROOM }, testUser());
     expect(rowLocks()).toHaveLength(0);
@@ -214,6 +223,24 @@ describe('MasterLessonsService: förutsättningen (expected)', () => {
     expect(tx['masterLesson']!['findUnique']).toHaveBeenCalledTimes(1);
   });
 
+  it('lets a request through that sets a value which already stands, though it is not the one the page saw: a lock a colleague set too, a move made twice (granskaren g515)', async () => {
+    // A bulk lock of a lesson a colleague has just locked as well: the value written is the one that stands, so nothing is written over.
+    stored = { ...stored, isLocked: true };
+    await expect(service.update(LESSON, { isLocked: true, propagate: false, expected: { isLocked: false } }, testUser())).resolves.toMatchObject({ isLocked: true });
+    // The same save sent a second time (the first has been written; the page still holds what it saw before).
+    stored = { ...stored, isLocked: false, dayOfWeek: 3, startTime: t('13:00'), endTime: t('14:00') };
+    await expect(
+      service.update(LESSON, { dayOfWeek: 3, startTime: '13:00', endTime: '14:00', expected: { dayOfWeek: 1, startTime: '10:00', endTime: '11:00' } }, testUser()),
+    ).resolves.toMatchObject({ dayOfWeek: 3 });
+  });
+
+  it('still names the field whose written value is not the one that stands, and a field the request does not write', async () => {
+    stored = { ...stored, dayOfWeek: 3, teacherId: '88888888-8888-4888-8888-888888888888', roomId: OTHER_ROOM };
+    // The day is written as it already stands and passes; the teacher is a colleague's and is written over; the room is not written but was named.
+    const refused = await refusal({ dayOfWeek: 3, teacherId: TEACHER, expected: { dayOfWeek: 1, teacherId: TEACHER, roomId: ROOM } });
+    expect(refused.getResponse()).toMatchObject({ code: LESSON_CHANGED, params: { fields: 'roomId,teacherId' } });
+  });
+
   it('answers 404 for a lesson that is gone by the time the row is locked', async () => {
     lockedUpdatedAt = null;
     await expect(service.update(LESSON, { roomId: OTHER_ROOM, expected: SAW }, testUser())).rejects.toBeInstanceOf(NotFoundException);
@@ -266,6 +293,14 @@ describe('changedSince', () => {
 
   it('names every field the page can say it saw, so that none is left out of the comparison', () => {
     expect([...EXPECTED_FIELDS].sort()).toEqual(Object.keys(saw).sort());
+  });
+
+  it('passes a field that the request writes as it already stands, whatever the page saw, in the forms the request writes it', () => {
+    // A day told with a time of day after it, and no day as an empty string, are the days parseDateOrNull reads them as.
+    expect(changedSince(row, { ...saw, startDate: '2026-09-14', endDate: '2026-12-18' }, { startDate: '2026-09-07T00:00:00.000Z', endDate: '' })).toEqual([]);
+    expect(changedSince(row, { ...saw, exempt: [], extraGroupIds: [] }, { exempt: ['FRAME'] })).toEqual(['extraGroupIds']);
+    expect(changedSince(row, { ...saw, isLocked: false }, { isLocked: false })).toEqual(['isLocked']);
+    expect(changedSince(row, { ...saw, roomId: OTHER_ROOM }, { roomId: null })).toEqual(['roomId']);
   });
 
   it('reads a clock and a day in the forms the page sends them in, however the row stores them', () => {

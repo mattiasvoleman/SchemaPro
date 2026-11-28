@@ -381,9 +381,36 @@ describe("a write says what the page saw (E9)", () => {
     updateLesson.mutateAsync.mockResolvedValueOnce({ id: "l-1", dayOfWeek: 3, startTime: "10:00", endTime: "09:00", isLocked: true, lockedByMove: true });
     await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 3, startTime: "10:00" })));
     await act(async () => void (await view.result.current.history.undo()));
-    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ id: "l-1", dayOfWeek: 1, startTime: "08:00", expected: { dayOfWeek: 3, startTime: "10:00" } }));
+    // Every field the undo writes, and the lock as the gateway answered it.
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: "l-1",
+        dayOfWeek: 1,
+        startTime: "08:00",
+        expected: { dayOfWeek: 3, startTime: "10:00", endTime: "09:00", roomId: "r-1", teacherId: "t-1", isLocked: true, isParked: false, recurrence: "ALL_WEEKS", startDate: null, endDate: null },
+      }),
+    );
     await act(async () => void (await view.result.current.history.redo()));
-    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ dayOfWeek: 3, startTime: "10:00", expected: { dayOfWeek: 1, startTime: "08:00" } }));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        dayOfWeek: 3,
+        startTime: "10:00",
+        expected: { dayOfWeek: 1, startTime: "08:00", endTime: "09:00", roomId: "r-1", teacherId: "t-1", isLocked: false, isParked: false, recurrence: "ALL_WEEKS", startDate: null, endDate: null },
+      }),
+    );
+  });
+
+  it("holds an undo and a redo to every field they write, so that a colleague's later change of a field the patch did not set is not put back (granskaren g515)", async () => {
+    const { view, updateLesson } = setup();
+    await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 3 })));
+    for (const step of ["undo", "redo"] as const) {
+      await act(async () => void (await view.result.current.history[step]()));
+      const body = updateLesson.mutateAsync.mock.lastCall![0] as Record<string, unknown>;
+      const written = Object.keys(body).filter((field) => field !== "id" && field !== "expected");
+      // The undo writes the whole snapshot (teacher and room too): a teacher that a colleague changed after the move is a value it would put back over his.
+      expect(written, step).toContain("teacherId");
+      for (const field of written) expect(body["expected"], `${step} writes ${field}`).toHaveProperty(field);
+    }
   });
 
   it("holds the undo of an exemption to the rules the gateway saved, which may be fewer than were asked", async () => {
@@ -391,7 +418,7 @@ describe("a write says what the page saw (E9)", () => {
     updateLesson.mutateAsync.mockResolvedValueOnce({ id: "l-1", dayOfWeek: 2, startTime: "08:00", endTime: "09:00", isLocked: true, exemptFrom: ["FRAME"] });
     await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 2, exempt: ["FRAME", "LUNCH"] })));
     await act(async () => void (await view.result.current.history.undo()));
-    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ expected: { dayOfWeek: 2, exempt: ["FRAME"] } }));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ expected: expect.objectContaining({ dayOfWeek: 2, exempt: ["FRAME"] }) }));
   });
 
   it("sends what a lesson that has none holds of an exemption as an empty list, so that a colleague's later one is seen", async () => {
@@ -459,7 +486,7 @@ describe("a lesson somebody else has changed (E9)", () => {
     expect(readOne).not.toHaveBeenCalled();
     // The step is gone: the next undo takes the step before it.
     await act(async () => void (await view.result.current.edits.doUndo()));
-    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ dayOfWeek: 1, expected: { dayOfWeek: 3 } }));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ dayOfWeek: 1, expected: expect.objectContaining({ dayOfWeek: 3 }) }));
   });
 });
 

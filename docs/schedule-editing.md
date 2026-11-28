@@ -225,6 +225,8 @@ whatever the request names (decision 5: no forced clash).
 - **Värden och inte tidsstämpel.** Det en skrivning inte får göra är att lägga sitt värde över ett som någon annan ändrat. En kollegas ändring av något begäran inte skriver
   (ett lås, en sal medan lektionen flyttas) är inte i vägen, och sidans egna skrivningar (ett drag som släpps två gånger i rad, ett Ångra) är det lektionen står på då. Dialogen
   skriver alla sina fält och nämner dem alla: en kollegas ny lärare läggs inte tillbaka av en Spara som ändrade salen (sn-d).
+  Ett fält som begäran själv skriver till det värde som redan står är inget som skrivs över, vad sidan än såg: en Spara som skickas två gånger och ett lås som en kollega
+  också har satt är ingen krock (sn-g; granskaren g515).
 - **Utan `expected` skrivs begäran som förut.** Mobilen och en äldre webb skickar ingen, och de tar inget lås i förväg: bara en begäran som nämner vad sidan såg kostar ett
   uttalande till (radlåset). Fältet är additivt; en gateway som är äldre än webben nekar det med 400 (`forbidNonWhitelisted`), så gatewayen går före webben.
 - **Webben** (`web/lib/lesson-expected.ts`, `lesson-changed.ts`): ett drag, en dialog och en Gör om skickar det de läste av de fält de skriver; ett Ångra hålls mot det lektionen

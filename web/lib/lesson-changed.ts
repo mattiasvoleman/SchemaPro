@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { ApiError } from "@/lib/api";
 import { apiErrorText } from "@/lib/api-error-text";
+import { seenOf } from "@/lib/lesson-expected";
 import type { MasterLesson } from "@/lib/types";
 
 /*
@@ -80,6 +81,17 @@ export async function tellChanged(input: {
 }
 
 /**
+ * What the reader changed: the fields of the patch whose value is not the one the page saw. A save carries every field of the dialog, and the ones the
+ * reader did not touch are restated, not asked for: made again on the lesson as it stands, a restated teacher would put back the one the colleague
+ * had just been told to have replaced (granskaren g515). The button says "min ändring", and sends that and nothing else.
+ */
+export function changedBy(lesson: object, patch: Record<string, unknown>): Record<string, unknown> {
+  const seen = seenOf(lesson, patch);
+  const same = (a: unknown, b: unknown) => (Array.isArray(a) && Array.isArray(b) ? a.length === b.length && a.every((item) => b.includes(item)) : a === b);
+  return Object.fromEntries(Object.entries(patch).filter(([field, value]) => !(field in seen) || !same(seen[field], value)));
+}
+
+/**
  * A write refused for somebody else's change (409 LESSON_CHANGED), said as what it is and never as a clash. A step of the history that meets it
  * is a step that cannot be taken back, in the history's own words. A write the page made is told in full when the page remembers what it asked
  * (`asked`), and by the catalogue's sentence when it does not.
@@ -97,5 +109,5 @@ export async function told(input: {
   const sentence = apiErrorText(error, tCommon);
   if (input.undo) return void toast.error(t("undoRefused", { why: sentence }));
   if (!asked || !input.queryClient) return void toast.error(sentence);
-  await tellChanged({ queryClient: input.queryClient, fields: String(error.params?.["fields"] ?? ""), lesson: asked.lesson, t, again: (fresh) => input.again(fresh, asked.patch as never) });
+  await tellChanged({ queryClient: input.queryClient, fields: String(error.params?.["fields"] ?? ""), lesson: asked.lesson, t, again: (fresh) => input.again(fresh, changedBy(asked.lesson, asked.patch) as never) });
 }

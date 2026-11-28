@@ -13,6 +13,7 @@
  *   (sn-d) a request that names only the fields it writes is not in the way of a colleague's change of another one, and the dialog, which names
  *          them all, is: the colleague's teacher is not put back by a save that changed the room;
  *   (sn-e) a request that sends no expectation is written as it always was (the mobile app and an older page send none);
+ *   (sn-g) a request that sets the value that already stands is no conflict: the same save twice, a lock a colleague set too;
  *   (sn-f) a first day that is no YYYY-MM-DD is a 400 LESSON_DATE_FORM and nothing is written (granskaren g511, L-6): it was a 500.
  *
  * It works in a school of its own (slug `probe-sakerhetsnat-0`) and drops it.
@@ -109,6 +110,35 @@ export async function sakerhetsnatChecks(owner: Client, api: PrismaService, chec
       }
     });
 
+    await check('(sn-h) a request with an expectation against Generera, which holds the year and then every row, is never a deadlock: the year\'s share is taken before the row (granskaren g515)', async () => {
+      const outcomes: Record<string, number> = {};
+      for (let round = 0; round < 24; round += 1) {
+        await reset(L1, 1, '09:00', '10:00', R1, T1);
+        const generera = new Client({ connectionString: process.env['PROBE_OWNER_URL'] });
+        await generera.connect();
+        const holding = (async () => {
+          try {
+            await generera.query('BEGIN');
+            await generera.query(`SELECT pg_advisory_xact_lock(hashtext('grundschema-regenerate'), hashtext($1::uuid::text))`, [a.year]);
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            await generera.query(`SELECT "id" FROM "MasterLessons" WHERE "academicYearId" = $1::uuid ORDER BY "id" FOR UPDATE`, [a.year]);
+            await generera.query('COMMIT');
+            return 'generera-ok';
+          } catch (error) {
+            await generera.query('ROLLBACK').catch(() => undefined);
+            return `generera-${(error as { code?: string }).code}`;
+          }
+        })();
+        // The request starts at another point of Generera's turn each round: before it, while it holds the year, and while it holds the rows.
+        await new Promise((resolve) => setTimeout(resolve, (round % 12) * 12));
+        const request = refusalOf(() => masters.update(L1, { roomId: R3, expected: { roomId: R1 } }, a.caller)).then((error) => (error === undefined ? 'ok' : (codeOf(error) ?? 'refused')), (error: unknown) => `error-${(error as { code?: string }).code}`);
+        const [rows, answer] = await Promise.all([holding, request]);
+        await generera.end();
+        outcomes[`${answer} | ${rows}`] = (outcomes[`${answer} | ${rows}`] ?? 0) + 1;
+      }
+      assert.deepEqual(Object.keys(outcomes), ['ok | generera-ok'], `no deadlock between a request that names what it saw and Generera: ${JSON.stringify(outcomes)}`);
+    });
+
     await check('(sn-c) a request that has read the lesson and waits for its row meets the write that held it, and is refused on that', async () => {
       await reset(L1, 1, '09:00', '10:00', R1, T1);
       // A writer held open by hand: the row is locked, as a PATCH in the middle of its transaction would have it.
@@ -155,6 +185,24 @@ export async function sakerhetsnatChecks(owner: Client, api: PrismaService, chec
       const saved = await masters.update(L1, { roomId: R3 }, a.caller);
       assert.equal(saved.roomId, R3);
       assert.equal((await stateOf(L1)).room, R3);
+    });
+
+    await check('(sn-g) a request that sets the value that already stands is nothing written over: the same save sent twice, and a lock a colleague set too (granskaren g515)', async () => {
+      await reset(L1, 1, '09:00', '10:00', R1, T1);
+      const move = { dayOfWeek: 5, startTime: '13:00', endTime: '14:00', expected: SAW_L1 };
+      await masters.update(L1, move, a.caller);
+      const again = await refusalOf(() => masters.update(L1, move, a.caller));
+      assert.equal(again, undefined, 'the second of two equal saves is no conflict with the first');
+      assert.deepEqual(await stateOf(L1), { day: 5, start: '13:00', room: R1, teacher: T1, locked: true });
+      // A colleague has locked the lesson; the page saw it free and asks for the lock: it is there.
+      await reset(L1, 1, '09:00', '10:00', R1, T1);
+      await owner.query(`UPDATE "MasterLessons" SET "isLocked" = true, "updatedAt" = now() WHERE id = $1`, [L1]);
+      assert.equal(await refusalOf(() => masters.update(L1, { isLocked: true, propagate: false, expected: { isLocked: false } }, a.caller)), undefined);
+      // The field a colleague changed that this request does write over, with another value, is still refused.
+      await owner.query(`UPDATE "MasterLessons" SET "roomId" = $2, "updatedAt" = now() WHERE id = $1`, [L1, R2]);
+      const over = await refusalOf(() => masters.update(L1, { roomId: R3, isLocked: true, expected: { roomId: R1, isLocked: false } }, a.caller));
+      assert.equal(codeOf(over), 'LESSON_CHANGED');
+      assert.equal(fieldsOf(over), 'roomId');
     });
 
     await check('(sn-f) a first day that is no YYYY-MM-DD is a 400 LESSON_DATE_FORM and nothing is written; it was a 500', async () => {
