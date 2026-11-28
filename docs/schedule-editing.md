@@ -13,7 +13,7 @@ Implemented feature set (Tiers 1–3 of the flexibility roadmap).
 - **Bulk editing** — shift-click lessons to multi-select, then Lock / Unlock / Delete from the bulk bar (single undo step).
 - **Conflict surfacing** — existing clashes (teacher/room/group double-bookings, weekly UNAVAILABLE constraints) are highlighted with a red ring and counted in a banner; detection in `web/lib/conflicts.ts` mirrors server validation.
 - **Views** — combined grid plus "By teacher / By room / By class" lane views; all lanes stay fully editable.
-- **Versions** — save named snapshots, restore any snapshot (an automatic safety snapshot is taken first). `api/v1/schedule-versions`.
+- **Versions** — save named snapshots, rename them, compare one with the grid or with another version, restore any snapshot after being asked (an automatic safety snapshot is taken first). `api/v1/schedule-versions`. See *Versionerna (E9)* below.
 - **Audit trail** — every create/update/delete/regenerate/restore is appended to `ScheduleChangeLogs` (before/after JSON, actor).
 
 ## One judge for a hand edit (En domare med ord, E1)
@@ -265,6 +265,26 @@ skriva något (varje administratör får läsa det, skrivningen är schemalägga
   `test/placement-write-in.e2e-spec.ts` (vägarna och vem som får), `scripts/test/probe-skriv-in.ts` och `probe-skriv-in-direkt.ts` (mot riktig Postgres, i CI) och, för hand mot en riktig motor, `scripts/test/probe-skriv-in-motor.ts`:
   Generera, körd efter bron, skriver samma lektioner ur samma rader, och bron efter Generera ändrar ingenting.
 
+## Versionerna (E9)
+
+- **En flytt är en rad.** Ett schema har inga lektions-id i en version (en återställning lägger varje lektion på nytt under ett nytt), så "samma lektion" läses av vad den är: ämne, klass,
+  lärare, medlärare, veckor, andra klasser och namngivna elever (`web/lib/version-diff.ts`, ren och provad för sig). Två lektioner som är lika i allt detta men står på en annan dag
+  eller ett annat klockslag, eller på bricklådan och inte, är **en lektion som flyttats** (`moved`, med en notis om salen också är en annan). En lektion som står där den stod men har
+  en annan lärare, sal, vecka, klass, elever, ett annat lås eller andra undantag (Lägg ändå) är **ändrad** (`changed`, med vad: "lärare: K. Ek → N. Berg"; lås och undantag skriver en återställning också, så
+  de är med). Det som blir kvar är tillagt eller borttaget. Två identiska lektioner räknas som två, så en av dem borta är en borttagen. Parningen ger så många par som lektionerna tillåter (per ämne och klass,
+  med en förlängande väg när en lektions partner är tagen), och föredrar samma lektion på samma plats, sedan samma lektion på annan plats, sedan samma plats med något annat ändrat. Ordningen är fast:
+  samma lektioner parar ihop sig i ordning, och en lektion hamnar i en rad. En lektion som både flyttats och fått en annan lärare är en borttagen och en tillagd: ingenting säger att det är samma lektion.
+- **Hela listan, per klass.** Varje klass som har något har en rubrik med sina tal ("7A · 1 flyttad, 2 tillagda") och alla sina rader i ordningen flyttade, ändrade, tillagda, borttagna.
+  Listan avkortades förut vid åtta rader. Tecknet före raden (↔ ~ + −) är för ögat och ordet före det (Flyttad, Ändrad, Tillagd, Borttagen) för örat.
+- **Två versioner mot varandra.** Jämför-knappen jämför versionen med schemat på skärmen, och listan "Jämför med" byter motparten till en annan version. Båda läses med
+  `GET /api/v1/schedule-versions/:id` (ingen ny läsväg i gatewayen: en version är en blob och jämförelsen görs i webben).
+- **Döp om.** `PATCH /api/v1/schedule-versions/:id` med `{ name }` (1 till 120 tecken, trimmat). Bara namnet kan ändras: en version är en ögonblicksbild. En annan skolas version är 404 (RLS),
+  ett namn av blanksteg 400. Ligger i `ScheduleVersionNamesService` och rör inte `ScheduleVersionsService`. Kräver samma område som att spara en version (SCHEMALAGGNING).
+- **Frågan före en återställning.** Återställ öppnar en fråga som säger att hela grundschemat ersätts, att det nuvarande schemat sparas som en version först, och vad som ändras
+  jämfört med schemat på skärmen ("1 flyttad, 3 tillagda") eller att versionen är identisk med det. Ingenting ersätts före ett ja.
+- **Hålls av** `web/lib/version-diff.test.ts`, `components/schedule/versions-dialog.diff.test.tsx` och sidprovet "comparing a version with the timetable", `src/calendar/schedule-version-names.service.spec.ts`,
+  `test/schedule-version-rename.e2e-spec.ts` och `scripts/test/probe-versioner.ts` (mot riktig Postgres under RLS: en annan skolas version döps inte om).
+
 ## Lägg det som går (E7a)
 
 Påfyllning i gatewayen för brickorna i Att lägga: de markerade brickorna, en klass, en årskurs eller skolan. Den bevisar ingenting och säger det: svaret är ett förslag, aldrig "går inte".
@@ -300,7 +320,7 @@ Ett förslag rymmer högst 600 brickor som går att lägga (Ta ins gräns): frå
 - **Richer objectives** — PREFERRED_FREE/BUSY now also apply to rooms and student groups; a `spread` objective penalizes same-subject lessons stacked on one weekday.
 - **Optimization profile UI** — sliders on the Generate page (stability / spread / preferred-free / preferred-busy), saved for the school (`OptimizationProfiles`, DEPLOYMENT §43), sent per run, all engine-side defaults env-overridable (`WEIGHT_DISRUPTION`, `WEIGHT_SPREAD`).
 - **Durable job store** — `OptimizationJobs` table replaces the in-memory queue: the row outlives the API process, and powers the run-history list on the Generate page (`GET /api/v1/optimization/jobs?academicYearId=…`). A run is a queue entry: a lease the process renews while it works, at most one active run per school year (a second start is 409 `GENERATE_ALREADY_RUNNING`), and a sweep that ends a run whose process went away as `ENGINE_RUN_ABANDONED` — see docs/DEPLOYMENT.md §27.
-- **Version diff** — compare any snapshot against the live timetable (added/removed lessons) before restoring (`GET /api/v1/schedule-versions/:id`).
+- **Version diff** — compare any snapshot against the live timetable, or against another snapshot, before restoring (`GET /api/v1/schedule-versions/:id`); see *Versionerna (E9)* for what the comparison says.
 - **iCal export & print** — download the filtered timetable as weekly-recurring `.ics` events, or print the current view.
 - **Keyboard editing** — focus a lesson: arrow keys move it (±15 min / ±1 day, validated like drags), Enter opens the editor, Shift+Enter toggles selection.
 
