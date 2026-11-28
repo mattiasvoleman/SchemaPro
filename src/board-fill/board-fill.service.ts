@@ -7,6 +7,7 @@ import { MasterLessonsService } from '../calendar/master-lessons.service';
 import { PossibleTimesService } from '../calendar/possible-times.service';
 import { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import { requireSchoolId } from '../common/utils/request-context';
+import { recordRead } from '../access-log/access-log';
 import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
 import { PrismaService } from '../database/prisma.service';
 import { gradeSpanOf } from '../optimization/room-eligibility';
@@ -245,6 +246,11 @@ export class BoardFillService {
           costs: entry.costs,
         }));
         for (const entry of plan.left) left.push({ ...viewOf(byKey.get(entry.brick.key)!), reason: entry.reason });
+        // A teacher's day or stretch counted against a limit of their post is a read of that post (HR data): the cost every start was ranked by read it, for each brick
+        // that was costed (laid, or tried and refused by the judge). Möjliga tider, Vad får plats and the swap search record the same read (EMPLOYMENT).
+        const costed = [...plan.placed.map((entry) => entry.brick), ...plan.left.filter((entry) => entry.reason === 'JUDGE').map((entry) => entry.brick)];
+        const limited = costed.flatMap((brick) => [brick.lesson.teacherId, brick.lesson.coTeacherId]).filter((id): id is string => id !== null && data.postLimited.has(id));
+        await recordRead(tx, 'EMPLOYMENT', limited, user.channel);
         return this.answer(dto.academicYearId, basis, asked.length, placed, left, plan.left.some((entry) => entry.reason === 'TIME'), plan.stats);
       },
       { timeoutMs: this.budgetMs + 30_000 },
