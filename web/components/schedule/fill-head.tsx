@@ -37,7 +37,9 @@ export function FillHead(props: Omit<FillDialogProps, "open" | "onClose"> & { wr
           }}
         >
           <Suspense fallback={null}>
-            <Dialog {...dialog} open onClose={() => setOpen(false)} />
+            {/* A proposal belongs to the year it was asked for: the dialog is not modal, so the page can be switched to another year while one stands. A new key
+                is a new dialog (the old one's cleanup takes its proposal off the board) with nothing asked yet. */}
+            <Dialog key={dialog.yearId} {...dialog} open onClose={() => setOpen(false)} />
           </Suspense>
         </DialogLoadBoundary>
       ) : null}
