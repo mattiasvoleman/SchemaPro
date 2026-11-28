@@ -25341,6 +25341,62 @@
         }
       }
     },
+    "/api/v1/swaps/pair": {
+      "post": {
+        "tags": [
+          "Swaps"
+        ],
+        "operationId": "SwapsController_pair",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairSwapDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
     "/api/v1/swaps/suggest": {
       "post": {
         "tags": [
@@ -29702,9 +29758,20 @@
             "type": "string",
             "format": "uuid"
           },
+          "alsoPicked": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "forBrick": {
+            "type": "boolean"
+          },
           "moves": {
             "type": "array",
-            "minItems": 2,
+            "minItems": 1,
             "maxItems": 60,
             "items": {
               "$ref": "#/components/schemas/SwapMoveDto"
@@ -34048,6 +34115,28 @@
           "isLocked"
         ]
       },
+      "MakeRoomDto": {
+        "type": "object",
+        "properties": {
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "startTime": {
+            "type": "string"
+          },
+          "depth": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 3
+          }
+        },
+        "required": [
+          "dayOfWeek",
+          "startTime"
+        ]
+      },
       "MarkDto": {
         "type": "object",
         "properties": {
@@ -34331,6 +34420,23 @@
         "required": [
           "academicYearId",
           "spans"
+        ]
+      },
+      "PairSwapDto": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "otherLessonId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "lessonId",
+          "otherLessonId"
         ]
       },
       "PassDecisionDto": {
@@ -36240,15 +36346,18 @@
             "type": "string",
             "format": "uuid"
           },
+          "brick": {
+            "$ref": "#/components/schemas/PossibleBrickDto"
+          },
           "limit": {
             "type": "number",
             "minimum": 1,
             "maximum": 30
+          },
+          "makeRoom": {
+            "$ref": "#/components/schemas/MakeRoomDto"
           }
-        },
-        "required": [
-          "lessonId"
-        ]
+        }
       },
       "SwapMoveDto": {
         "type": "object",

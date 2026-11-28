@@ -324,6 +324,49 @@ proposal. Code in `src/swaps/`, dialog in `web/components/schedule/swap-dialog.t
   past 23 into the next day, so `34:00` used to be judged at minute 2040 and
   stored as 10:00.
 
+### Byt plats and Gör plats (E5a)
+
+Two more questions of the same code, asked of a lesson the schemaläggare marked or dropped on a taken time. Nothing is written by either;
+both are applied by `POST /api/v1/swaps/apply` as above.
+
+- **Byt plats: `POST /api/v1/swaps/pair`.** Two lessons the schemaläggare marked each take the other's day and start and keep their own
+  length, so an hour and three quarters swap when both fit where the other stood. Each lesson goes with the lessons laid beside it (its unit).
+  The two are judged as ONE move (each is gone from where it stood when the other is asked of) by the judge of the hand edit
+  (`src/calendar/lesson-judge.ts`), and the answer is `ok` with the swap as a proposal (kind `SWAP`, its price and what it takes out of the
+  calendar) or the judge's reasons by lesson, each with its sentence. `immovable` says why there is nothing to judge: a lesson on the tray
+  (`PARKED`) or written from a förläggning (`PLACED`), lessons that move as one (`SAME_UNIT`) or stand at one start (`SAME_PLACE`). A lesson the
+  generation keeps may be swapped: it is the person's own hand, as a PATCH is, and the swap locks both, as every hand move does. `apply` is
+  sent with `alsoPicked` naming the second lesson, which is what lets it be locked.
+- **Gör plats: `POST /api/v1/swaps/suggest` with `makeRoom: { dayOfWeek, startTime, depth? }`.** The picked lesson (`lessonId`), or a lesson
+  that is not one yet (`brick`, as the possible times take it), or a lesson on the tray (its own `lessonId`), is asked to stand at that time,
+  and the answer is the sets of moves that make room for it: kind `MAKE_ROOM`, each lesson's `levels` (0 is the picked one, 1 what stood in its
+  way, 2 what stood in the way of that, at most `depth`, three when left out), the price before and after, and for a brick or a lesson on the
+  tray `lay`, where it is laid once the others have gone (it is not among `moves`). `makeRoom.blockers` names what stands at the time and
+  `makeRoom.stuck` says why there is nothing to offer when that is known beforehand (`CLOSED` by a rule, `LOCKED_IN_THE_WAY`, `TOO_MANY`).
+  The rules of a proposal, in `src/swaps/swap-make-room.ts`:
+  - the picked unit lands at the time; every other unit that moves stood in the way of one that moves (nothing moves for no reason); nothing
+    stands in the way at the end, and no two landings hold the same teacher, room or class;
+  - **a lesson the generation keeps never moves** (a locked lesson, a lesson a förläggning wrote, and so one with an exemption, which is locked
+    as long as it holds): where one stands in the way, the landing is not to be had. The picked lesson, when it carries an exemption, is
+    answered `EXEMPT` and is moved by hand;
+  - a displaced lesson lands at a start of the school's own grid (the clocks its lessons begin at), in a place that is empty or that another
+    lesson of the set leaves; no proposal asks for an exemption, because the judge is asked without one;
+  - `levels` are the smallest there are (breadth first), at most six units move in all, and each displaced unit is offered its eight
+    landings that stand in the way of fewest others (`makeRoom.landingsCut` says when that cut was made), at most 1 200 sets are costed,
+    and the judge has the same 1,5 s as the swap search. A school the size of the tests (hourly grid) is searched without a cut.
+  - **Held to an exhaustive check.** `swap-make-room.spec.ts` tries every assignment of every subset of the unlocked units to every place of
+    the grid and keeps the sets that leave the school with no double booking, move only what stood in the way (reached from the picked unit)
+    and are no deeper than `depth`: the search gives exactly those, at depth 1, 2 and 3, for placed lessons and for bricks, with locked
+    lessons in the school. `swap-context.spec.ts` holds the pair rule it asks (`SwapContext.landingsClash`) to the indexed one (`inTheWay`)
+    for every pair of lessons in four kinds of school.
+- **The staff room is told after the commit** (g465 L-3). `apply` announces the move through `PrismaService.onCommit`, with the ids of the
+  lessons that moved, as `MasterLessonsService` announces a hand edit: told inside the transaction, the page read the year before the commit and
+  found the lessons as they were, and a swap rolled back after the announcement had been announced all the same.
+- **Not in the apply: laying a brick.** A swap that makes room for a brick is applied as the moves that vacate the time (`forBrick`: one move
+  is a proposal, and no moved lesson may be locked), and the brick is laid by `POST /api/v1/board-tray/lay` (a lesson on the tray by moving it
+  back). They are two requests, which the page runs one after the other, taking the moves back with `undo` if the lay is refused. One
+  transaction needs a `layIn(tx, …)` in the tray's service, whose partKey check lives in a private read there.
+
 ## Lesson participants (multi-class & individual students)
 
 A lesson keeps its primary class but can additionally contain **extra classes**
