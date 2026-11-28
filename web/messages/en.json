@@ -2612,6 +2612,55 @@
       }
     }
   },
+  "fillDialog": {
+    "button": "Fill what fits",
+    "title": "Fill what fits",
+    "description": "Lays the bricks of Att lägga one at a time on the best free time each has, with a room. It is a proposal: nothing is written until you take it in, and nothing that stands is moved.",
+    "loadFailed": "The dialog could not be fetched. Try again.",
+    "nothingLeft": "Nothing is left in Att lägga.",
+    "scopeLegend": "What should be laid?",
+    "scopeClass": "One class",
+    "scopeGrade": "One year",
+    "scopeSchool": "The whole school ({count} left)",
+    "classLabel": "Class",
+    "classOption": "{name} ({count} left)",
+    "gradeLabel": "Year",
+    "gradeOption": "Year {grade} ({count} left)",
+    "propose": "Propose",
+    "proposeAgain": "Propose again",
+    "proposing": "Looking for times…",
+    "result": "Laid {laid} of {asked}. Nothing else was moved.",
+    "resultNone": "None of the {asked} bricks got a time. Nothing was moved.",
+    "drawn": "The proposal is drawn as dashed boxes on the board.",
+    "leftTitle": "Left over",
+    "reasons": {
+      "NO_FREE_START": "{count, plural, one {# has} other {# have}} no free time with what stands.",
+      "JUDGE": "{count, plural, one {# has} other {# have}} no time the judge lets through.",
+      "TIME": "{count, plural, one {# was} other {# were}} not tried: the time ran out. Propose again for the rest.",
+      "TIME_TAKE_FIRST": "{count, plural, one {# was} other {# were}} not tried: the time ran out. Take in what was laid and propose again for the rest.",
+      "BLOCK": "{count, plural, one {# is} other {# are}} in a parallel block and laid with the block.",
+      "NO_TEACHER": "{count, plural, one {# has} other {# have}} no teacher.",
+      "OTHER": "{count, plural, one {# was} other {# were}} left for a reason this page has no words for yet. Reload the page."
+    },
+    "showPlaced": "Show the {count} laid",
+    "placedLine": "{lesson}: {day} {from}–{to}",
+    "placedLineNoRoom": "{lesson}: {day} {from}–{to}, no room",
+    "answeredBy": "The fill answered, and it proves nothing. What is left over stays in Att lägga.",
+    "take": "Take into the schedule",
+    "taking": "Taking in…",
+    "discard": "Discard",
+    "taken": "{count, plural, one {Laid # lesson.} other {Laid # lessons.}} A version was saved before: see Versions.",
+    "errors": {
+      "proposeFailed": "The proposal could not be made. Try again.",
+      "stale": "The schedule has changed since the proposal was made. Nothing was written. Propose again.",
+      "refused": "A time the proposal laid is no longer let through. Nothing was written. Propose again.",
+      "unknown": "The server's answer did not arrive, so it is not certain that the proposal was taken in. The board is read again: look at what stands, and propose again if something is missing."
+    }
+  },
+  "fillLayer": {
+    "proposed": "{lesson} {from}",
+    "withoutRoom": "{lesson} {from}, no room"
+  },
   "boardKeys": {
     "clash": "Clash",
     "blockDialog": "{lesson} is a block: its own dialog opens, where lock, park and remove apply to the whole block.",

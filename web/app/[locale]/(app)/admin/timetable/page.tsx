@@ -65,6 +65,7 @@ import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { boardBehind } from "@/components/schedule/board-behind";
+import { fillBehind } from "@/components/schedule/fill-behind";
 import {
   Select,
   SelectContent,
@@ -308,6 +309,7 @@ export default function TimetablePage() {
     ConflictList,
     TrayHead,
     TrayPanel,
+    FillHead,
   } = lazyDialogs;
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   /*
@@ -769,6 +771,8 @@ export default function TimetablePage() {
    * replay over it, so it goes, as after the room optimisation.
    */
   const afterSwap = useCallback(() => history.clear(), [history]);
+  /** Ta in of Lägg det som går wrote lessons under the stack, laid back from the parking among them: the stack of earlier steps goes, as after a swap. */
+  const afterFill = afterSwap;
   const { placeLunch, moveLunch, removeLunch } = useLunchEdits({
     ...reads,
     t,
@@ -1235,6 +1239,7 @@ export default function TimetablePage() {
           <DialogLoadBoundary onError={() => setTrayFailed(true)}>
             <Suspense fallback={null}>
               <TrayHead yearId={shownYear.id} revision={lessonsReadAt} open={trayOpen} onToggle={() => setTrayOpen((open) => !open)} />
+              <FillHead yearId={shownYear.id} revision={lessonsReadAt} groupById={groupById} subjectById={subjectById} writable={!readOnly} guard={directReach.ask} declined={(error) => error instanceof DirectReachDeclined} onApplied={afterFill} />
             </Suspense>
           </DialogLoadBoundary>
         ) : null}
@@ -1514,6 +1519,7 @@ export default function TimetablePage() {
                 onSlotClick={
                   lunchMode ? (day, minute) => void placeLunch(day, minute) : openCreate
                 }
+                behind={(day, scale) => fillBehind(day, scale, groupBy, board.key)}
                 bands={lunchBands}
                 onBandMove={(id, day, minute) => void moveLunch(id, day, minute)}
                 onBandRemove={(id) => void removeLunch(id)}

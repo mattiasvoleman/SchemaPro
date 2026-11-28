@@ -17,6 +17,7 @@
   - combobox "Vy": Kombinerad vy
   - button "Att lägga 2"
   - text: 14 av 16 lektioner lagda
+  - button "Lägg det som går"
   - button "Lektionstid"
   - text: "14 lektioner / vecka Dra lektioner för att flytta, dra i nederkanten för att ändra längd, klicka på en tom lucka för att lägga till, skift-klicka för flerval. Med tangentbordet: pilarna flyttar fokus mellan lektionerna, Enter öppnar en lektion och skift-Enter väljer den. Mellanslag tar upp en lektion, pilarna flyttar den och Enter lägger den. På en lektion visar ? alla tangenter. Mån Tis Ons Tor Fre 09:00 10:00 11:00 12:00 13:00 14:00 15:00"
   - button "Måndag 08:10–09:10, Svenska 7A · A. Lind Sal 101"

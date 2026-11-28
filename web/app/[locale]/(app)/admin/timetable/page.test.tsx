@@ -8,6 +8,7 @@ import { exportTimetablePdf } from "@/lib/pdf";
 import { ApiError } from "@/lib/api";
 import { ProfileProvider } from "@/components/profile-context";
 import type { Profile } from "@/lib/types";
+import { fillPreview } from "@/lib/fill-store";
 
 /**
  * Whose week is on screen.
@@ -4995,5 +4996,78 @@ describe("Byt and Gör plats at a refused drop", () => {
     await user.click(screen.getByRole("button", { name: "planningYear.optionNext(2027/28)" }));
     await waitFor(() => expect(screen.queryByTestId("proposals-stub")).toBeNull());
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("the proposal of Lägg det som går on the boards of a view (E7a)", () => {
+  const brick = (key: string, over: Record<string, unknown>) => ({ key, postId: "p", studentGroupId: "g-41", subjectId: "s-ma", teacherId: "t-1", minutes: 60, lessonId: null, ...over });
+  const proposal = {
+    academicYearId: "y-1",
+    answeredBy: "FILL" as const,
+    basis: "a".repeat(32),
+    asked: 2,
+    placed: [
+      { ...brick("k1", {}), dayOfWeek: 2, startMinutes: 540, endMinutes: 600, roomId: null, noRoom: true },
+      { ...brick("k2", { teacherId: "t-2", studentGroupId: "g-42" }), dayOfWeek: 3, startMinutes: 600, endMinutes: 660, roomId: null, noRoom: true },
+    ],
+    left: [],
+    moved: [],
+    truncated: false,
+  };
+
+  afterEach(() => fillPreview.set(null));
+
+  it("is drawn on the board of each teacher it is for and on no other, as on the combined board", async () => {
+    fillPreview.set({ proposal, labels: new Map([["k1", "Matte 4.1"], ["k2", "Svenska 4.2"]]) });
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await waitFor(() => expect(document.querySelectorAll("[data-fill-box]")).toHaveLength(2));
+
+    await user.click(screen.getByRole("combobox", { name: "timetable.viewLabel" }));
+    await user.click(await screen.findByRole("option", { name: "timetable.viewByTeacher" }));
+
+    const boardOf = (id: string) => document.getElementById(`board-${id}`)!.closest("section")!;
+    await waitFor(() => expect(boardOf("t-1").querySelectorAll("[data-fill-box]")).toHaveLength(1));
+    expect(boardOf("t-1").textContent).toContain("Matte 4.1");
+    expect(boardOf("t-1").textContent).not.toContain("Svenska 4.2");
+    await waitFor(() => expect(boardOf("t-2").querySelectorAll("[data-fill-box]")).toHaveLength(1));
+    expect(boardOf("t-2").textContent).toContain("Svenska 4.2");
+  });
+});
+
+describe("Ta in of Lägg det som går and the page's own undo history (E7a)", () => {
+  it("forgets the history once the lessons are written, as after a swap or the room optimisation: a step that holds a laid lesson as it stood would put it back with no word of it", async () => {
+    blockApi.tray.mockResolvedValue({ academicYearId: "y-1", bricks: [], tally: { lessons: 10, laid: 8, placedByRow: 0, left: 2 }, groups: [{ studentGroupId: "g-51", left: 2 }] });
+    blockApi.post.mockImplementation(async (path: string) =>
+      path.endsWith("/board-fill/propose")
+        ? {
+            academicYearId: "y-1",
+            answeredBy: "FILL",
+            basis: "a".repeat(32),
+            asked: 2,
+            placed: [{ key: "k1", postId: "p-1", studentGroupId: "g-51", subjectId: "s-sl", teacherId: "t-1", minutes: 60, lessonId: null, dayOfWeek: 3, startMinutes: 540, endMinutes: 600, roomId: null, noRoom: true }],
+            left: [],
+            moved: [],
+            truncated: false,
+          }
+        : { academicYearId: "y-1", versionId: "v-1", laid: [{ key: "k1", lessonId: "l-new", created: true, noRoom: true }] },
+    );
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <TimetablePage />
+      </QueryClientProvider>,
+    );
+
+    dragToTuesday("Slöjd");
+    const undo = screen.getByRole("button", { name: "timetable.undo" });
+    await waitFor(() => expect(undo).toBeEnabled());
+
+    await user.click(await screen.findByRole("button", { name: "fillDialog.button" }, { timeout: 10_000 }));
+    await user.click(await screen.findByRole("button", { name: "fillDialog.propose" }));
+    await user.click(await screen.findByRole("button", { name: "fillDialog.take" }));
+
+    expect(blockApi.post).toHaveBeenCalledWith("/api/v1/board-fill/apply", expect.objectContaining({ basis: "a".repeat(32) }));
+    await waitFor(() => expect(undo).toBeDisabled());
   });
 });

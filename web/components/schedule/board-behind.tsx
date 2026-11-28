@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, type ReactNode } from "react";
+import { fillBehind } from "./fill-behind";
 import { swapBehind } from "./swap-behind";
 
 /*
@@ -19,4 +20,4 @@ export const behindOf =
     layers.map((layer, index) => <Fragment key={index}>{layer(day, scale)}</Fragment>);
 
 /** The layers of the grundschema's board. Lägg det som går (E7a) adds its own here: `behindOf(swapBehind, fillBehind)`. */
-export const boardBehind = behindOf(swapBehind);
+export const boardBehind = behindOf(swapBehind, fillBehind);

@@ -308,6 +308,16 @@ Ett förslag rymmer högst 600 brickor som går att lägga (Ta ins gräns): frå
   egen skrivning (`BoardTrayService.writeBrick`, samma som en läggning för hand): domaren dömer den igen mot det som nu ligger i databasen, en sal generatorn inte tar nekas (`BOARD_ROOM_NOT_ALLOWED`), lektionen
   görs låst och handgjord, loggas och säges som en handredigering. En lektion på bricklådan som läggs tillbaka frågar P5:s fråga i läget Direkt (`409 DIRECT_REACH_UNANSWERED`, och allt rullas tillbaka, versionen med).
   Svaret har versionen och, per bricka, lektionens id och om den skapades.
+- **Webben.** Knappen *Lägg det som går* sitter i brädets verktygsrad bredvid Att lägga (`components/schedule/fill-head.tsx`, med i lektionsdialogernas bit) och dialogen hämtas först när den trycks
+  (`fill-dialog.tsx`). Dialogen frågar efter en klass, en årskurs eller hela skolan (med det som är kvar i Att lägga för var och en), föreslår, och säger "Lade 31 av 36. Ingenting annat flyttades.", varför
+  de andra inte lades och att påfyllningen inte bevisar något. Förslaget ritas som streckade rutor på brädet (`fill-layer.tsx`, en egen lat fil som grindens `behind` hämtar när ett förslag visas; dialogen
+  är inte modal och täcker inte brädet). *Ta in i schemat* skriver det och sparar en version före; i Direkt frågar sidan P5:s fråga först. *Kasta* och stängning lämnar schemat orört, men medan *Ta in* pågår
+  står dialogen kvar (Escape och krysset gör ingenting): en skrivning som är på väg tas inte tillbaka av att fönstret stängs. Ett förslag hör till sitt läsår och släpps när brädet byter läsår. I vyerna per klass,
+  lärare och sal ritar varje bräda bara de brickor som är dess egna, och brickor på samma tid ritas bredvid varandra. Får *Ta in* inget svar (nätet bröt, eller kanten gav 502 eller 504 över en transaktion som går vidare)
+  säger dialogen att det inte är säkert att förslaget togs in, läser om brädet och släpper förslaget, i stället för att be om ett nytt försök som mötte sitt eget första försök som 409 "inget skrevs". En orsak till
+  att en bricka blev över som sidan inte har ord för räknas ändå (`OTHER`), och `web/lib/board-fill.contract.test.ts` håller listan till gatewayens. Tog tiden slut (`TIME`) och något lades är vägen vidare att ta in det
+  som lades och föreslå igen: ett förslag som inte tas in kastas, och nästa börjar om från första brickan. Efter *Ta in* släpper sidan sina ångra-steg, som efter ett byte; vägen tillbaka är versionen "Före påfyllning" i
+  Versioner. Markerade brickor har ingen knapp i webben än (bricklådan kan inte markera; gatewayens `BRICKS` finns).
 - **Hålls av** `src/board-fill/fill-plan.spec.ts` (ordningen avgör: ett fall där den först-lagda tar den enda starten en annan har; ingen lagd bricka krockar, ligger utanför ramen eller i en måltid; domaren frågas i kostnadsordning;
   tiden; salen; starterna), `board-fill.service.spec.ts` (vad som läses och skrivs, ordningen på lås och version, `basis`), `fill-reads.spec.ts`, `test/board-fill.e2e-spec.ts` (dörrarna och valideringen),
   `scripts/test/probe-lagg-det-som-gar.ts` (mot riktig Postgres, i CI: förslaget skriver ingenting, varje lagd lektion godkänns av domaren, Ta in skriver exakt förslaget efter en version och rör inget som låg,

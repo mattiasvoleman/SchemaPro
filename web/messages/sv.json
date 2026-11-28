@@ -2612,6 +2612,55 @@
       }
     }
   },
+  "fillDialog": {
+    "button": "Lägg det som går",
+    "title": "Lägg det som går",
+    "description": "Lägger brickorna i Att lägga i tur och ordning på den bästa lediga tid de har, med en sal. Det är ett förslag: ingenting skrivs förrän du tar in det, och ingenting som ligger flyttas.",
+    "loadFailed": "Dialogen gick inte att hämta. Försök igen.",
+    "nothingLeft": "Det finns inget kvar i Att lägga.",
+    "scopeLegend": "Vad ska läggas?",
+    "scopeClass": "En klass",
+    "scopeGrade": "En årskurs",
+    "scopeSchool": "Hela skolan ({count} kvar)",
+    "classLabel": "Klass",
+    "classOption": "{name} ({count} kvar)",
+    "gradeLabel": "Årskurs",
+    "gradeOption": "Årskurs {grade} ({count} kvar)",
+    "propose": "Föreslå",
+    "proposeAgain": "Föreslå igen",
+    "proposing": "Letar tider…",
+    "result": "Lade {laid} av {asked}. Ingenting annat flyttades.",
+    "resultNone": "Ingen av de {asked} brickorna fick en tid. Ingenting flyttades.",
+    "drawn": "Förslaget är ritat med streckade rutor på brädet.",
+    "leftTitle": "Blev över",
+    "reasons": {
+      "NO_FREE_START": "{count, plural, one {# fick} other {# fick}} ingen ledig tid med det som ligger.",
+      "JUDGE": "{count, plural, one {# fick} other {# fick}} inga tider som domaren släppte igenom.",
+      "TIME": "{count, plural, one {# hann} other {# hann}} inte prövas: tiden tog slut. Föreslå igen för resten.",
+      "TIME_TAKE_FIRST": "{count, plural, one {# hann} other {# hann}} inte prövas: tiden tog slut. Ta in det som lades och föreslå igen för resten.",
+      "BLOCK": "{count, plural, one {# ligger} other {# ligger}} i ett parallellt block och läggs med blocket.",
+      "NO_TEACHER": "{count, plural, one {# saknar} other {# saknar}} lärare.",
+      "OTHER": "{count, plural, one {# blev} other {# blev}} över av en orsak som sidan inte har ord för än. Ladda om sidan."
+    },
+    "showPlaced": "Visa de {count} lagda",
+    "placedLine": "{lesson}: {day} {from}–{to}",
+    "placedLineNoRoom": "{lesson}: {day} {from}–{to}, utan sal",
+    "answeredBy": "Påfyllningen svarade, och den bevisar ingenting. Det som blev över ligger kvar i Att lägga.",
+    "take": "Ta in i schemat",
+    "taking": "Tar in…",
+    "discard": "Kasta",
+    "taken": "{count, plural, one {Lade # lektion.} other {Lade # lektioner.}} En version sparades före: se Versioner.",
+    "errors": {
+      "proposeFailed": "Förslaget gick inte att få. Försök igen.",
+      "stale": "Schemat har ändrats sedan förslaget gjordes. Ingenting skrevs. Föreslå igen.",
+      "refused": "En tid som förslaget lade släpptes inte igenom nu. Ingenting skrevs. Föreslå igen.",
+      "unknown": "Svaret från servern kom inte fram, så det är inte säkert att förslaget togs in. Brädet läses om: titta efter vad som ligger, och föreslå igen om något saknas."
+    }
+  },
+  "fillLayer": {
+    "proposed": "{lesson} {from}",
+    "withoutRoom": "{lesson} {from}, utan sal"
+  },
   "boardKeys": {
     "clash": "Krock",
     "blockDialog": "{lesson} är ett block: blockets egen ruta öppnas, där lås, parkera och ta bort gäller hela blocket.",
