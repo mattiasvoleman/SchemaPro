@@ -15,7 +15,11 @@
  *   (lb-c) en läggning som domaren nekar efter flytten (en söndag, SCHOOL_DAY) gör likadant;
  *   (lb-d) en läggning av ett annat läsår än flyttarnas är 400 och ingenting skrivs;
  *   (lb-e) ett förslag med EN lektion (en ledig tid behöver ingen annan) kan läggas av `apply` utan forBrick: lektionen flyttas, låses och loggas, och ångran
- *          (samma flytt baklänges) tar den tillbaka.
+ *          (samma flytt baklänges) tar den tillbaka;
+ *   (lb-f) en sal som generatorn inte skulle ta (BOARD_ROOM_NOT_ALLOWED) och (lb-g) en lärare som är upptagen (MASTER_LESSON_REFUSED, TEACHER) nekar läggningen
+ *          efter flytten och tar flytten med sig, som (lb-b) och (lb-c);
+ *   (lb-h) sex `apply` med varsin flytt och samma läggning, lästa samtidigt: en lägger, fem får 409 REQUIREMENT_PLACEMENTS_STALE, och bara den enas lektion har flyttats;
+ *   (lb-i) en lektion i bytet som hör till brickans egen post (samma klass, ämne, lärare och längd) ändrar inte delens bild: läggningen med den gamla `partKey` går.
  *
  * Ett eget skolspår (slug `probe-lagg-i-bytet`) som tas bort.
  */
@@ -33,10 +37,16 @@ const WORLD: World = {
   classes: [{ key: '7A', grade: 7 }, { key: '8B', grade: 8 }],
   teachers: ['T1', 'T2', 'T3'],
   rooms: ['R1', 'R2'],
-  subjects: ['Matematik', 'Kemi', 'Historia'],
+  subjects: ['Matematik', 'Kemi', 'Historia', 'Svenska', 'Bild'],
   lessons: [
     { key: 'KEMI', class: '7A', subject: 'Kemi', teacher: 'T2', room: 'R1', day: 1, start: '09:00', minutes: 60 },
     { key: 'HIST', class: '8B', subject: 'Historia', teacher: 'T3', room: 'R2', day: 2, start: '09:00', minutes: 60 },
+    // (lb-g) T1 teaches 8B on Wednesday 09:00: a lay of T1's brick there is a teacher clash.
+    { key: 'T1BUSY', class: '8B', subject: 'Matematik', teacher: 'T1', day: 3, start: '09:00', minutes: 60 },
+    // (lb-h) six lessons of 8B on Friday, each its own request's move.
+    ...[8, 9, 10, 11, 12, 13].map((hour, index) => ({ key: `S${index + 1}`, class: '8B', subject: 'Historia', teacher: 'T3', day: 5, start: `${String(hour).padStart(2, '0')}:00`, minutes: 60 })),
+    // (lb-i) the one lesson of a post of two that stands where its own brick is wanted.
+    { key: 'BILD1', class: '7A', subject: 'Bild', teacher: 'T1', day: 2, start: '10:00', minutes: 60 },
   ],
   unavailable: [],
   frames: [{ grades: [7, 9], start: '08:00', end: '15:00' }],
@@ -142,6 +152,86 @@ async function main() {
       assert.equal(await count('ScheduleVersions'), before.versions);
     });
 
+    await check('(lb-f) a room the generator would not take refuses the lay after the moves, and takes the moves back', async () => {
+      // R2 is fenced from the years of 7A: the same refusal Att lägga gives a lay alone (BOARD_ROOM_NOT_ALLOWED, YEARS).
+      await owner.query(`UPDATE "Rooms" SET "minGradeLevel" = 1, "maxGradeLevel" = 3 WHERE id = $1`, [a.roomId.get('R2')]);
+      try {
+        const before = { kemi: await stored(kemi), lessons: await count('MasterLessons'), versions: await count('ScheduleVersions'), logs: await count('ScheduleChangeLogs') };
+        const room = await refusal(swaps.apply(bodyOf(proposal, { lay: layOf(brick.partKey, { roomId: a.roomId.get('R2') }) }) as never, a.caller));
+        assert.deepEqual(room, { status: 409, code: 'BOARD_ROOM_NOT_ALLOWED' });
+        assert.deepEqual(await stored(kemi), before.kemi, 'the Kemi lesson did not move');
+        assert.equal(await count('MasterLessons'), before.lessons);
+        assert.equal(await count('ScheduleVersions'), before.versions);
+        assert.equal(await count('ScheduleChangeLogs'), before.logs);
+        assert.equal((await bricks()).length, 1);
+      } finally {
+        await owner.query(`UPDATE "Rooms" SET "minGradeLevel" = NULL, "maxGradeLevel" = NULL WHERE id = $1`, [a.roomId.get('R2')]);
+      }
+    });
+
+    await check('(lb-g) a teacher who is busy refuses the lay after the moves, and takes the moves back', async () => {
+      const before = { kemi: await stored(kemi), lessons: await count('MasterLessons'), versions: await count('ScheduleVersions'), logs: await count('ScheduleChangeLogs') };
+      const busy = await refusal(swaps.apply(bodyOf(proposal, { lay: layOf(brick.partKey, { dayOfWeek: 3, startTime: '09:00' }) }) as never, a.caller));
+      assert.deepEqual(busy, { status: 409, code: 'MASTER_LESSON_REFUSED' });
+      assert.deepEqual(await stored(kemi), before.kemi, 'the Kemi lesson did not move');
+      assert.equal(await count('MasterLessons'), before.lessons);
+      assert.equal(await count('ScheduleVersions'), before.versions);
+      assert.equal(await count('ScheduleChangeLogs'), before.logs);
+    });
+
+    await check('(lb-h) six apply with a move each and one lay, read at once: one lays, five are 409 REQUIREMENT_PLACEMENTS_STALE, and only the winner’s lesson has moved', async () => {
+      const t2 = a.teacherId.get('T2')!;
+      const second = (
+        await q<{ id: string }>(
+          `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "minutesPerLesson", recurrence, "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, 1, 60, 'ALL_WEEKS'::"LessonRecurrence", now()) RETURNING id`,
+          [a.school, a.year, a.subjectId.get('Svenska'), a.classId.get('8B'), t2],
+        )
+      )[0]!.id;
+      const key = (await tray.trayOfYear(a.year, undefined, a.caller)).bricks.find((entry) => entry.postId === second)!.partKey;
+      const friday = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'].map((name) => a.lessonId.get(name)!);
+      const before = await Promise.all(friday.map((id) => stored(id)));
+      const settled = await Promise.allSettled(
+        friday.map((id, index) =>
+          swaps.apply(
+            {
+              forBrick: true,
+              moves: [{ lessonId: id, from: { dayOfWeek: 5, startTime: clock((8 + index) * 60), endTime: clock((9 + index) * 60) }, to: { dayOfWeek: 1, startTime: clock((8 + index) * 60), endTime: clock((9 + index) * 60) } }],
+              lay: { academicYearId: a.year, postId: second, teacherId: t2, minutes: 60, partKey: key, dayOfWeek: 2 + (index % 3), startTime: '14:00', roomId: null },
+            } as never,
+            a.caller,
+          ),
+        ),
+      );
+      assert.equal(settled.filter((outcome) => outcome.status === 'fulfilled').length, 1, 'one lays');
+      for (const outcome of settled) {
+        if (outcome.status === 'rejected') assert.equal((outcome.reason as { getResponse: () => { code: string } }).getResponse().code, 'REQUIREMENT_PLACEMENTS_STALE');
+      }
+      const after = await Promise.all(friday.map((id) => stored(id)));
+      assert.equal(after.filter((now, index) => now.dayOfWeek !== before[index]!.dayOfWeek || now.startTime !== before[index]!.startTime).length, 1, 'only the winner’s lesson moved');
+      assert.equal(Number((await q<{ n: string }>(`SELECT count(*) AS n FROM "MasterLessons" WHERE "schoolId" = $1 AND "subjectId" = $2 AND "studentGroupId" = $3`, [a.school, a.subjectId.get('Svenska'), a.classId.get('8B')]))[0]!.n), 1, 'one lesson was made');
+    });
+
+    await check('(lb-i) a lesson of the brick’s own post goes out of the way and is locked by the move: the part is the picture it was, and the lay with the old key goes', async () => {
+      const bild = (
+        await q<{ id: string }>(
+          `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "minutesPerLesson", recurrence, "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, 2, 60, 'ALL_WEEKS'::"LessonRecurrence", now()) RETURNING id`,
+          [a.school, a.year, a.subjectId.get('Bild'), a.classId.get('7A'), t1],
+        )
+      )[0]!.id;
+      const own = (await tray.trayOfYear(a.year, undefined, a.caller)).bricks.filter((entry) => entry.postId === bild);
+      assert.equal(own.length, 1, 'one of the post’s two lessons stands, so one brick is left');
+      const bild1 = a.lessonId.get('BILD1')!;
+      const ask = await swaps.suggest({ brick: brickAsked(own[0]!), makeRoom: { dayOfWeek: 2, startTime: '10:00' }, limit: 12 } as never, a.caller);
+      const way = ask.proposals.find((p) => p.moves.length === 1 && p.moves[0]!.lessonId === bild1);
+      assert.ok(way, 'the post’s own other lesson is the one in the way');
+      const result = await swaps.apply(bodyOf(way, { lay: { academicYearId: a.year, postId: bild, teacherId: t1, minutes: 60, partKey: own[0]!.partKey, dayOfWeek: 2, startTime: '10:00', roomId: null } }) as never, a.caller);
+      assert.ok(result.laid, 'laid');
+      assert.equal((await tray.trayOfYear(a.year, undefined, a.caller)).bricks.filter((entry) => entry.postId === bild).length, 0);
+      assert.equal((await stored(bild1)).isLocked, true, 'the lesson that went out of the way is locked by the move');
+    });
+
     await check('(lb-a) the moves and the lay are one transaction: the Kemi lesson moved, Matematik laid and locked, one version, a log row for each, the brick gone', async () => {
       const lessons = await count('MasterLessons');
       const versions = await count('ScheduleVersions');
@@ -153,7 +243,7 @@ async function main() {
       assert.equal(moved.startTime, clock(move.to.startMinutes));
       assert.equal(moved.isLocked, true, 'a lesson moved by hand is the school’s (E4)');
       assert.equal(await count('MasterLessons'), lessons + 1, 'one lesson was made');
-      const made = (await q<{ id: string; dayOfWeek: number; startTime: string; isLocked: boolean; teacherId: string }>(`SELECT id, "dayOfWeek", to_char("startTime", 'HH24:MI') AS "startTime", "isLocked", "teacherId" FROM "MasterLessons" WHERE "subjectId" = $1`, [a.subjectId.get('Matematik')]))[0]!;
+      const made = (await q<{ id: string; dayOfWeek: number; startTime: string; isLocked: boolean; teacherId: string }>(`SELECT id, "dayOfWeek", to_char("startTime", 'HH24:MI') AS "startTime", "isLocked", "teacherId" FROM "MasterLessons" WHERE "subjectId" = $1 AND "studentGroupId" = $2`, [a.subjectId.get('Matematik'), a.classId.get('7A')]))[0]!;
       assert.deepEqual({ day: made.dayOfWeek, start: made.startTime, locked: made.isLocked, teacher: made.teacherId }, { day: 1, start: '09:00', locked: true, teacher: t1 });
       assert.equal((result.laid!.lesson as { id: string }).id, made.id, 'the answer names the lesson that was laid');
       assert.equal(await count('ScheduleVersions'), versions + 1, 'one safety version, taken before the first write');
