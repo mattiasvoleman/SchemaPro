@@ -11,7 +11,7 @@ import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { lockPostForShares } from '../resources/requirement-shares';
 import { makeWorld } from '../swaps/__fixtures__/swap-world';
 import { readSwapData } from '../swaps/swap-snapshot';
-import { BOARD_FILL_STALE, BoardFillService } from './board-fill.service';
+import { BOARD_FILL_STALE, BoardFillService, FILL_APPLY_CEILING_MS, applyTimeoutMs } from './board-fill.service';
 
 /*
  * LÄGG DET SOM GÅR, the service (E7a): what it reads and what it writes, with the tray, the judge and the world faked. The planner has its own spec
@@ -51,8 +51,22 @@ const brick = (over: Partial<TrayBrick> = {}): TrayBrick => ({
 });
 const keyOf = (entry: TrayBrick): string => `${entry.postId}|${entry.teacherId ?? '-'}|${entry.minutes}|${entry.nth}`;
 
+describe('the time a Ta in is given (g517 L-4)', () => {
+  it('grows with the lessons, from 15 s, and stops at a ceiling that lies well under the 300 s the edge lets a silent request live', () => {
+    expect(applyTimeoutMs(1)).toBe(15_000);
+    expect(applyTimeoutMs(10)).toBe(16_000);
+    expect(applyTimeoutMs(100)).toBe(70_000);
+    // Up to the DTO's 600 lessons it never passes the ceiling, and the ceiling is under the edge with a margin of minutes.
+    for (let lessons = 1; lessons <= 600; lessons += 1) expect(applyTimeoutMs(lessons)).toBeLessThanOrEqual(FILL_APPLY_CEILING_MS);
+    expect(applyTimeoutMs(600)).toBe(FILL_APPLY_CEILING_MS);
+    expect(FILL_APPLY_CEILING_MS).toBeLessThanOrEqual(150_000);
+    expect(FILL_APPLY_CEILING_MS).toBeLessThan(300_000);
+  });
+});
+
 describe('BoardFillService', () => {
   let tx: TxMock;
+  let prisma: ReturnType<typeof createPrismaMock>;
   let service: BoardFillService;
   let tray: { trayIn: jest.Mock; writeBrick: jest.Mock };
   let versions: { snapshotInTransaction: jest.Mock };
@@ -83,8 +97,9 @@ describe('BoardFillService', () => {
     (lockYearForRegeneration as jest.Mock).mockReset().mockImplementation(async () => void order.push('year'));
     tx['academicYear']!['findUnique']!.mockResolvedValue({ id: YEAR });
     (lockPostForShares as jest.Mock).mockReset().mockImplementation(async (_tx: unknown, postId: string) => void order.push(`post:${postId === POST_A ? 'A' : 'B'}`));
+    prisma = createPrismaMock(tx);
     service = new BoardFillService(
-      createPrismaMock(tx) as unknown as PrismaService,
+      prisma as unknown as PrismaService,
       tray as unknown as BoardTrayService,
       {} as MasterLessonsService,
       possible as unknown as PossibleTimesService,
@@ -212,6 +227,15 @@ describe('BoardFillService', () => {
       expect(lockYearForRegeneration).not.toHaveBeenCalled();
       expect(lockPostForShares).not.toHaveBeenCalled();
       expect(versions.snapshotInTransaction).not.toHaveBeenCalled();
+    });
+
+    it('gives the transaction the time of its lessons, under the ceiling: a Ta in of 600 lessons does not ask for 370 s', async () => {
+      const refs = Array.from({ length: 600 }, (_, index) => ({ key: `${POST_A}|${TEACHER}|60|${index + 1}`, dayOfWeek: 2, startTime: '09:00' }));
+      await expect(service.apply({ academicYearId: YEAR, basis: 'a'.repeat(32), items: refs }, asAdmin)).rejects.toMatchObject({ response: { code: BOARD_FILL_STALE } });
+      const calls = prisma.withRls.mock.calls as unknown as Array<[unknown, unknown, { timeoutMs: number }]>;
+      expect(calls.at(-1)![2]).toEqual({ timeoutMs: FILL_APPLY_CEILING_MS });
+      await service.apply({ academicYearId: YEAR, basis: await basisNow(), items: items() }, asAdmin);
+      expect((prisma.withRls.mock.calls as unknown as Array<[unknown, unknown, { timeoutMs: number }]>).at(-1)![2]).toEqual({ timeoutMs: applyTimeoutMs(2) });
     });
 
     it('writes nothing and saves no version when the grundschema is not the one the proposal was made on', async () => {
