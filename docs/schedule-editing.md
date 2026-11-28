@@ -204,14 +204,40 @@ whatever the request names (decision 5: no forced clash).
   de stod vid varje Spara, och Ångra skickar dem vid varje återställning. Bara veckor som skiljer sig från lektionens egna lämnar en lektion Generera lagt över till
   skolan (`isGenerated: false`; Generera kan inte lägga datum eller udda och jämna veckor utanför en posts egna, så det enda sättet att behålla dem är att lektionen står
   kvar). Dagen är fönstret: samma dag skriven som tidsstämpel (`2026-08-17T23:59:59+02:00`) är samma första dag. En ny sal, en ny lärare eller en flytt med veckorna som de
-  stod lämnar lektionen Generera lagd, och sidans mening "Fri för motorn" stämmer därför också efter Spara, för en ny sal, en ny lärare och ett lås som brytaren visar; en
-  flytt eller andra veckor ändrar vem som äger lektionen, och meningen läser inte dem (webben). En flytt låser lektionen (ett lås vid en flytt, ovan), och det är låset som
+  stod lämnar lektionen Generera lagd, och sidans mening "Fri för motorn" stämmer därför också efter Spara, för en ny sal, en ny lärare och ett lås som brytaren visar. En
+  flytt eller andra veckor ändrar vem som äger lektionen, och meningen läser dem också (granskaren g511, L-3; `web/lib/motor-owner.ts`): andra veckor än lektionens egna
+  säger "Låst för motorn: andra veckor gör lektionen handgjord", och en flyttad olåst lektion säger att Spara låser den (en som läsaren låser upp i samma Spara står kvar fri,
+  som `locksByMove` säger). Veckor som skrivs om utan att ändras säger fortfarande "Fri". En flytt låser lektionen (ett lås vid en flytt, ovan), och det är låset som
   håller den. En lektion i ett block frågas om sitt block bara när den flyttas. En lektion i ett block som står i inget kort när den flyttas (inget kort att lämna, inget att
   gå med i) får inget lås och lämnas inte över: Generera lägger om blocket, som efter en dragning (ett PATCH har alltid gjort så). Dialogen gjorde den handgjord förut, av
   samma slump som ovan.
 - **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, en dubbelbokad
   lektion kan låsas, ett byte låser sina två lektioner och Ångra tar låset av, ett blockkort låser hela sitt block, och Justera lektions Spara lämnar bara över en lektion vars veckor ändrats, br-w), `src/calendar/master-lessons.lock-at-move.spec.ts`,
   `src/swaps/swaps.apply.spec.ts` och blockkortets prov i `master-lessons.service.spec.ts`.
+
+## Säkerhetsnät (E9)
+
+- **En ändring av en lektion nekas med besked när någon annan har ändrat den sedan sidan läste den.** `PATCH /api/v1/master-lessons/:id` tar `expected`: det sidan såg av de
+  fält begäran skriver (`dayOfWeek`, `startTime`, `endTime`, `roomId`, `teacherId`, `coTeacherId`, `isLocked`, `isParked`, `recurrence`, `startDate`, `endDate`,
+  `extraGroupIds`, `studentIds`, `exempt`, i begärans egna former; `null` är ett svar: ingen sal, ingen första dag). Gatewayen håller `expected` mot lektionen som den står
+  **under lektionens radlås, i skrivningens egen transaktion** (`FOR NO KEY UPDATE`, som blockkortets rader; lektionen läses om bara när någon skrev den mellan första läsningen
+  och låset). Ett värde som inte är det sidan läste är en annans ändring: `409 LESSON_CHANGED` med `params.fields` (namnen, kommaskilda, i fast ordning), ingenting skrivs och
+  domaren frågas inte. Två skribenter på samma läsning: en skrivs, den andra nekas, aldrig båda (`scripts/test/probe-sakerhetsnat.ts`, sn-b: trettio varv av två samtidiga).
+- **Värden och inte tidsstämpel.** Det en skrivning inte får göra är att lägga sitt värde över ett som någon annan ändrat. En kollegas ändring av något begäran inte skriver
+  (ett lås, en sal medan lektionen flyttas) är inte i vägen, och sidans egna skrivningar (ett drag som släpps två gånger i rad, ett Ångra) är det lektionen står på då. Dialogen
+  skriver alla sina fält och nämner dem alla: en kollegas ny lärare läggs inte tillbaka av en Spara som ändrade salen (sn-d).
+  Ett fält som begäran själv skriver till det värde som redan står är inget som skrivs över, vad sidan än såg: en Spara som skickas två gånger och ett lås som en kollega
+  också har satt är ingen krock (sn-g; granskaren g515).
+- **Utan `expected` skrivs begäran som förut.** Mobilen och en äldre webb skickar ingen, och de tar inget lås i förväg: bara en begäran som nämner vad sidan såg kostar ett
+  uttalande till (radlåset). Fältet är additivt; en gateway som är äldre än webben nekar det med 400 (`forbidNonWhitelisted`), så gatewayen går före webben.
+- **Webben** (`web/lib/lesson-expected.ts`, `lesson-changed.ts`): ett drag, en dialog och en Gör om skickar det de läste av de fält de skriver; ett Ångra hålls mot det lektionen
+  hade efter skrivningen (gatewayens svar, så ett lås servern satte inte väntas på) och ett Gör om mot det före. Ett nej berättas som vad det är: lektionen läses om och läggs i
+  schemat, toasten säger vad den har blivit i de fält som nämndes ("Nu är den: tisdag 10:00–11:00, sal A12"), att ändringen inte gjordes, och erbjuder **Gör om min ändring** på
+  lektionen som den står nu. Ett Ångra som möter det är ett Ångra som inte går, och steget tas ur historiken så att de äldre inte stängs bakom det.
+- **Dagar som inte är ÅÅÅÅ-MM-DD** (granskaren g511, L-6). Valideringen tar ISO 8601:s andra former (`20260817`, `2026-W34-1`, `2026-229`) som datum, och de gav 500 när
+  lektionen berättades. De är nu `400 LESSON_DATE_FORM`, från både PATCH, POST och den läsande frågan; en dag med klockslag efter sig är fortfarande en dag.
+- **Hålls av** `src/calendar/master-lessons.expected.spec.ts`, `test/lesson-changed.e2e-spec.ts` (koden och `fields` når klienten), `scripts/test/probe-sakerhetsnat.ts` (mot riktig
+  Postgres, i CIs Database-jobb) och webbens `lib/lesson-expected.test.ts` (som läser gatewayens fältlista som text), `lib/lesson-changed.test.ts` och `use-undoable-edits.test.ts`.
 
 ## Skriv in förläggningarna (E4b)
 

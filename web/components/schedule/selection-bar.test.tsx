@@ -64,18 +64,19 @@ describe("Lås upp on a selection, and its Ångra (Undantag med flit)", () => {
     const { pushed, mutate } = draw([exempt, plain]);
     fireEvent.click(screen.getByRole("button", { name: /Lås upp/ }));
     await vi.waitFor(() => expect(pushed).toHaveLength(1));
-    expect(mutate).toHaveBeenNthCalledWith(1, { id: "a", isLocked: false, propagate: false });
+    // Each write says the lock the lesson had when it was selected (E9), so that a colleague's lock or unlock since is not written over.
+    expect(mutate).toHaveBeenNthCalledWith(1, { id: "a", isLocked: false, propagate: false, expected: { isLocked: true } });
 
     mutate.mockClear();
     await pushed[0]!.undo();
-    expect(mutate).toHaveBeenNthCalledWith(1, { id: "a", isLocked: true, propagate: false, exempt: ["FRAME"] });
+    expect(mutate).toHaveBeenNthCalledWith(1, { id: "a", isLocked: true, propagate: false, exempt: ["FRAME"], expected: { isLocked: false } });
     // A lesson with no exemption is locked again as it always was: no word of one.
-    expect(mutate).toHaveBeenNthCalledWith(2, { id: "b", isLocked: true, propagate: false });
+    expect(mutate).toHaveBeenNthCalledWith(2, { id: "b", isLocked: true, propagate: false, expected: { isLocked: false } });
 
     // The redo takes the lock off and says nothing of the exemption: it ends again, as the first time.
     mutate.mockClear();
     await pushed[0]!.redo();
-    expect(mutate).toHaveBeenNthCalledWith(1, { id: "a", isLocked: false, propagate: false });
+    expect(mutate).toHaveBeenNthCalledWith(1, { id: "a", isLocked: false, propagate: false, expected: { isLocked: true } });
   });
 
   it("says nothing of an exemption when the lock is put on: the lesson that is locked has none to give", async () => {
@@ -85,7 +86,7 @@ describe("Lås upp on a selection, and its Ångra (Undantag med flit)", () => {
     await vi.waitFor(() => expect(pushed).toHaveLength(1));
     mutate.mockClear();
     await pushed[0]!.undo();
-    expect(mutate).toHaveBeenCalledWith({ id: "a", isLocked: false, propagate: false });
+    expect(mutate).toHaveBeenCalledWith({ id: "a", isLocked: false, propagate: false, expected: { isLocked: true } });
   });
 });
 
