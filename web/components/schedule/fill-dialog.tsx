@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { NativeSelect } from "@/components/ui/native-select";
 import { Notice } from "@/components/ui/notice";
 import { apiErrorText } from "@/lib/api-error-text";
-import { applyFill, clockOf, FILL_LEFT_REASONS, fillFailureOf, fillFigures, proposeFill, type FillProposal, type FillRequest, type FillScope } from "@/lib/board-fill";
+import { ApiError } from "@/lib/api";
+import { applyFill, clockOf, FILL_LEFT_REASONS, fillFailureOf, fillFigures, proposeFill, undoFill, type FillProposal, type FillRequest, type FillScope } from "@/lib/board-fill";
 import { fetchTray } from "@/lib/board-tray";
 import { fillPreview } from "@/lib/fill-store";
 
@@ -27,6 +28,8 @@ import { fillPreview } from "@/lib/fill-store";
  */
 
 const TRAY_KEY = "boardTray";
+/** How long the toast of a Ta in, and with it its Ångra, stays up (as after the room optimisation and a swap). */
+const UNDO_TOAST_MS = 15_000;
 
 export interface FillDialogProps {
   open: boolean;
@@ -44,8 +47,9 @@ export interface FillDialogProps {
   /** Whether an error of `guard` is the reader's no to its question (Avbryt): not a failure, and nothing is said. */
   declined?: (error: unknown) => boolean;
   /**
-   * Called when Ta in has written. The page lets go of the undo steps it holds (as after a swap or a room optimisation): lessons laid back from the parking are
-   * lessons a step holds a snapshot of, and replaying the step would put one back where it stood before the fill, with no word of it.
+   * Called when Ta in has written, and again when its Ångra has restored the schedule. The page lets go of the undo steps it holds (as after a swap or a room
+   * optimisation): lessons laid back from the parking are lessons a step holds a snapshot of, and replaying the step would put one back where it stood
+   * before the fill, with no word of it.
    */
   onApplied?: () => void;
 }
@@ -65,6 +69,8 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
   const [grade, setGrade] = useState("");
   const [phase, setPhase] = useState<"idle" | "asking" | "taking">("idle");
   const [proposal, setProposal] = useState<FillProposal | null>(null);
+  /** What the version saved before Ta in is called: what the proposal was asked for, as it was asked ("Före påfyllning: 7A"). */
+  const [versionName, setVersionName] = useState<string | null>(null);
   const [error, setError] = useState<{ text: string; stale: boolean } | null>(null);
   const asking = useRef<AbortController | null>(null);
 
@@ -97,6 +103,12 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
 
   const labelOf = (subjectId: string, groupId: string) => `${subjectById.get(subjectId)?.name ?? ""} ${groupById.get(groupId)?.name ?? ""}`.trim();
 
+  const versionNameOf = (body: FillRequest): string => {
+    if (body.scope === "CLASS") return t("versionOfClass", { name: groupById.get(body.studentGroupId ?? "")?.name ?? "" });
+    if (body.scope === "GRADE") return t("versionOfGrade", { grade: body.gradeLevel ?? 0 });
+    return t("versionOfSchool");
+  };
+
   const request = (): FillRequest | null => {
     if (scope === "CLASS") return chosenClass === "" ? null : { academicYearId: yearId, scope, studentGroupId: chosenClass };
     if (scope === "GRADE") return chosenGrade === "" ? null : { academicYearId: yearId, scope, gradeLevel: Number(chosenGrade) };
@@ -123,7 +135,10 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
       const answer = await proposeFill(body, controller.signal);
       if (controller.signal.aborted) return;
       if (answer === null) setError({ text: t("errors.proposeFailed"), stale: false });
-      else show(answer);
+      else {
+        show(answer);
+        setVersionName(versionNameOf(body));
+      }
     } catch (failure) {
       if (!controller.signal.aborted) setError({ text: apiErrorText(failure, tCommon), stale: false });
     } finally {
@@ -143,13 +158,35 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
     for (const key of [TRAY_KEY, "masterLessons", "calendarLessons", "teacherLessons", "scheduleVersions"]) void queryClient.invalidateQueries({ queryKey: [key] });
   };
 
+  /**
+   * The Ångra on the toast of a Ta in: the version saved before it, restored. It is the whole grundschema as that version had it, so a colleague's change after
+   * the Ta in goes too: the toast says so, is up for a few seconds only, and the restore saves a version of its own first. It runs from a toast, after the
+   * dialog may be gone, so it uses only what it was given. A restore writes no calendar row, so it asks nothing of the school in Direkt.
+   */
+  const undo = async (versionId: string) => {
+    try {
+      const result = await undoFill(versionId);
+      for (const key of [TRAY_KEY, "masterLessons", "calendarLessons", "teacherLessons", "scheduleVersions"]) void queryClient.invalidateQueries({ queryKey: [key] });
+      onApplied?.();
+      toast.success(t("undone", { count: result.restoredLessons }));
+    } catch (failure) {
+      // The year's regeneration lock: a Generera, an apply of a schemaförslag or another restore is rewriting the year right now.
+      if (failure instanceof ApiError && failure.code === "SCHEDULE_BUSY") toast.error(t("undoBusy"));
+      else toast.error(apiErrorText(failure, tCommon));
+    }
+  };
+
   const take = async () => {
     if (!proposal || phase !== "idle") return;
     setPhase("taking");
     setError(null);
     try {
-      const answer = await (guard ? guard(() => applyFill(proposal)) : applyFill(proposal));
-      toast.success(t("taken", { count: answer.laid.length }));
+      const answer = await (guard ? guard(() => applyFill(proposal, versionName ?? undefined)) : applyFill(proposal, versionName ?? undefined));
+      toast.success(t("taken", { count: answer.laid.length }), {
+        description: t("takenNote"),
+        duration: UNDO_TOAST_MS,
+        action: { label: t("undo"), onClick: () => void undo(answer.versionId) },
+      });
       for (const key of [TRAY_KEY, "masterLessons", "calendarLessons", "teacherLessons", "scheduleVersions"]) void queryClient.invalidateQueries({ queryKey: [key] });
       show(null);
       onApplied?.();

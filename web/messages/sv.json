@@ -2648,6 +2648,13 @@
     "taking": "Tar in…",
     "discard": "Kasta",
     "taken": "{count, plural, one {Lade # lektion.} other {Lade # lektioner.}} En version sparades före: se Versioner.",
+    "takenNote": "Ångra sätter tillbaka hela schemat som det var före påfyllningen.",
+    "undo": "Ångra",
+    "undone": "{count, plural, one {Återställde # lektion.} other {Återställde # lektioner.}} Schemat är som före påfyllningen. En version sparades före återställningen: se Versioner.",
+    "undoBusy": "Schemat skrivs om av en annan körning just nu. Försök igen strax, eller återställ versionen före påfyllningen i Versioner.",
+    "versionOfClass": "Före påfyllning: {name}",
+    "versionOfGrade": "Före påfyllning: årskurs {grade}",
+    "versionOfSchool": "Före påfyllning: hela skolan",
     "errors": {
       "proposeFailed": "Förslaget gick inte att få. Försök igen.",
       "stale": "Schemat har ändrats sedan förslaget gjordes. Ingenting skrevs. Föreslå igen.",

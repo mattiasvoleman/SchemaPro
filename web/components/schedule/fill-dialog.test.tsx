@@ -203,8 +203,8 @@ describe("Ta in", () => {
     await screen.findByText(/Lade 2 av 3/);
     pressed(/^Ta in i schemat$/);
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(apply).toHaveBeenCalledWith(PROPOSAL);
-    expect(toast.success).toHaveBeenCalledWith("Lade 2 lektioner. En version sparades före: se Versioner.");
+    expect(apply).toHaveBeenCalledWith(PROPOSAL, "Före påfyllning: 7A");
+    expect(toast.success).toHaveBeenCalledWith("Lade 2 lektioner. En version sparades före: se Versioner.", expect.objectContaining({ action: expect.objectContaining({ label: "Ångra" }) }));
     expect(fillPreview.get()).toBeNull();
   });
 

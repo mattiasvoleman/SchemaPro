@@ -73,8 +73,15 @@ export async function proposeFill(request: FillRequest, signal?: AbortSignal): P
   return answer && typeof answer.basis === "string" && Array.isArray(answer.placed) && Array.isArray(answer.left) ? answer : null;
 }
 
-/** "Ta in": the proposal as it was read, with the basis it was made on. */
-export function applyFill(proposal: FillProposal): Promise<FillApplied> {
+/** The gateway takes a version name of at most this many characters (FillApplyDto.versionName). */
+export const FILL_VERSION_NAME_MAX = 80;
+
+/**
+ * "Ta in": the proposal as it was read, with the basis it was made on. `versionName` names the version saved before the first lesson is written, so that
+ * Versioner says what it was a version before ("Före påfyllning: 7A") and not only "Före påfyllning"; the gateway names it so itself when none is given.
+ */
+export function applyFill(proposal: FillProposal, versionName?: string): Promise<FillApplied> {
+  const name = versionName?.trim().slice(0, FILL_VERSION_NAME_MAX);
   return api.post<FillApplied>("/api/v1/board-fill/apply", {
     academicYearId: proposal.academicYearId,
     basis: proposal.basis,
@@ -84,7 +91,23 @@ export function applyFill(proposal: FillProposal): Promise<FillApplied> {
       startTime: clockOf(entry.startMinutes),
       roomId: entry.roomId,
     })),
+    ...(name ? { versionName: name } : {}),
   });
+}
+
+/** What the restore of a version answers (src/calendar/schedule-versions.service.ts). */
+export interface FillUndone {
+  restoredLessons: number;
+  /** The version the restore saved before it replaced the schedule: the way back from the Ångra. */
+  safetyVersionId: string;
+}
+
+/**
+ * The Ångra of a Ta in: the version saved before it, restored. A restore replaces the year's grundschema as the version had it, so what anybody else changed
+ * after the Ta in goes with it; the restore saves a version of its own first (`safetyVersionId`), and the toast that offers it is up for a few seconds only.
+ */
+export function undoFill(versionId: string): Promise<FillUndone> {
+  return api.post<FillUndone>(`/api/v1/schedule-versions/${versionId}/restore`, {});
 }
 
 /** "HH:MM" of a minute of the day. */

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
-import { applyFill, BOARD_FILL_STALE, clockOf, fillFailureOf, fillFigures, proposeFill, type FillProposal } from "./board-fill";
+import { applyFill, BOARD_FILL_STALE, clockOf, FILL_VERSION_NAME_MAX, fillFailureOf, fillFigures, proposeFill, undoFill, type FillProposal } from "./board-fill";
 import { fillPreview } from "./fill-store";
 
 const post = vi.hoisted(() => vi.fn());
@@ -56,6 +56,35 @@ describe("applyFill", () => {
         { key: "p|t|60|2", dayOfWeek: 4, startTime: "08:00", roomId: null },
       ],
     });
+  });
+});
+
+describe("applyFill's version name", () => {
+  const sent = () => (post.mock.calls.at(-1) as [string, Record<string, unknown>])[1];
+
+  it("names the version saved before the write when it is given a name, as the gateway takes it: trimmed, and never over its 80 characters", async () => {
+    post.mockResolvedValue({ academicYearId: "y1", versionId: "v1", laid: [] });
+    await applyFill(proposal(), "  Före påfyllning: 7A ");
+    expect(sent()["versionName"]).toBe("Före påfyllning: 7A");
+    await applyFill(proposal(), "x".repeat(200));
+    expect(sent()["versionName"]).toBe("x".repeat(FILL_VERSION_NAME_MAX));
+    expect(FILL_VERSION_NAME_MAX).toBe(80);
+  });
+
+  it("leaves the field out when there is no name, so that the gateway's own stands", async () => {
+    post.mockResolvedValue({ academicYearId: "y1", versionId: "v1", laid: [] });
+    await applyFill(proposal());
+    expect(sent()).not.toHaveProperty("versionName");
+    await applyFill(proposal(), "   ");
+    expect(sent()).not.toHaveProperty("versionName");
+  });
+});
+
+describe("undoFill", () => {
+  it("restores the version saved before Ta in, and answers what the restore answers", async () => {
+    post.mockResolvedValue({ restoredLessons: 126, safetyVersionId: "safety-1" });
+    await expect(undoFill("v-1")).resolves.toEqual({ restoredLessons: 126, safetyVersionId: "safety-1" });
+    expect(post).toHaveBeenCalledWith("/api/v1/schedule-versions/v-1/restore", {});
   });
 });
 

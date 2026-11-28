@@ -2648,6 +2648,13 @@
     "taking": "Taking in…",
     "discard": "Discard",
     "taken": "{count, plural, one {Laid # lesson.} other {Laid # lessons.}} A version was saved before: see Versions.",
+    "takenNote": "Undo puts the whole schedule back as it was before the fill.",
+    "undo": "Undo",
+    "undone": "{count, plural, one {Restored # lesson.} other {Restored # lessons.}} The schedule is as it was before the fill. A version was saved before the restore: see Versions.",
+    "undoBusy": "The schedule is being rewritten by another run right now. Try again shortly, or restore the version from before the fill in Versions.",
+    "versionOfClass": "Before fill: {name}",
+    "versionOfGrade": "Before fill: year {grade}",
+    "versionOfSchool": "Before fill: the whole school",
     "errors": {
       "proposeFailed": "The proposal could not be made. Try again.",
       "stale": "The schedule has changed since the proposal was made. Nothing was written. Propose again.",
