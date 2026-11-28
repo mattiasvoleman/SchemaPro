@@ -171,6 +171,20 @@ describe("a block's card whose lessons are placed", () => {
     await waitFor(() => expect(actions.announce).toHaveBeenCalledTimes(1));
     expect(actions.history.push).toHaveBeenCalledTimes(1);
     expect(actions.showError).not.toHaveBeenCalled();
+    // The step says what it was about for the list of the session's steps (E9): the block, and where it went.
+    expect(actions.history.push.mock.calls[0]![0]).toMatchObject({ label: "block-move", meta: { what: "block-move", name: expect.any(String), dayOfWeek: 3, startTime: "09:00", endTime: "10:00" } });
+  });
+
+  it("is locked once the gateway lets it: the step says which block, and whether it was locked or unlocked", async () => {
+    state.patch.mockResolvedValue({ blockId: "b", isLocked: true, lessonIds: ["a-ty", "b-fr"], parked: 0 });
+    const { actions, kit } = mount();
+    await waitFor(() => expect(kit()).not.toBeNull());
+    act(() => {
+      kit().open("block:a-ty");
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "lock" }));
+    await waitFor(() => expect(actions.history.push).toHaveBeenCalledTimes(1));
+    expect(actions.history.push.mock.calls[0]![0]).toMatchObject({ label: "block-lock", meta: { what: "block-lock", name: expect.any(String), locked: true } });
   });
 });
 

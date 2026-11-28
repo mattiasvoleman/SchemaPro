@@ -2935,6 +2935,12 @@
     "historyParked": "satt åt sidan",
     "historyPlaced": "lagd i schemat",
     "historyWeeks": "andra veckor",
+    "historyBlockMove": "Blocket {name}: flyttat till {slot}",
+    "historyBlockLock": "Låste blocket {name}",
+    "historyBlockUnlock": "Låste upp blocket {name}",
+    "historyLunchPlace": "Lunch lagd {slot}",
+    "historyLunchMove": "Lunch flyttad till {slot}",
+    "historyLunchRemove": "Lunch borttagen från {slot}",
     "blocks": {
       "split": "Delat",
       "apart": "{name} · delat",

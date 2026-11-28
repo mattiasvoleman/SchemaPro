@@ -20,7 +20,10 @@ export type HistoryMeta =
   | { what: "update"; lesson: HistoryLesson; patch: object }
   | { what: "create" | "delete"; lesson: HistoryLesson }
   | { what: "bulk-lock"; locked: boolean; count: number }
-  | { what: "bulk-delete"; count: number };
+  | { what: "bulk-delete"; count: number }
+  | { what: "block-move"; name: string; dayOfWeek: number; startTime: string; endTime: string }
+  | { what: "block-lock"; name: string; locked: boolean }
+  | { what: "lunch"; kind: "place" | "move" | "remove"; dayOfWeek: number; startTime: string };
 
 /** The lesson a step is about: what names it ("Matematik 7A"). */
 export interface HistoryLesson {

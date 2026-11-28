@@ -87,6 +87,11 @@ export function HistoryList({ history, subjectById, teacherById, roomById, group
   const describe = (entry: HistoryEntry): string => {
     const meta = entry.meta;
     if (!meta) return entry.label === "lunch" ? t("historyLunch") : t("historyOther");
+    /** "tisdag 10:00–11:00": a weekday is written in lower case in the middle of a Swedish sentence, and with a capital in English. */
+    const slotOf = (day: number, start: string, end?: string) => {
+      const name = tDays(String(day));
+      return `${locale === "sv" ? name.toLocaleLowerCase("sv") : name} ${start}${end ? `–${end}` : ""}`;
+    };
     switch (meta.what) {
       case "update": {
         const changes = changesOf(meta.lesson, meta.patch as Record<string, unknown>);
@@ -100,6 +105,12 @@ export function HistoryList({ history, subjectById, teacherById, roomById, group
         return t(meta.locked ? "historyBulkLock" : "historyBulkUnlock", { count: meta.count });
       case "bulk-delete":
         return t("historyBulkDelete", { count: meta.count });
+      case "block-move":
+        return t("historyBlockMove", { name: meta.name, slot: slotOf(meta.dayOfWeek, meta.startTime, meta.endTime) });
+      case "block-lock":
+        return t(meta.locked ? "historyBlockLock" : "historyBlockUnlock", { name: meta.name });
+      case "lunch":
+        return t(meta.kind === "place" ? "historyLunchPlace" : meta.kind === "move" ? "historyLunchMove" : "historyLunchRemove", { slot: slotOf(meta.dayOfWeek, meta.startTime) });
     }
   };
 

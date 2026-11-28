@@ -47,6 +47,7 @@ export function useLunchEdits(inputs: Pick<TimetableReads, "lunchSittings" | "sh
       const ref = { id: placed.id };
       history.push({
         label: "lunch",
+        meta: { what: "lunch", kind: "place", dayOfWeek: body.dayOfWeek, startTime: body.startTime },
         undo: async () => {
           if (before && !before.isGenerated) {
             await lunchMutations.update.mutateAsync({
@@ -87,6 +88,7 @@ export function useLunchEdits(inputs: Pick<TimetableReads, "lunchSittings" | "sh
       await lunchMutations.update.mutateAsync({ id, ...after });
       history.push({
         label: "lunch",
+        meta: { what: "lunch", kind: "move", dayOfWeek: after.dayOfWeek, startTime: after.startTime },
         undo: async () => {
           await lunchMutations.update.mutateAsync({ id, ...before });
         },
@@ -113,6 +115,7 @@ export function useLunchEdits(inputs: Pick<TimetableReads, "lunchSittings" | "sh
       await lunchMutations.remove.mutateAsync(id);
       history.push({
         label: "lunch",
+        meta: { what: "lunch", kind: "remove", dayOfWeek: body.dayOfWeek, startTime: body.startTime },
         undo: async () => {
           const again = (await lunchMutations.create.mutateAsync(body)) as { id: string };
           ref.id = again.id;

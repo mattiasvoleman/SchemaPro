@@ -2935,6 +2935,12 @@
     "historyParked": "set aside",
     "historyPlaced": "placed in the timetable",
     "historyWeeks": "other weeks",
+    "historyBlockMove": "The block {name}: moved to {slot}",
+    "historyBlockLock": "Locked the block {name}",
+    "historyBlockUnlock": "Unlocked the block {name}",
+    "historyLunchPlace": "Lunch placed at {slot}",
+    "historyLunchMove": "Lunch moved to {slot}",
+    "historyLunchRemove": "Lunch removed from {slot}",
     "blocks": {
       "split": "Split",
       "apart": "{name} · split",
