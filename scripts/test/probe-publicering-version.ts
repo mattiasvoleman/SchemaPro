@@ -8,6 +8,8 @@
  *   (pv-a) POST /publications leaves a version of the grundschema as it was published, named by the window it is valid for as the log gives it
  *          ("Publicering 2026-11-30–2026-12-18"), with the lessons the grundschema had, in the transaction of the publication;
  *   (pv-b) the old POST /calendar/publish leaves one too, named by the window it materialised;
+ *   (pv-b2) a publication whose version cannot be saved is not published at all, on either route: the version is written in the publication's own
+ *          transaction, so a database that refuses the version row takes the log row and the lessons with it (not only the version is missing);
  *   (pv-c) a publication a check the school set to REFUSE stops is logged and leaves NO version (the version is rolled back with the transaction that
  *          would have published): the log has the refusal, the version list is as it was;
  *   (pv-d) a restore of a version tells the staff room that the master timetable changed (the event carries no lesson ids: the client reads the year),
@@ -84,6 +86,29 @@ export async function publiceringVersionChecks(owner: Client, api: PrismaService
       const all = await versionsOf();
       assert.equal(all.length, 2);
       assert.equal(all[1]!.name, `Publicering ${result.fromDate}–${result.toDate}`);
+    });
+
+    await check('(pv-b2) a publication whose version cannot be saved is not published at all, on either route', async () => {
+      // The owner makes the database refuse the version row of this school. The version is in the publication's own transaction, so what the publication wrote
+      // before it (the log row, the dated lessons) goes with it; a version taken after the publication has committed would leave them standing.
+      const count = async (sql: string): Promise<number> => Number((await owner.query<{ n: string }>(sql, [a.school])).rows[0]!.n);
+      const standing = async () => ({
+        publications: await count(`SELECT count(*) AS n FROM "TimetablePublications" WHERE "schoolId" = $1`),
+        lessons: await count(`SELECT count(*) AS n FROM "CalendarLessons" WHERE "schoolId" = $1`),
+        versions: await count(`SELECT count(*) AS n FROM "ScheduleVersions" WHERE "schoolId" = $1`),
+      });
+      await owner.query(`CREATE OR REPLACE FUNCTION probe_publicering_version_refuse() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'the version row is refused'; END $$`);
+      await owner.query(`CREATE TRIGGER probe_publicering_version_refuse BEFORE INSERT ON "ScheduleVersions" FOR EACH ROW EXECUTE FUNCTION probe_publicering_version_refuse()`);
+      try {
+        const before = await standing();
+        await assert.rejects(publications.publish({ academicYearId: a.year, validFrom: '2027-01-11', validTo: '2027-01-15', acknowledgeWarnings: true }, a.caller), /version row is refused/);
+        assert.deepEqual(await standing(), before, 'POST /publications: the refused version took the publication and its lessons with it');
+        await assert.rejects(publications.legacyPublish({ academicYearId: a.year, fromDate: '2027-01-18', toDate: '2027-01-22' }, a.caller), /version row is refused/);
+        assert.deepEqual(await standing(), before, 'the old route: the refused version took the publication and its lessons with it');
+      } finally {
+        await owner.query(`DROP TRIGGER IF EXISTS probe_publicering_version_refuse ON "ScheduleVersions"`);
+        await owner.query(`DROP FUNCTION IF EXISTS probe_publicering_version_refuse()`);
+      }
     });
 
     await check('(pv-c) a publication that a check set to REFUSE stops is logged and leaves no version', async () => {

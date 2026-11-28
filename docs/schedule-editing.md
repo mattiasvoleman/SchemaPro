@@ -407,5 +407,5 @@ Adds `MasterLessons.isLocked` + `coTeacherId`, `Subjects.requiredRoomType`, `Tea
   (alla, eller bara administratörerna i utkastläget), och en återställning som nekas (en version som inte finns, `SCHEDULE_BUSY`) säger ingenting.
   Det gör meningen ovan sann: *any other change reads the year again*.
 - **Hålls av** `src/publication/publications.service.spec.ts` (namn, samma transaktion, ingen version för en nekad publicering), `src/optimization/optimization-proxy.announce.spec.ts`,
-  `src/calendar/schedule-version-announcer.spec.ts` och `scripts/test/probe-publicering-version.ts` (mot riktig Postgres: pv-a en publicering, pv-b den gamla vägen, pv-c en nekad publicering lämnar
+  `src/calendar/schedule-version-announcer.spec.ts` och `scripts/test/probe-publicering-version.ts` (mot riktig Postgres: pv-a en publicering, pv-b den gamla vägen, pv-b2 en publicering vars version databasen vägrar står inte alls (loggraden och lektionerna rullas tillbaka med den, på båda vägarna), pv-c en nekad publicering lämnar
   ingen version men en loggrad, pv-d en återställning säger till en gång, i rätt läge, och en som nekas säger ingenting).
