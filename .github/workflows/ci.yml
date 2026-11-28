@@ -408,6 +408,17 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-direkt-fragan.ts
 
+      # En återställning i Direkt (E9, g520 M-3): the restore carried to the published calendar in its own transaction, as the API role under row
+      # security. After a restore and a publication the school has the lessons the grundschema gives and not twice as many, the rows of a lesson
+      # the version holds unchanged keep their vikarie, room and note, a restore that would take published lessons before the school has answered
+      # is refused and leaves everything as it was, a lesson that has been held stays, and utkast is as before. It builds its own schools
+      # (slug probe-aterstallning-*) and drops them.
+      - name: Aterstallning i Direkt probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-aterstallning-direkt.ts
+
       # Optimeringsprofilen (P5): the school's Generera profile through the real service as the API role under row security. The first save
       # makes the row and a later one replaces it, a school reads its own and no other's, and the expedition and a läsare are refused by the
       # database and leave the row as it was. It builds its own schools (slug probe-profil-*) and drops them.

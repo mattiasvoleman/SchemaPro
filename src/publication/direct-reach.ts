@@ -28,8 +28,9 @@ import type { PublishMode } from './publish-mode';
  * (en anteckning, en lektion utanför perioden, propagate: false) frågar aldrig.
  *
  * Skrivvägar som anropar vakten i dag: PATCH master-lessons/:id, PATCH master-lessons/block-card, DELETE master-lessons/:id, POST swaps/apply
- * (ett byte flyttar publicerade lektioner på samma sätt och rullas tillbaka med sin säkerhetsversion) och POST placement-write-in (E4b: förläggningarna skrivs in,
- * och de lektioner de ersätter tas bort ur kalendern).
+ * (ett byte flyttar publicerade lektioner på samma sätt och rullas tillbaka med sin säkerhetsversion), POST placement-write-in (E4b: förläggningarna skrivs in,
+ * och de lektioner de ersätter tas bort ur kalendern) och POST schedule-versions/:id/restore (en återställning tar de framtida publicerade lektionerna av
+ * mallar som den ändrar, restore-calendar.ts).
  * E4:s läggning går genom PATCHens skrivning och frågar där: en parkerad lektion som läggs tillbaka flyttar sina kalenderrader som ett drag (updateIn), och en ny
  * lektion (createIn) når ingen förrän kalendern nästa gång genereras. En skrivväg som lämnar den skrivningen måste själv anropa funktionen med det antal den nådde.
  */
@@ -70,24 +71,31 @@ export function mustAsk(mode: PublishMode, facts: DirectReachFacts | null): bool
   return mode === 'DIRECT' && facts !== null && !facts.answered;
 }
 
-export function directReachUnanswered(facts: Pick<DirectReachFacts, 'validFrom' | 'validTo'>): ConflictException {
+/** What a write says of its own reach beside the period, as flat numbers: the problem JSON forwards `code` and flat `params` only. */
+export type DirectReachDetail = Record<string, number>;
+
+export function directReachUnanswered(
+  facts: Pick<DirectReachFacts, 'validFrom' | 'validTo'>,
+  detail: DirectReachDetail = {},
+): ConflictException {
   return new ConflictException({
     message:
       'Ändringen når elever och vårdnadshavare i en publicerad period. Svara på frågan om att fortsätta i Direkt eller använda utkast, så görs ändringen.',
     code: DIRECT_REACH_UNANSWERED,
-    params: { validFrom: facts.validFrom, validTo: facts.validTo },
+    params: { validFrom: facts.validFrom, validTo: facts.validTo, ...detail },
   });
 }
 
 /**
  * The guard of a write that moves or removes published lessons. Asked AFTER the write has propagated, inside its transaction, with the
- * number of published lessons it reached (moved plus removed): the throw rolls the whole write back.
+ * number of published lessons it reached (moved plus removed): the throw rolls the whole write back. `detail` is what the write can say
+ * of what it reached (a restore: how many of the removed lessons somebody had worked on by hand), carried on the refusal as flat params.
  */
 export async function requireDirectReachAnswered(
   tx: PrismaClient,
-  input: { academicYearId: string; mode: PublishMode; reached: number },
+  input: { academicYearId: string; mode: PublishMode; reached: number; detail?: DirectReachDetail },
 ): Promise<void> {
   if (input.mode !== 'DIRECT' || input.reached <= 0) return;
   const facts = await readDirectReachFacts(tx, input.academicYearId);
-  if (facts !== null && mustAsk(input.mode, facts)) throw directReachUnanswered(facts);
+  if (facts !== null && mustAsk(input.mode, facts)) throw directReachUnanswered(facts, input.detail);
 }

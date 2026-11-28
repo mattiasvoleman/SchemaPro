@@ -18,6 +18,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import {
   ScheduleVersionsService,
+  type RestoreResult,
   type ScheduleVersionSummary,
   type VersionLesson,
 } from './schedule-versions.service';
@@ -67,7 +68,7 @@ export class ScheduleVersionsController {
   restore(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<{ restoredLessons: number; safetyVersionId: string }> {
+  ): Promise<RestoreResult> {
     return this.versions.restore(id, user);
   }
 
