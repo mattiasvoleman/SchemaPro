@@ -1,6 +1,8 @@
+// ApplySchoolCalendarDto's rows use class-transformer's @Type, which reads design metadata.
+import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { CreateSchoolBreakDto, UpdateSchoolBreakDto } from './school-break.dto';
+import { ApplySchoolCalendarDto, CreateSchoolBreakDto, UpdateSchoolBreakDto } from './school-break.dto';
 
 const YEAR_ID = '99999999-9999-4999-8999-999999999999';
 
@@ -55,5 +57,36 @@ describe.each([
     await expect(failing(cls, { ...base, maxGradeLevel: 9.5 })).resolves.toEqual([
       'maxGradeLevel',
     ]);
+  });
+});
+
+describe('ApplySchoolCalendarDto (Skolans kalender)', () => {
+  const row = { name: 'Sportlov', startDate: '2027-02-22', endDate: '2027-02-26' };
+  const problems = async (body: object) => {
+    const errors = await validate(plainToInstance(ApplySchoolCalendarDto, body));
+    // A nested error is named by the list and the row's index, then its property.
+    return errors.flatMap((error) =>
+      error.children?.length
+        ? error.children.flatMap((child) => (child.children ?? []).map((leaf) => `${error.property}[${child.property}].${leaf.property}`))
+        : [error.property],
+    );
+  };
+
+  it('takes a list of rows, with or without an id, and a dry run', async () => {
+    await expect(problems({ academicYearId: YEAR_ID, breaks: [row, { ...row, id: '11111111-1111-4111-8111-111111111111' }], dryRun: true })).resolves.toEqual([]);
+    await expect(problems({ academicYearId: YEAR_ID, breaks: [] })).resolves.toEqual([]);
+  });
+
+  it('judges every row by the rules of a lov made one at a time', async () => {
+    await expect(problems({ academicYearId: YEAR_ID, breaks: [row, { ...row, startDate: '2027-02-30' }] })).resolves.toEqual(['breaks[1].startDate']);
+    await expect(problems({ academicYearId: YEAR_ID, breaks: [{ ...row, name: '' }] })).resolves.toEqual(['breaks[0].name']);
+    await expect(problems({ academicYearId: YEAR_ID, breaks: [{ ...row, minGradeLevel: 13, maxGradeLevel: 9 }] })).resolves.toEqual(['breaks[0].minGradeLevel']);
+    await expect(problems({ academicYearId: YEAR_ID, breaks: [{ ...row, id: 'x' }] })).resolves.toEqual(['breaks[0].id']);
+  });
+
+  it('refuses a list of more than 200 rows, a missing list and a year that is not an id', async () => {
+    await expect(problems({ academicYearId: YEAR_ID, breaks: Array.from({ length: 201 }, () => row) })).resolves.toEqual(['breaks']);
+    await expect(problems({ academicYearId: YEAR_ID })).resolves.toContain('breaks');
+    await expect(problems({ academicYearId: 'not-an-id', breaks: [] })).resolves.toEqual(['academicYearId']);
   });
 });

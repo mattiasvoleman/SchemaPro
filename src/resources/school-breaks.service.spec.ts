@@ -18,6 +18,7 @@ import type { NotificationsService } from '../notifications/notifications.servic
 import { zonedTimeToUtc } from '../common/utils/time';
 import { SchoolBreaksService } from './school-breaks.service';
 import type {
+  ApplySchoolCalendarDto,
   CreateSchoolBreakDto,
   UpdateSchoolBreakDto,
 } from './dto/school-break.dto';
@@ -1078,6 +1079,186 @@ describe('SchoolBreaksService', () => {
       await service.remove(BREAK_ID, testUser());
       expect(told()).toEqual([]);
       expect(deliver).not.toHaveBeenCalled();
+    });
+  });
+
+  // Skolans kalender: a whole calendar in one write.
+  describe('applyCalendar', () => {
+    const TELL = 'app.leave_requests_tell_new_mentors()';
+    const OTHER_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    let deliver: jest.Mock;
+
+    const calendar = (
+      breaks: ApplySchoolCalendarDto['breaks'],
+      extra: Partial<ApplySchoolCalendarDto> = {},
+    ): ApplySchoolCalendarDto => ({ academicYearId: YEAR_ID, breaks, ...extra });
+    const sportlov = { name: 'Sportlov', startDate: '2027-02-22', endDate: '2027-02-26' };
+    const pask = { name: 'Annandag påsk', startDate: '2027-03-29', endDate: '2027-03-29' };
+    const told = () => queryRaw.mock.calls.filter((call) => rawSql(call).includes(TELL));
+
+    beforeEach(() => {
+      deliver = jest.fn();
+      service = new SchoolBreaksService(prisma as unknown as PrismaService, { deliver } as unknown as NotificationsService);
+      queryRaw.mockImplementation((...call: unknown[]) =>
+        Promise.resolve(rawSql(call).includes(TELL) ? [] : lockingRead(YEARS, years, call)),
+      );
+      givenYear();
+      tx.schoolBreak.findMany.mockResolvedValue([]);
+      let made = 0;
+      tx.schoolBreak.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ ...storedBreak(), id: `0000000${++made}-0000-4000-8000-000000000000`, ...data }),
+      );
+    });
+
+    it('makes every row in one transaction, reads the year once FOR SHARE, and tells the mentors once', async () => {
+      const result = await service.applyCalendar(calendar([sportlov, pask]), testUser());
+
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(queryRaw.mock.calls.filter((call) => YEAR_READ.test(rawSql(call)))).toHaveLength(1);
+      expect(tx.schoolBreak.create).toHaveBeenCalledTimes(2);
+      expect(tx.schoolBreak.create.mock.calls.map(([arg]) => arg.data.name)).toEqual(['Sportlov', 'Annandag påsk']);
+      expect(tx.schoolBreak.create.mock.calls[0]![0].data).toMatchObject({ kind: 'HOLIDAY', minGradeLevel: null, maxGradeLevel: null });
+      expect(result).toMatchObject({ dryRun: false, created: 2, updated: 0, unchanged: 0, removedCalendarLessons: 0 });
+      expect(result.items.map((item) => item.action)).toEqual(['CREATED', 'CREATED']);
+      expect(told()).toHaveLength(1);
+    });
+
+    it('refuses all rows, naming the one, when a row lies outside its läsår, and writes none', async () => {
+      await expect(
+        service.applyCalendar(calendar([sportlov, { name: 'Sommarlov', startDate: '2027-06-07', endDate: '2027-06-18' }]), testUser()),
+      ).rejects.toThrow(/breaks\[1\]: endDate must fall inside the academic year/);
+      expect(tx.schoolBreak.create).not.toHaveBeenCalled();
+      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses a half-stated span before it reads anything', async () => {
+      await expect(
+        service.applyCalendar(calendar([{ ...sportlov, minGradeLevel: 7 }]), testUser()),
+      ).rejects.toThrow(/both minGradeLevel and maxGradeLevel/);
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    it('writes a row that is already there again as nothing, and two equal rows of the list as one', async () => {
+      tx.schoolBreak.findMany.mockResolvedValue([storedBreak({ id: OTHER_ID, name: 'sportlov ' })]);
+
+      const result = await service.applyCalendar(calendar([sportlov, pask, { ...pask, name: 'ANNANDAG PÅSK' }]), testUser());
+
+      expect(tx.schoolBreak.create).toHaveBeenCalledTimes(1);
+      expect(result.items).toEqual([
+        { index: 0, id: OTHER_ID, action: 'UNCHANGED', removedCalendarLessons: 0 },
+        expect.objectContaining({ index: 1, action: 'CREATED' }),
+        expect.objectContaining({ index: 2, action: 'UNCHANGED', id: result.items[1]!.id }),
+      ]);
+      expect(result).toMatchObject({ created: 1, updated: 0, unchanged: 2 });
+    });
+
+    it('tells nobody and takes no lesson when every row is already there', async () => {
+      tx.schoolBreak.findMany.mockResolvedValue([storedBreak({ name: 'Sportlov' })]);
+      const result = await service.applyCalendar(calendar([sportlov]), testUser());
+      expect(result).toMatchObject({ created: 0, unchanged: 1, removedCalendarLessons: 0 });
+      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+      expect(told()).toEqual([]);
+    });
+
+    it('moves a lov of the year by its id, and refuses a lov that is not the year\'s as an unknown one', async () => {
+      tx.schoolBreak.findMany.mockResolvedValue([storedBreak()]);
+      tx.schoolBreak.update.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ ...storedBreak(), ...data }),
+      );
+
+      const moved = await service.applyCalendar(
+        calendar([{ id: BREAK_ID, name: 'Sportlov', startDate: '2027-03-01', endDate: '2027-03-05' }]),
+        testUser(),
+      );
+      expect(tx.schoolBreak.update).toHaveBeenCalledWith({
+        where: { id: BREAK_ID },
+        data: expect.objectContaining({ startDate: date('2027-03-01'), endDate: date('2027-03-05') }),
+      });
+      expect(moved).toMatchObject({ created: 0, updated: 1 });
+      expect(told()).toHaveLength(1);
+
+      await expect(
+        service.applyCalendar(calendar([{ id: OTHER_ID, ...sportlov }]), testUser()),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('takes the lessons a single write takes, by the same protection rule, and counts them per row and in all', async () => {
+      givenCalendar([
+        lesson({ id: 'in-sport', date: '2027-02-23' }),
+        lesson({ id: 'in-sport-2', date: '2027-02-24' }),
+        lesson({ id: 'begun', date: '2027-02-10', time: '08:00' }),
+        lesson({ id: 'attended', date: '2027-02-24', hasAttendance: true }),
+        lesson({ id: 'in-pask', date: '2027-03-29' }),
+        lesson({ id: 'elsewhere', date: '2027-03-30' }),
+      ]);
+
+      const result = await service.applyCalendar(calendar([sportlov, pask]), testUser());
+
+      expect(result.items.map((item) => item.removedCalendarLessons)).toEqual([2, 1]);
+      expect(result.removedCalendarLessons).toBe(3);
+    });
+
+    describe('with dryRun', () => {
+      it('writes nothing and tells nobody, and counts the lessons the rows would take, once each', async () => {
+        const lesson = (day: string, gradeLevel: number | null) => ({ date: date(day), studentGroup: { gradeLevel } });
+        // What the one question answers: the lessons some row takes, each once.
+        tx.calendarLesson.findMany.mockResolvedValue([
+          lesson('2027-02-22', 7),
+          lesson('2027-02-23', 7),
+          lesson('2027-02-24', 9),
+          lesson('2027-02-26', 7),
+        ]);
+
+        const result = await service.applyCalendar(
+          calendar([sportlov, { name: 'Vecka 8', startDate: '2027-02-23', endDate: '2027-02-24' }], { dryRun: true }),
+          testUser(),
+        );
+
+        expect(tx.schoolBreak.create).not.toHaveBeenCalled();
+        expect(tx.schoolBreak.update).not.toHaveBeenCalled();
+        expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+        expect(told()).toEqual([]);
+        // One statement, not one per row: each is a NOT EXISTS over the attendance register.
+        expect(tx.calendarLesson.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.calendarLesson.count).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ dryRun: true, created: 2, removedCalendarLessons: 4 });
+        // Each row's own count, and the sum a lesson on two rows counted once.
+        expect(result.items.map((item) => [item.id, item.removedCalendarLessons])).toEqual([[null, 4], [null, 2]]);
+      });
+
+      it('counts a row for some årskurser by the årskurs of the lesson\'s group, and a group with none is not taken by it', async () => {
+        const lesson = (day: string, gradeLevel: number | null) => ({ date: date(day), studentGroup: { gradeLevel } });
+        tx.calendarLesson.findMany.mockResolvedValue([lesson('2027-02-22', 7), lesson('2027-02-22', 9), lesson('2027-02-22', null)]);
+        const result = await service.applyCalendar(calendar([{ ...sportlov, minGradeLevel: 7, maxGradeLevel: 8 }], { dryRun: true }), testUser());
+        expect(result.items[0]!.removedCalendarLessons).toBe(1);
+      });
+
+      it('asks the database the question the purge asks: the same protection rule, once, not a copy per row', async () => {
+        tx.calendarLesson.findMany.mockResolvedValue([]);
+        const rows = [sportlov, { ...pask, minGradeLevel: 7, maxGradeLevel: 9 }, { name: 'Vecka 8', startDate: '2027-02-23', endDate: '2027-02-24' }];
+        await service.applyCalendar(calendar(rows, { dryRun: true }), testUser());
+        const asked = tx.calendarLesson.findMany.mock.calls[0]![0].where as Record<string, unknown>;
+        givenCalendar([]);
+        await service.applyCalendar(calendar([{ ...sportlov, minGradeLevel: 7, maxGradeLevel: 9 }]), testUser());
+        const purged = tx.calendarLesson.deleteMany.mock.calls[0]![0].where as Record<string, unknown>;
+        // The protection the purge asks for is the protection the count asks for.
+        expect({ status: asked['status'], startsAt: asked['startsAt'], attendanceRecords: asked['attendanceRecords'] }).toEqual({
+          status: purged['status'],
+          startsAt: purged['startsAt'],
+          attendanceRecords: purged['attendanceRecords'],
+        });
+        // And only once: a copy of it under every row is a NOT EXISTS over the register per row.
+        expect(JSON.stringify(asked).match(/attendanceRecords/g)).toHaveLength(1);
+        // One arm per årskurs span (whole school; 7 to 9), the rows with the same span sharing it.
+        expect((asked['OR'] as unknown[]).length).toBe(2);
+      });
+
+      it('counts nothing for rows that are already there', async () => {
+        tx.schoolBreak.findMany.mockResolvedValue([storedBreak({ name: 'Sportlov' })]);
+        const result = await service.applyCalendar(calendar([sportlov], { dryRun: true }), testUser());
+        expect(tx.calendarLesson.findMany).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ dryRun: true, created: 0, unchanged: 1, removedCalendarLessons: 0 });
+      });
     });
   });
 });

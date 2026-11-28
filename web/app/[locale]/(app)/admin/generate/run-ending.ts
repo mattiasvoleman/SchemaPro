@@ -52,7 +52,7 @@ export interface RunEnding {
 }
 
 /** The engine's own names for the steps of a solve (the gateway carries only these through). */
-const STAGES: readonly string[] = ["PRECHECKS", "BUILD", "SITES", "SEARCH_CLEAN", "SEARCH_CLONE", "PROBE"];
+const STAGES: readonly string[] = ["PRECHECKS", "START", "BUILD", "SITES", "SEARCH_CLEAN", "YEARS", "SEARCH_CLONE", "PROBE"];
 
 const seconds = (params: Params, key: string): number | null => {
   const value = params?.[key];

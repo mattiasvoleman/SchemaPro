@@ -359,6 +359,34 @@ describe('the data files', () => {
     });
   });
 
+  describe('notiser.csv: the notice of a colleague\'s own report of absence (K7b)', () => {
+    const report = (over: object) => ({
+      id: 'n1', recipient: PUPIL, recipientEmail: 's@x', type: 'TEACHER_ABSENCE_REPORTED', content: '{"teacherName":"Anna Ek","startsAt":"2027-03-21T23:00:00.000Z"}',
+      mentionsMarked: false, aboutColleague: false, readAt: null, emailedAt: null, created: 'c', at: 'x', ...over,
+    });
+
+    it('is empty in a registerutdrag where the teacher is not one of the persons asked for, keeps its type and time, and is counted', async () => {
+      const h = harness([[report({ aboutColleague: true }), report({ id: 'n2', aboutColleague: false, content: '{"teacherName":"Egen"}' })]], { scope: { ids: [PUPIL] } });
+      expect(await rowsOf(NOTISER, h.env)).toEqual([
+        ['n1', PUPIL, 's@x', 'TEACHER_ABSENCE_REPORTED', '', '', '', 'c'],
+        ['n2', PUPIL, 's@x', 'TEACHER_ABSENCE_REPORTED', '{"teacherName":"Egen"}', '', '', 'c'],
+      ]);
+      expect(h.held).toEqual([['data/notiser.csv', 'blanked', 1]]);
+    });
+
+    it('asks the database which notices are the colleague\'s by the teacher the notice names, and only in a registerutdrag', async () => {
+      const extract = harness([[]], { scope: { ids: [PUPIL] } });
+      await rowsOf(NOTISER, extract.env);
+      const sql = extract.calls[0]!.strings.join('?');
+      expect(sql).toContain(`n."type" = 'TEACHER_ABSENCE_REPORTED'`);
+      expect(sql).toContain(`n."meta"->>'userId'`);
+      expect(valuesOf(extract.calls[0]!)).toEqual(expect.arrayContaining([[PUPIL]]));
+      const school = harness([[]]);
+      await rowsOf(NOTISER, school.env);
+      expect(school.calls[0]!.strings.join('?')).toContain('false AS "aboutColleague"');
+    });
+  });
+
   describe('notiser.csv without a marked person', () => {
     it('does not scan the notices\' content for one', async () => {
       const h = harness([[]]);

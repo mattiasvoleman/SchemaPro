@@ -55,12 +55,18 @@ import { plant, type World } from './probe-domaren';
 const SLUG = 'probe-mojliga-tider';
 const FIXTURE = join(__dirname, '../../src/calendar/__fixtures__/lesson-judge-cases.json');
 const STEP = 15;
+/** The probe's own transactions may run as long as the judge is allowed to (possible.judgeBudgetMs below): a loaded host must not decide the answer. */
+const PROBE_TX = { timeoutMs: 10 * 60_000 };
 
 const minutesOf = (clock: string): number => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
 const clockOf = (minutes: number): string => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+const dateOf = (day: string | null | undefined): Date | null => (day ? new Date(`${day}T00:00:00.000Z`) : null);
 
 export async function mojligaTiderChecks(owner: Client, api: PrismaService, check: (label: string, body: () => Promise<void>) => Promise<void>): Promise<void> {
   const worlds = (JSON.parse(readFileSync(FIXTURE, 'utf8')) as { worlds: World[] }).worlds;
+  // MOJLIGA_FROM and MOJLIGA_WORLDS take a stretch of the file's worlds (the first to the one before the last), so that the richer worlds can be asked
+  // in two processes on a loaded host; the thresholds below are for the whole file.
+  const from = Number(process.env['MOJLIGA_FROM'] ?? 0);
   const wanted = Number(process.env['MOJLIGA_WORLDS'] ?? worlds.length);
 
   const realtime = { notifyMasterTimetableChanged: () => undefined };
@@ -75,7 +81,8 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
 
   try {
     await check(`(mt-a/b/c) the query against the judge, every ${STEP}th minute of the week, every lesson of the first ${wanted} worlds of the fall file`, async () => {
-      for (const [index, world] of worlds.slice(0, wanted).entries()) {
+      for (const [offset, world] of worlds.slice(from, wanted).entries()) {
+        const index = from + offset;
         const planted = await plant(owner, `${SLUG}-${index}`, world);
         const { caller } = planted;
         seen.worlds += 1;
@@ -88,7 +95,10 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
 
           const answer = await possible.possibleTimes({ lessonId, from: '07:00', to: '18:00', stepMinutes: STEP, limit: 40 }, caller);
           assert.equal(answer.stats.truncated, false, `${label}: the judge ran out of time`);
-          assert.equal(answer.stats.refused, 0, `${label}: the prune let ${answer.stats.refused} start(s) through that the judge refused`);
+          // A pupil NAMED on a lesson is a clash the prune cannot see (swap-context.ts inTheWay reads groups, as the engine's own prune does): the
+          // judge pass refuses the start and it is painted CROWDED by no one. In a world with none the prune is exact, and the judge refuses nothing it passed.
+          const namedPupils = world.lessons.some((entry) => (entry.participants ?? []).length > 0);
+          if (!namedPupils) assert.equal(answer.stats.refused, 0, `${label}: the prune let ${answer.stats.refused} start(s) through that the judge refused`);
 
           // What the judge says of every start, in the lesson's own room, as the PATCH would hold it.
           const startsOfDay = (): Array<{ day: number; start: number }> =>
@@ -112,13 +122,16 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
                 extraGroupIds: own.extraGroupIds,
                 studentIds: own.studentIds,
                 recurrence: own.recurrence,
+                // The lesson's window of dates (the richer worlds of the fall file have lessons that run in one).
+                startDate: dateOf(own.startDate),
+                endDate: dateOf(own.endDate),
               },
-              stands: { dayOfWeek: own.dayOfWeek, startMinutes: own.startMinutes, endMinutes: own.endMinutes, teacherId: own.teacherId, coTeacherId: own.coTeacherId, roomId: own.roomId, extraGroupIds: own.extraGroupIds, recurrence: own.recurrence },
+              stands: { dayOfWeek: own.dayOfWeek, startMinutes: own.startMinutes, endMinutes: own.endMinutes, teacherId: own.teacherId, coTeacherId: own.coTeacherId, roomId: own.roomId, extraGroupIds: own.extraGroupIds, recurrence: own.recurrence, startDate: dateOf(own.startDate), endDate: dateOf(own.endDate) },
               excludeIds: [lessonId],
             }));
             const judged = await judgeLessons(tx, masters, { academicYearId: planted.year, schoolId: planted.school, basis: CURRENT, gradeNumbering: 'NIOARIG' }, items, { reads: new ConflictReads() });
             return new Map(startsOfDay().map(({ day, start }, at) => [`${day}|${start}`, judged[at]!]));
-          });
+          }, PROBE_TX);
 
           const kindAt = (day: number, start: number) => {
             const run = answer.days.find((entry) => entry.dayOfWeek === day)!.runs.find((candidate) => candidate.fromMinutes <= start && start <= candidate.toMinutes);
@@ -148,20 +161,27 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
                 seen.free += 1;
                 assert.ok(verdict.ok, `${where}: the query says FREE and the judge says ${reasons.join(',')}`);
                 break;
-              case 'CHANGE':
+              case 'CHANGE': {
                 // Another room: the judge is asked below with it. A CHANGE where the own room is fine is a mistake.
                 seen.change += 1;
                 assert.ok(!verdict.ok, `${where}: the query says CHANGE although the lesson's own room is free`);
+                // The run carries the room the board lays the lesson in (Ledigt, annan sal läggs), and the judge lets the lesson through in it.
+                const room = run.rooms?.find((entry) => entry.lessonId === lessonId)?.roomId;
+                assert.ok(room, `${where}: a run of another room that names no room (${JSON.stringify(run.rooms)})`);
+                const there = await masters.judgeMoves({ moves: [{ lessonId, dayOfWeek: day, startTime: clockOf(start), endTime: clockOf(start + minutes), roomId: room }] }, caller);
+                assert.ok(there.ok, `${where}: the judge refuses the room the run names (${there.moves[0]!.refusals.map((refusal) => refusal.reason).join(',')})`);
                 break;
+              }
               case 'CLOSED': {
                 seen.closed.set(run.code!, (seen.closed.get(run.code!) ?? 0) + 1);
                 assert.ok(!verdict.ok, `${where}: the query says CLOSED ${run.code} and the judge lets it through`);
                 const wantedReason = run.code;
                 assert.ok(reasons.includes(wantedReason!), `${where}: the query says CLOSED ${run.code}, the judge says ${reasons.join(',')}`);
                 if (run.code === 'AVAILABILITY') {
-                  // The judge's own sentence names the resource.
-                  const resource = verdict.refusals.find((refusal) => refusal.reason === 'AVAILABILITY')!.params['resource'];
-                  assert.equal(run.params!['resource'], resource, `${where}: what the weekly row closes`);
+                  // The judge's own sentence names the resource. An hour that two rows close (a room's and a class's, in the richer worlds) is
+                  // two sentences, and the query names one of them.
+                  const resources = verdict.refusals.filter((refusal) => refusal.reason === 'AVAILABILITY').map((refusal) => refusal.params['resource']);
+                  assert.ok(resources.includes(run.params!['resource']!), `${where}: what the weekly row closes is ${String(run.params!['resource'])}, the judge says ${resources.join(', ')}`);
                 }
                 break;
               }
@@ -170,6 +190,8 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
                 if (run.kind === 'IN_THE_WAY') seen.inTheWay += 1;
                 else seen.crowded += 1;
                 assert.ok(!verdict.ok, `${where}: the query says ${run.kind} and the judge lets it through`);
+                // CROWDED by no one is the judge's refusal for a pupil named on a lesson, and nothing else.
+                if (run.kind === 'CROWDED' && run.units === 0) assert.ok(namedPupils && reasons.some((reason) => reason === 'PUPILS' || reason === 'GROUP'), `${where}: CROWDED by no one, and the judge says ${reasons.join(',')}`);
                 assert.ok(reasons.some((reason) => ['TEACHER', 'ROOM', 'GROUP', 'PUPILS', 'AVAILABILITY'].includes(reason)), `${where}: ${run.kind} without a clash: the judge says ${reasons.join(',')}`);
                 if (run.kind === 'IN_THE_WAY') {
                   const named = answer.blockers[run.blockerId!]!;
@@ -219,15 +241,15 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
               answer.options.map((_, at) => at + 1),
               `${label}: the ranks`,
             );
-          });
+          }, PROBE_TX);
         }
-        await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [`${SLUG}-${index}`]);
+        await owner.query(`DELETE FROM "Schools" WHERE slug IN ($1, $2)`, [`${SLUG}-${index}`, `${SLUG}-${index}-andra`]);
       }
     });
 
     await check('(mt-d) the worlds are not vacuous: every answer and every rule is given, and many starts are free', async () => {
       // The thresholds are for all of the fall file; a run of a few worlds (MOJLIGA_WORLDS) only says what it saw.
-      const all = wanted >= worlds.length;
+      const all = wanted >= worlds.length && from === 0;
       if (all) {
         assert.ok(seen.free >= 500, `${seen.free} free starts`);
         assert.ok(seen.inTheWay >= 200, `${seen.inTheWay} starts with one lesson in the way`);
@@ -242,7 +264,8 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
 
     await check('(mt-f/g) what can lie here, and the room chooser, against the judge', async () => {
       const fitsSeen = { lit: 0, dim: 0, changed: 0, free: 0, busy: 0, shut: 0 };
-      for (const [index, world] of worlds.slice(0, wanted).entries()) {
+      for (const [offset, world] of worlds.slice(from, wanted).entries()) {
+        const index = from + offset;
         const planted = await plant(owner, `${SLUG}-${index}`, world);
         const { caller } = planted;
         const starts = [
@@ -268,7 +291,9 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
             caller,
           );
           assert.equal(answer.stats.truncated, false);
-          assert.equal(answer.stats.refused, 0, `world ${index} ${day} ${start}: the prune let ${answer.stats.refused} lesson(s) through that the judge refused`);
+          // As above: a pupil named on a lesson is a clash the prune cannot see, and the judge pass is what refuses it (answered CROWDED, never lit).
+          const namedPupils = world.lessons.some((entry) => (entry.participants ?? []).length > 0);
+          if (!namedPupils) assert.equal(answer.stats.refused, 0, `world ${index} ${day} ${start}: the prune let ${answer.stats.refused} lesson(s) through that the judge refused`);
           for (const entry of answer.answers) {
             const label = `world ${index}, day ${day} ${start}, candidate ${entry.index} (${entry.lessonId ?? 'a brick'})`;
             const lesson = entry.lessonId === null ? null : world.lessons.find((candidate) => planted.lessonId.get(candidate.key) === entry.lessonId)!;
@@ -289,7 +314,7 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
                 );
                 void data;
                 return verdict!;
-              });
+              }, PROBE_TX);
             }
             if (entry.answer === 'STANDS') continue;
             if (own.ok) assert.equal(entry.answer, 'FREE', `${label}: the judge lets it through and the query says ${entry.answer}`);
@@ -345,21 +370,30 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
                 );
               } else {
                 fitsSeen.shut += 1;
-                assert.ok(refusals.some((refusal) => refusal.reason === 'AVAILABILITY' && refusal.params['resource'] === 'ROOM'), `${label}: the chooser says shut and the judge does not say the room is unavailable`);
+                if (room.closedBy === 'OTHER_SCHOOL') {
+                  // A room another school has borrowed (a world's `loans`): the judge names the school.
+                  assert.ok(
+                    refusals.some((refusal) => refusal.reason === 'OTHER_SCHOOL' && refusal.params['schools'] === room.closedParams['schools']),
+                    `${label}: the chooser says another school holds it (${String(room.closedParams['schools'])}) and the judge says ${refusals.map((refusal) => `${refusal.reason}${JSON.stringify(refusal.params)}`).join(',')}`,
+                  );
+                } else {
+                  assert.ok(refusals.some((refusal) => refusal.reason === 'AVAILABILITY' && refusal.params['resource'] === 'ROOM'), `${label}: the chooser says shut and the judge does not say the room is unavailable`);
+                }
               }
             }
           }
         }
-        await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [`${SLUG}-${index}`]);
+        await owner.query(`DELETE FROM "Schools" WHERE slug IN ($1, $2)`, [`${SLUG}-${index}`, `${SLUG}-${index}-andra`]);
       }
-      if (wanted >= worlds.length) {
+      if (wanted >= worlds.length && from === 0) {
         assert.ok(fitsSeen.lit >= 100 && fitsSeen.dim >= 100, `${fitsSeen.lit} lit, ${fitsSeen.dim} dim`);
         assert.ok(fitsSeen.free >= 100 && fitsSeen.busy >= 50 && fitsSeen.shut >= 1, `${fitsSeen.free} free, ${fitsSeen.busy} busy, ${fitsSeen.shut} shut rooms`);
       }
       console.log(`     what fits: ${fitsSeen.lit} lit, ${fitsSeen.changed} lit in another room, ${fitsSeen.dim} dim; rooms: ${fitsSeen.free} free, ${fitsSeen.busy} busy, ${fitsSeen.shut} shut, each held against the judge`);
     });
 
-    await check('(mt-e) a högstadium, with blocks and teaching groups: the unit moves as one, and the query and POST /judge agree on every start', async () => {
+    // MOJLIGA_NO_HOGSTADIUM=1 leaves it to the other process when the worlds are asked in two (it plants a school of one fixed name).
+    if (process.env['MOJLIGA_NO_HOGSTADIUM'] !== '1') await check('(mt-e) a högstadium, with blocks and teaching groups: the unit moves as one, and the query and POST /judge agree on every start', async () => {
       const seeded = await seedHogstadium(owner, { slug: `${SLUG}-hogstadium`, letters: 'AB', pupils: 25 });
       const caller = { authId: seeded.adminAuth, userId: seeded.admin, schoolId: seeded.school, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL', channel: 'WEB', hrRead: false } as unknown as AuthenticatedUser;
       const rows = (
@@ -442,8 +476,9 @@ export async function mojligaTiderChecks(owner: Client, api: PrismaService, chec
       console.log(`     a school of ${lessonCount[0].n} lessons: ${units} units asked (${multi} of more than one lesson), ${asked} starts held against POST /judge; an answer took ${timings[0]}–${timings[timings.length - 1]} ms, median ${timings[Math.floor(timings.length / 2)]} ms, at load ${(await import('node:os')).loadavg().map((load) => load.toFixed(0)).join('/')}`);
     });
   } finally {
-    for (let index = 0; index < worlds.length; index++) await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [`${SLUG}-${index}`]);
-    await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [`${SLUG}-hogstadium`]);
+    // Only the worlds this process asked: another process asking the rest has its schools planted.
+    for (let index = from; index < Math.min(wanted, worlds.length); index++) await owner.query(`DELETE FROM "Schools" WHERE slug IN ($1, $2)`, [`${SLUG}-${index}`, `${SLUG}-${index}-andra`]);
+    if (process.env['MOJLIGA_NO_HOGSTADIUM'] !== '1') await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [`${SLUG}-hogstadium`]);
   }
 }
 

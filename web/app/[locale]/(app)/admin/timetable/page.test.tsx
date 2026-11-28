@@ -261,6 +261,10 @@ vi.mock("@/lib/publication-draft-notice", () => ({
 vi.mock("@/lib/use-timetable-realtime", () => ({
   useTimetableRealtime: () => ({ peers: [], setEditing: vi.fn() }),
 }));
+// The question before a change in Direkt that reaches families reads the gateway through react-query, which these tests do not provide. It is
+// held on its own (lib/use-direct-reach-ask.test.tsx); here a write is run as it is.
+const direct = vi.hoisted(() => ({ ask: <T,>(run: () => Promise<T>) => run(), question: null }));
+vi.mock("@/lib/use-direct-reach-ask", () => ({ useDirectReachAsk: () => direct }));
 // The page links to the version history; next-intl's navigation helper pulls in
 // the Next router, which has no place in a question about who is on screen.
 vi.mock("@/i18n/navigation", () => ({
@@ -3882,6 +3886,39 @@ describe("a parallel block (Block i schemat)", () => {
         endTime: "14:00",
       }),
     );
+  });
+
+  it("takes the lock off the block when a card's move is undone, for exactly the lessons the move locked: the block the gateway locks whole is not left locked (Låset vid en flytt, E4)", async () => {
+    const answer = (extra: Record<string, unknown> = {}) => ({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [], ...extra });
+    blockApi.patch.mockResolvedValue(answer({ lockedByMove: true, lockedLessonIds: ["l-sv1", "l-sv2", "l-sv9"] }));
+    showPage();
+    await card();
+    dragToTuesday("Språkval åk 4");
+    await screen.findByText("timetable.sharedCardTitle");
+    await confirmClasses();
+    await waitFor(() => expect(blockApi.patch).toHaveBeenCalledTimes(1));
+
+    // The way back moves the card where it stood (that move locks nothing: the block is locked), and then the block is unlocked, by the lessons the first move locked.
+    blockApi.patch.mockClear();
+    blockApi.patch.mockResolvedValueOnce(answer({ lockedLessonIds: [] })).mockResolvedValueOnce({ blockId: "b-sv", isLocked: false, lessonIds: ["l-sv1", "l-sv2", "l-sv9"], parked: 0 });
+    await userEvent.setup().click(screen.getByRole("button", { name: /timetable\.undo/ }));
+    await waitFor(() => expect(blockApi.patch).toHaveBeenCalledTimes(2));
+    expect(blockApi.patch.mock.calls[0]![0]).toBe("/api/v1/master-lessons/block-card");
+    expect(blockApi.patch.mock.calls[1]).toEqual(["/api/v1/master-lessons/block-lock", { blockId: "b-sv", isLocked: false, lessonIds: ["l-sv1", "l-sv2", "l-sv9"] }]);
+  });
+
+  it("asks nothing of the block's lock when an undone card's move locked nothing", async () => {
+    blockApi.patch.mockResolvedValue({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [], lockedLessonIds: [] });
+    showPage();
+    await card();
+    dragToTuesday("Språkval åk 4");
+    await screen.findByText("timetable.sharedCardTitle");
+    await confirmClasses();
+    await waitFor(() => expect(blockApi.patch).toHaveBeenCalledTimes(1));
+    await userEvent.setup().click(screen.getByRole("button", { name: /timetable\.undo/ }));
+    await waitFor(() => expect(blockApi.patch).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(blockApi.patch.mock.calls.map((call) => call[0])).toEqual(["/api/v1/master-lessons/block-card", "/api/v1/master-lessons/block-card"]);
   });
 
   it("says a card's move that locked the block, and the button takes exactly those lessons' lock off, as the block (Låset vid en flytt, E4)", async () => {

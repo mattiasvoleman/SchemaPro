@@ -42,9 +42,35 @@ describe('timeoutReportOf', () => {
     expect(timeoutReportOf(once)).toEqual(once);
   });
 
-  it('knows the six steps and the two searches the engine names', () => {
-    expect([...TIMEOUT_STAGES]).toEqual(['PRECHECKS', 'BUILD', 'SITES', 'SEARCH_CLEAN', 'SEARCH_CLONE', 'PROBE']);
+  it('knows the eight steps and the two searches the engine names', () => {
+    expect([...TIMEOUT_STAGES]).toEqual([
+      'PRECHECKS',
+      'START',
+      'BUILD',
+      'SITES',
+      'SEARCH_CLEAN',
+      'YEARS',
+      'SEARCH_CLONE',
+      'PROBE',
+    ]);
     expect([...TIMEOUT_PHASES]).toEqual(['CLEAN', 'CLONE']);
+  });
+
+  it('keeps START and YEARS, which the page has sentences for since G6b, in the engine’s order and out of otherSeconds', () => {
+    const kept = timeoutReportOf({
+      ...report(),
+      stages: [
+        { stage: 'START', seconds: 12.3 },
+        { stage: 'BUILD', seconds: 4 },
+        { stage: 'YEARS', seconds: 30 },
+      ],
+    });
+    expect(kept?.stages).toEqual([
+      { stage: 'START', seconds: 12.3 },
+      { stage: 'BUILD', seconds: 4 },
+      { stage: 'YEARS', seconds: 30 },
+    ]);
+    expect('otherSeconds' in (kept as object)).toBe(false);
   });
 
   describe('the names, read from the engine’s schema (the review of #376, U-1)', () => {
@@ -85,7 +111,7 @@ describe('timeoutReportOf', () => {
     // deploy after it, and the page learns the name later) and leaves when TIMEOUT_STAGES has it. It is what keeps a step the
     // engine has added from going unseen: the check above lets the engine add one, and nothing else would say that the card
     // still leaves it out.
-    const SKIPPED_FOR_NOW: readonly string[] = ['START', 'YEARS'];
+    const SKIPPED_FOR_NOW: readonly string[] = [];
 
     it('names every step of the engine that the gateway does not know, so that none is skipped unseen', () => {
       const unknown = literalOf('TimeoutStageName').filter((name) => !(TIMEOUT_STAGES as readonly string[]).includes(name));
@@ -93,10 +119,10 @@ describe('timeoutReportOf', () => {
     });
 
     it('can tell a name the engine has added from one it has dropped (the check above has teeth)', () => {
-      const engine = ['PRECHECKS', 'BUILD', 'YEARS', 'SITES', 'SEARCH_CLEAN', 'SEARCH_CLONE', 'PROBE'];
+      const engine = [...TIMEOUT_STAGES.slice(0, 3), 'A_STEP_THE_ENGINE_ADDED', ...TIMEOUT_STAGES.slice(3)];
       expect(subsequence(TIMEOUT_STAGES, engine)).toBe(true); // added: allowed
       expect(subsequence(TIMEOUT_STAGES, engine.filter((name) => name !== 'SITES'))).toBe(false); // dropped
-      expect(subsequence(TIMEOUT_STAGES, ['BUILD', 'PRECHECKS', 'SITES', 'SEARCH_CLEAN', 'SEARCH_CLONE', 'PROBE'])).toBe(false); // reordered
+      expect(subsequence(TIMEOUT_STAGES, ['BUILD', 'PRECHECKS', ...TIMEOUT_STAGES.slice(2)])).toBe(false); // reordered
     });
 
     it('lists the searches that report their effort as the engine does', () => {
@@ -113,9 +139,9 @@ describe('timeoutReportOf', () => {
       const kept = timeoutReportOf(
         withSteps([
           { stage: 'PRECHECKS', seconds: 0.4 },
-          { stage: 'YEARS', seconds: 30 },
+          { stage: 'REFINEMENT', seconds: 30 },
           { stage: 'BUILD', seconds: 4 },
-          { stage: 'START', seconds: 12.34 },
+          { stage: 'WARMUP', seconds: 12.34 },
           { stage: 'SEARCH_CLEAN', seconds: 60 },
         ]),
       );
@@ -135,9 +161,9 @@ describe('timeoutReportOf', () => {
       const kept = timeoutReportOf(
         withSteps([
           { stage: 'PRECHECKS', seconds: 0.4 },
-          { stage: 'YEARS', seconds: 30 },
+          { stage: 'REFINEMENT', seconds: 30 },
           { stage: 'BUILD', seconds: 4 },
-          { stage: 'START', seconds: 12.34 },
+          { stage: 'WARMUP', seconds: 12.34 },
         ]),
       );
 
@@ -149,14 +175,14 @@ describe('timeoutReportOf', () => {
 
     it('carries no seconds of what it skipped when it skipped nothing, so that a report of known steps is what it was', () => {
       expect('otherSeconds' in (timeoutReportOf(report()) as object)).toBe(false);
-      expect('otherSeconds' in (timeoutReportOf(withSteps([{ stage: 'YEARS', seconds: 0 }])) as object)).toBe(false);
+      expect('otherSeconds' in (timeoutReportOf(withSteps([{ stage: 'REFINEMENT', seconds: 0 }])) as object)).toBe(false);
     });
 
     it('keeps the seconds it skipped when its own output is read again, and adds to them', () => {
-      const once = timeoutReportOf(withSteps([{ stage: 'YEARS', seconds: 30 }, { stage: 'BUILD', seconds: 4 }]));
+      const once = timeoutReportOf(withSteps([{ stage: 'REFINEMENT', seconds: 30 }, { stage: 'BUILD', seconds: 4 }]));
       expect(once?.otherSeconds).toBe(30);
       expect(timeoutReportOf(once)).toEqual(once);
-      expect(timeoutReportOf({ ...once, stages: [{ stage: 'START', seconds: 5 }] })?.otherSeconds).toBe(35);
+      expect(timeoutReportOf({ ...once, stages: [{ stage: 'WARMUP', seconds: 5 }] })?.otherSeconds).toBe(35);
     });
 
     it.each([
@@ -168,20 +194,20 @@ describe('timeoutReportOf', () => {
     });
 
     it('leaves a report of nothing but such steps with no steps and the rest of it', () => {
-      const kept = timeoutReportOf(withSteps([{ stage: 'YEARS', seconds: 90 }]));
+      const kept = timeoutReportOf(withSteps([{ stage: 'REFINEMENT', seconds: 90 }]));
       expect(kept?.stages).toEqual([]);
       expect(kept?.budgetSeconds).toBe(100);
     });
 
     it('is read the same the second time: what is kept is accepted unchanged', () => {
-      const once = timeoutReportOf(withSteps([{ stage: 'YEARS', seconds: 30 }, { stage: 'BUILD', seconds: 4 }]));
+      const once = timeoutReportOf(withSteps([{ stage: 'REFINEMENT', seconds: 30 }, { stage: 'BUILD', seconds: 4 }]));
       expect(timeoutReportOf(once)).toEqual(once);
     });
 
     it.each([
-      ['a step with no readable seconds', { stage: 'YEARS', seconds: 'a while' }],
-      ['a step with negative seconds', { stage: 'YEARS', seconds: -1 }],
-      ['a step that is not an object', 'YEARS'],
+      ['a step with no readable seconds', { stage: 'REFINEMENT', seconds: 'a while' }],
+      ['a step with negative seconds', { stage: 'REFINEMENT', seconds: -1 }],
+      ['a step that is not an object', 'REFINEMENT'],
       ['a step with no name', { seconds: 3 }],
       ['a name that is no word', { stage: 'years of the school', seconds: 3 }],
       ['a name in lower case', { stage: 'years', seconds: 3 }],
@@ -197,7 +223,7 @@ describe('timeoutReportOf', () => {
     });
 
     it('still counts the skipped steps toward the cap on how many a report may carry', () => {
-      const many = Array.from({ length: 13 }, (_, index) => ({ stage: index % 2 ? 'YEARS' : 'BUILD', seconds: 1 }));
+      const many = Array.from({ length: 13 }, (_, index) => ({ stage: index % 2 ? 'REFINEMENT' : 'BUILD', seconds: 1 }));
       expect(timeoutReportOf(withSteps(many))).toBeNull();
     });
   });

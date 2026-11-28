@@ -68,6 +68,8 @@ function mount() {
     validate: vi.fn(() => true),
     history: { push: vi.fn() },
     showError: vi.fn(),
+    // The question before a change in Direkt that reaches families: not asked here, the write is run.
+    guard: <T,>(run: () => Promise<T>) => run(),
     announce: vi.fn(),
     title: vi.fn(() => "saved"),
     name: vi.fn((row: MasterLesson) => row.id),

@@ -210,8 +210,23 @@ async function main(): Promise<void> {
     await check('(a) an empty school lacks the year, the subjects, the rooms and the teachers, and waits with the rest for the year', async () => {
       const view = await service.read(await adminOf(owner, empty.schoolId));
       assert.equal(view.year, null);
-      assert.deepEqual(present(view), ['NO_YEAR', 'NO_SUBJECTS', 'NO_ROOMS', 'NO_RASTS', 'NO_TEACHERS', 'NO_STUDENTS']);
-      assert.deepEqual([view.hard, view.soft, view.info], [4, 1, 1]);
+      // The lov and the rastvakt are the läsår's and wait for it; the lunch and the four switches are the school's, and a school with no row
+      // for them has them off.
+      assert.deepEqual(present(view), [
+        'NO_YEAR',
+        'NO_SUBJECTS',
+        'NO_ROOMS',
+        'NO_ROOM_TYPES',
+        'NO_RASTS',
+        'LUNCH_OFF',
+        'NO_TEACHERS',
+        'NO_STUDENTS',
+        'ABSENCE_WATCH_OFF',
+        'ACK_OFF',
+        'VIEWER_OFF',
+        'SICK_REPORT_OFF',
+      ]);
+      assert.deepEqual([view.hard, view.soft, view.info], [4, 1, 7]);
       assert.deepEqual(found(view, 'PEOPLE'), { teachers: 0, students: 0 }, 'the two administrators are no teachers');
     });
 
@@ -222,9 +237,13 @@ async function main(): Promise<void> {
       assert.deepEqual(view.year, { id: built.yearId, name: '2026/2027', isActive: true });
       assert.deepEqual(found(view, 'YEAR'), { years: 1 });
       assert.deepEqual(found(view, 'SUBJECTS'), { subjects: 4 });
-      assert.deepEqual(found(view, 'ROOMS'), { rooms: 2 });
+      assert.deepEqual(found(view, 'ROOMS'), { rooms: 2, roomTypes: 2 });
       assert.deepEqual(found(view, 'FRAME_TIMES'), { frameTimes: 1 });
       assert.deepEqual(found(view, 'RASTS'), { rasts: 0 });
+      assert.deepEqual(found(view, 'BREAKS'), { breaks: 0 });
+      assert.deepEqual(found(view, 'LUNCH'), { lunchServings: 0 });
+      assert.deepEqual(found(view, 'SUPERVISION'), { supervisionAreas: 0, supervisionShifts: 0 });
+      assert.deepEqual(found(view, 'SWITCHES'), { switchesOn: 0 });
       assert.deepEqual(found(view, 'CLASSES'), { classes: 7 });
       assert.deepEqual(found(view, 'TEACHING_GROUPS'), { teachingGroups: 5 });
       assert.deepEqual(found(view, 'REQUIREMENTS'), { requirements: 6 });
@@ -264,11 +283,17 @@ async function main(): Promise<void> {
     });
     await check('(b) nothing else is a gap, and nothing hard', async () => {
       assert.deepEqual(present(view).sort(), [
+        'ABSENCE_WATCH_OFF',
+        'ACK_OFF',
         'CLASSES_WITHOUT_GRADE',
         'CLASSES_WITHOUT_POSTS',
         'FRAME_TIMES_MISSING',
+        'LUNCH_OFF',
+        'NO_BREAKS',
         'NO_RASTS',
+        'NO_SUPERVISION',
         'POSTS_WITHOUT_SIGNATURE',
+        'SICK_REPORT_OFF',
         'ROOM_TYPE_WITHOUT_ROOM',
         'STUDENTS_WITHOUT_CLASS',
         'SUBJECTS_WITHOUT_POSTS',
@@ -277,9 +302,11 @@ async function main(): Promise<void> {
         'TIMPLAN_MISSING',
         'TIMPLAN_NOT_DECIDED',
         'UNSTAFFED_POSTS',
+        'VIEWER_OFF',
       ].sort());
-      // One hard (the room type), five soft and seven only for another step.
-      assert.deepEqual([view.hard, view.soft, view.info], [1, 5, 7]);
+      // One hard (the room type), five soft and fourteen only for another step: the seven there were, and the lov, the lunch, the rastvakt
+      // and the four switches that are off.
+      assert.deepEqual([view.hard, view.soft, view.info], [1, 5, 14]);
     });
 
     // (c) the school's choice, and a room of the missing type
@@ -291,7 +318,7 @@ async function main(): Promise<void> {
       await owner.room.create({ data: { schoolId: built.schoolId, name: 'Textilsalen', capacity: 20, roomTypeId: type.id } });
       const withRoom = await service.read(built.admin);
       assert.equal(gap(withRoom, 'ROOM_TYPE_WITHOUT_ROOM').count, 0);
-      assert.deepEqual(found(withRoom, 'ROOMS'), { rooms: 3 });
+      assert.deepEqual(found(withRoom, 'ROOMS'), { rooms: 3, roomTypes: 2 });
     });
 
     // (d) another school's rows
@@ -304,7 +331,7 @@ async function main(): Promise<void> {
       }
       await owner.studentGroup.create({ data: { schoolId: other.schoolId, academicYearId: otherYear.id, name: '1A', kind: 'CLASS', gradeLevel: 1 } });
       const again = await service.read(built.admin);
-      assert.deepEqual(found(again, 'ROOMS'), { rooms: 3 });
+      assert.deepEqual(found(again, 'ROOMS'), { rooms: 3, roomTypes: 2 });
       assert.deepEqual(found(again, 'PEOPLE'), { teachers: 5, students: 5 });
       assert.deepEqual(found(again, 'CLASSES'), { classes: 7 });
       assert.equal(again.year!.id, built.yearId, 'the school\'s own active year, not the other school\'s');
@@ -338,9 +365,12 @@ async function main(): Promise<void> {
         const view = await service.read(built.admin);
         assert.equal(view.year, null);
         assert.equal(gap(view, 'NO_YEAR').count, 1);
-        assert.deepEqual(view.areas.filter((area) => area.waitsForYear).map((area) => area.area), ['CLASSES', 'TEACHING_GROUPS', 'TIMPLAN', 'REQUIREMENTS', 'STAFFING']);
+        assert.deepEqual(view.areas.filter((area) => area.waitsForYear).map((area) => area.area), ['BREAKS', 'SUPERVISION', 'CLASSES', 'TEACHING_GROUPS', 'TIMPLAN', 'REQUIREMENTS', 'STAFFING']);
+        assert.equal(gap(view, 'NO_BREAKS').count, 0, 'a school with no year has no lov to lack: it has no year to have them in');
+        assert.equal(gap(view, 'NO_SUPERVISION').count, 0, 'and no rastvakt');
         assert.equal(gap(view, 'NO_CLASSES').count, 0, 'a school with no year has not got no classes: it has no year to have them in');
-        assert.deepEqual(found(view, 'ROOMS'), { rooms: 3 }, 'rooms and people belong to the school, not the year');
+        assert.deepEqual(found(view, 'ROOMS'), { rooms: 3, roomTypes: 2 }, 'rooms and people belong to the school, not the year');
+        assert.equal(gap(view, 'LUNCH_OFF').count, 1, 'and the lunch and the switches');
       } finally {
         await owner.academicYear.update({ where: { id: built.yearId }, data: { isActive: true } });
       }
@@ -399,6 +429,74 @@ async function main(): Promise<void> {
       const view = await service.read(await adminOf(owner, schoolId));
       assert.deepEqual([gap(view, 'NO_CLASSES').count, gap(view, 'NO_CLASSES').level], [1, 'SOFT']);
       assert.equal(view.hard, 0, 'the year, a subject, a room, a teacher and a post: Generera has what its Förutsättningar ask for');
+    });
+
+    // (j) what is set up and what is turned on: the lov, the lunch, the rastvakt and the four switches
+    await check('(j) a lov or a rastvakt of another läsår is no lov or rastvakt of this one, and another school\'s switches are no switches of this one', async () => {
+      const old = await owner.academicYear.findFirstOrThrow({ where: { schoolId: built.schoolId, name: '2025/2026' } });
+      const teacher = await owner.user.findFirstOrThrow({ where: { schoolId: built.schoolId, email: { startsWith: 't1-' } } });
+      const area = await owner.supervisionArea.create({ data: { schoolId: built.schoolId, name: 'Skolgården' } });
+      await owner.schoolBreak.create({ data: { schoolId: built.schoolId, academicYearId: old.id, name: 'Höstlov', startDate: new Date('2025-10-27'), endDate: new Date('2025-10-31') } });
+      await owner.supervisionShift.create({
+        data: { schoolId: built.schoolId, academicYearId: old.id, areaId: area.id, userId: teacher.id, dayOfWeek: 1, startTime: time('09:50'), endTime: time('10:10') },
+      });
+      const other = await newSchool(owner, tag, 'pa', cleanup);
+      const otherYear = await owner.academicYear.create({ data: { schoolId: other.schoolId, name: '2026/2027', startDate: new Date('2026-08-17'), endDate: new Date('2027-06-11'), gradeNumbering: 'NIOARIG', isActive: true } });
+      await owner.schoolBreak.create({ data: { schoolId: other.schoolId, academicYearId: otherYear.id, name: 'Höstlov', startDate: new Date('2026-10-26'), endDate: new Date('2026-10-30') } });
+      await owner.lunchSetting.create({ data: { schoolId: other.schoolId, lunchEnabled: true, lunchStartTime: time('11:00'), lunchEndTime: time('13:00'), lunchMinutes: 30 } });
+      await owner.absenceWatchSetting.create({ data: { schoolId: other.schoolId, enabled: true } });
+      await owner.ackSetting.create({ data: { schoolId: other.schoolId, enabled: true } });
+      await owner.coverSettings.create({ data: { schoolId: other.schoolId, teacherSelfReport: true } });
+      await owner.publicationSettings.create({ data: { schoolId: other.schoolId, viewerClassMode: 'LIST' } });
+      const view = await service.read(built.admin);
+      assert.deepEqual(found(view, 'BREAKS'), { breaks: 0 }, 'the old year\'s lov and the other school\'s are not this year\'s');
+      assert.deepEqual(found(view, 'SUPERVISION'), { supervisionAreas: 1, supervisionShifts: 0 }, 'the area is the school\'s; the shift is the old year\'s');
+      for (const code of ['NO_BREAKS', 'NO_SUPERVISION', 'LUNCH_OFF', 'ABSENCE_WATCH_OFF', 'ACK_OFF', 'VIEWER_OFF', 'SICK_REPORT_OFF'] as const) {
+        assert.equal(gap(view, code).count, 1, `${code} still`);
+      }
+      assert.deepEqual(found(view, 'SWITCHES'), { switchesOn: 0 });
+    });
+    await check('(j) a lov and a pass of this läsår, and the lunch, are counted, and a lunch that is set up but off is still off', async () => {
+      const year = built.yearId;
+      const area = await owner.supervisionArea.findFirstOrThrow({ where: { schoolId: built.schoolId } });
+      const teacher = await owner.user.findFirstOrThrow({ where: { schoolId: built.schoolId, email: { startsWith: 't1-' } } });
+      await owner.schoolBreak.create({ data: { schoolId: built.schoolId, academicYearId: year, name: 'Höstlov', startDate: new Date('2026-10-26'), endDate: new Date('2026-10-30') } });
+      await owner.schoolBreak.create({ data: { schoolId: built.schoolId, academicYearId: year, name: 'Studiedag', startDate: new Date('2026-11-13'), endDate: new Date('2026-11-13') } });
+      await owner.supervisionShift.create({ data: { schoolId: built.schoolId, academicYearId: year, areaId: area.id, userId: teacher.id, dayOfWeek: 2, startTime: time('09:50'), endTime: time('10:10') } });
+      await owner.lunchSetting.create({ data: { schoolId: built.schoolId, lunchEnabled: false, lunchStartTime: time('11:00'), lunchEndTime: time('13:00'), lunchMinutes: 30 } });
+      await owner.lunchServing.create({ data: { schoolId: built.schoolId, minGradeLevel: 7, maxGradeLevel: 9, startTime: time('11:00'), endTime: time('11:30') } });
+      const off = await service.read(built.admin);
+      assert.deepEqual(found(off, 'BREAKS'), { breaks: 2 });
+      assert.deepEqual(found(off, 'SUPERVISION'), { supervisionAreas: 1, supervisionShifts: 1 });
+      assert.deepEqual(found(off, 'LUNCH'), { lunchServings: 1 });
+      assert.equal(gap(off, 'NO_BREAKS').count, 0);
+      assert.equal(gap(off, 'NO_SUPERVISION').count, 0);
+      assert.equal(gap(off, 'LUNCH_OFF').count, 1, 'a lunch with times and a serving that is not turned on is off: the generator lays none');
+      await owner.lunchSetting.update({ where: { schoolId: built.schoolId }, data: { lunchEnabled: true } });
+      assert.equal(gap(await service.read(built.admin), 'LUNCH_OFF').count, 0);
+    });
+    await check('(j) each switch is on when its own row says so, and Schemavisaren when any kind of schedule is shown in it', async () => {
+      const schoolId = built.schoolId;
+      const switchesOn = async () => found(await service.read(built.admin), 'SWITCHES')['switchesOn'];
+      const off = async () => present(await service.read(built.admin)).filter((code) => ['ABSENCE_WATCH_OFF', 'ACK_OFF', 'VIEWER_OFF', 'SICK_REPORT_OFF'].includes(code));
+      await owner.absenceWatchSetting.create({ data: { schoolId, enabled: false } });
+      await owner.ackSetting.create({ data: { schoolId, enabled: false } });
+      await owner.coverSettings.create({ data: { schoolId, teacherSelfReport: false } });
+      await owner.publicationSettings.create({ data: { schoolId } });
+      assert.deepEqual([await switchesOn(), (await off()).length], [0, 4], 'a row that says off is off, as no row is');
+      await owner.absenceWatchSetting.update({ where: { schoolId }, data: { enabled: true } });
+      assert.deepEqual([await switchesOn(), (await off()).sort()], [1, ['ACK_OFF', 'SICK_REPORT_OFF', 'VIEWER_OFF']]);
+      // One at a time: two read from each other's row would still agree once both were on.
+      await owner.ackSetting.update({ where: { schoolId }, data: { enabled: true } });
+      assert.deepEqual([await switchesOn(), (await off()).sort()], [2, ['SICK_REPORT_OFF', 'VIEWER_OFF']]);
+      await owner.coverSettings.update({ where: { schoolId }, data: { teacherSelfReport: true } });
+      assert.deepEqual([await switchesOn(), await off()], [3, ['VIEWER_OFF']]);
+      // The audience alone shows nothing: it says who may look, and nothing is shown while every kind of schedule is off.
+      await owner.publicationSettings.update({ where: { schoolId }, data: { viewerAudience: 'EVERYONE' } });
+      assert.deepEqual(await off(), ['VIEWER_OFF'], 'an audience with no schedule shown is a viewer that shows nothing');
+      await owner.publicationSettings.update({ where: { schoolId }, data: { viewerRoomMode: 'CODE' } });
+      assert.deepEqual([await switchesOn(), await off()], [4, []]);
+      assert.deepEqual(await service.read(built.lasare), await service.read(built.admin), 'a läsare reads the same');
     });
 
     // (g) no person in the answer

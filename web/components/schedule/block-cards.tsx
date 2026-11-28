@@ -83,7 +83,7 @@ export interface SavedWrite {
   joined?: { id: string; isGenerated: boolean }[];
   /** PATCH block-card: the lessons of a block on the same times that moved with the card. */
   followed?: string[];
-  /** Låset vid en flytt (E4): the card's move locked its block whole; these are the lessons it locked. */
+  /** Låset vid en flytt (E4): the card's move locked its block whole; these are the lessons it locked, which its undo unlocks. */
   lockedByMove?: true;
   lockedLessonIds?: string[];
 }
@@ -129,6 +129,8 @@ export interface BlockActions {
   validate: (id: string, change: LessonChange, without?: ReadonlySet<string>) => boolean;
   history: { push: (entry: HistoryEntry) => void };
   showError: (error: unknown) => void;
+  /** The question before a change in Direkt that reaches families: asked around a card's first move (lib/use-direct-reach-ask.tsx). */
+  guard: <T>(run: () => Promise<T>) => Promise<T>;
   /** The page's saved toast, with the sentence that says the move locked the block and the button that takes the lock off, when it did. */
   announce: (result: SavedWrite, lock?: LockedNote) => void;
   /** The page's saved sentence ("Sparat. 3 lektioner i kalendern flyttades."). */
@@ -343,6 +345,9 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
     };
     const patchCard = (body: Record<string, unknown>) =>
       api.patch<SavedWrite>("/api/v1/master-lessons/block-card", body).finally(invalidate);
+    /** The lock a card's move put on its block, taken off again for exactly the lessons it locked (lockBlock). */
+    const unlockMoved = (blockId: string, lessonIds: string[]) =>
+      api.patch("/api/v1/master-lessons/block-lock", { blockId, isLocked: false, lessonIds }).finally(invalidate);
 
     const moveCard = async (card: BlockCard, change: LessonChange) => {
       const lessonIds = card.lessons.map((lesson) => lesson.id);
@@ -357,10 +362,16 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       try {
         // What the card took in where it landed, and the other term's card
         // it took along: its undo leaves the one and takes back the other.
-        let result = await patchCard(to);
+        let result = await acts.current.guard(() => patchCard(to));
         acts.current.history.push({
           label: "block-move",
-          undo: async () => void (await patchCard(moveBackOf(from, result))),
+          undo: async () => {
+            // Låset vid en flytt (E4): the gateway locks the block the card was moved in, and the way back moves nothing it did not move, so the lock is
+            // taken off here, by the lessons the move locked, once the card is back where it stood.
+            const locked = result.lockedLessonIds ?? [];
+            await patchCard(moveBackOf(from, result));
+            if (locked.length > 0) await unlockMoved(card.blockId, locked);
+          },
           redo: async () => {
             result = await patchCard(to);
           },

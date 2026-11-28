@@ -62,7 +62,7 @@
 // the field without a page change. See staffing-policy-card.tsx.
 
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Grid3x3, Settings2, Sparkles, Users } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import {
@@ -82,7 +82,7 @@ import {
 import { travelOf } from "@/lib/staffing-travel";
 import { sharesByRequirement, useRequirementShares } from "@/lib/requirement-shares";
 import { supervisionOf } from "@/lib/staffing-supervision";
-import { overOrdinanceIds, overScopeIds, scopeCardOf } from "@/lib/assignment-scope";
+import { overOrdinanceIds, overScopeIds, scopeCardOf, scopeDayText, scopeYearNote } from "@/lib/assignment-scope";
 import { kpis, type UnitView, type WeekView } from "@/lib/staffing-view";
 import { NextStep } from "@/components/layout/next-step";
 import { Page } from "@/components/layout/page";
@@ -157,6 +157,7 @@ const PROPOSE_HASH = "propose";
 
 export default function StaffingPage() {
   const t = useTranslations("staffing");
+  const locale = useLocale();
   const tNav = useTranslations("nav");
   const { data: years, isLoading: yearsLoading, isError: yearsFailed } = useAcademicYears();
   const [selectedYearId, setSelectedYearId] = useState<string | null>(null);
@@ -296,6 +297,8 @@ export default function StaffingPage() {
   const overOrdinance = overOrdinanceIds(report);
   const overOwnCount = overScope.size - overOrdinance.size;
   const noTarget = policy !== undefined && (policy === null || policy.fullTimeTeachingMinutesPerWeek === null);
+  // Why nothing on the page is judged against the ordinance, said once (the review of #387, L-8): a läsår that begins before it holds has no card.
+  const yearNote = scopeYearNote(report);
 
   const openSettings = () => {
     setSettingsOpen(true);
@@ -375,6 +378,17 @@ export default function StaffingPage() {
               }
             >
               {t("noTargetBody")}
+            </Notice>
+          ) : null}
+
+          {yearNote ? (
+            // A state the page is in, not a problem: neutral, said once and not on every teacher (a card per teacher would say "not yet" all of 2026/27).
+            <Notice>
+              {yearNote.kind === "NUMBERING_NOT_COVERED"
+                ? t("scopeYearNumbering")
+                : yearNote.from !== null && yearNote.sfs !== null
+                  ? t("scopeYearNotInForce", { sfs: yearNote.sfs, from: scopeDayText(yearNote.from, locale) })
+                  : t("scopeYearNotInForceNoDate")}
             </Notice>
           ) : null}
 

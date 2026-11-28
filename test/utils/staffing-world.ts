@@ -199,6 +199,9 @@ export function givenStaffingWorld(
     }
     // A hand edit that moves a lesson asks the other schools' holds on it (lesson-judge.ts): this school has none, no sibling of its huvudman.
     if (sql.includes('app.sibling_schools')) return Promise.resolve([]);
+    // A grundschema write that reached published lessons asks whether the school has answered the question before a change in Direkt (P5): no
+    // publication of this world holds, so there is nothing to ask.
+    if (sql.includes('app.direct_reach_facts')) return Promise.resolve([]);
     if (fallback) return fallback(...call);
     throw new Error(`Unexpected raw statement: ${sql}`);
   });

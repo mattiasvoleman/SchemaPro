@@ -56,6 +56,15 @@ const OWNER = {
   timplan: { href: "/admin/timplan", navKey: "timplan" },
   requirements: { href: "/admin/requirements", navKey: "requirements" },
   staffing: { href: "/admin/staffing", navKey: "staffing" },
+  breaks: { href: "/admin/breaks", navKey: "breaks" },
+  // The lunch card stays on tillgänglighet: the hall's size and the break's length, one row for the school.
+  lunch: { href: "/admin/constraints", navKey: "constraints" },
+  supervision: { href: "/admin/supervision", navKey: "supervision" },
+  absenceWatch: { href: "/admin/absence-watch", navKey: "absenceWatch" },
+  acknowledgements: { href: "/admin/acknowledgements", navKey: "acknowledgements" },
+  schemavisaren: { href: "/admin/schemavisaren", navKey: "schemavisaren" },
+  // Sjukanmälan by a teacher themselves is a switch of the cover settings, which the absence page opens.
+  teacherAbsence: { href: "/admin/teacher-absence", navKey: "teacherAbsence" },
 } as const satisfies Record<string, GapOwner>;
 
 const OWNER_OF_GAP: Readonly<Record<string, GapOwner>> = {
@@ -65,8 +74,12 @@ const OWNER_OF_GAP: Readonly<Record<string, GapOwner>> = {
   // The room type is a room's, and the subject names it: the rooms are where it is mended first.
   ROOM_TYPE_WITHOUT_ROOM: OWNER.rooms,
   NO_ROOMS: OWNER.rooms,
+  NO_ROOM_TYPES: OWNER.rooms,
   FRAME_TIMES_MISSING: OWNER.frameTimes,
   NO_RASTS: OWNER.rasts,
+  NO_BREAKS: OWNER.breaks,
+  LUNCH_OFF: OWNER.lunch,
+  NO_SUPERVISION: OWNER.supervision,
   NO_CLASSES: OWNER.groups,
   CLASSES_WITHOUT_GRADE: OWNER.groups,
   CLASSES_WITHOUT_POSTS: OWNER.requirements,
@@ -80,6 +93,10 @@ const OWNER_OF_GAP: Readonly<Record<string, GapOwner>> = {
   UNSTAFFED_POSTS: OWNER.staffing,
   TEACHERS_WITHOUT_POST: OWNER.staffing,
   POSTS_WITHOUT_SIGNATURE: OWNER.staffing,
+  ABSENCE_WATCH_OFF: OWNER.absenceWatch,
+  ACK_OFF: OWNER.acknowledgements,
+  VIEWER_OFF: OWNER.schemavisaren,
+  SICK_REPORT_OFF: OWNER.teacherAbsence,
 };
 
 /** The page that owns the gap, or null for a code this table does not know (a newer gateway). */

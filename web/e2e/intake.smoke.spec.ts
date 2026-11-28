@@ -52,8 +52,8 @@ for (const school of SCHOOLS) {
       const { misses, writes } = await open(page, baseURL!);
       await expect(page.getByRole("heading", { level: 1, name: "Vad kom in" })).toBeVisible();
       await expect(page.getByText(school.summary, { exact: false }).first()).toBeVisible();
-      // Eleven areas, each a named region with the count of what it found.
-      await expect(page.locator("main section")).toHaveCount(11);
+      // Fifteen areas, each a named region with the count of what it found.
+      await expect(page.locator("main section")).toHaveCount(15);
       await expect(page.getByRole("region", { name: "Salar" })).toContainText("Det som kom in:");
       // Never "klart": the page does not say that a week can be laid.
       await expect(page.locator("main")).not.toContainText(/klart att generera|redo att generera|schemat går att lägga/i);
@@ -97,7 +97,8 @@ test("a gap's link goes to the page that owns it, by the menu's own word", async
   const rooms = page.getByRole("region", { name: "Salar" });
   await expect(rooms).toContainText("Stoppar Generera");
   await expect(rooms).toContainText("Inga salar är inlagda");
-  await rooms.getByRole("link", { name: "Öppna Salar" }).click();
+  // An empty school has no rooms and no room types, and both are mended on the same page: two links, the first of them the one that stops Generera.
+  await rooms.getByRole("link", { name: "Öppna Salar" }).first().click();
   await expect(page).toHaveURL(/\/sv\/admin\/rooms$/);
 });
 

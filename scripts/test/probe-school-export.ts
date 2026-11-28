@@ -60,6 +60,11 @@
  *          (which row, who decided, when) and not the colleague, the level, the exception, the day, the note or the
  *          post before and after; the colleague's own extract has the row whole, and the rektor who assessed
  *          themself keeps their own (g409-L-5, K7);
+ *   (k-t)  an expedition clerk who registered teachers' absences, took one back and decided cover for them gets the act in
+ *          their extract (who registered, who took back, when; the lesson, the decision, the substitute) and not the
+ *          teacher, the period, the category, the absence, the lesson's note or the pass; a teacher who reported or took
+ *          back their own absence is empty in that column of the clerk's row too; the absent teacher's own extract has
+ *          every row whole, and a substitute's has the cover without the teacher (K7b);
  *   (k-p)  a lesson held by someone who is neither teacher nor administrator by role is in the
  *          grundschema with the holder named, and with a protected holder it is without them in
  *          every file of the school's export, said in the README, the manifest and the order.
@@ -76,6 +81,7 @@ import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
+import { recordRead } from '../../src/access-log/access-log';
 import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
 import { createPgAdapter } from '../../src/database/pool-config';
 import { PrismaService } from '../../src/database/prisma.service';
@@ -1050,6 +1056,216 @@ async function main(): Promise<void> {
       const shielded = await access.extract(a.admins.FULL, protectedPupil.id.toUpperCase(), true);
       assert.equal(shielded.subjectIsMarked, true, 'a protected person asked for in capitals is still protected');
       assert.equal(shielded.relatedIncluded, 0, 'and brings no guardian');
+    });
+
+    await check("(k-t) an expedition clerk's extract has the act of the absences they registered and decided cover for, and not the teachers, the periods, the category, the notes or the passes", async () => {
+      // K7b. The clerk registers a teacher's absence (the admin arm, area DRIFT, as the application does: createdByUserId is set by the
+      // service), a teacher reports or takes back their own, and the board decides cover for the lessons and the passes. The cover tables have
+      // no trigger that writes the decider, so those rows are made as the owner with the same columns the service writes.
+      const clerk = a.admins.EXPEDITION;
+      const mk = (name: string) =>
+        owner.user.create({ data: { schoolId: a.schoolId, authId: randomUUID(), role: 'TEACHER', firstName: name, lastName: 'EfternamnA', email: `${name.toLowerCase()}@${a.slug}.example.com` } });
+      const away = await mk('Franvarande');
+      const selfReporter = await mk('Sjalvanmalare');
+      const vikarie = await mk('Vikarie');
+      for (const person of [away, selfReporter, vikarie]) cleanup.push(async () => void (await owner.user.deleteMany({ where: { id: person.id } })));
+      const sick = await owner.teacherAbsenceReason.create({ data: { schoolId: a.schoolId, builtin: 'SICK' } });
+      cleanup.push(async () => void (await owner.teacherAbsenceReason.deleteMany({ where: { id: sick.id } })));
+
+      const abs = await api.withRls(clerk, async (tx) => {
+        const registered = await tx.teacherAbsence.create({
+          data: { schoolId: a.schoolId, userId: away.id, startsAt: new Date('2027-03-14T23:00:00Z'), endsAt: new Date('2027-03-17T23:00:00Z'), reasonId: sick.id, createdByUserId: clerk.userId },
+        });
+        // Registered by the clerk and taken back by the teacher themself.
+        const takenBackByThem = await tx.teacherAbsence.create({
+          data: {
+            schoolId: a.schoolId, userId: away.id, startsAt: new Date('2027-04-11T22:00:00Z'), endsAt: new Date('2027-04-12T22:00:00Z'), createdByUserId: clerk.userId,
+            status: 'WITHDRAWN', withdrawnAt: new Date('2027-04-10T08:00:00Z'), withdrawnByUserId: away.id,
+          },
+        });
+        // Reported by the teacher themself and taken back by the clerk.
+        const reportedByThem = await tx.teacherAbsence.create({
+          data: {
+            schoolId: a.schoolId, userId: selfReporter.id, startsAt: new Date('2027-03-21T23:00:00Z'), endsAt: new Date('2027-03-22T23:00:00Z'), reasonId: sick.id,
+            createdByUserId: selfReporter.id, status: 'WITHDRAWN', withdrawnAt: new Date('2027-03-21T07:30:00Z'), withdrawnByUserId: clerk.userId,
+          },
+        });
+        return { registered, takenBackByThem, reportedByThem };
+      });
+
+      // The clerk read the register of absences (the läslogg names the teachers read), and the läslogg is a file of the extract too.
+      await api.withRls(clerk, (tx) => recordRead(tx, 'STAFF_ABSENCES', [away.id, selfReporter.id], 'WEB'));
+      // The notice the self-report path sends every administrator (TeacherAbsencesService.tellAdmins: who, the period, whether whole days, and
+      // never why), as it writes it: the clerk is one of the recipients, and a notice is in the extract of the person it was sent to.
+      await owner.notification.create({
+        data: {
+          schoolId: a.schoolId, userId: clerk.userId!, type: 'TEACHER_ABSENCE_REPORTED',
+          meta: {
+            absenceId: abs.reportedByThem.id, userId: selfReporter.id, teacherName: `${selfReporter.firstName} ${selfReporter.lastName}`,
+            startsAt: '2027-03-21T23:00:00.000Z', endsAt: '2027-03-22T23:00:00.000Z', wholeDays: true,
+          },
+        },
+      });
+      // ...and one about the clerk's own absence, which is the clerk's to be given whole.
+      await owner.notification.create({
+        data: {
+          schoolId: a.schoolId, userId: clerk.userId!, type: 'TEACHER_ABSENCE_REPORTED',
+          meta: { absenceId: randomUUID(), userId: clerk.userId, teacherName: 'Expeditionen Eget', startsAt: '2027-05-03T22:00:00.000Z', endsAt: '2027-05-04T22:00:00.000Z', wholeDays: true },
+        },
+      });
+
+      const model = await owner.calendarLesson.findFirstOrThrow({ where: { schoolId: a.schoolId } });
+      const lessonAt = (day: string) =>
+        owner.calendarLesson.create({
+          data: { schoolId: a.schoolId, subjectId: model.subjectId, studentGroupId: model.studentGroupId, date: new Date(day), startsAt: time(day, '09:00'), endsAt: time(day, '10:00') },
+        });
+      const lessonA = await lessonAt('2027-03-15');
+      const lessonB = await lessonAt('2027-03-16');
+      const lessonNote = 'Se uppgiften på tavlan, jag är hos läkaren på måndag';
+      const removed = [{ teacherId: away.id, role: 'LEAD' }];
+      await owner.teacherAbsenceCover.create({
+        data: {
+          schoolId: a.schoolId, absenceId: abs.registered.id, calendarLessonId: lessonA.id, absentTeacherId: away.id, removedTeachers: removed,
+          decision: 'SUBSTITUTE', substituteId: vikarie.id, decidedByUserId: clerk.userId!, decidedAt: time('2027-03-14', '15:00'),
+        },
+      });
+      await owner.teacherAbsenceCover.create({
+        data: {
+          schoolId: a.schoolId, absenceId: abs.registered.id, calendarLessonId: lessonB.id, absentTeacherId: away.id, removedTeachers: removed,
+          decision: 'SUPERVISED_STUDY', previousNote: lessonNote, decidedByUserId: clerk.userId!, decidedAt: time('2027-03-14', '15:01'),
+        },
+      });
+      const area = await owner.supervisionArea.create({ data: { schoolId: a.schoolId, name: `Skolgården ${tag}` } });
+      const shift = await owner.supervisionShift.create({
+        data: {
+          schoolId: a.schoolId, academicYearId: a.yearId, areaId: area.id, userId: away.id, dayOfWeek: 2,
+          startTime: new Date('1970-01-01T10:20:00Z'), endTime: new Date('1970-01-01T10:40:00Z'),
+        },
+      });
+      await owner.supervisionCover.create({
+        data: {
+          schoolId: a.schoolId, shiftId: shift.id, date: new Date('2027-03-16'), areaId: area.id, startsAt: time('2027-03-16', '10:20'), endsAt: time('2027-03-16', '10:40'),
+          absenceId: abs.registered.id, absentTeacherId: away.id, decision: 'SUBSTITUTE', substituteId: vikarie.id, decidedByUserId: clerk.userId!,
+        },
+      });
+      // A pool member the clerk added: whole, K7b (nothing in the row is the colleague's state).
+      await owner.substitutePoolMember.create({ data: { schoolId: a.schoolId, userId: vikarie.id, createdByUserId: clerk.userId } });
+
+      const ask = async (who: AuthenticatedUser, personId: string) => {
+        const answer = await access.extract(who, personId, false);
+        const { dir, files } = unzip(Buffer.from(answer.contentBase64, 'base64'));
+        cleanup.push(async () => rmSync(dir, { recursive: true, force: true }));
+        return { files, manifest: JSON.parse(files.get('manifest.json')!.toString('utf8')) as { files: Array<{ path: string; rader?: number; tommaCeller?: number }> } };
+      };
+      const table = (files: Map<string, Buffer>, name: string) => {
+        const lines = csvLines(files.get(`data/person/${name}.csv`));
+        const header = (lines[0] ?? '').split(';');
+        return lines.slice(1).map((line) => {
+          const cells = line.split(';');
+          return Object.fromEntries(header.map((column, index) => [column, cells[index] ?? '']));
+        });
+      };
+      const everyFileHolds = (files: Map<string, Buffer>, token: string) => [...files].filter(([, content]) => content.toString('utf8').includes(token)).map(([name]) => name);
+
+      // The clerk: the act, and none of the three teachers' state.
+      const theirs = await ask(a.admins.FULL, clerk.userId!);
+      const absences = table(theirs.files, 'teacherabsences');
+      assert.equal(absences.length, 3, 'the three registrations the clerk took part in are in their extract');
+      for (const row of absences) {
+        for (const hidden of ['userId', 'startsAt', 'endsAt', 'wholeDays', 'reasonId']) assert.equal(row[hidden], '', `${hidden} of an absence is empty`);
+        assert.ok(row['id'] && row['status'] && row['createdAt'], 'the registration itself, its status and when stay');
+      }
+      const byId = (id: string) => absences.find((row) => row['id'] === id)!;
+      assert.equal(byId(abs.registered.id)['createdByUserId'], clerk.userId, 'who registered it stays');
+      assert.equal(byId(abs.takenBackByThem.id)['createdByUserId'], clerk.userId);
+      assert.equal(byId(abs.takenBackByThem.id)['withdrawnByUserId'], '', "the teacher who took their own registration back is not in the clerk's row");
+      assert.ok(byId(abs.takenBackByThem.id)['withdrawnAt'], 'but that it was taken back, and when, stays');
+      assert.equal(byId(abs.reportedByThem.id)['createdByUserId'], '', "the teacher who reported their own absence is not in the clerk's row");
+      assert.equal(byId(abs.reportedByThem.id)['withdrawnByUserId'], clerk.userId, 'who took it back stays');
+      const covers = table(theirs.files, 'teacherabsencecovers');
+      assert.equal(covers.length, 2);
+      for (const row of covers) {
+        for (const hidden of ['absenceId', 'absentTeacherId', 'removedTeachers', 'previousNote']) assert.equal(row[hidden], '', `${hidden} of a cover is empty`);
+        assert.equal(row['decidedByUserId'], clerk.userId);
+        assert.ok(row['calendarLessonId'] && row['decision'], 'the lesson and what was decided stay');
+      }
+      assert.deepEqual(covers.map((row) => row['decision']).sort(), ['SUBSTITUTE', 'SUPERVISED_STUDY']);
+      assert.equal(covers.find((row) => row['decision'] === 'SUBSTITUTE')!['substituteId'], vikarie.id);
+      const passes = table(theirs.files, 'supervisioncovers');
+      assert.equal(passes.length, 1);
+      for (const hidden of ['shiftId', 'absenceId', 'absentTeacherId']) assert.equal(passes[0]![hidden], '', `${hidden} of a pass is empty`);
+      assert.ok(passes[0]!['areaId'] && passes[0]!['date'] && passes[0]!['startsAt'] && passes[0]!['decision'], 'the occurrence and the decision stay');
+      assert.equal(passes[0]!['decidedByUserId'], clerk.userId);
+      for (const token of [away.id, selfReporter.id, sick.id, shift.id, lessonNote, '2027-03-14T23:00', '2027-04-11T22:00', selfReporter.firstName, '2027-03-21T23:00']) {
+        assert.deepEqual(everyFileHolds(theirs.files, token), [], `no file of the clerk's extract holds ${token}`);
+      }
+      // A registration's own id is the act (which row): it is in teacherabsences.csv and in no other file, so no cover names the absence.
+      for (const absence of [abs.registered, abs.takenBackByThem, abs.reportedByThem]) {
+        assert.deepEqual(everyFileHolds(theirs.files, absence.id), ['data/person/teacherabsences.csv'], 'the absence is named by its own row only');
+      }
+      const blanked = (path: string) => theirs.manifest.files.find((file) => file.path === path)?.tommaCeller ?? 0;
+      // 5 (the first registration), 4 + the teacher's own withdrawal (a category-less registration they took back) and 5 + the teacher's own report.
+      assert.equal(blanked('data/person/teacherabsences.csv'), 16, 'the manifest counts the absence cells it emptied');
+      // 3 (the absence, the teacher, the json that names them) + 4 (and the note that was on the lesson).
+      assert.equal(blanked('data/person/teacherabsencecovers.csv'), 7);
+      assert.equal(blanked('data/person/supervisioncovers.csv'), 3);
+      // The pool is whole: the clerk added the vikarie, and nothing in the row is the vikarie's state.
+      assert.equal(table(theirs.files, 'substitutepoolmembers')[0]!['userId'], vikarie.id);
+      // The notice of a colleague's own report is empty (it names the teacher, the period and whether it was whole days, as the absence's row
+      // does), counted in the manifest, and the notice about the clerk's own absence is the clerk's and stays whole.
+      const clerkNotices = theirs.files.get('data/notiser.csv')!.toString('utf8');
+      assert.ok(clerkNotices.includes('Expeditionen Eget'), "the notice about the clerk's own absence is theirs");
+      assert.equal(blanked('data/notiser.csv'), 1, 'the manifest counts the notice it emptied');
+
+      // The teacher who was away: every row whole, with who registered it, the category and the lesson's note as it was.
+      const own = await ask(a.admins.FULL, away.id);
+      const ownAbsences = table(own.files, 'teacherabsences');
+      const ownRegistered = ownAbsences.find((row) => row['id'] === abs.registered.id)!;
+      assert.equal(ownRegistered['userId'], away.id);
+      assert.equal(ownRegistered['reasonId'], sick.id);
+      assert.equal(ownRegistered['createdByUserId'], clerk.userId);
+      assert.ok(ownRegistered['startsAt']?.startsWith('2027-03-14T23:00') && ownRegistered['wholeDays'] === 'true', 'the period is theirs');
+      assert.equal(ownAbsences.find((row) => row['id'] === abs.takenBackByThem.id)!['withdrawnByUserId'], away.id, 'and that they took one back themself');
+      const ownCovers = table(own.files, 'teacherabsencecovers');
+      assert.equal(ownCovers.length, 2);
+      assert.ok(ownCovers.every((row) => row['absentTeacherId'] === away.id && row['absenceId'] === abs.registered.id), 'the covers name them');
+      assert.ok(ownCovers.some((row) => row['previousNote'] === lessonNote), "with the lesson's note as it was");
+      const ownPass = table(own.files, 'supervisioncovers');
+      assert.equal(ownPass.length, 1);
+      assert.equal(ownPass[0]!['absentTeacherId'], away.id);
+      assert.equal(ownPass[0]!['shiftId'], shift.id);
+      assert.equal(blanked('data/person/teacherabsences.csv') > 0, true);
+      assert.equal(own.manifest.files.find((file) => file.path === 'data/person/teacherabsences.csv')?.tommaCeller ?? 0, 0, 'nothing is emptied in their own extract');
+      // The API takes a personId in either case (the review of #494, M-2): the same rows come back, whole for the teacher and emptied for the clerk.
+      const ownUpper = await ask(a.admins.FULL, away.id.toUpperCase());
+      assert.deepEqual(table(ownUpper.files, 'teacherabsences'), ownAbsences, 'the absent teacher asked for by an upper-case id has every row whole');
+      assert.deepEqual(table(ownUpper.files, 'teacherabsencecovers'), ownCovers, "and the covers with the teacher in them");
+      const clerkUpper = await ask(a.admins.FULL, clerk.userId!.toUpperCase());
+      assert.deepEqual(table(clerkUpper.files, 'teacherabsences'), absences, 'the clerk asked for by an upper-case id has the same rows, emptied the same');
+      assert.deepEqual(table(clerkUpper.files, 'teacherabsencecovers'), covers);
+      assert.deepEqual(table(clerkUpper.files, 'supervisioncovers'), passes);
+
+      // The teacher who reported their own absence: the row is theirs, and the clerk who took it back stays as who took it back.
+      const reporter = await ask(a.admins.FULL, selfReporter.id);
+      const reported = table(reporter.files, 'teacherabsences');
+      assert.equal(reported.length, 1);
+      assert.equal(reported[0]!['createdByUserId'], selfReporter.id);
+      assert.equal(reported[0]!['withdrawnByUserId'], clerk.userId);
+      assert.equal(reported[0]!['reasonId'], sick.id);
+
+      // The vikarie: where and when the pass and the lesson were theirs, who decided, and not the teacher they took over from.
+      const substitute = await ask(a.admins.FULL, vikarie.id);
+      const takenCovers = table(substitute.files, 'teacherabsencecovers');
+      assert.equal(takenCovers.length, 1, 'the one lesson cover that names them as the substitute');
+      assert.equal(takenCovers[0]!['calendarLessonId'], lessonA.id);
+      assert.equal(takenCovers[0]!['decision'], 'SUBSTITUTE');
+      assert.equal(takenCovers[0]!['substituteId'], vikarie.id);
+      for (const hidden of ['absenceId', 'absentTeacherId', 'removedTeachers', 'previousNote']) assert.equal(takenCovers[0]![hidden], '', `${hidden} is empty in the vikarie's cover`);
+      const takenPass = table(substitute.files, 'supervisioncovers');
+      assert.equal(takenPass.length, 1);
+      assert.ok(takenPass[0]!['areaId'] && takenPass[0]!['date'] && takenPass[0]!['startsAt'] && takenPass[0]!['endsAt'], "the pass is the vikarie's own duty: where and when");
+      for (const hidden of ['shiftId', 'absenceId', 'absentTeacherId']) assert.equal(takenPass[0]![hidden], '', `${hidden} is empty in the vikarie's pass`);
+      for (const token of [away.id, sick.id, abs.registered.id, shift.id, lessonNote]) assert.deepEqual(everyFileHolds(substitute.files, token), [], `no file of the vikarie's extract holds ${token}`);
     });
 
     await check('(k-j) only those who decide ask for one, and only about their own school', async () => {

@@ -3503,6 +3503,99 @@ describe('MasterLessonsService', () => {
       expect(tx.calendarLessonTeacher.create).not.toHaveBeenCalled();
     });
 
+    describe('P5: frågan före en ändring i Direkt som når familjer', () => {
+      /**
+       * What the two raw statements of a grundschema write answer: the school's mode (the writer's first statement) and, for the question,
+       * app.direct_reach_facts: nothing when no publication of the year still holds, else the one that does and whether the school has answered.
+       */
+      const school = (mode: 'DIRECT' | 'DRAFT', facts: { answered: boolean } | null) => {
+        tx.$queryRaw.mockImplementation(async (query: { sql?: string; strings?: readonly string[] }) => {
+          const text = query.sql ?? query.strings?.join('?') ?? '';
+          if (/direct_reach_facts/.test(text)) {
+            return facts
+              ? [
+                  {
+                    publishedAt: new Date('2026-08-01T10:00:00Z'),
+                    validFrom: new Date('2026-08-01T00:00:00Z'),
+                    validTo: new Date('2027-06-11T00:00:00Z'),
+                    acknowledgedAt: facts.answered ? new Date('2026-08-02T10:00:00Z') : null,
+                    answered: facts.answered,
+                  },
+                ]
+              : [];
+          }
+          return [{ mode }];
+        });
+      };
+      const moveWithOneCalendarLesson = () => {
+        arrangeUpdate({}, { dayOfWeek: 3, startTime: t('09:00'), endTime: t('10:30') });
+        tx.calendarLesson.findMany.mockResolvedValue([{ id: CAL_LESSON_ID, date: new Date('2026-08-10T00:00:00.000Z') }]);
+        return service.update(LESSON_ID, { dayOfWeek: 3, startTime: '09:00', endTime: '10:30' }, testUser());
+      };
+
+      it('refuses with DIRECT_REACH_UNANSWERED a move that reached published lessons before the school has answered, and the whole edit goes with it', async () => {
+        school('DIRECT', { answered: false });
+        const attempt = moveWithOneCalendarLesson();
+        await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+        await expect(attempt).rejects.toMatchObject({
+          response: expect.objectContaining({
+            code: 'DIRECT_REACH_UNANSWERED',
+            params: { validFrom: '2026-08-01', validTo: '2027-06-11' },
+          }),
+        });
+        // It is a throw inside the transaction: the rows the move wrote are rolled back with it. Nothing is announced or sent either.
+        expect(notifications.notifyUsers).not.toHaveBeenCalled();
+        await afterCommit();
+        expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
+      });
+
+      it('lets the same move through once the school has answered, and tells the class as it always did', async () => {
+        school('DIRECT', { answered: true });
+        await expect(moveWithOneCalendarLesson()).resolves.toMatchObject({ propagatedLessons: 1 });
+        expect(notifications.notifyUsers).toHaveBeenCalledTimes(1);
+      });
+
+      it('asks nothing of a move that reached no published lesson: no publication holds, or the move left the calendar alone', async () => {
+        // No publication of the year that still holds: no family to reach.
+        school('DIRECT', null);
+        await expect(moveWithOneCalendarLesson()).resolves.toMatchObject({ propagatedLessons: 1 });
+        // The question is about what was reached: a move that moved no calendar lesson asks nothing, answered or not.
+        school('DIRECT', { answered: false });
+        arrangeUpdate({}, { dayOfWeek: 3 });
+        tx.calendarLesson.findMany.mockResolvedValue([]);
+        await expect(service.update(LESSON_ID, { dayOfWeek: 3 }, testUser())).resolves.toMatchObject({ propagatedLessons: 0 });
+        // propagate: false keeps the calendar where it was, and so asks nothing.
+        arrangeUpdate({}, { dayOfWeek: 3 });
+        tx.calendarLesson.findMany.mockResolvedValue([{ id: CAL_LESSON_ID, date: new Date('2026-08-10T00:00:00.000Z') }]);
+        await expect(service.update(LESSON_ID, { dayOfWeek: 3, propagate: false }, testUser())).resolves.toMatchObject({ propagatedLessons: 0 });
+      });
+
+      it('asks of an edit that only took published lessons out of the calendar: what was removed is reached too, and the notice goes for it', async () => {
+        // A narrowed recurrence: the only published lesson is in an even week, which the odd weeks no longer cover. Nothing moved, one lesson went.
+        arrangeUpdate({}, { recurrence: 'ODD_WEEKS' });
+        tx.calendarLesson.findMany.mockResolvedValue([{ id: OTHER_CAL_LESSON_ID, date: new Date('2026-08-17T00:00:00.000Z') }]);
+        school('DIRECT', { answered: false });
+        const attempt = service.update(LESSON_ID, { recurrence: 'ODD_WEEKS' }, testUser());
+        await expect(attempt).rejects.toMatchObject({ response: expect.objectContaining({ code: 'DIRECT_REACH_UNANSWERED' }) });
+        expect(notifications.notifyUsers).not.toHaveBeenCalled();
+
+        arrangeUpdate({}, { recurrence: 'ODD_WEEKS' });
+        tx.calendarLesson.findMany.mockResolvedValue([{ id: OTHER_CAL_LESSON_ID, date: new Date('2026-08-17T00:00:00.000Z') }]);
+        school('DIRECT', { answered: true });
+        await expect(service.update(LESSON_ID, { recurrence: 'ODD_WEEKS' }, testUser())).resolves.toMatchObject({
+          propagatedLessons: 0,
+          removedCalendarLessons: 1,
+        });
+        expect(notifications.notifyUsers).toHaveBeenCalledTimes(1);
+      });
+
+      it('asks nothing in DRAFT: an edit there is a draft and reaches nobody', async () => {
+        school('DRAFT', { answered: false });
+        await expect(moveWithOneCalendarLesson()).resolves.toMatchObject({ propagatedLessons: 0 });
+        expect(tx.$queryRaw.mock.calls.some((call) => /direct_reach_facts/.test((call[0] as { sql?: string }).sql ?? ''))).toBe(false);
+      });
+    });
+
     it('skips propagation entirely when propagate is false', async () => {
       arrangeUpdate({}, { dayOfWeek: 5 });
 
@@ -5079,6 +5172,34 @@ describe('MasterLessonsService', () => {
       );
     });
 
+    it('P5: refuses a deletion that took published lessons out of the calendar before the school has answered, and puts them back', async () => {
+      arrangeRemove();
+      const facts = (answered: boolean) => [
+        {
+          publishedAt: new Date('2026-08-01T10:00:00Z'),
+          validFrom: new Date('2026-08-01T00:00:00Z'),
+          validTo: new Date('2027-06-11T00:00:00Z'),
+          acknowledgedAt: answered ? new Date('2026-08-02T10:00:00Z') : null,
+          answered,
+        },
+      ];
+      const answerWith = (rows: unknown[]) =>
+        tx.$queryRaw.mockImplementation(async (query: { sql?: string; strings?: readonly string[] }) =>
+          /direct_reach_facts/.test(query.sql ?? query.strings?.join('?') ?? '') ? rows : [{ mode: 'DIRECT' }],
+        );
+      answerWith(facts(false));
+      await expect(service.remove(LESSON_ID, testUser())).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'DIRECT_REACH_UNANSWERED' }),
+      });
+      // The master lesson stays: the throw is inside the transaction that deleted the calendar rows.
+      expect(tx.masterLesson.delete).not.toHaveBeenCalled();
+      expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
+
+      answerWith(facts(true));
+      await expect(service.remove(LESSON_ID, testUser())).resolves.toEqual({ id: LESSON_ID, removedCalendarLessons: 3 });
+      expect(tx.masterLesson.delete).toHaveBeenCalledTimes(1);
+    });
+
     it('says a removal in DRAFT mode to the admins only: a draft is not the staff room\'s to hear of, ids and all', async () => {
       arrangeRemove();
       // The school's mode, as the first statement of every grundschema writer answers it (publish-mode.ts).
@@ -5364,6 +5485,20 @@ describe('MasterLessonsService', () => {
           testUser(),
         );
 
+      /**
+       * The two reads of a block a moved card makes. The card's own: whether the block stands on another's times (sameTimesAsBlockId, sameTimes). And
+       * the one it ends with (låset vid en flytt: lockBlock's own write): the block's members, whose lessons are the block's to lock.
+       */
+      const blockRead = (linked: Row | null, members: Row = {}) =>
+        tx.teachingBlock.findUnique.mockImplementation((query: Query = {}) =>
+          Promise.resolve(
+            query.select && 'requirements' in query.select
+              ? { id: BLOCK_ID, schoolId: SCHOOL_ID, academicYearId: YEAR_ID, requirements: [], sameTimesAs: null, sameTimes: [], ...members }
+              : linked,
+          ),
+        );
+      beforeEach(() => blockRead(null));
+
       it('refuses a card whose lessons a run wrote from a block\u2019s förläggning (LESSON_IS_PLACED), before anything is written', async () => {
         // One member's lesson is enough: the card is the block's, which the next Generera writes again at its day and start.
         arrangeCard([tyska(), franskaLesson({ fromPlacement: true })]);
@@ -5378,6 +5513,36 @@ describe('MasterLessonsService', () => {
         arrangeCard([tyska({ fromPlacement: false }), franskaLesson({ fromPlacement: false })]);
         await expect(move()).resolves.toBeDefined();
         expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
+      });
+
+      it('P5: refuses a card whose move reached published lessons before the school has answered, and the whole card goes back', async () => {
+        const facts = (answered: boolean) => [
+          {
+            publishedAt: new Date('2026-08-01T10:00:00Z'),
+            validFrom: new Date('2026-08-01T00:00:00Z'),
+            validTo: new Date('2027-06-11T00:00:00Z'),
+            acknowledgedAt: answered ? new Date('2026-08-02T10:00:00Z') : null,
+            answered,
+          },
+        ];
+        const answerWith = (rows: unknown[]) =>
+          tx.$queryRaw.mockImplementation(async (query: { sql?: string; strings?: readonly string[] }) =>
+            /direct_reach_facts/.test(query.sql ?? query.strings?.join('?') ?? '') ? rows : [{ mode: 'DIRECT' }],
+          );
+        // Each member has one published lesson that the card's move carries to the new day.
+        tx.calendarLesson.findMany.mockResolvedValue([{ id: CAL_LESSON_ID, date: new Date('2026-08-10T00:00:00.000Z') }]);
+        arrangeCard([tyska(), franskaLesson()]);
+        answerWith(facts(false));
+        await expect(move()).rejects.toMatchObject({ response: expect.objectContaining({ code: 'DIRECT_REACH_UNANSWERED' }) });
+        // Nobody is told: the notices are sent after the guard, and the guard threw.
+        expect(notifications.notifyUsers).not.toHaveBeenCalled();
+        await afterCommit();
+        expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
+
+        arrangeCard([tyska(), franskaLesson()]);
+        answerWith(facts(true));
+        await expect(move()).resolves.toMatchObject({ propagatedLessons: expect.any(Number) });
+        expect(notifications.notifyUsers).toHaveBeenCalled();
       });
 
       it('says the exemption a moved member loses, and nothing of the kind for a card that stays (Undantag med flit)', async () => {
@@ -5420,6 +5585,79 @@ describe('MasterLessonsService', () => {
         // Every lesson the card moved, the lessons that followed it included, and nothing else.
         await afterCommit();
         expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { lessonIds: [LESSON_ID, FR_LESSON] });
+      });
+
+      describe('låset vid en flytt (E4): a card moved by hand locks its block whole', () => {
+        // The generation refuses a block with some lessons locked and the rest still to place (BLOCK_PARTLY_LOCKED), so the lock a moved card gets
+        // is the block's: every placed lesson of every member, as lockBlock does it, and the next Generera keeps the block where the hand put it.
+        const OTHER_CARD = () => lessonRecord({ id: OTHER_LESSON_ID, dayOfWeek: 3, startTime: t('13:00'), endTime: t('14:00') });
+        const arrangeBlockRead = (over: Record<string, unknown> = {}) =>
+          blockRead(
+            { sameTimesAsBlockId: null, sameTimes: [] },
+            { requirements: posts.map(({ studentGroupId, subjectId }) => ({ studentGroupId, subjectId })), ...over },
+          );
+
+        it('locks every placed lesson of the block that is not locked, the card\'s and the block\'s other cards, and says so', async () => {
+          arrangeCard([tyska(), franskaLesson()], [tyska(), franskaLesson(), OTHER_CARD(), lessonRecord({ id: CAL_LESSON_ID, isParked: true })]);
+          arrangeBlockRead();
+
+          const result = await move();
+
+          expect(tx.masterLesson.updateMany).toHaveBeenLastCalledWith({
+            where: { id: { in: [LESSON_ID, FR_LESSON, OTHER_LESSON_ID] } },
+            data: { isLocked: true },
+          });
+          expect(result.lockedByMove).toBe(true);
+          expect(result.lockedLessonIds).toEqual([LESSON_ID, FR_LESSON, OTHER_LESSON_ID]);
+          // The answer's lessons are the card's, as they stand now: locked.
+          expect(result.lessons.map((lesson) => [lesson.id, lesson.isLocked])).toEqual([
+            [LESSON_ID, true],
+            [FR_LESSON, true],
+          ]);
+          // One row for the move of each member and one for each lock, so the undo has what it needs; and one notice, naming every lesson that changed.
+          expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(5);
+          await afterCommit();
+          expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+          expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { lessonIds: expect.arrayContaining([LESSON_ID, FR_LESSON, OTHER_LESSON_ID]) });
+        });
+
+        it('says nothing of a lock when the whole block was locked already', async () => {
+          arrangeCard([tyska({ isLocked: true }), franskaLesson({ isLocked: true })], [tyska({ isLocked: true }), franskaLesson({ isLocked: true }), { ...OTHER_CARD(), isLocked: true }]);
+          arrangeBlockRead();
+
+          const result = await move();
+
+          expect(result.lockedLessonIds).toEqual([]);
+          expect(result).not.toHaveProperty('lockedByMove');
+          expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
+        });
+
+        it('locks nothing for a card dropped where it stood: that is no move', async () => {
+          arrangeCard([tyska(), franskaLesson()], [tyska(), franskaLesson(), OTHER_CARD()]);
+          arrangeBlockRead();
+
+          const result = await move({ dayOfWeek: 1, startTime: '10:00', endTime: '11:00' });
+
+          expect(result.lockedLessonIds).toEqual([]);
+          expect(result).not.toHaveProperty('lockedByMove');
+          expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
+        });
+
+        it('takes the block on the same times with it, as lockBlock does: the generation takes the two as one', async () => {
+          const SPRING_GROUP = '1b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b';
+          const SPRING_SUBJECT = '1c1c1c1c-1c1c-4c1c-8c1c-1c1c1c1c1c1c';
+          arrangeCard([tyska(), franskaLesson()], [tyska(), franskaLesson(), OTHER_CARD()]);
+          arrangeBlockRead({ sameTimes: [{ requirements: [{ studentGroupId: SPRING_GROUP, subjectId: SPRING_SUBJECT }] }] });
+
+          await move();
+
+          const read = tx.masterLesson.findMany.mock.calls.map((call) => (call as [Query])[0]).find((query) => query.where && 'OR' in query.where && 'academicYearId' in query.where);
+          expect(read!.where!.OR).toEqual([
+            { studentGroupId: GROUP_ID, subjectId: SUBJECT_ID },
+            { studentGroupId: FR_GROUP, subjectId: FR_SUBJECT },
+            { studentGroupId: SPRING_GROUP, subjectId: SPRING_SUBJECT },
+          ]);
+        });
       });
 
       describe('the board’s rules (En domare med ord)', () => {
@@ -5640,7 +5878,7 @@ describe('MasterLessonsService', () => {
         ];
         const arrangeHalves = (block: Row[], linked: Row | null) => {
           arrangeCard([tyska(autumn), spring], [spring], [posts[0]!], block);
-          tx.teachingBlock.findUnique.mockResolvedValue(linked);
+          blockRead(linked);
           tx.teachingRequirement.findMany.mockImplementation((query: Query = {}) =>
             Promise.resolve(
               query.select && 'blockId' in query.select
@@ -5710,7 +5948,7 @@ describe('MasterLessonsService', () => {
         ];
         const arrangeTerms = (spring: Row[], locked: Row[] = spring) => {
           arrangeCard([tyska(autumn), franskaLesson(autumn), ...locked], spring);
-          tx.teachingBlock.findUnique.mockResolvedValue({ sameTimesAsBlockId: null, sameTimes: [{ id: SPRING_BLOCK }] });
+          blockRead({ sameTimesAsBlockId: null, sameTimes: [{ id: SPRING_BLOCK }] });
           tx.teachingRequirement.findMany.mockImplementation((query: Query = {}) =>
             Promise.resolve(
               query.select && 'blockId' in query.select

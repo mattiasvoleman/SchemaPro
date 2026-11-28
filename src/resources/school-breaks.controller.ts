@@ -23,8 +23,10 @@ import {
   SchoolBreaksService,
   type SchoolBreakResponse,
   type SchoolBreakWriteResult,
+  type SchoolCalendarResult,
 } from './school-breaks.service';
 import {
+  ApplySchoolCalendarDto,
   CreateSchoolBreakDto,
   UpdateSchoolBreakDto,
 } from './dto/school-break.dto';
@@ -68,6 +70,21 @@ export class SchoolBreaksController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<SchoolBreakWriteResult> {
     return this.breaks.create(dto, user);
+  }
+
+  /**
+   * `POST /api/v1/school-breaks/calendar` — a whole calendar in one write, or,
+   * with `dryRun`, the lessons it would take and nothing written (Skolans
+   * kalender: the red days, a proposal for the year's lov, a municipality's
+   * file). All rows or none; see SchoolBreaksService.applyCalendar.
+   */
+  @Post('calendar')
+  @HttpCode(HttpStatus.OK)
+  applyCalendar(
+    @Body() dto: ApplySchoolCalendarDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<SchoolCalendarResult> {
+    return this.breaks.applyCalendar(dto, user);
   }
 
   @Patch(':id')

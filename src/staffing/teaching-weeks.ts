@@ -71,6 +71,11 @@ const DAYS_IN_WEEK = 7;
  * Five: the denominator a closure is measured against. A studiedag takes a
  * fifth of a teaching week, not a seventh — the Saturday it did not fall on
  * never carried a share of the lessons.
+ *
+ * A DECISION, NOT A DISCOVERY (R1b, the review of #400, L-3). School days are Monday to Friday here, and nothing in a school's data says
+ * otherwise: a requirement carries no weekday, so a lesson costs the same minutes on a Saturday, and five only decides how much of a week a
+ * window or a closure covers at its edges. A school that teaches on a Saturday is counted the same as one that does not. See
+ * teaching-weeks.school-days.spec.ts, which pins it, and says why the timplan still counts whole weeks (L-2).
  */
 const TEACHING_DAYS_IN_WEEK = 5;
 

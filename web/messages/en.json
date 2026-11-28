@@ -46,6 +46,7 @@
       "CLASS_HAS_HALVES": "The class is split into halves and cannot change type or school year. Remove the halves first.",
       "CLASS_HAS_ONE_HALF": "The class has only one of its two halves. Remove it under Classes and try again, and the class is split into two new halves.",
       "DATABASE_BUSY": "The server is busy right now, and nothing was done. Try again in a moment.",
+      "DIRECT_REACH_UNANSWERED": "The change reaches pupils and guardians in the published period {validFrom}–{validTo}, and the school has not answered the question about that yet. Nothing was changed. Make the change in Schema, where the question is asked.",
       "EMPLOYMENT_PERIOD_OVERLAP": "The period overlaps another period of the post. Change or remove that one first: a day has one post.",
       "EXAM_CAPS": "The weekly limit cannot be lower than the daily limit: a week holds at least as many exams as a day.",
       "EXAM_GROUPS": "A chosen class or group is not in the school year.",
@@ -475,12 +476,16 @@
       "ROOMS": "Rooms",
       "FRAME_TIMES": "Frame times",
       "RASTS": "Breaks",
+      "BREAKS": "Holidays and study days",
+      "LUNCH": "Lunch",
+      "SUPERVISION": "Break supervision",
       "CLASSES": "Classes",
       "TEACHING_GROUPS": "Teaching groups",
       "PEOPLE": "People",
       "TIMPLAN": "Local timplan",
       "REQUIREMENTS": "Curriculum entries",
-      "STAFFING": "Staffing"
+      "STAFFING": "Staffing",
+      "SWITCHES": "Settings that are off"
     },
     "found": {
       "years": "{count, plural, one {# school year} other {# school years}}",
@@ -494,7 +499,13 @@
       "students": "{count, plural, one {# pupil} other {# pupils}}",
       "gradesWithTimplan": "{count, plural, one {# year with a local timplan} other {# years with a local timplan}}",
       "requirements": "{count, plural, one {# curriculum entry} other {# curriculum entries}}",
-      "posts": "{count, plural, one {# post} other {# posts}}"
+      "posts": "{count, plural, one {# post} other {# posts}}",
+      "roomTypes": "{count, plural, one {# room type} other {# room types}}",
+      "breaks": "{count, plural, one {# holiday or study day} other {# holidays and study days}}",
+      "lunchServings": "{count, plural, one {# lunch sitting} other {# lunch sittings}}",
+      "supervisionAreas": "{count, plural, one {# supervision area} other {# supervision areas}}",
+      "supervisionShifts": "{count, plural, one {# supervision shift} other {# supervision shifts}}",
+      "switchesOn": "{count, plural, one {# of 4 is on} other {# of 4 are on}}"
     },
     "gaps": {
       "NO_YEAR": {
@@ -577,6 +588,38 @@
       "POSTS_WITHOUT_SIGNATURE": {
         "title": "{count, plural, one {# post has} other {# posts have}} no signature",
         "hint": "A schedule from Untis or aSc finds the teacher by signature or e-mail address. Add the signatures before you read a schedule in."
+      },
+      "NO_ROOM_TYPES": {
+        "title": "No room types are entered",
+        "hint": "A subject can name a room type (Gym, Slöjd room) so that the engine places it only in a room of that type. Without room types the subjects go in any room. A school started by hand begins with none."
+      },
+      "NO_BREAKS": {
+        "title": "The school year has no holidays or study days",
+        "hint": "Holidays and study days are skipped when the timetable is published. Without them lessons are published on the autumn break, the Christmas break and the study days too."
+      },
+      "LUNCH_OFF": {
+        "title": "Lunch is off",
+        "hint": "Without a lunch rule the engine plans no meal for the classes and makes no lunch sitting. The window, the length and the dining hall's seats are entered under Availability."
+      },
+      "NO_SUPERVISION": {
+        "title": "No break supervision is laid for the school year",
+        "hint": "The supervision schedule is the areas the school watches and who watches when. It does not affect Generate: a teacher's shifts show in their own timetable."
+      },
+      "ABSENCE_WATCH_OFF": {
+        "title": "Absence watch is off",
+        "hint": "The watch counts pupils' absence against the school's limits and sends summaries to the mentor, the principal, the office and the guardians. It is off until the school turns it on."
+      },
+      "ACK_OFF": {
+        "title": "Acknowledgement (kvittens) is off",
+        "hint": "With kvittens a teacher asks guardians to confirm a message, and those who have not answered get a reminder. It is off until the school turns it on."
+      },
+      "VIEWER_OFF": {
+        "title": "Schemavisaren is off",
+        "hint": "Schemavisaren shows a class's, a group's, a teacher's or a room's schedule to whom the school chooses. Nothing is shown until the school chooses which kinds of schedule are shown and who may look."
+      },
+      "SICK_REPORT_OFF": {
+        "title": "Teachers' own sick reporting is off",
+        "hint": "A teacher cannot report themselves sick in the app: an administrator enters the absence. It is turned on among the settings under Teacher absence."
       }
     }
   },
@@ -1121,7 +1164,7 @@
       "toggle": "Target",
       "loading": "Loading the year's timplan…",
       "failed": "The year's timplan could not be loaded, so no targets are shown. Turn Target off and on to try again.",
-      "legend": "Each class cell shows planned / target in minutes per standard week: an entry that runs odd or even weeks counts half, a dated entry by its share of the year's teaching weeks. Amber is below target, red has no entries. Teaching groups have no target of their own — their pupils are counted against their class's target on the coverage page.",
+      "legend": "Each class cell shows planned / target in minutes per standard week: an entry that runs odd or even weeks counts half, a dated entry by its share of the year's teaching weeks. Amber is below target, red has no entries. Teaching groups have no target of their own — their pupils are counted against their class's target on the coverage page. The hours per year are counted in whole weeks: a week with at least one school day in the year counts as a whole one. The scope under the ordinance, in Tjänstefördelning and Min tjänst, counts school days, so the same lesson can be a week less there in a year that begins or ends in the middle of a week.",
       "grade": "{grade, select, 0 {preschool class} other {year {grade}}}",
       "unattached": "The academic year has no local timplan for {grades}, so those classes have no targets.",
       "draft": "{name} is a draft — not decided. The targets for {grades} are the draft's.",
@@ -1970,6 +2013,62 @@
     "loadFailed": "The list of holidays could not be fetched.",
     "loadFailedHint": "No list is shown, because an empty one would mean the school has no holidays at all. Switch the year above to try again.",
     "tableCaption": "The academic year's holidays and staff days, earliest first. Each row is a period the school is not teaching, and the curriculum's hours deduct it.",
+    "calendar": {
+      "open": "School calendar",
+      "title": "School calendar",
+      "description": "Public holidays, proposed breaks and the municipality's term dates for {year}. You see what is added before anything is saved, and nothing already entered is removed.",
+      "sources": "What to add",
+      "holidays": "Public holidays",
+      "holidaysHint": "{count, plural, =0 {No public holidays} =1 {1 public holiday} other {# public holidays}} that fall on a school day this year, worked out from Easter and the calendar. Christmas Eve, Midsummer Eve and New Year's Eve are included, because the school is shut on them.",
+      "proposals": "Proposed breaks",
+      "proposalsHint": "Autumn break in week {autumn}, Christmas break, winter break in week {spring} and Easter break. The proposals follow the rules the rollover uses for next year. Your municipality may have another week for the winter break: change it with the municipality's file.",
+      "file": "The municipality's term dates",
+      "fileHint": "A calendar file (.ics) or a CSV with the columns name, start and end, and preferably type, from grade and to grade. The file is read in your browser and sent nowhere until you save.",
+      "chooseFile": "Choose file",
+      "changeFile": "Change file",
+      "removeFile": "Remove the file",
+      "fileRead": "{name} was read as {format, select, ICS {a calendar file} other {a CSV}}: {count, plural, =0 {no entries} =1 {1 entry} other {# entries}}.",
+      "fileUnreadable": "The file could not be read: {problem}",
+      "problemsTitle": "{count, plural, =1 {1 thing in the file could not be read} other {# things in the file could not be read}}",
+      "problemsMore": "…and {count} more.",
+      "placeEvent": "Event {n}",
+      "placeRow": "Row {n}",
+      "problem": {
+        "NOT_A_CALENDAR": "The file is named .ics but is not a calendar file.",
+        "NO_COLUMNS": "The file has no column for name and start. The headings it has: {value}.",
+        "NO_EVENTS": "The file has no entries.",
+        "NO_NAME": "The entry has no name and was skipped.",
+        "BAD_DATE": "“{value}” is not a date (write YYYY-MM-DD) and the entry was skipped.",
+        "END_BEFORE_START": "{value} ends before it starts and was skipped.",
+        "BAD_GRADES": "{value} has grades that do not fit (both or neither, 0–12, from before to) and was skipped.",
+        "RECURRING": "{value} recurs and was skipped: a school year is dated, and a recurring break is a guess.",
+        "CANCELLED": "{value} is cancelled and was skipped.",
+        "TOO_MANY": "The file has {value} entries and the first 200 were read."
+      },
+      "preview": "Preview",
+      "previewCaption": "What is added, with what each row does to the breaks that already exist.",
+      "nothingChosen": "Choose something above, or read in a file, and it shows here.",
+      "colTick": "Add",
+      "colStatus": "What happens",
+      "status": {
+        "NEW": "Added",
+        "SAME": "Already there",
+        "CHANGED": "Moved from {range}",
+        "COVERED": "Inside {name}",
+        "OUTSIDE": "Outside the school year",
+        "WEEKEND": "Weekend only"
+      },
+      "termDate": "Looks like the start or end of a term, not a break. Tick it if it is one.",
+      "overlaps": "Shares days with {names}.",
+      "onlyHere": "The school has these but the file does not: {names}. They are not removed.",
+      "nothingToAdd": "Nothing to add: everything shown is already there or inside a break.",
+      "counting": "Counting what it removes…",
+      "countFailed": "The lessons could not be counted. {count, plural, =1 {1 break} other {# breaks}} can be saved anyway, and the number of lessons removed is shown afterwards.",
+      "willSave": "{count, plural, =1 {1 break is saved} other {# breaks are saved}}. {lessons, plural, =0 {No published lessons are removed.} =1 {1 published lesson is removed from the calendar.} other {# published lessons are removed from the calendar.}}",
+      "save": "{count, plural, =0 {Add} =1 {Add 1 break} other {Add # breaks}}",
+      "saved": "{count, plural, =1 {1 break was saved} other {# breaks were saved}}.",
+      "savedNotice": "{created, plural, =0 {} =1 {1 break was added. } other {# breaks were added. }}{updated, plural, =0 {} =1 {1 break was moved. } other {# breaks were moved. }}{removed, plural, =0 {No published lessons needed removing.} =1 {1 published lesson was removed from the calendar.} other {# published lessons were removed from the calendar.}}"
+    },
     "credits": {
       "title": "Credited teaching time",
       "intro": "The school's decision that a day's activity counts as teaching time, for instance that an outdoor day counts as 300 minutes of physical education for years 7–9. The time counts as delivered in Coverage from the day after. A day with no decision here does not count.",
@@ -2095,7 +2194,7 @@
     "timeoutAccount": {
       "title": "How the time went",
       "whereTitle": "Where the time went",
-      "stage": "{stage, select, PRECHECKS {The checks before the search} BUILD {Preparing the search} SITES {The search that counts travel time between sites} SEARCH_CLEAN {The first search} SEARCH_CLONE {The second search} PROBE {The explanation of why no timetable was found} other {A step}}: {seconds, number} s",
+      "stage": "{stage, select, PRECHECKS {The checks before the search} START {Reading the schedule the week starts from} BUILD {Preparing the search} SITES {The search that counts travel time between sites} SEARCH_CLEAN {The first search} YEARS {The search grade by grade} SEARCH_CLONE {The second search} PROBE {The explanation of why no timetable was found} other {A step}}: {seconds, number} s",
       "otherSteps": "Steps this page has no words for: {seconds, number} s",
       "total": "The solver's work took {seconds, number} s.",
       "searchTitle": "How far the search got",
@@ -2124,7 +2223,7 @@
         "PROBE_CHANGED_WEEK": "Read the rows under Detected conflicts: they say what the probe changed in the week. It is not a rule to relax but a change to the basis.",
         "TIGHT_WEEK": "Free time in those years: a teacher of their own for each parallel group and block, or widen the frame times. Another run on the same basis gives the same answer.",
         "SHORT_CLOCK": "Run again: this run was given less time than the engine usually has. If it repeats, contact whoever runs the service.",
-        "SLOW_SETUP": "If you have an earlier timetable, raise Schedule stability so the engine starts from it. Otherwise Best possible timetable can give a timetable with deviations.",
+        "SLOW_SETUP": "Run again. If it repeats, contact whoever runs the service.",
         "NOTHING_FOUND": "Run again. Check the week says whether the week is already too full before you run."
       },
       "technicalTitle": "Technical details",
@@ -2508,6 +2607,7 @@
     "markerTaken": "{day} {from}–{to}: cannot go here. Enter shows the nearest free times.",
     "markerRank": "{day} {from}–{to}: suggestion {rank}. Enter places it.",
     "markerChange": "{day} {from}–{to}: free, but in a room other than the lesson's own. Place it with one of the best suggestions, or in Edit lesson, where the room is chosen.",
+    "markerChangeHere": "{day} {from}–{to}: free in a room other than the lesson's own. Enter places it there.",
     "markerClosed": "{day} {from}–{to}: closed by {code, select, FRAME {the school day's frame} LUNCH {the class's lunch} GRADE_RULE {a rule for the year group} OTHER_SCHOOL {another school's time} AVAILABILITY {a mark that something is unavailable} other {a rule}}. Enter shows the nearest free times.",
     "markerInTheWay": "{day} {from}–{to}: {subject} {className} is in the way. Enter shows the nearest free times.",
     "markerCrowded": "{day} {from}–{to}: {units, plural, =0 {something is in the way} one {a lesson is in the way} other {# lessons are in the way}}. Enter shows the nearest free times.",
@@ -5290,6 +5390,7 @@
       "span": "{low}–{high} h",
       "stage": "Grades {from}–{to}",
       "unregulated": "Preschool class (not covered)",
+      "outsideStages": "Years the ordinance gives no level for",
       "unknownGrade": "Groups with no grade",
       "planningFloor": "Planning and follow-up, at least (§§ 4–5)",
       "remaining": "Left of the annual working time after teaching and duties",
@@ -5303,6 +5404,7 @@
       "verdictNoStage": "The teaching is in the preschool class, which the ordinance does not cover. No level is judged.",
       "verdictNoStageUnknown": "The teaching is in groups with no grade, so it cannot be placed in a stage. No level is judged.",
       "verdictNoStageBoth": "The teaching is in the preschool class, which the ordinance does not cover, and in groups with no grade. No level is judged.",
+      "verdictNoStageOutside": "The teaching is in years the ordinance's stages do not cover (and perhaps in the preschool class or groups with no grade). No level is judged.",
       "verdictNumbering": "The ordinance gives no levels for the ten-year grundskola yet. The hours are shown but not judged against any span.",
       "blended": "The teacher teaches in several stages, so the span is weighted by hours.",
       "fits": "The annual working time holds the planning floor. Meetings and anything that is not teaching or a duty in Rastra timetable are not included, so a yes is no promise.",
@@ -5310,9 +5412,15 @@
       "overOnlyWithUnregulated": "Over the ordinance's highest level only when the hours outside the stages are counted in (preschool class or groups with no grade). The ordinance gives no level for those hours, so the teacher is not counted as over: an interpretation, stated below.",
       "unknownGradeNote": "Hours in groups with no grade count in the teaching time but cannot be placed in a stage.",
       "unregulatedNote": "Hours in preschool class count in the teaching time but lie outside the stages: the ordinance gives no level for them.",
+      "outsideStagesNote": "Hours in years the ordinance's stages do not cover count in the teaching time but lie outside the stages: the ordinance gives no level for them.",
       "planningFloorOnStages": "The planning floor is worked out on the hours in the stages: the ordinance gives no level for the other hours, so they add nothing to the floor.",
       "fitsNotShown": "Whether the annual working time holds the planning floor is not shown here: it is only worked out for a term-time contract, and only shown to someone who may see the size of the post.",
       "interpretation": "Interpretation ({section}), as recorded in Swedish: {note}",
+      "interpretationTranslated": "{text} ({section})",
+      "knownInterpretation": {
+        "band7to9": "Interpretation: § 5 says \"in addition to the time stated in § 4\", but § 4 does not list years 7-9. Read as 100 % (§ 4) and at least a further 10 % (§ 5), which is the inquiry's own summary (prop. 2025/26:196 appendix 1 p. 125).",
+        "unregulated": "Interpretation (T7): hours in the preschool class and in groups with no grade are outside the ordinance's stages (§ 3 names years 1-6 and 7-9, and the proposition says the preschool class is not covered) but are teaching time under § 2. Counted, the teaching time is over the highest level; not counted, it is not. Rastra timetable says over the highest level only when the hours in the stages alone go over, and shows this reason otherwise."
+      },
       "notAnnual": "May differ from the row for teaching per school year under Annual working time, which applies percentage and factor. This figure is the lessons' own time, unweighted. Both count school days.",
       "caption": "Computed from the teaching posts: the lessons' own time over the weeks they run, unweighted and without duties. Not the target, which is the school's own measure. Source: {sfs}, in force from {from}.",
       "source": "Read the ordinance",
@@ -5327,8 +5435,10 @@
       "exceptionRegisteredOn": "Exception registered under § 11: {kind}, on {day}.",
       "exceptionKeepsVerdict": "An exception does not change the verdict above. It only means that an assignment over the highest level is warned of and not refused.",
       "assessmentNote": "Note: {note}",
+      "levelAboveEdge": "The level {level} h is above the ordinance's highest level for the teacher's stage, {edge} h at full time. It counts as {edge} h at the most.",
       "opensInNewTab": "(opens in a new tab)",
       "own": {
+        "levelAboveEdge": "Your level {level} h is above the ordinance's highest level for your stage, {edge} h at full time. It counts as {edge} h at the most.",
         "exceptionKindOWN_INITIATIVE": "at your own initiative (§ 11 point 1)",
         "exceptionKindSMALL_GROUP": "you teach a single pupil or a small group (§ 11 point 3)",
         "overOnlyWithUnregulated": "Over the ordinance's highest level only when the hours outside the stages are counted in (preschool class or groups with no grade). The ordinance gives no level for those hours, so you are not counted as over: an interpretation, stated below.",
@@ -5356,6 +5466,7 @@
       "level": "The teacher's highest level at full time (hours per school year)",
       "levelHint": "Leave empty for the ordinance's highest level to apply: {edge} h at full time for this stage. The level may lie anywhere in the span or under it, and is scaled by the size of the post.",
       "levelHintNoEdge": "Leave empty for the ordinance's highest level to apply. The level may lie anywhere in the span or under it, and is scaled by the size of the post.",
+      "levelOverStageEdge": "The level is above the ordinance's highest level for the teacher's stage ({edge} h at full time). If it is within the highest level of another stage it is saved all the same, because the teacher's stages change with the schedule, but it counts as {edge} h at the most. If it is above the highest level of every stage it is refused.",
       "exceptionLabel": "Exception under § 11",
       "exceptionNone": "No exception",
       "exceptionOptionOWN_INITIATIVE": "At the teacher's own initiative (§ 11 point 1)",
@@ -5378,6 +5489,7 @@
         "initiativeNeedsDay": "An exception at the teacher's own initiative is given with the day the teacher took the initiative.",
         "dayNeedsInitiative": "The day only applies to an exception at the teacher's own initiative.",
         "dayInvalid": "The day must exist.",
+        "dayInFuture": "The day cannot be after today: the exception is registered once the initiative has been taken.",
         "noteLong": "The note can be at most {max} characters."
       }
     },
@@ -5389,6 +5501,9 @@
     "scopeOverOwnBadgeTitle": "More teaching time than the level set for the teacher, but not more than the ordinance's highest level (SFS 2026:1487 § 3, § 8). Open the teacher for the figures.",
     "scopeOwnNoticeTitle": "{count, plural, one {# teacher has} other {# teachers have}} more teaching time than the level set for the teacher",
     "scopeOwnNoticeBody": "The principal has set a lower level than the ordinance's for the marked teachers. The ordinance's highest level is not passed (§ 3). It is a warning and stops nothing.",
+    "scopeYearNotInForce": "The ordinance on the extent of teaching time ({sfs}) applies from {from}. This school year begins before that, so no teacher's teaching time is judged against the ordinance's levels.",
+    "scopeYearNotInForceNoDate": "No version of the ordinance on the extent of teaching time applies to this school year, so no teacher's teaching time is judged against the ordinance's levels.",
+    "scopeYearNumbering": "The ordinance on the extent of teaching time gives no levels for this school year's grade numbering (ten-year grundskola). The hours are shown, but not judged against any span.",
     "history": {
       "title": "History",
       "show": "Show",
@@ -5978,14 +6093,15 @@
       "volume": "Differs from {plan} in {count, plural, one {# subject} other {# subjects}}"
     },
     "volumeLine": "{subject}: {carried} min/week, timplan {planned}",
-    "breaksHint": "No holidays are carried over unless you tick them. The dates are proposals: Christmas moves by whole weeks, Easter follows Easter and the rest keep their week numbers. Change them if the school has decided otherwise.",
+    "breaksHint": "No holidays are carried over unless you tick them. The dates are proposals: Christmas moves by whole weeks, the Easter break and the public holidays around Easter (Good Friday, Ascension Day, Whitsun) follow Easter, a public holiday with a fixed date keeps it (Christmas Eve and Midsummer Eve follow the calendar's day), and the rest keep their week numbers. Change them if the school has decided otherwise.",
     "noBreaks": "The year has no holidays or staff days.",
     "breakThisYear": "This year {start} – {end}",
     "anchor": {
       "CHRISTMAS": "Proposed {start} – {end} (whole weeks, like Christmas)",
       "EASTER": "Proposed {start} – {end} (follows Easter)",
+      "FIXED_DATE": "Proposed {start} (follows the calendar)",
       "ISO_WEEK": "Proposed {start} – {end} (same weeks)",
-      "NONE": "No proposal — the week does not exist next year. Enter the dates."
+      "NONE": "No proposal — the week does not exist next year, or the day is a Saturday or Sunday. Enter the dates or leave the break."
     },
     "breakStartFor": "First day of {name}",
     "breakEndFor": "Last day of {name}",
@@ -6743,6 +6859,17 @@
     "stampSupervision": "Break duty as the supervision rota stood on the day printed; shifts have no version in the history.",
     "supervisionLine": "Break duty by the supervision rota: {shifts, plural, one {# shift} other {# shifts}}, {minutes} min/wk.",
     "dutyRam": "budget for the supervision rota, counts in weeks the teacher has no shift"
+  },
+  "directReach": {
+    "title": "The change reaches families straight away",
+    "published": "The school publishes in Direkt mode, and the timetable is published {from}–{to}. A change moves or removes the published lessons in the calendar at once.",
+    "publishedNoPeriod": "The school publishes in Direkt mode. A change moves or removes the published lessons in the calendar at once.",
+    "who": "When a lesson is moved, the pupils in it and their guardians get a notice that the timetable has changed. Teachers see the change in their calendar.",
+    "audience": "The school has {pupils, plural, one {# pupil} other {# pupils}} and {guardians, plural, one {# guardian} other {# guardians}} who can get a notice. A change reaches only those who have the lesson.",
+    "draftOffer": "If you want to work on the timetable without anything reaching families until you publish, switch to draft. Your changes are then kept as a draft until you publish them.",
+    "onlyOnce": "The question is asked once. It is asked again if the school switches mode.",
+    "stayDirect": "Continue in Direkt",
+    "useDraft": "Use draft"
   },
   "publishing": {
     "title": "Publishing",
@@ -8654,7 +8781,7 @@
       "ENGINE_MEALS_INCONSISTENT": "The timetable engine answered with lunch times that do not fit the periods of the school year, so nothing was written. Try again, and get in touch if it keeps happening.",
       "ENGINE_TIMED_OUT": "The scheduling engine did not answer within its longest wait, so no timetable was saved. It may go on working in the background for a while, so wait a few minutes before you run Generate again.",
       "ENGINE_TIMED_OUT_CEILING": "The scheduling engine did not answer within its longest wait of {ceilingSeconds, number} s, so no timetable was saved. It may go on working in the background for a while, so wait a few minutes before you run Generate again.",
-      "ENGINE_TIMED_OUT_AT": "The scheduling engine did not answer within its longest wait of {ceilingSeconds, number} s, so no timetable was saved. When the time ran out it was busy with {stage, select, PRECHECKS {the checks before the search} BUILD {the preparation of the search} SITES {the search that counts the travel time between sites} SEARCH_CLEAN {the first search for a timetable} SEARCH_CLONE {the second search for a timetable} PROBE {the explanation of why no timetable was found} other {a step}}, which had gone on for {stageSeconds, number} s of the {elapsedSeconds, number} s the run had taken. It may go on working in the background for a while, so wait a few minutes before you run Generate again.",
+      "ENGINE_TIMED_OUT_AT": "The scheduling engine did not answer within its longest wait of {ceilingSeconds, number} s, so no timetable was saved. When the time ran out it was busy with {stage, select, PRECHECKS {the checks before the search} START {the reading of the schedule the week starts from} BUILD {the preparation of the search} SITES {the search that counts the travel time between sites} SEARCH_CLEAN {the first search for a timetable} YEARS {the search grade by grade} SEARCH_CLONE {the second search for a timetable} PROBE {the explanation of why no timetable was found} other {a step}}, which had gone on for {stageSeconds, number} s of the {elapsedSeconds, number} s the run had taken. It may go on working in the background for a while, so wait a few minutes before you run Generate again.",
       "ENGINE_WAIT_EXPIRED": "The service got no answer from the scheduling engine within its wait, so no timetable was saved. The engine may go on working in the background for a while, so wait a few minutes before you run Generate again.",
       "ENGINE_WAIT_EXPIRED_AFTER": "The service waited {waitSeconds, number} s for the scheduling engine and got no answer, so no timetable was saved. The engine may go on working in the background for a while, so wait a few minutes before you run Generate again.",
       "ENGINE_WAIT_EXPIRED_SHORT": "The service waited {waitSeconds, number} s for the scheduling engine and got no answer, so no timetable was saved. The engine's own limit for a run is {engineCeilingSeconds, number} s. What happened cannot be told from here: the wait may be too short for an older engine, or the engine, or the network between the service and the engine, may have hung. The engine may go on working in the background for a while, so wait a few minutes before you run Generate again. Contact whoever runs the service.",
@@ -8723,6 +8850,7 @@
       "CANDIDATES_NONE_APPLICABLE": "None of the proposals produced a timetable that can be applied.",
       "CANDIDATE_RUN_INTERRUPTED": "The service restarted while the proposals were being computed. Compute them again.",
       "CANDIDATE_RUN_ABANDONED": "The proposals stopped responding and have been cancelled. Compute them again.",
+      "DATABASE_BUSY": "The server was busy when the proposals were to be saved, so they were not finished. Compute them again in a moment.",
       "generic": "The proposals could not be computed."
     },
     "refusal": {
@@ -11369,6 +11497,7 @@
       "ROOM_NEEDS_APPROVAL": "The room requires approval and is booked by the office instead.",
       "SPLIT_MINUTES": "The parts must be at least 15 minutes each and together as long as the lesson.",
       "LESSON_IS_PLACED": "The lesson is placed on the curriculum and is written again from there at every Generera. The scheduler changes it, on its curriculum entry.",
+      "DIRECT_REACH_UNANSWERED": "The school has not yet answered the question about staying in Direkt, and this change reaches families. An administrator answers it when she changes something in Schema, and then the change can be published.",
       "UNKNOWN": "The lesson cannot be changed by the class teacher."
     },
     "problem": {

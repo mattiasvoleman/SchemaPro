@@ -671,20 +671,18 @@
       "verdict": { "ok": true }
     },
     {
-      "name": "a year rule for the members' year does not reach a teaching group in the judge, which reads no year of the group (the mirror derives it from the pupils, and is stricter)",
+      "name": "a year rule for the members' year reaches a teaching group in the judge, which reads the group's year from its pupils' classes, as the mirror does",
       "rule": "GRADE_RULE",
-      "mirrorStricter": true,
       "add": { "unavailable": [{ "kind": "grade", "grades": [7, 9], "day": 2, "start": "10:00", "end": "11:00" }] },
       "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60 },
-      "verdict": { "ok": true }
+      "verdict": { "ok": false, "reason": "GRADE_RULE", "post": "MS" }
     },
     {
-      "name": "a ramtid for the members' year does not reach a teaching group in the judge, which reads no year of the group (the mirror derives it from the pupils, and is stricter)",
+      "name": "a ramtid for the members' year reaches a teaching group in the judge, which reads the group's year from its pupils' classes, as the mirror does",
       "rule": "FRAME",
-      "mirrorStricter": true,
       "add": { "frames": [{ "grades": [7, 9], "start": "08:00", "end": "10:30" }] },
       "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60 },
-      "verdict": { "ok": true }
+      "verdict": { "ok": false, "reason": "FRAME", "post": "MS" }
     },
     {
       "name": "the block's lesson inside the ramtid holds",

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
+import { DirectReachDeclined } from "@/lib/direct-reach";
 import type { SwapProposal, SwapSuggestion } from "@/lib/swaps";
 import english from "@/messages/en.json";
 import swedish from "@/messages/sv.json";
@@ -99,9 +100,10 @@ const suggestion = (over: Partial<SwapSuggestion> = {}): SwapSuggestion => ({
 const onApplied = vi.fn();
 const onOpenChange = vi.fn();
 
-function dialog(open = true, lessonId: string | null = "l-a") {
+function dialog(open = true, lessonId: string | null = "l-a", guard?: <T>(run: () => Promise<T>) => Promise<T>) {
   return (
     <SwapDialog
+      guard={guard}
       open={open}
       onOpenChange={onOpenChange}
       lessonId={lessonId}
@@ -113,9 +115,9 @@ function dialog(open = true, lessonId: string | null = "l-a") {
   );
 }
 
-async function opened(answer: SwapSuggestion = suggestion()) {
+async function opened(answer: SwapSuggestion = suggestion(), guard?: <T>(run: () => Promise<T>) => Promise<T>) {
   swaps.suggest.mutateAsync.mockResolvedValue(answer);
-  const view = render(dialog());
+  const view = render(dialog(true, "l-a", guard));
   await screen.findByText(/found/);
   return view;
 }
@@ -409,6 +411,33 @@ describe("SwapDialog: apply", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     const said = (toast.error as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0] as string;
     expect(said.startsWith("Kemi för 8B: codes.MASTER_LESSON_REFUSED(TEACHER")).toBe(true);
+  });
+
+  // The question before a change in Direkt that reaches families (P5, beslut 8): the swap is the one write that the gateway holds the line for and the
+  // page used not to ask about, so a school that had not answered was told "make the change in Schema" on the page it was on.
+  it("asks the school around the apply, and only around the apply", async () => {
+    const asked = vi.fn(async <T,>(run: () => Promise<T>) => run());
+    await opened(suggestion(), asked as never);
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
+    await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
+    await waitFor(() => expect(swaps.apply.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(asked.mock.invocationCallOrder[0]!).toBeLessThan(swaps.apply.mutateAsync.mock.invocationCallOrder[0]!);
+    expect(onApplied).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies nothing and says nothing when the school answers no to the question", async () => {
+    const declined = vi.fn(async () => {
+      throw new DirectReachDeclined();
+    });
+    await opened(suggestion(), declined as never);
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
+    await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
+    await waitFor(() => expect(declined).toHaveBeenCalledTimes(1));
+    expect(swaps.apply.mutateAsync).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(onApplied).not.toHaveBeenCalled();
+    expect(screen.getByText("found(2)")).toBeInTheDocument();
   });
 
   it("reports any other failure and leaves the proposals where they are", async () => {

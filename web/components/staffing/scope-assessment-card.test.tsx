@@ -98,8 +98,41 @@ describe("ScopeAssessmentCard", () => {
     fireEvent.change(field("day"), { target: { value: "" } });
     expect(screen.getByRole("alert")).toHaveTextContent("problems.initiativeNeedsDay");
     expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
-    fireEvent.change(field("day"), { target: { value: "2027-06-01" } });
+    // A day that has passed in every run: the initiative is registered after it was taken (the review of #413, U-2).
+    fireEvent.change(field("day"), { target: { value: "2026-06-01" } });
     expect(screen.getByRole("button", { name: "save" })).toBeEnabled();
+  });
+
+  it("does not take a day after today, and says so before the gateway does: the field stops at today and the draft is a problem", async () => {
+    const user = userEvent.setup();
+    renderCard({ assessment: { levelHours: null, exceptionKind: "OWN_INITIATIVE", ownInitiativeOn: "2026-06-01", note: null, decidedAt: null } });
+    await user.click(screen.getByRole("button", { name: "edit" }));
+    expect(field("day").max).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(field("day").max).toBe(new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Stockholm" }).format(new Date()));
+    fireEvent.change(field("day"), { target: { value: "2099-01-01" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("problems.dayInFuture");
+    expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+    fireEvent.change(field("day"), { target: { value: field("day").max } });
+    expect(screen.getByRole("button", { name: "save" })).toBeEnabled();
+  });
+
+  it("says before it is saved that a level above the edge of the teacher's own stage counts to the edge, and saves it all the same", async () => {
+    const user = userEvent.setup();
+    renderCard({ fullTimeHighestHours: 600 });
+    await user.click(screen.getByRole("button", { name: "add" }));
+    fireEvent.change(field("level"), { target: { value: "600" } });
+    expect(screen.queryByText(/levelOverStageEdge/)).not.toBeInTheDocument();
+    fireEvent.change(field("level"), { target: { value: "640" } });
+    expect(screen.getByText("levelOverStageEdge(600)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "save" })).toBeEnabled();
+  });
+
+  it("has no opinion on a level when the edge is not known", async () => {
+    const user = userEvent.setup();
+    renderCard({ fullTimeHighestHours: null });
+    await user.click(screen.getByRole("button", { name: "add" }));
+    fireEvent.change(field("level"), { target: { value: "1400" } });
+    expect(screen.queryByText(/levelOverStageEdge/)).not.toBeInTheDocument();
   });
 
   it("leaves the form as it was and says why when the gateway refuses", async () => {
