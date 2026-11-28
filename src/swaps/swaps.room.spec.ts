@@ -386,6 +386,19 @@ describe('POST /swaps/pair: Byt plats, two marked lessons that each take the oth
     expect(ok).toBeGreaterThan(0);
   });
 
+  it('says SAME_PLACE for an hour and a three-quarter lesson that start together, and offers no swap of each to where it stands (g514)', async () => {
+    const world = shortWorld();
+    const [a] = world.data.lessons as [SwapLesson];
+    // Another class's lesson at the same day and start, three quarters of an hour long: its own teacher, room and class.
+    const short: SwapLesson = { ...a, id: '00000000-0000-4000-8000-0000000000fd', dayOfWeek: a.dayOfWeek, startMinutes: a.startMinutes, endMinutes: a.startMinutes + 45, studentGroupId: 'c9', teacherId: 'tx', roomId: 'rx' };
+    const withShort = { ...world, data: { ...world.data, lessons: [...world.data.lessons, short] } };
+    const answer = await service({ world: withShort }).swaps.pair({ lessonId: a.id, otherLessonId: short.id }, user);
+    expect(answer).toMatchObject({ ok: false, immovable: 'SAME_PLACE' });
+    expect(answer.proposal).toBeUndefined();
+    // The same two the other way round.
+    expect(await service({ world: withShort }).swaps.pair({ lessonId: short.id, otherLessonId: a.id }, user)).toMatchObject({ ok: false, immovable: 'SAME_PLACE' });
+  });
+
   it('says why there is nothing to judge: a lesson on the tray or from a förläggning, lessons that are one unit or stand at one start, the same lesson twice', async () => {
     const world = shortWorld();
     const [a, b] = world.data.lessons as [SwapLesson, SwapLesson];

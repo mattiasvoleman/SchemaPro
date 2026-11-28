@@ -32,7 +32,6 @@ import { removedCalendarLessons } from './swap-calendar';
 import { dayLessonOf, SwapReads } from './swap-reads';
 import { movesOfUnit, searchMakeRoom } from './swap-make-room';
 import { proposalId, searchSwaps } from './swap-search';
-import { slotKey } from './swap-units';
 import { readSwapData, type SwapData } from './swap-snapshot';
 import type {
   ExternalTouch,
@@ -583,7 +582,9 @@ export class SwapsService {
       if (!left) return cannot('NOT_PLACED', first.id);
       if (!right) return cannot('NOT_PLACED', second.id);
       if (left.id === right.id) return cannot('SAME_UNIT', first.id);
-      if (slotKey(left.slot) === slotKey(right.slot)) return cannot('SAME_PLACE', first.id);
+      // Each takes the other's START and keeps its length, so two lessons that begin at one clock of one day (a lesson of an hour and one of three
+      // quarters, say) have nothing to trade: the moves would be from each place to itself (g514).
+      if (left.slot.dayOfWeek === right.slot.dayOfWeek && left.slot.startMinutes === right.slot.startMinutes) return cannot('SAME_PLACE', first.id);
 
       const moves = [...movesOfUnit(left, right.slot), ...movesOfUnit(right, left.slot)];
       const reads = new SwapReads(data.lessons);
