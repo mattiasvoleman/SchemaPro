@@ -8,6 +8,7 @@ import {
   type SuggestionProof,
   type SuggestionRule,
 } from './interfaces/suggest-changes.interface';
+import { timeoutReportOf, type TimeoutReportView } from './timeout-report';
 
 /*
  * ÅTGÄRDSFÖRSLAG VID VÄGRAN (omgång 13, G6): THE CHANGES THAT WOULD LET A REFUSED WEEK BE LAID, AS A RUN KEEPS THEM.
@@ -27,6 +28,11 @@ import {
  * passes on: the page reads the name when it reads the run, as it does a free-day note. A change to a part-timer's days is the hidden
  * form for every reader (work-days.ts, deviations.ts): the rule, the price and the proof, and no post, no teacher, no figure and no
  * weekday. Several of them are one, since two of them say nothing the first did not, and their prices add.
+ *
+ * `neededIsLeast` (G6b) SAYS HOW FAR `needed` IS KNOWN: true, the value one step below was proved to hold no timetable with the rest of the
+ * list as it is; false, the engine tried it and did not finish; null, it did not try. It is kept only where `needed` is, and a part-timer's
+ * days carry neither: "just N days and not N-1" is the figure of a post, hidden as `needed` is (g493-L-5). A NOT_FOUND keeps the engine's
+ * `report`, where the search's time went, through the same whitelist a Generera's report goes through (timeout-report.ts).
  *
  * BOUNDED, BECAUSE THE COLUMN IS: at most MAX_STORED_CHANGES changes of at most MAX_NAMED posts and rooms each, every name cut to
  * MAX_NAME, and the whole text under what the CHECK on the column allows (8 KiB). What was left out is counted (`total`), never silent.
@@ -83,6 +89,11 @@ export interface StoredChange {
   cost: number;
   current: number | null;
   needed: number | null;
+  /**
+   * `needed` is the least (true), was tried one step lower without an answer (false), or nothing is said (null). Null wherever `needed` is
+   * null, for a part-timer's days (hidden) and for a list the engine did not check.
+   */
+  neededIsLeast: boolean | null;
   weekdays: number[];
   requirementIds: string[];
   requirementNames: string[];
@@ -109,6 +120,8 @@ export interface SuggestionsStored {
   verifySeconds: number | null;
   changes: StoredChange[];
   failure: SuggestionsFailure | null;
+  /** Where the search's time went, for a NOT_FOUND where the search ran out of it; null for every other answer. No id and no name is in it. */
+  report: TimeoutReportView | null;
   /**
    * Until when a RUNNING analysis holds its place (the database's clock at its last heartbeat, plus ANALYSIS_LEASE_SECONDS); null on one
    * that has ended and on one an API from before the lease wrote. Only the column keeps it: the page is told RUNNING, not for how long.
@@ -200,6 +213,10 @@ function storedChangeOf(value: unknown): StoredChange | null {
   const current = intOrNull(value.current, 100_000);
   const needed = intOrNull(value.needed, 100_000);
   if (cost === null || cost === undefined || current === undefined || needed === undefined) return null;
+  // Absent is null: a value written before the field, and an engine that omits it where it said nothing. Anything but a boolean is not read.
+  if (value.neededIsLeast !== undefined && value.neededIsLeast !== null && typeof value.neededIsLeast !== 'boolean') return null;
+  // A claim about a value that is not there says nothing.
+  const neededIsLeast = needed === null ? null : (value.neededIsLeast ?? null);
   const weekdays = Array.isArray(value.weekdays) ? value.weekdays : null;
   if (weekdays === null || weekdays.length > 7 || weekdays.some((day) => !Number.isInteger(day) || day < 1 || day > 7)) return null;
   const requirementIds = idsOf(value.requirementIds, MAX_NAMED);
@@ -219,6 +236,7 @@ function storedChangeOf(value: unknown): StoredChange | null {
     (rule !== 'TEACHER_WORK_DAYS' ||
       current !== null ||
       needed !== null ||
+      value.neededIsLeast != null ||
       weekdays.length > 0 ||
       requirementIds.length > 0 ||
       requirementNames.length > 0 ||
@@ -237,6 +255,7 @@ function storedChangeOf(value: unknown): StoredChange | null {
     cost: hidden ? 0 : cost,
     current,
     needed,
+    neededIsLeast,
     weekdays: [...(weekdays as number[])].sort((a, b) => a - b),
     requirementIds,
     requirementNames,
@@ -297,6 +316,16 @@ export function suggestionsOf(value: unknown): SuggestionsStored | null {
   // the same analysis by two rules.
   const leaseUntil =
     state === 'RUNNING' && typeof value.leaseUntil === 'string' && LEASE_TEXT.test(value.leaseUntil) ? isoOf(value.leaseUntil) : null;
+  // Nor is a list the engine did not check lowered: it says nothing of the least (the engine keeps `neededIsLeast` null for it).
+  if (!value.verified && changes.some((change) => change.neededIsLeast !== null)) return null;
+  // The account of where the search's time went belongs to a NOT_FOUND and to nothing else, and is read through the door it was written
+  // through: a report that is not wholly well formed is not shown in part, and nor is the analysis that carries it.
+  let report: TimeoutReportView | null = null;
+  if (value.report !== null && value.report !== undefined) {
+    if (state !== 'DONE' || verdictValue !== 'NOT_FOUND') return null;
+    report = timeoutReportOf(value.report);
+    if (report === null) return null;
+  }
   // The analysis a RUNNING one was asked over: one level, and a finished one. Whatever else is there is not shown (nor is the analysis).
   let previous: SuggestionsStored | null = null;
   if (value.previous !== null && value.previous !== undefined) {
@@ -316,6 +345,7 @@ export function suggestionsOf(value: unknown): SuggestionsStored | null {
     verifySeconds,
     changes,
     failure: (failureValue ?? null) as SuggestionsFailure | null,
+    report,
     leaseUntil,
     previous,
   };
@@ -341,6 +371,7 @@ export function runningSuggestions(now: Date, previous: SuggestionsStored | null
     verifySeconds: null,
     changes: [],
     failure: null,
+    report: null,
     leaseUntil: new Date(now.getTime() + ANALYSIS_LEASE_SECONDS * 1000).toISOString(),
     previous,
   };
@@ -433,7 +464,7 @@ function realisedChange(change: AiEngineSuggestedChange, realiser: Realiser): St
   if (change.rule === 'TEACHER_WORK_DAYS') {
     // A part-timer's days: no post, no teacher, no figure, no weekday (work-days.ts).
     return {
-      rule: change.rule, proof, cost: 0, current: null, needed: null, weekdays: [], requirementIds: [], requirementNames: [],
+      rule: change.rule, proof, cost: 0, current: null, needed: null, neededIsLeast: null, weekdays: [], requirementIds: [], requirementNames: [],
       roomIds: [], roomNames: [], resourceIds: [], teacherIds: [], hidden: true,
     };
   }
@@ -453,6 +484,8 @@ function realisedChange(change: AiEngineSuggestedChange, realiser: Realiser): St
     cost: price,
     current: change.current ?? null,
     needed: change.needed ?? null,
+    // Only a boolean is a claim, and only about a `needed` that is there; the check that the list was verified is made where `checked` is known.
+    neededIsLeast: change.needed != null && typeof change.neededIsLeast === 'boolean' ? change.neededIsLeast : null,
     weekdays: [...new Set(change.weekdays)].sort((a, b) => a - b),
     requirementIds,
     requirementNames: requirementIds.flatMap((id) => cut(realiser.nameOf(id)) ?? []),
@@ -491,7 +524,7 @@ export function suggestionsFromEngine(
   const checked = response.verified === true;
   const mapped = entries.map((change) => {
     const stored = realisedChange(change, realiser);
-    return checked ? stored : { ...stored, proof: 'MAY_HELP' as const };
+    return checked ? stored : { ...stored, proof: 'MAY_HELP' as const, neededIsLeast: null };
   });
   // Two part-timers' days say nothing the first did not: one change, and no price (g385-L-8): the price of a part-timer's days is a weight
   // times the days a post goes over, and a reader who may not read HR would be told how many. NOR DOES ITS PLACE IN THE LIST SAY IT: ranked by
@@ -524,6 +557,8 @@ export function suggestionsFromEngine(
     verifySeconds: secondsOrNull(response.verifySeconds) ?? null,
     changes: kept,
     failure: null,
+    // The engine sends it for a NOT_FOUND only; whatever else carries one is not kept.
+    report: verdict === 'NOT_FOUND' ? timeoutReportOf(response.report) : null,
     leaseUntil: null,
     previous: null,
   };

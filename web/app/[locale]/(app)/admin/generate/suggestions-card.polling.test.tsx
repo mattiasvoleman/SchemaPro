@@ -32,7 +32,7 @@ vi.mock("next-intl", () => ({
 const NS = "generate.suggestions";
 const RUNNING: Suggestions = {
   version: 1, state: "RUNNING", startedAt: "2027-03-05T10:00:00.000Z", finishedAt: null, verdict: null, verified: false, total: 0,
-  searchSeconds: null, verifySeconds: null, changes: [], failure: null,
+  searchSeconds: null, verifySeconds: null, changes: [], failure: null, report: null,
 };
 const ANSWERED: Suggestions = { ...RUNNING, state: "DONE", finishedAt: "2027-03-05T10:01:30.000Z", verdict: "NOT_FOUND", searchSeconds: 60 };
 const REFUSED = {

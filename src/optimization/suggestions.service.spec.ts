@@ -311,6 +311,37 @@ describe('SuggestionsService', () => {
       expect(prisma.withRls.mock.invocationCallOrder[2]).toBeGreaterThan(proxy.callAiEngine.mock.invocationCallOrder[0]!);
     });
 
+    it('keeps what the engine says of the least value, and hides it with `needed` for a part-timer\'s days (g493-L-5)', async () => {
+      proxy.callAiEngine.mockResolvedValue(
+        answer({
+          changes: [
+            { rule: 'TEACHER_DAILY_CAP', cost: 168, current: 300, needed: 330, neededIsLeast: true, weekdays: [3], requirementIds: [], roomIds: [], resourceIds: [ANON_RULE], proof: 'SOLVED_TOGETHER' },
+            { rule: 'TEACHER_WORK_DAYS', cost: 1200, current: 3, needed: 4, neededIsLeast: true, weekdays: [2], requirementIds: [], roomIds: [], resourceIds: [], proof: 'SOLVED_TOGETHER' },
+          ],
+        }),
+      );
+      await service.start(JOB_ID, user);
+      await service.settled();
+
+      const stored = writtenBy(columnCalls()[1]!);
+      expect(stored.changes.find((change) => change.rule === 'TEACHER_DAILY_CAP')).toMatchObject({ needed: 330, neededIsLeast: true });
+      expect(stored.changes.find((change) => change.hidden)).toMatchObject({ rule: 'TEACHER_WORK_DAYS', needed: null, neededIsLeast: null });
+    });
+
+    it('keeps the account of where a NOT_FOUND\'s time went, through the same whitelist as a run\'s', async () => {
+      const report = {
+        totalSeconds: 71.2, budgetSeconds: 60, configuredBudgetSeconds: 60, callerWaitSeconds: 195,
+        stages: [{ stage: 'BUILD', seconds: 9.4 }, { stage: 'SEARCH_CLEAN', seconds: 60 }],
+        search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: 60, conflicts: 1834, branches: 20113 }] },
+        weekLoadCut: false,
+      };
+      proxy.callAiEngine.mockResolvedValue(answer({ verdict: 'NOT_FOUND', changes: [], verified: false, report }));
+      await service.start(JOB_ID, user);
+      await service.settled();
+
+      expect(writtenBy(columnCalls()[1]!)).toMatchObject({ state: 'DONE', verdict: 'NOT_FOUND', report });
+    });
+
     it('realises through the proxy\'s own maps', async () => {
       await service.start(JOB_ID, user);
       await service.settled();

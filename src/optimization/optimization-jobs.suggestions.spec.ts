@@ -103,6 +103,29 @@ describe('a run read with its analysis', () => {
       }
     });
 
+    it('shows what the engine said of the least value for a cap, and not for a part-timer\'s days to any reader, a reader with HR-läs included (g493-L-5)', () => {
+      const stored = suggestionsFromEngine(answer([{ ...cap, neededIsLeast: true }, { ...days, neededIsLeast: true }]), realiser, STARTED, NOW);
+      const posts = new Map([[TEACHER, { days: 3, stretch: null, name: 'Anna Andersson' }]]);
+      for (const reader of [null, posts]) {
+        const { view } = jobView(row({ suggestions: stored }), reader, new Map([[TEACHER, 'Anna Andersson']]), NOW);
+        const byRule = new Map(view.suggestions!.changes.map((change) => [change.rule, change]));
+        expect(byRule.get('TEACHER_DAILY_CAP')).toMatchObject({ needed: 330, neededIsLeast: true });
+        expect(byRule.get('TEACHER_WORK_DAYS')).toMatchObject({ hidden: true, needed: null, neededIsLeast: null });
+      }
+    });
+
+    it('shows where a NOT_FOUND\'s time went, and nothing else about the engine\'s run', () => {
+      const report = {
+        totalSeconds: 71.2, budgetSeconds: 60, configuredBudgetSeconds: 60, callerWaitSeconds: 195,
+        stages: [{ stage: 'BUILD', seconds: 9.4 }, { stage: 'SEARCH_CLEAN', seconds: 60 }],
+        search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: 60, conflicts: 1834, branches: 20113 }] },
+        weekLoadCut: false,
+      };
+      const stored = suggestionsFromEngine({ ...answer([]), verdict: 'NOT_FOUND', verified: false, report }, realiser, STARTED, NOW);
+      const { view } = jobView(row({ solverStatus: 'TIMEOUT', suggestions: stored }), null, new Map(), NOW);
+      expect(view.suggestions).toMatchObject({ state: 'DONE', verdict: 'NOT_FOUND', changes: [], report });
+    });
+
     it('reads an analysis that has been RUNNING for longer than any lasts as the failure it is', () => {
       const lost = runningSuggestions(new Date(NOW.getTime() - 10 * 60 * 1000));
       expect(jobView(row({ suggestions: lost }), null, new Map(), NOW).view.suggestions).toMatchObject({ state: 'FAILED', failure: 'ABANDONED' });

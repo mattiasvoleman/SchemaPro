@@ -19,6 +19,8 @@ const ROOT = join(__dirname, "..", "..");
 const GATEWAY_INTERFACE = readFileSync(join(ROOT, "src", "optimization", "interfaces", "suggest-changes.interface.ts"), "utf8");
 const GATEWAY = readFileSync(join(ROOT, "src", "optimization", "suggestions.ts"), "utf8");
 const WEB = readFileSync(join(__dirname, "suggestion-types.ts"), "utf8");
+const GATEWAY_REPORT = readFileSync(join(ROOT, "src", "optimization", "timeout-report.ts"), "utf8");
+const QUERIES = readFileSync(join(__dirname, "queries.ts"), "utf8");
 
 /** The strings of `export const NAME = [ 'A', 'B' ] as const`. */
 function gatewayList(source: string, name: string): string[] {
@@ -47,6 +49,7 @@ function fields(source: string, name: string): Map<string, string> {
 const ALIASES: [RegExp, string][] = [
   [/\bSuggestVerdict\b/g, "SuggestionVerdict"],
   [/\bSuggestionsState\b/g, '"RUNNING"|"DONE"|"FAILED"'],
+  [/\bTimeoutReportView\b/g, "SuggestionReport"],
   [/\bStoredChange\b/g, "SuggestionChange"],
   [/\bSuggestionChangeView\b/g, "SuggestionChange"],
 ];
@@ -79,10 +82,10 @@ describe("what this test reads (a parse that finds nothing would pass everything
     expect(gatewayList(GATEWAY, "SUGGESTION_STATES"), COUNT).toHaveLength(3);
     expect(gatewayList(GATEWAY, "SUGGESTION_FAILURES"), COUNT).toHaveLength(5);
     expect(webUnion("SuggestionRule"), COUNT).toHaveLength(5);
-    expect(fields(GATEWAY, "StoredChange").size, COUNT).toBe(13);
-    expect(fields(GATEWAY, "SuggestionsStored").size, COUNT).toBe(13);
-    expect(fields(WEB, "SuggestionChange").size, COUNT).toBe(13);
-    expect(fields(WEB, "Suggestions").size, COUNT).toBe(11);
+    expect(fields(GATEWAY, "StoredChange").size, COUNT).toBe(14);
+    expect(fields(GATEWAY, "SuggestionsStored").size, COUNT).toBe(14);
+    expect(fields(WEB, "SuggestionChange").size, COUNT).toBe(14);
+    expect(fields(WEB, "Suggestions").size, COUNT).toBe(12);
   });
 });
 
@@ -155,3 +158,42 @@ describe("the fields of the answer", () => {
     expect(asWeb(fields(WEB, "Suggestions").get(field) ?? "(not a field)")).toBe(asWeb(gateway.get(field)!));
   });
 });
+
+describe("the report of a NOT_FOUND (where the analysis' time went)", () => {
+  // The analysis keeps the engine's TimeoutReport through the gateway's own whitelist (timeout-report.ts), and the page reads it as a run's
+  // `TimeoutReport` (lib/queries.ts). This file writes the shape out because the gateway's typecheck cannot resolve queries.ts; so the three
+  // are held to one another here, and the steps are the gateway's list.
+  const names = (text: string, name: string): string[] => {
+    const body = new RegExp(`export interface ${name} \\{\\n([\\s\\S]*?)\\n\\}`).exec(text)?.[1] ?? "";
+    return [...body.matchAll(/^ {2}(\w+)\??:/gm)].map((found) => found[1]!);
+  };
+  const stagesOf = (text: string, name: string): string[] => {
+    const body = new RegExp(`export interface ${name} \\{\\n([\\s\\S]*?)\\n\\}`).exec(text)?.[1] ?? "";
+    // One line in this file's type, several in queries.ts (prettier-free, but written out over lines since #497): both are read.
+    const line = /^ {2}stages: \{\s*stage: ([^;]+);\s*seconds: number;?\s*\}\[\];/m.exec(body)?.[1] ?? "";
+    return [...line.matchAll(/"([A-Z_]+)"/g)].map((found) => found[1]!);
+  };
+
+  it("reads what it compares", () => {
+    expect(names(GATEWAY_REPORT, "TimeoutReportView").length).toBeGreaterThan(6);
+    expect(stagesOf(WEB, "SuggestionReport").length).toBeGreaterThan(4);
+    expect(stagesOf(QUERIES, "TimeoutReport").length).toBeGreaterThan(4);
+  });
+
+  it("has the fields of the gateway's report, in its order", () => {
+    expect(names(WEB, "SuggestionReport")).toEqual(names(GATEWAY_REPORT, "TimeoutReportView"));
+  });
+
+  it("names the steps the gateway has a sentence for, in its order, and is the run's report to the page", () => {
+    const gateway = gatewayList(GATEWAY_REPORT, "TIMEOUT_STAGES");
+    expect(stagesOf(WEB, "SuggestionReport"), missingAndExtra("steps of a report", stagesOf(WEB, "SuggestionReport"), gateway)).toEqual(gateway);
+    expect(stagesOf(QUERIES, "TimeoutReport")).toEqual(stagesOf(WEB, "SuggestionReport"));
+    expect(names(QUERIES, "TimeoutReport")).toEqual(names(WEB, "SuggestionReport"));
+  });
+
+  it("is a nullable `report` of the analysis the gateway keeps as the same view", () => {
+    expect(fields(WEB, "Suggestions").get("report")).toBe("SuggestionReport | null");
+    expect(fields(GATEWAY, "SuggestionsStored").get("report")).toBe("TimeoutReportView | null");
+  });
+});
+

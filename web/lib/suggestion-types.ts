@@ -20,6 +20,29 @@ export type SuggestionVerdict = "CHANGES" | "SOLVABLE_AS_IS" | "NOT_FOUND" | "HA
 
 export type SuggestionsFailure = "ENGINE_LACKS_SUGGESTIONS" | "ENGINE_BUSY" | "ENGINE_FAILED" | "NOTHING_TO_PLACE" | "ABANDONED";
 
+/**
+ * Where an analysis' search spent its time (the engine's TimeoutReport of a NOT_FOUND, kept through the same whitelist as a run's:
+ * src/optimization/timeout-report.ts). The same shape as `TimeoutReport` in lib/queries.ts, written out here because this file is also
+ * compiled by the gateway's typecheck, which cannot resolve what queries.ts imports; the contract test holds the two lists of steps to the
+ * gateway's. The page reads it as a `TimeoutReport`, and tsc says so where the two part.
+ */
+export interface SuggestionReport {
+  totalSeconds: number;
+  /** What the search was given, and what the engine is set to give a search of this kind. */
+  budgetSeconds: number;
+  configuredBudgetSeconds: number;
+  /** How long the caller said it waits; null when it did not say. */
+  callerWaitSeconds: number | null;
+  stages: { stage: "PRECHECKS" | "START" | "BUILD" | "SITES" | "SEARCH_CLEAN" | "YEARS" | "SEARCH_CLONE" | "PROBE"; seconds: number }[];
+  /** The seconds of steps the gateway has no name for and left out of `stages`. Absent when there were none. */
+  otherSeconds?: number;
+  search: {
+    solutions: number;
+    phases: { phase: "CLEAN" | "CLONE"; seconds: number; conflicts: number | null; branches: number | null }[];
+  };
+  weekLoadCut: boolean;
+}
+
 export interface SuggestionChange {
   rule: SuggestionRule;
   proof: SuggestionProof;
@@ -27,6 +50,12 @@ export interface SuggestionChange {
   cost: number;
   current: number | null;
   needed: number | null;
+  /**
+   * How far `needed` is known: true, the value one step below was proved to hold no timetable (with the other changes of the list as they
+   * are), so `needed` is the least; false, the engine tried it and did not finish; null, it did not try, or the change has no number. Null
+   * for a part-timer's days and for a list the engine did not check.
+   */
+  neededIsLeast: boolean | null;
   /** ISO weekdays 1 to 7. */
   weekdays: number[];
   requirementIds: string[];
@@ -55,4 +84,6 @@ export interface Suggestions {
   verifySeconds: number | null;
   changes: SuggestionChange[];
   failure: SuggestionsFailure | null;
+  /** Where the search's time went, for a NOT_FOUND where the search ran out of it; null for every other answer. */
+  report: SuggestionReport | null;
 }

@@ -172,3 +172,63 @@ describe("what a list may promise, and what it does not", () => {
     expect(say(en, "en", "change.SUBJECT_DAYS_APART_REMOVE", { post: "PE for 8A", current: 2 })).toBe("Remove the requirement of days apart for PE for 8A (today 2).");
   });
 });
+
+describe("what the card says of how far a number is known, and how long an analysis takes (G6b)", () => {
+  it("says 'less will not do' only where the engine proved it, and says a step it did not decide as that", () => {
+    for (const [messages, locale, proved, undecided] of [
+      [sv, "sv", /Mindre räcker inte.*prövat en ändring som är ett steg mindre/, /hann inte avgöra/],
+      [en, "en", /Less will not do.*tried a change one step smaller/, /did not get to decide/],
+    ] as const) {
+      expect(say(messages, locale, "least.PROVED")).toMatch(proved);
+      expect(say(messages, locale, "least.PROVED_TOGETHER")).toMatch(proved);
+      expect(say(messages, locale, "least.UNDECIDED")).toMatch(undecided);
+      expect(say(messages, locale, "least.UNDECIDED")).not.toMatch(/Mindre räcker inte|Less will not do/);
+    }
+    // Over a list of several the proof holds with the others as they are, and the text says so; over a list of one it has nothing to add.
+    expect(say(sv, "sv", "least.PROVED_TOGETHER")).toMatch(/med de andra ändringarna i listan som de är/);
+    expect(say(en, "en", "least.PROVED_TOGETHER")).toMatch(/with the other changes of the list as they are/);
+    expect(say(sv, "sv", "least.PROVED")).not.toMatch(/de andra ändringarna/);
+    // An undecided step is the smallest change FOUND, not the smallest there is.
+    expect(say(sv, "sv", "least.UNDECIDED")).toMatch(/inte säkert den minsta som går/);
+    expect(say(en, "en", "least.UNDECIDED")).toMatch(/not necessarily the smallest that works/);
+  });
+
+  it("names no direction of the number it tried, and does not say it tried one step where it may have tried several (g510)", () => {
+    // A cap, a post's days and a subject's lessons a day are tightened by LOWERING the number, and the days apart of a subject by RAISING it
+    // (`_values_back`): "ett steg lägre" under "Sänk antalet dagar emellan från 3 till 1" says 0, and what the engine tried is 2. The step is a
+    // smaller CHANGE, in every rule. `neededIsLeast: false` is also a change that was lowered by halving and then ran out of checks: it tried
+    // several values, and not "one step lower".
+    for (const key of ["least.PROVED", "least.PROVED_TOGETHER", "least.UNDECIDED"]) {
+      expect(say(sv, "sv", key), `sv ${key}`).not.toMatch(/lägre|högre|lägsta|högsta/);
+      expect(say(en, "en", key), `en ${key}`).not.toMatch(/lower|higher|lowest|highest/);
+    }
+    expect(say(sv, "sv", "least.UNDECIDED")).not.toMatch(/ett steg/);
+    expect(say(en, "en", "least.UNDECIDED")).not.toMatch(/one step/);
+  });
+
+  it("says an analysis takes about two minutes, in the offer, the offer after a timeout and the running text (g493-L-3)", () => {
+    for (const key of ["offer", "offerTimeout", "running"]) {
+      expect(say(sv, "sv", key), `sv ${key}`).toMatch(/cirka två minuter/);
+      expect(say(sv, "sv", key), `sv ${key}`).not.toMatch(/en och en halv/);
+      expect(say(en, "en", key), `en ${key}`).toMatch(/about two minutes/);
+      expect(say(en, "en", key), `en ${key}`).not.toMatch(/a minute and a half/);
+    }
+  });
+
+  it("says a week that can be laid as it is does not promise the next Generera finds it, since the analysis searched with the five rules free (g493-L-6)", () => {
+    for (const key of ["verdict.SOLVABLE_AS_IS", "verdict.SOLVABLE_AS_IS_CHANGED"]) {
+      expect(say(sv, "sv", key), `sv ${key}`).toMatch(/Det visar inte att nästa Generera hittar schemat på sin tid, för analysen sökte med de fem reglerna fria/);
+      expect(say(en, "en", key), `en ${key}`).toMatch(/does not show that the next Generera finds the timetable in its time, because the analysis searched with the five rules free/);
+    }
+  });
+
+  it("says an engine that is busy is busy with something else, and that this is also another school's analysis: its gate lets one run, and answers the same 429 (g493-L-7, g510)", () => {
+    const busy = say(sv, "sv", "failed.ENGINE_BUSY");
+    for (const word of ["schema", "tjänstefördelning", "provplan", "salförslag"]) expect(busy).toContain(word);
+    // The engine's 429 is also "Another analysis is running" (the gate of one, app/api/v1/suggest_changes.py): the case the text was first written for.
+    expect(busy).toMatch(/förslag åt någon annan/);
+    expect(say(en, "en", "failed.ENGINE_BUSY")).toMatch(/something else/);
+    expect(say(en, "en", "failed.ENGINE_BUSY")).toMatch(/suggestions for someone else/);
+  });
+});
+

@@ -114,6 +114,12 @@ MIN_VERIFY_SECONDS = 5
 #: the descent of that change.
 MAX_REFINEMENTS = 8
 REFINE_CHECK_SECONDS = 15
+#: A part-timer's days have checks of their own, after every other change's (g510). The gateway shows no figure of a post's days to anyone:
+#: not how many it is over and not whether one fewer would do. Checks they shared with the others would show: the dearest change goes first
+#: (a day weighs 1 200, a cap's five minutes 14), so a post that is not at its least spent three of the eight and the cheaper changes
+#: ended with `neededIsLeast` None where a post at its least left them proved, and a post that fell away left one more proved than one that
+#: stayed. Beside the others they cannot move what is said of them.
+MAX_REFINEMENTS_DAYS = 4
 
 #: The cap's price is per five minutes (relaxation._CAP_BASE_MINUTES, pinned by a test).
 _CAP_UNIT_MINUTES = 5
@@ -508,7 +514,7 @@ def refine(
     left: Callable[[], float],
     workers: int | None = None,
 ) -> tuple[list[SuggestedChange], int]:
-    """Lower each change's `needed` while the strict model still lays the week, dearest change first: the list and the checks spent.
+    """Lower each change's `needed` while the strict model still lays the week, dearest change first and a part-timer's days last: the list and the checks spent.
 
     `needed` IS WHAT THE SEARCH'S TIMETABLE NEEDED, and the search is not looking for the least (docs/DEPLOYMENT.md §33.2: on 3 of 59 weeks
     the strict solver laid the week a step below it, a cap of 240 where 180 holds). For each change the values back toward the school's own
@@ -523,17 +529,22 @@ def refine(
     """
     current = list(changes)
     spent = 0
-    order = sorted(range(len(current)), key=lambda index: -current[index].cost)
+    spent_days = 0
+    # Dearest first, and a part-timer's days after all the others, with checks of their own (MAX_REFINEMENTS_DAYS): what they spend is not
+    # what the others may. The others are checked with the days as the search had them, which is the looser value, so a value proved not to
+    # hold there holds nowhere under the days once they are lowered; the days last, with the others as they ended.
+    order = sorted(range(len(current)), key=lambda index: (current[index].rule == "TEACHER_WORK_DAYS", -current[index].cost))
     dropped: set[int] = set()
     for index in order:
         change = current[index]
         values = _values_back(change)
         if not values:
             continue
+        days = change.rule == "TEACHER_WORK_DAYS"
         good = -1  # the index in `values` of the lowest value accepted; -1 is `needed` itself
         bad: int | None = None
         proved = False  # whether the lowest value known not to hold (`bad`) was PROVED not to
-        while spent < MAX_REFINEMENTS:
+        while (spent_days < MAX_REFINEMENTS_DAYS if days else spent < MAX_REFINEMENTS):
             top = len(values) - 1 if bad is None else bad - 1
             if good >= top:
                 break
@@ -550,7 +561,10 @@ def refine(
                 for position, other in enumerate(current)
                 if position not in dropped
             ]
-            spent += 1
+            if days:
+                spent_days += 1
+            else:
+                spent += 1
             verdict = strict_check(apply_changes(request, candidate), lessons, settings, seconds=available, workers=workers)
             if verdict == "ACCEPTED":
                 good = probe
@@ -568,7 +582,7 @@ def refine(
             # None is "not tried": a change that was lowered and then ran out of checks was tried (g493), and says so.
             "needed_is_least": (True if proved and bad == good + 1 else False if bad is not None or good >= 0 else None),
         })
-    return [change for position, change in enumerate(current) if position not in dropped], spent
+    return [change for position, change in enumerate(current) if position not in dropped], spent + spent_days
 
 
 # ---------------------------------------------------------------------------

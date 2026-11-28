@@ -23,13 +23,13 @@ vi.mock("next-intl", () => ({
 
 const NS = "generate.suggestions";
 const change = (proof: SuggestionChange["proof"]): SuggestionChange => ({
-  rule: "TEACHER_DAILY_CAP", proof, cost: 168, current: 300, needed: 330, weekdays: [], requirementIds: [], requirementNames: [], roomIds: [],
+  rule: "TEACHER_DAILY_CAP", proof, cost: 168, current: 300, needed: 330, neededIsLeast: null, weekdays: [], requirementIds: [], requirementNames: [], roomIds: [],
   roomNames: [], resourceIds: [], teacherNames: ["Anna Andersson"], hidden: false,
 });
 const render = (over: Partial<Suggestions>) => {
   const list: Suggestions = {
     version: 1, state: "DONE", startedAt: "2027-03-05T10:00:00.000Z", finishedAt: "2027-03-05T10:01:30.000Z", verdict: "CHANGES", verified: true,
-    total: 1, searchSeconds: 60, verifySeconds: 2.5, changes: [change("SOLVED")], failure: null, ...over,
+    total: 1, searchSeconds: 60, verifySeconds: 2.5, changes: [change("SOLVED")], failure: null, report: null, ...over,
   };
   const job = { id: "job-1", status: "SUCCEEDED", solverStatus: "INFEASIBLE", conflicts: [], errorCode: null, errorParams: null, suggestionsOffered: true, suggestions: list } as unknown as OptimizationJob;
   return renderPlain(
