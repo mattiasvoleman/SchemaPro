@@ -244,7 +244,8 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
                   <p className="font-medium">{t("leftTitle")}</p>
                   <ul className="list-disc pl-5 text-muted-foreground">
                     {reasonCounts.map(([reason, count]) => (
-                      <li key={reason}>{t(`reasons.${reason}`, { count })}</li>
+                      // The time ran out: a second proposal starts again from the first brick on the same schedule and runs out in the same place, so when something was laid the way on is to take it in first.
+                      <li key={reason}>{t(`reasons.${reason === "TIME" && proposal.placed.length > 0 ? "TIME_TAKE_FIRST" : reason}`, { count })}</li>
                     ))}
                   </ul>
                 </div>

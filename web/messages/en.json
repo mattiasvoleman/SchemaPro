@@ -2635,6 +2635,7 @@
       "NO_FREE_START": "{count, plural, one {# has} other {# have}} no free time with what stands.",
       "JUDGE": "{count, plural, one {# has} other {# have}} no time the judge lets through.",
       "TIME": "{count, plural, one {# was} other {# were}} not tried: the time ran out. Propose again for the rest.",
+      "TIME_TAKE_FIRST": "{count, plural, one {# was} other {# were}} not tried: the time ran out. Take in what was laid and propose again for the rest.",
       "BLOCK": "{count, plural, one {# is} other {# are}} in a parallel block and laid with the block.",
       "NO_TEACHER": "{count, plural, one {# has} other {# have}} no teacher."
     },
