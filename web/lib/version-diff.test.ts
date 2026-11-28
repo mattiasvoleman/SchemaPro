@@ -89,6 +89,12 @@ describe("what two schedules do not share", () => {
     expect(kinds(entries).sort()).toEqual(["added", "moved"]);
   });
 
+  it("does not call a lesson that moved AND has another teacher one that changed where it stands: it is one removed and one added, so that the move is not hidden", () => {
+    // Same class and subject, but another day and another teacher: nothing says it is the same lesson, and "teacher: Anna to Bo" under Tuesday would say nothing of Monday.
+    const entries = diffLessons([lesson({ dayOfWeek: 1 })], [lesson({ dayOfWeek: 2, teacherId: "bo" })]);
+    expect(kinds(entries)).toEqual(["removed", "added"]);
+  });
+
   it("counts the entries of each kind, and says the class an entry is about on whichever side it stands", () => {
     const entries = diffLessons([lesson(), lesson({ studentGroupId: "8b", subjectId: "sv" })], [lesson({ dayOfWeek: 2 }), lesson({ studentGroupId: "9c", subjectId: "no" })]);
     expect(countsOf(entries)).toEqual({ moved: 1, changed: 0, added: 1, removed: 1 });
