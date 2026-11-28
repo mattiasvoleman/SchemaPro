@@ -243,6 +243,7 @@ skriva något (varje administratör får läsa det, skrivningen är schemalägga
 Påfyllning i gatewayen för brickorna i Att lägga: de markerade brickorna, en klass, en årskurs eller skolan. Den bevisar ingenting och säger det: svaret är ett förslag, aldrig "går inte".
 `POST /api/v1/board-fill/propose` (`{ academicYearId, scope, … }`) läser och skriver ingenting. `scope` är `BRICKS` (`bricks`: postId, teacherId, minutes och brickans `nth` ur bricklådan),
 `CLASS` (`studentGroupId`), `GRADE` (`gradeLevel`, årskursen i läsårets egen numrering) eller `SCHOOL`. Båda dörrarna är schemaläggarens, som domaren och Möjliga tider.
+Ett förslag rymmer högst 600 brickor som går att lägga (Ta ins gräns): frågar man om fler är svaret `400 BOARD_FILL_TOO_MANY` med `asked` och `max` som platta `params`, och sidan ber om en årskurs eller en klass i taget.
 
 - **Hur.** Brickorna läggs en i taget, den med **färst lediga starter först** (räknad om efter varje läggning, men bara för de brickor en lagd lektion kan ha tagit en start från: samma lärare,
   en grupp som delar en elev med klassen, ett fåtal salar). Var och en läggs på en start ur de lägst kostade (samma kostnad som Möjliga tider rangordnar med: elevernas och lärarnas håltimmar, ämnets
@@ -250,11 +251,12 @@ Påfyllning i gatewayen för brickorna i Att lägga: de markerade brickorna, en 
   Salen är den minsta som generatorns regel tillåter (`roomAllowed`) och ingen håller just då; har skolan ingen sådan sal läggs brickan "Utan sal". Starterna är de punkter där något i skolan börjar
   eller slutar (en lektion, en måltid, en stängd timme, ramen) och där en lektion av brickans längd skulle sluta vid en sådan. Beskärningen är `probeAt` (E3), och **domaren har sista ordet** om varje start
   (`judgeLessons`, med de lektioner förslaget redan lagt stående): en start domaren nekar läggs inte. Ett förslag föreslår aldrig en tid som kräver ett undantag, ger inget, och flyttar ingenting som ligger:
-  `moved` är platsen för valet "får flytta" (E5a:s sökning, en senare PR) och är alltid tom.
+  `moved` är platsen för valet "får flytta" (E5a:s sökning, en senare PR) och är alltid tom. En bricka som är en lektion på bricklådan döms som den lektion den är (dess andra klasser, namngivna elever och veckor),
+  så som Ta in skriver den; och en lärare vars tjänst bär en gräns (dagar, sammanhängande undervisning) läses som den läses i Möjliga tider och loggas som läsning av tjänsten (`EMPLOYMENT`).
 - **Svaret.** `placed` (per bricka: dag, tid, sal eller "Utan sal", hur många starter som var lediga och vilken av dem, bäst först, den lades på, kostnaden), `left` (per bricka varför den inte lades:
   `NO_FREE_START` ingen start är ledig för den med det som ligger, `JUDGE` domaren nekade de starter den prövade, `TIME` tiden tog slut innan den påbörjades, `BLOCK` ett block läggs med blocket,
   `NO_TEACHER` ingen lärare), `asked`, `truncated`, `answeredBy: "FILL"` och en `basis`. Tiden är 20 sekunder (beslut 8); därefter lämnas de som inte påbörjats med `TIME` och förslaget gäller det som hann.
-- **Ta in.** `POST /api/v1/board-fill/apply` (`{ academicYearId, basis, items: [{ key, dayOfWeek, startTime, roomId }], versionName? }`) är den enda skrivningen. En transaktion: läget och årets lås, posternas lås i id-ordning,
+- **Ta in.** `POST /api/v1/board-fill/apply` (`{ academicYearId, basis, items: [{ key, dayOfWeek, startTime, roomId }], versionName? }`) är den enda skrivningen. En transaktion: läget och årets lås (**exklusivt**, som Generera och en återställning tar det: en Ta in i taget; en andra som kommer medan den första skriver får `409 SCHEDULE_BUSY` efter 5 s, och när den kommer in efter den första är dess `basis` gammal), posternas lås i id-ordning,
   `basis` jämförd med läget nu (`409 BOARD_FILL_STALE` och ingenting skrivs om en lektion eller post ändrats sedan förslaget lästes), en **version före** ("Före påfyllning"), och sedan varje lektion genom bricklådans
   egen skrivning (`BoardTrayService.writeBrick`, samma som en läggning för hand): domaren dömer den igen mot det som nu ligger i databasen, en sal generatorn inte tar nekas (`BOARD_ROOM_NOT_ALLOWED`), lektionen
   görs låst och handgjord, loggas och säges som en handredigering. En lektion på bricklådan som läggs tillbaka frågar P5:s fråga i läget Direkt (`409 DIRECT_REACH_UNANSWERED`, och allt rullas tillbaka, versionen med).
