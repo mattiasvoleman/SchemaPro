@@ -150,6 +150,7 @@ const lessonMinutes = (start: Date, end: Date): number => {
 };
 import { readUnstaffedRequirements } from '../staffing/unstaffed-requirements';
 import { enterGrundschemaWrite, isLockTimeout, type PublishMode } from '../publication/publish-mode';
+import { RealtimeService } from '../realtime/realtime.service';
 import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
 import { recordRead, type AccessChannel } from '../access-log/access-log';
 import type { Realiser } from './suggestions';
@@ -1610,6 +1611,11 @@ export class OptimizationProxyService {
      * AI_ENGINE_TIMEOUT_MS, or 120 s, as the gateway always did.
      */
     private readonly timing?: EngineTimingService,
+    /**
+     * Tells the staff room that the master timetable changed, after a run has written it (E9, g465 L-4). REQUIRED of Nest, like `masters` and `timing`;
+     * optional in the signature only for the callers that build this service by hand (the specs, the probes), whose run then tells nobody.
+     */
+    private readonly realtime?: RealtimeService,
   ) {
     this.aiConfig = this.configService.getOrThrow<AiEngineConfig>('aiEngine');
   }
@@ -1742,6 +1748,9 @@ export class OptimizationProxyService {
       `Optimization complete [requestId=${requestId}, status=${response.status}, ` +
         `lessons=${response.lessons.length}, lunches=${response.lunches?.length ?? 0}]`,
     );
+    // A run that wrote the week has changed the master timetable under everyone who has it open (E9, g465 L-4): they are told, after the write has
+    // committed, and read the year again (the event names no lesson, since a run replaces them all). One that wrote nothing left it as it was.
+    if (written !== null) await this.announceWritten(user, academicYearId);
 
     // The sittings and the refusal leave this method carrying REAL ids and
     // the school's own names. Everything the engine sees is anonymised, so a
@@ -1766,6 +1775,21 @@ export class OptimizationProxyService {
             ],
       ...(start ? { startedFrom: this.startedFromOf(start, response, written !== null, fellBack.startLessons === true) } : {}),
     };
+  }
+
+  /**
+   * Tells the staff room that a run has written the master timetable. In DRAFT mode the grundschema is the draft and only the administrators are told (as
+   * every writer of it does), otherwise everyone who reads it. Best effort and after the commit: a failure here is logged and never fails a run that has
+   * written the week. The mode is read in a transaction of its own, so that the run's own transaction keeps the statements it has.
+   */
+  private async announceWritten(user: AuthenticatedUser, academicYearId: string): Promise<void> {
+    if (!this.realtime || !user.schoolId) return;
+    try {
+      const settings = await this.prisma.queryWithRls(user, (db) => db.publicationSettings.findUnique({ where: { schoolId: user.schoolId! }, select: { publishMode: true } }));
+      this.realtime.notifyMasterTimetableChanged(user.schoolId, settings?.publishMode === 'DRAFT' ? { draft: true } : {});
+    } catch (error) {
+      this.logger.warn(`The staff room was not told that a run wrote the timetable [academicYearId=${academicYearId}]: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**

@@ -22,13 +22,17 @@ import {
   type VersionLesson,
 } from './schedule-versions.service';
 import { CreateScheduleVersionDto } from './dto/schedule-version.dto';
+import { ScheduleVersionAnnouncer } from './schedule-version-announcer';
 
 @Controller('api/v1/schedule-versions')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
 @Area('SCHEMALAGGNING')
 export class ScheduleVersionsController {
-  constructor(private readonly versions: ScheduleVersionsService) {}
+  constructor(
+    private readonly versions: ScheduleVersionsService,
+    private readonly announcer: ScheduleVersionAnnouncer,
+  ) {}
 
   /** `GET /api/v1/schedule-versions?academicYearId=…` — list saved snapshots. */
   @Get()
@@ -61,14 +65,18 @@ export class ScheduleVersionsController {
   /**
    * `POST /api/v1/schedule-versions/:id/restore` — replace the live timetable
    * with the snapshot. An automatic safety snapshot of the current state is
-   * taken first, so a restore can always be reverted.
+   * taken first, so a restore can always be reverted. The staff room is told
+   * (realtime) that the timetable was replaced once the restore has committed.
    */
   @Post(':id/restore')
-  restore(
+  async restore(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ restoredLessons: number; safetyVersionId: string }> {
-    return this.versions.restore(id, user);
+    const restored = await this.versions.restore(id, user);
+    // The restore has committed: the staff room is told that the grundschema was replaced, and reads the year (E9, g465 L-4).
+    await this.announcer.restored(user);
+    return restored;
   }
 
   /** `DELETE /api/v1/schedule-versions/:id` — remove a snapshot. */

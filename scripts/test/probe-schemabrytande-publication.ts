@@ -173,7 +173,7 @@ async function world(owner: Client, api: PrismaService, marker: string, tag: str
     quiet,
     activities: (service: PrismaService = api) => new ScheduleActivitiesService(service, realtime, notifications),
     publications: (service: PrismaService = api) =>
-      new PublicationsService(service, new CalendarService(service), new TimplanCoverageService(service), new StaffingLoadService(service), quiet, realtime),
+      new PublicationsService(service, new CalendarService(service), new TimplanCoverageService(service), new StaffingLoadService(service), quiet, realtime, new ScheduleVersionsService(service)),
     status: (id: string) => one<{ status: string }>(`SELECT status::text AS status FROM "CalendarLessons" WHERE id = $1`, [id]),
     replacements: (activityId: string) =>
       all<{ id: string; date: string; from: string; to: string; studentGroupId: string }>(
