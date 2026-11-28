@@ -164,7 +164,7 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
   return (
     <Dialog open={open} modal={false} onOpenChange={(next) => (next ? undefined : (discard(), onClose()))}>
       <DialogContent
-        className="bottom-4 left-auto right-4 top-auto w-[calc(100vw-2rem)] max-w-sm translate-x-0 translate-y-0"
+        className="bottom-4 left-4 right-4 top-auto w-auto max-w-none translate-x-0 translate-y-0 sm:left-auto sm:w-96"
         onInteractOutside={(event) => event.preventDefault()}
         data-fill-dialog=""
       >
@@ -176,14 +176,14 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
         {left === 0 && tray ? <p className="text-sm font-medium">{t("nothingLeft")}</p> : null}
 
         {left > 0 ? (
-          <fieldset className="grid gap-2 text-sm" disabled={phase !== "idle"}>
+          <fieldset className="grid gap-1 text-sm" disabled={phase !== "idle"}>
             <legend className="mb-1 font-medium">{t("scopeLegend")}</legend>
-            <label className="flex items-center gap-2">
+            <label className="flex min-h-9 items-center gap-2">
               <input type="radio" name="fill-scope" checked={scope === "CLASS"} onChange={() => setScope("CLASS")} />
               {t("scopeClass")}
             </label>
             {scope === "CLASS" ? (
-              <NativeSelect aria-label={t("classLabel")} className="ml-6 h-9 w-auto" value={chosenClass} onChange={(event) => setClassId(event.target.value)}>
+              <NativeSelect aria-label={t("classLabel")} className="ml-6 h-11 w-auto" value={chosenClass} onChange={(event) => setClassId(event.target.value)}>
                 {classes.map((entry) => (
                   <option key={entry.id} value={entry.id}>
                     {t("classOption", { name: entry.name, count: entry.left })}
@@ -192,13 +192,13 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
               </NativeSelect>
             ) : null}
             {grades.length > 0 ? (
-              <label className="flex items-center gap-2">
+              <label className="flex min-h-9 items-center gap-2">
                 <input type="radio" name="fill-scope" checked={scope === "GRADE"} onChange={() => setScope("GRADE")} />
                 {t("scopeGrade")}
               </label>
             ) : null}
             {scope === "GRADE" ? (
-              <NativeSelect aria-label={t("gradeLabel")} className="ml-6 h-9 w-auto" value={chosenGrade} onChange={(event) => setGrade(event.target.value)}>
+              <NativeSelect aria-label={t("gradeLabel")} className="ml-6 h-11 w-auto" value={chosenGrade} onChange={(event) => setGrade(event.target.value)}>
                 {grades.map(([value, count]) => (
                   <option key={value} value={value}>
                     {t("gradeOption", { grade: value, count })}
@@ -206,12 +206,12 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
                 ))}
               </NativeSelect>
             ) : null}
-            <label className="flex items-center gap-2">
+            <label className="flex min-h-9 items-center gap-2">
               <input type="radio" name="fill-scope" checked={scope === "SCHOOL"} onChange={() => setScope("SCHOOL")} />
               {t("scopeSchool", { count: left })}
             </label>
             <div>
-              <Button type="button" size="sm" onClick={() => void propose()} disabled={phase !== "idle" || request() === null} data-writes="SCHEMALAGGNING DRIFT">
+              <Button type="button" size="sm" className="min-h-11" onClick={() => void propose()} disabled={phase !== "idle" || request() === null} data-writes="SCHEMALAGGNING DRIFT">
                 {phase === "asking" ? <Loader2 className="animate-spin" /> : null}
                 {phase === "asking" ? t("proposing") : proposal ? t("proposeAgain") : t("propose")}
               </Button>
@@ -265,13 +265,13 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
 
         <div className="flex flex-wrap justify-end gap-2">
           {proposal && proposal.placed.length > 0 ? (
-            <Button type="button" onClick={() => void take()} disabled={phase !== "idle"} data-writes="SCHEMALAGGNING DRIFT">
+            <Button type="button" className="min-h-11" onClick={() => void take()} disabled={phase !== "idle"} data-writes="SCHEMALAGGNING DRIFT">
               {phase === "taking" ? <Loader2 className="animate-spin" /> : null}
               {phase === "taking" ? t("taking") : t("take")}
             </Button>
           ) : null}
           {proposal ? (
-            <Button type="button" variant="outline" onClick={discard} disabled={phase !== "idle"}>
+            <Button type="button" variant="outline" className="min-h-11" onClick={discard} disabled={phase !== "idle"}>
               {t("discard")}
             </Button>
           ) : null}
