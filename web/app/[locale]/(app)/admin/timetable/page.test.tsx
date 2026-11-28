@@ -8,6 +8,7 @@ import { exportTimetablePdf } from "@/lib/pdf";
 import { ApiError } from "@/lib/api";
 import { ProfileProvider } from "@/components/profile-context";
 import type { Profile } from "@/lib/types";
+import { fillPreview } from "@/lib/fill-store";
 
 /**
  * Whose week is on screen.
@@ -4962,5 +4963,41 @@ describe("a numbered time the gateway offers in another room (E3)", () => {
     fireEvent.keyDown(drawn, { key: "Enter" });
     await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalled());
     expect(noMutation.mutateAsync.mock.calls.at(-1)![0]).not.toHaveProperty("roomId");
+  });
+});
+
+describe("the proposal of Lägg det som går on the boards of a view (E7a)", () => {
+  const brick = (key: string, over: Record<string, unknown>) => ({ key, postId: "p", studentGroupId: "g-41", subjectId: "s-ma", teacherId: "t-1", minutes: 60, lessonId: null, ...over });
+  const proposal = {
+    academicYearId: "y-1",
+    answeredBy: "FILL" as const,
+    basis: "a".repeat(32),
+    asked: 2,
+    placed: [
+      { ...brick("k1", {}), dayOfWeek: 2, startMinutes: 540, endMinutes: 600, roomId: null, noRoom: true },
+      { ...brick("k2", { teacherId: "t-2", studentGroupId: "g-42" }), dayOfWeek: 3, startMinutes: 600, endMinutes: 660, roomId: null, noRoom: true },
+    ],
+    left: [],
+    moved: [],
+    truncated: false,
+  };
+
+  afterEach(() => fillPreview.set(null));
+
+  it("is drawn on the board of each teacher it is for and on no other, as on the combined board", async () => {
+    fillPreview.set({ proposal, labels: new Map([["k1", "Matte 4.1"], ["k2", "Svenska 4.2"]]) });
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await waitFor(() => expect(document.querySelectorAll("[data-fill-box]")).toHaveLength(2));
+
+    await user.click(screen.getByRole("combobox", { name: "timetable.viewLabel" }));
+    await user.click(await screen.findByRole("option", { name: "timetable.viewByTeacher" }));
+
+    const boardOf = (id: string) => document.getElementById(`board-${id}`)!.closest("section")!;
+    await waitFor(() => expect(boardOf("t-1").querySelectorAll("[data-fill-box]")).toHaveLength(1));
+    expect(boardOf("t-1").textContent).toContain("Matte 4.1");
+    expect(boardOf("t-1").textContent).not.toContain("Svenska 4.2");
+    await waitFor(() => expect(boardOf("t-2").querySelectorAll("[data-fill-box]")).toHaveLength(1));
+    expect(boardOf("t-2").textContent).toContain("Svenska 4.2");
   });
 });

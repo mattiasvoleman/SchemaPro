@@ -1514,6 +1514,7 @@ export default function TimetablePage() {
                 onSlotClick={
                   lunchMode ? (day, minute) => void placeLunch(day, minute) : openCreate
                 }
+                behind={(day, scale) => fillBehind(day, scale, groupBy, board.key)}
                 bands={lunchBands}
                 onBandMove={(id, day, minute) => void moveLunch(id, day, minute)}
                 onBandRemove={(id) => void removeLunch(id)}

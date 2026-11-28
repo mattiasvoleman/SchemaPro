@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { clockOf } from "@/lib/board-fill";
+import { clockOf, type FillPlaced } from "@/lib/board-fill";
 import type { FillShown } from "@/lib/fill-store";
 
 /*
@@ -13,16 +13,28 @@ import type { FillShown } from "@/lib/fill-store";
  * and not only in its colour. A proposal writes nothing until it is taken in: an outline is not a lesson, and the board says so by drawing it dashed.
  */
 
+/**
+ * A board that is one class's, one teacher's or one room's (the views by class, teacher and room) draws only the bricks that are that one's: `id` null is the
+ * board of "no teacher" or "no room". The combined board draws them all.
+ */
+export interface FillOnly {
+  by: "group" | "teacher" | "room";
+  id: string | null;
+}
+
 export interface FillLayerProps {
   day: number;
   scale: { startMinutes: number; pxPerMinute: number };
   shown: FillShown;
+  only?: FillOnly;
 }
 
-export default function FillLayer({ day, scale, shown }: FillLayerProps) {
+export default function FillLayer({ day, scale, shown, only }: FillLayerProps) {
   const t = useTranslations("fillLayer");
   const px = (minutes: number) => (minutes - scale.startMinutes) * scale.pxPerMinute;
-  const here = shown.proposal.placed.filter((entry) => entry.dayOfWeek === day);
+  const mine = (entry: FillPlaced) =>
+    !only || (only.by === "group" ? entry.studentGroupId : only.by === "teacher" ? entry.teacherId : entry.roomId) === only.id;
+  const here = shown.proposal.placed.filter((entry) => entry.dayOfWeek === day && mine(entry));
   if (here.length === 0) return null;
   return (
     <div aria-hidden data-fill-layer={day} className="pointer-events-none absolute inset-0 z-30 overflow-hidden">

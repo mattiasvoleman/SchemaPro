@@ -2,6 +2,7 @@
 
 import { lazy, Suspense, useSyncExternalStore } from "react";
 import { fillPreview } from "@/lib/fill-store";
+import type { FillOnly } from "./fill-layer";
 
 /*
  * The board's layer for a proposal of Lägg det som går (E7a), as the grid takes a layer: `behind` is called for each day's column with the scale. All
@@ -10,13 +11,19 @@ import { fillPreview } from "@/lib/fill-store";
  */
 const Layer = lazy(() => import("./fill-layer"));
 
-function FillDay({ day, scale }: { day: number; scale: { startMinutes: number; pxPerMinute: number } }) {
+function FillDay({ day, scale, only }: { day: number; scale: { startMinutes: number; pxPerMinute: number }; only?: FillOnly }) {
   const shown = useSyncExternalStore(fillPreview.subscribe, fillPreview.get, () => null);
   return shown ? (
     <Suspense fallback={null}>
-      <Layer day={day} scale={scale} shown={shown} />
+      <Layer day={day} scale={scale} shown={shown} only={only} />
     </Suspense>
   ) : null;
 }
 
-export const fillBehind = (day: number, scale: { startMinutes: number; pxPerMinute: number }) => <FillDay day={day} scale={scale} />;
+/**
+ * `view` and `id` are the page's view ("none" is the combined board) and the key of one board of it (a teacher's or a room's id, a class's id, or
+ * "__none__" for the board of the lessons that have no teacher or no room): the board draws what is that one's, as the views draw their lessons.
+ */
+export const fillBehind = (day: number, scale: { startMinutes: number; pxPerMinute: number }, view?: "none" | "teacher" | "room" | "group", id?: string) => (
+  <FillDay day={day} scale={scale} only={view && view !== "none" ? { by: view, id: id === undefined || id === "__none__" ? null : id } : undefined} />
+);
