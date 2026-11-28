@@ -104,8 +104,13 @@ export interface FillPlaced extends FillCandidate {
 }
 
 export type FillLeftReason =
-  /** No start is free for it, with a room: nothing that stands can be moved by this, so it says that and no more. */
+  /** No start is free for it, whatever the room: the teacher, the class or the board holds every one. Nothing that stands can be moved by this, so it says that and no more. */
   | 'NO_FREE_START'
+  /**
+   * A start is free for it (the teacher, the class and the board let it through) but at every one of them the rooms the generator's rule allows are taken or held:
+   * the room has run out and the time has not. The page can say so ("sal" and not "tid"), and a school that frees a room is the one that gets it laid.
+   */
+  | 'NO_ROOM'
   /** Every start it tried the judge refused. */
   | 'JUDGE'
   /** The time was out before it was begun. */
@@ -232,7 +237,7 @@ function freeStartsOf(
   stepMinutes: number,
   points: readonly number[] | null,
   withRooms: boolean,
-): { subject: PossibleSubject; starts: Start[] } {
+): { subject: PossibleSubject; starts: Start[]; withoutRoom: number } {
   const unit = possible.context.unitOf.get(brick.lesson.id) as SwapUnit;
   const subject: PossibleSubject = { unit, lesson: brick.lesson, unplaced: true };
   const prepared = prepare(possible, subject);
@@ -241,6 +246,8 @@ function freeStartsOf(
   const length = brick.lesson.endMinutes - brick.lesson.startMinutes;
   const times = startTimesOf(points, window, stepMinutes, length);
   const starts: Start[] = [];
+  // The starts the prune lets through that no room holds: with none left over, it is the room that has run out and not the time.
+  let withoutRoom = 0;
   for (const dayOfWeek of window.days) {
     for (const startMinutes of times) {
       const probe = probeAt(possible, subject, prepared, dayOfWeek, startMinutes);
@@ -250,11 +257,14 @@ function freeStartsOf(
         continue;
       }
       const room = roomAt(possible, allowed, brick.lesson, { dayOfWeek, startMinutes, endMinutes: startMinutes + length });
-      if (room === undefined) continue;
+      if (room === undefined) {
+        withoutRoom += 1;
+        continue;
+      }
       starts.push({ dayOfWeek, startMinutes, roomId: room.roomId });
     }
   }
-  return { subject, starts };
+  return { subject, starts, withoutRoom };
 }
 
 /** group -> the groups that hold a pupil of it: what a lesson of one takes from the others (the clash rule's own reading of the rosters). */
@@ -375,13 +385,14 @@ export async function planFill(world: FillWorld, bricks: readonly FillBrick[], w
     }
 
     let probeStart = now();
-    const { subject, starts } = freeStartsOf(possible, next, window, options.stepMinutes, points, true);
+    const { subject, starts, withoutRoom } = freeStartsOf(possible, next, window, options.stepMinutes, points, true);
     stats.probeMs += now() - probeStart;
     remaining = remaining.filter((brick) => brick !== next);
 
     if (starts.length === 0) {
-      // Nothing was laid, so the world is the one that was read: it already has this brick as a lesson that stands nowhere.
-      left.push({ brick: next, reason: 'NO_FREE_START', freeStarts: 0 });
+      // Nothing was laid, so the world is the one that was read: it already has this brick as a lesson that stands nowhere. A time that was free and had no room
+      // is the room's doing, which the school can mend by freeing a room; a time that was not free for the teacher or the class is not.
+      left.push({ brick: next, reason: withoutRoom > 0 ? 'NO_ROOM' : 'NO_FREE_START', freeStarts: 0 });
       continue;
     }
 
