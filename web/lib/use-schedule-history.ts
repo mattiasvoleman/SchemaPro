@@ -65,8 +65,12 @@ export interface HistoryEntry {
 
 export interface ScheduleHistory {
   push: (entry: HistoryEntry) => void;
-  /** The session's steps as they stand: the ones done, oldest first, and the ones undone, in the order a redo takes them (E9). */
-  steps: () => { done: readonly HistoryEntry[]; undone: readonly HistoryEntry[] };
+  /**
+   * The session's steps as they stand: the ones done, oldest first, and the ones undone, in the order a redo takes them (E9). `lost` is how many
+   * steps have left the history without being undone (the oldest, past the depth the history keeps, and one that could not be undone for good, see
+   * `refusedUndo`): what they did stands, and the first of the done steps is then not where the session began.
+   */
+  steps: () => { done: readonly HistoryEntry[]; undone: readonly HistoryEntry[]; lost?: number };
   undo: () => Promise<HistoryEntry | null>;
   redo: () => Promise<HistoryEntry | null>;
   canUndo: boolean;
@@ -80,13 +84,17 @@ export function useScheduleHistory(): ScheduleHistory {
   const undoStack = useRef<HistoryEntry[]>([]);
   const redoStack = useRef<HistoryEntry[]>([]);
   const busy = useRef(false);
+  const lost = useRef(0);
   const [, bump] = useState(0);
   const refresh = () => bump((n) => n + 1);
 
   const push = useCallback((entry: HistoryEntry) => {
     entry.at ??= Date.now();
     undoStack.current.push(entry);
-    if (undoStack.current.length > MAX_DEPTH) undoStack.current.shift();
+    if (undoStack.current.length > MAX_DEPTH) {
+      undoStack.current.shift();
+      lost.current++;
+    }
     redoStack.current = [];
     refresh();
   }, []);
@@ -101,7 +109,10 @@ export function useScheduleHistory(): ScheduleHistory {
       redoStack.current.push(entry);
       return entry;
     } catch (error) {
-      if (entry.refusedUndo?.(error)) undoStack.current.pop();
+      if (entry.refusedUndo?.(error)) {
+        undoStack.current.pop();
+        lost.current++;
+      }
       throw error;
     } finally {
       busy.current = false;
@@ -124,11 +135,12 @@ export function useScheduleHistory(): ScheduleHistory {
     }
   }, []);
 
-  const steps = useCallback(() => ({ done: [...undoStack.current], undone: [...redoStack.current].reverse() }), []);
+  const steps = useCallback(() => ({ done: [...undoStack.current], undone: [...redoStack.current].reverse(), lost: lost.current }), []);
 
   const clear = useCallback(() => {
     undoStack.current = [];
     redoStack.current = [];
+    lost.current = 0;
     refresh();
   }, []);
 

@@ -2910,6 +2910,7 @@
     "historyTitle": "Det du har gjort i den här sessionen ({count})",
     "historyBody": "Nyast först. Gå tillbaka till ett steg för att ångra allt efter det, eller gör om steg du har ångrat. Varje steg går genom samma kontroller som en vanlig ändring, och det första som inte går stoppar vandringen och säger varför.",
     "historyEmpty": "Inget än. Det du ändrar i schemat visas här.",
+    "historyStartCut": "Så långt tillbaka listan når. Ett eller flera steg har lämnat den utan att ångras, så det här är inte hur schemat såg ut när du började.",
     "historyStart": "Så här såg schemat ut när du började",
     "historyNow": "Nu",
     "historyBack": "Gå tillbaka hit",

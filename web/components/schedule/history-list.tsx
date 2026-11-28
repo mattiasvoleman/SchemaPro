@@ -41,7 +41,7 @@ export function HistoryList({ history, subjectById, teacherById, roomById, group
   const [walking, setWalking] = useState(false);
   const clock = new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", { timeStyle: "short" });
 
-  const { done, undone } = history.steps();
+  const { done, undone, lost = 0 } = history.steps();
   // Oldest first, as the steps were taken: the ones done, then the ones undone in the order a redo takes them.
   const lines: Line[] = [
     ...done.map((entry, index) => ({ entry, position: index + 1, undone: false })),
@@ -157,13 +157,14 @@ export function HistoryList({ history, subjectById, teacherById, roomById, group
               </li>
             );
           })}
-          {/* The start: the schedule as it was when the page was opened, which is all the steps undone. */}
+          {/* The start: the schedule as it was when the page was opened, which is all the steps undone. Not when a step has left the list without being undone
+              (the oldest past the depth the history keeps, one that could not be undone for good): what it did stands, and the row says it is as far back as the list goes. */}
           <li className="flex items-center justify-between gap-2 rounded px-2 py-1">
-            <span className="text-muted-foreground">{t("historyStart")}</span>
+            <span className="text-muted-foreground">{t(lost > 0 ? "historyStartCut" : "historyStart")}</span>
             {newest === 0 ? (
               <span className="shrink-0 text-muted-foreground">{t("historyNow")}</span>
             ) : (
-              <Button size="sm" variant="ghost" disabled={walking} onClick={() => void walkTo(0)} data-writes="SCHEMALAGGNING" aria-label={t("historyBackNamed", { step: t("historyStart") })}>
+              <Button size="sm" variant="ghost" disabled={walking} onClick={() => void walkTo(0)} data-writes="SCHEMALAGGNING" aria-label={t("historyBackNamed", { step: t(lost > 0 ? "historyStartCut" : "historyStart") })}>
                 {t("historyBack")}
               </Button>
             )}

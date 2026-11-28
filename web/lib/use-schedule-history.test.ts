@@ -537,6 +537,6 @@ describe("steps (the session's steps as a list, E9)", () => {
     const { result } = renderHook(() => useScheduleHistory());
     act(() => result.current.push(makeEntry("a")));
     act(() => result.current.clear());
-    expect(result.current.steps()).toEqual({ done: [], undone: [] });
+    expect(result.current.steps()).toEqual({ done: [], undone: [], lost: 0 });
   });
 });
