@@ -173,9 +173,11 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
   const reasonCounts = figures ? REASONS.flatMap((reason) => (figures.byReason[reason] ? [[reason, figures.byReason[reason]!] as const] : [])) : [];
 
   return (
-    <Dialog open={open} modal={false} onOpenChange={(next) => (next ? undefined : (discard(), onClose()))}>
+    // While Ta in is on its way the dialog stays (Escape, the X): closing it would not take the write back, and a failure would be said to nobody.
+    <Dialog open={open} modal={false} onOpenChange={(next) => (next || phase === "taking" ? undefined : (discard(), onClose()))}>
       <DialogContent
         className="bottom-4 left-4 right-4 top-auto w-auto max-w-none translate-x-0 translate-y-0 sm:left-auto sm:w-96"
+        closeDisabled={phase === "taking"}
         onInteractOutside={(event) => event.preventDefault()}
         data-fill-dialog=""
       >
