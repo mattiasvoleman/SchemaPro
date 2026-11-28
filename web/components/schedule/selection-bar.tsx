@@ -93,8 +93,9 @@ export function SelectionBar({
     const targets = selectedLessons(true).filter((lesson) => lesson.isLocked !== isLocked);
     if (targets.length === 0) return;
     try {
+      // What each lesson held of the lock when it was selected (E9): a colleague's lock or unlock since is not written over.
       for (const lesson of targets) {
-        await updateLesson.mutateAsync({ id: lesson.id, isLocked, propagate: false });
+        await updateLesson.mutateAsync({ id: lesson.id, isLocked, propagate: false, expected: { isLocked: lesson.isLocked } });
       }
       history.push({
         label: "bulk-lock",
@@ -104,6 +105,7 @@ export function SelectionBar({
               id: lesson.id,
               isLocked: !isLocked,
               propagate: false,
+              expected: { isLocked },
               // Undantag med flit rests on the lock: taking the lock off ended it (the gateway), and putting the lock back puts it back with it.
               ...(!isLocked && lesson.exemptFrom && lesson.exemptFrom.length > 0 ? { exempt: lesson.exemptFrom } : {}),
             });
@@ -111,7 +113,7 @@ export function SelectionBar({
         },
         redo: async () => {
           for (const lesson of targets) {
-            await updateLesson.mutateAsync({ id: lesson.id, isLocked, propagate: false });
+            await updateLesson.mutateAsync({ id: lesson.id, isLocked, propagate: false, expected: { isLocked: !isLocked } });
           }
         },
       });

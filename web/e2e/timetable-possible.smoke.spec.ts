@@ -124,7 +124,7 @@ test("Grundschemat: 1 takes the marker to the best time and Enter lays the lesso
   await page.keyboard.press("Enter");
   await expect.poll(() => written.length).toBe(1);
   expect(written[0]!.id).toBe(MATH_LESSON.id);
-  expect(Object.keys(written[0]!.body).sort()).toEqual(["dayOfWeek", "endTime", "startTime"]);
+  expect(Object.keys(written[0]!.body).sort()).toEqual(["dayOfWeek", "endTime", "expected", "startTime"]);
   expect(await page.evaluate(() => window.__pointerPresses), "no pointer was pressed").toBe(0);
 
   // A suggestion that does not exist is said, and moves nothing.
@@ -158,7 +158,7 @@ test("Grundschemat: the list of possible times below the week lays a lesson with
   await buttons.first().click();
   await expect.poll(() => written.length).toBe(1);
   expect(written[0]!.id).toBe(MATH_LESSON.id);
-  expect(Object.keys(written[0]!.body).sort()).toEqual(["dayOfWeek", "endTime", "startTime"]);
+  expect(Object.keys(written[0]!.body).sort()).toEqual(["dayOfWeek", "endTime", "expected", "startTime"]);
   expect(misses, MISSES).toEqual([]);
 });
 
