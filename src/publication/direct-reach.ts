@@ -29,7 +29,8 @@ import type { PublishMode } from './publish-mode';
  *
  * Skrivvägar som anropar vakten i dag: PATCH master-lessons/:id, PATCH master-lessons/block-card, DELETE master-lessons/:id och POST swaps/apply
  * (ett byte flyttar publicerade lektioner på samma sätt och rullas tillbaka med sin säkerhetsversion).
- * E4:s läggning (att lägga en bricka som flyttar publicerade lektioner) anropar samma funktion med det antal den nådde.
+ * E4:s läggning går genom PATCHens skrivning och frågar där: en parkerad lektion som läggs tillbaka flyttar sina kalenderrader som ett drag (updateIn), och en ny
+ * lektion (createIn) når ingen förrän kalendern nästa gång genereras. En skrivväg som lämnar den skrivningen måste själv anropa funktionen med det antal den nådde.
  */
 
 /** The problem `code` of a change in Direkt that reached families before the school had answered. */

@@ -126,6 +126,13 @@ export class BoardTrayService {
    *
    * The lesson is the school's (handgjord) and locked, so Generera keeps it and counts it for the post. It is laid through the hand edit's own
    * write (createIn and updateIn), so it is judged as every other hand edit is (the one judge), logged, announced and warned about as one.
+   *
+   * DIREKT (P5, beslut 8; g490 M-5). A parked lesson laid back moves its calendar rows as any drag does (parking leaves them standing), and it asks the school's
+   * question through the write it is made with: updateIn is MasterLessonsService.update, which calls requireDirectReachAnswered after propagateTemplateChange,
+   * in this transaction, with propagatedLessons + removedCalendarLessons, so 409 DIRECT_REACH_UNANSWERED rolls the whole lay back. A brick that is no lesson yet
+   * (createIn) reaches nobody: its calendar rows come with the next generation of the calendar. A second call here, with the same number in the same
+   * transaction, could never answer differently, so there is none; probe-direkt-fragan.ts (i) holds it against a real database, and a lay that left the
+   * hand edit's write would have to ask the question itself.
    */
   async lay(dto: LayBrickDto, user: AuthenticatedUser): Promise<LayBrickResult> {
     return this.prisma.withRls(user, async (tx) => {
