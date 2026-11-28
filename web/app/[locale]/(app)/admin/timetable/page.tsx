@@ -64,7 +64,7 @@ import { FilterBar } from "@/components/ui/filter-bar";
 import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
-import { swapBehind } from "@/components/schedule/swap-behind";
+import { boardBehind } from "@/components/schedule/board-behind";
 import {
   Select,
   SelectContent,
@@ -1536,7 +1536,7 @@ export default function TimetablePage() {
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onSlotClick={lunchMode ? (day, minute) => void placeLunch(day, minute) : openCreate}
-          behind={swapBehind}
+          behind={boardBehind}
           bands={lunchBands}
           onBandMove={(id, day, minute) => void moveLunch(id, day, minute)}
           onBandRemove={(id) => void removeLunch(id)}
