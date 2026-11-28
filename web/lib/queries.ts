@@ -1453,6 +1453,14 @@ export function useScheduleVersionActions() {
       api.post<ScheduleVersion>("/api/v1/schedule-versions", body),
     onSuccess: invalidateVersions,
   });
+  const rename = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => api.patch<ScheduleVersion>(`/api/v1/schedule-versions/${id}`, { name }),
+    // The list says the new name, and so does a version that is being compared.
+    onSuccess: () => {
+      invalidateVersions();
+      void queryClient.invalidateQueries({ queryKey: ["scheduleVersionDetail"] });
+    },
+  });
   const restore = useMutation({
     mutationFn: (id: string) =>
       api.post<{ restoredLessons: number; safetyVersionId: string }>(
@@ -1466,7 +1474,7 @@ export function useScheduleVersionActions() {
     onSuccess: invalidateVersions,
   });
 
-  return { save, restore, remove };
+  return { save, rename, restore, remove };
 }
 
 // ---------------------------------------------------------------------------
