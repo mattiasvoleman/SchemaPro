@@ -6,7 +6,7 @@ import type { ScheduleVersionsService } from '../calendar/schedule-versions.serv
 import type { BoardTrayService, TrayBrick } from '../board-tray/board-tray.service';
 import type { PrismaService } from '../database/prisma.service';
 import { judgeLessons } from '../calendar/lesson-judge';
-import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
+import { lockYearForRegeneration } from '../optimization/regeneration-lock';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { lockPostForShares } from '../resources/requirement-shares';
 import { makeWorld } from '../swaps/__fixtures__/swap-world';
@@ -21,7 +21,7 @@ import { BOARD_FILL_STALE, BoardFillService } from './board-fill.service';
 jest.mock('../swaps/swap-snapshot', () => ({ ...jest.requireActual('../swaps/swap-snapshot'), readSwapData: jest.fn() }));
 jest.mock('../calendar/lesson-judge', () => ({ ...jest.requireActual('../calendar/lesson-judge'), judgeLessons: jest.fn() }));
 jest.mock('../publication/publish-mode', () => ({ ...jest.requireActual('../publication/publish-mode'), enterGrundschemaWrite: jest.fn() }));
-jest.mock('../optimization/regeneration-lock', () => ({ ...jest.requireActual('../optimization/regeneration-lock'), lockYearForGrundschemaEdit: jest.fn() }));
+jest.mock('../optimization/regeneration-lock', () => ({ ...jest.requireActual('../optimization/regeneration-lock'), lockYearForRegeneration: jest.fn() }));
 jest.mock('../resources/requirement-shares', () => ({ ...jest.requireActual('../resources/requirement-shares'), lockPostForShares: jest.fn() }));
 jest.mock('./fill-reads');
 
@@ -80,7 +80,8 @@ describe('BoardFillService', () => {
     (readSwapData as jest.Mock).mockReset().mockResolvedValue({ ...world.data, lessons: [], posts: [] });
     (judgeLessons as jest.Mock).mockReset().mockResolvedValue([{ ok: true, refusals: [], exempted: [], exemptable: false }]);
     (enterGrundschemaWrite as jest.Mock).mockReset().mockImplementation(async () => (order.push('mode'), 'DIRECT'));
-    (lockYearForGrundschemaEdit as jest.Mock).mockReset().mockImplementation(async () => void order.push('year'));
+    (lockYearForRegeneration as jest.Mock).mockReset().mockImplementation(async () => void order.push('year'));
+    tx['academicYear']!['findUnique']!.mockResolvedValue({ id: YEAR });
     (lockPostForShares as jest.Mock).mockReset().mockImplementation(async (_tx: unknown, postId: string) => void order.push(`post:${postId === POST_A ? 'A' : 'B'}`));
     service = new BoardFillService(
       createPrismaMock(tx) as unknown as PrismaService,
@@ -179,7 +180,7 @@ describe('BoardFillService', () => {
     ];
     const basisNow = async (): Promise<string> => (await service.propose({ academicYearId: YEAR, scope: 'SCHOOL' }, asAdmin)).basis;
 
-    it('takes the school\'s mode, the year\'s lock and the posts\' locks in id order, reads the tray under them, saves a version, and then writes each lesson', async () => {
+    it('takes the school\'s mode, the year\'s lock (exclusive: one Ta in at a time) and the posts\' locks in id order, reads the tray under them, saves a version, and then writes each lesson', async () => {
       const dto = { academicYearId: YEAR, basis: await basisNow(), items: items() };
       const result = await service.apply(dto, asAdmin);
       expect(order).toEqual(['mode', 'year', 'post:A', 'version']);
@@ -203,6 +204,14 @@ describe('BoardFillService', () => {
       expect(versions.snapshotInTransaction).toHaveBeenCalledWith(tx, YEAR, 'Före klass 7A', asAdmin);
       expect(tray.writeBrick.mock.calls[0]![2]).toMatchObject({ lessonId: 'parked-1', ownLessonIds: new Set(['parked-1', 'parked-2']) });
       expect(result.laid.map((entry) => entry.created)).toEqual([false, false]);
+    });
+
+    it('does not take the lock of a year that is not the school\'s: 404 before any lock, so that a stranger\'s request never queues the owner\'s edits', async () => {
+      tx['academicYear']!['findUnique']!.mockResolvedValue(null);
+      await expect(service.apply({ academicYearId: YEAR, basis: 'a'.repeat(32), items: items() }, asAdmin)).rejects.toMatchObject({ status: 404 });
+      expect(lockYearForRegeneration).not.toHaveBeenCalled();
+      expect(lockPostForShares).not.toHaveBeenCalled();
+      expect(versions.snapshotInTransaction).not.toHaveBeenCalled();
     });
 
     it('writes nothing and saves no version when the grundschema is not the one the proposal was made on', async () => {

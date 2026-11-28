@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { LessonRecurrence, PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { judgeLessons, type JudgeItem } from '../calendar/lesson-judge';
@@ -10,7 +10,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
 import { PrismaService } from '../database/prisma.service';
 import { gradeSpanOf } from '../optimization/room-eligibility';
-import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
+import { lockYearForRegeneration } from '../optimization/regeneration-lock';
 import { BoardTrayService, type BoardTrayResponse, type TrayBrick } from '../board-tray/board-tray.service';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { lockPostForShares } from '../resources/requirement-shares';
@@ -327,7 +327,15 @@ export class BoardFillService {
       user,
       async (tx) => {
         await enterGrundschemaWrite(tx, requireSchoolId(user));
-        await lockYearForGrundschemaEdit(tx, dto.academicYearId);
+        // The year is the school's before its lock is taken (the row is read under row-level security, so another school's year is not found): an exclusive lock on a
+        // year that is nobody's here would queue the school that owns it behind a stranger's request, and every hand edit of that school behind the queue.
+        if (!(await tx.academicYear.findUnique({ where: { id: dto.academicYearId }, select: { id: true } }))) throw new NotFoundException('Läsåret finns inte.');
+        // The year's lock EXCLUSIVE, as the three other writers of many lessons take it (Generera's persist, an apply of a candidate, a restore): a hand edit takes it
+        // shared and runs beside others, which is right for one lesson and wrong for a Ta in. Two proposals made on the same basis (two administrators filling two
+        // classes of one teacher) both pass the basis and the judge when each reads the grundschema without the other's uncommitted lessons, and both commit: a
+        // teacher and a room in two places at once, locked. The second Ta in now queues for up to 5 s (409 SCHEDULE_BUSY) and, when it gets the lock, reads the
+        // grundschema after the first, so its basis is stale (409 BOARD_FILL_STALE) and nothing is written.
+        await lockYearForRegeneration(tx, dto.academicYearId);
         // The posts' locks in id order, before the tray is read under them: two administrators that lay bricks of one post queue here.
         const postIds = [...new Set(keys.map((key) => key.split('|')[0]!))].sort();
         for (const postId of postIds) await lockPostForShares(tx, postId);
