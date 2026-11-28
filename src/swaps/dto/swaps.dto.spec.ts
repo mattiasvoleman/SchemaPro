@@ -85,6 +85,8 @@ describe('E5a: what the doors take', () => {
     expect(await check(ApplySwapDto, { forBrick: true, lay: { ...lay, partKey: 'nope' }, moves: [move(A)] })).toEqual(['lay.partKey']);
     expect(await check(ApplySwapDto, { forBrick: true, lay: { ...lay, startTime: '25:00', minutes: 1 }, moves: [move(A)] })).toEqual(['lay.minutes', 'lay.startTime']);
     expect(await check(ApplySwapDto, { forBrick: true, lay: 'x', moves: [move(A)] })).toEqual(['lay']);
+    // `null` is no lay and no absence: the service reads `lay !== undefined`, so a null that got through was a TypeError, and a 500, in the service.
+    expect(await check(ApplySwapDto, { forBrick: true, lay: null, moves: [move(A)] })).toEqual(['lay']);
     // Not for a brick, a lay is the service's 400; the DTO takes the shape.
     expect(await check(ApplySwapDto, { lessonId: A, lay, moves: [move(A)] })).toEqual([]);
   });

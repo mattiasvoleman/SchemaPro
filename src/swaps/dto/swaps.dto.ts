@@ -154,8 +154,9 @@ export class ApplySwapDto {
    * Att lägga, as `POST /board-tray/lay` takes it: the brick the moves made room for, laid in THE SAME TRANSACTION as the moves, after them. A lay that
    * is refused (a part that has changed, a room that does not fit, Direkt's question) takes the moves back with it, so nobody is left with a
    * timetable moved for a brick that was not laid (g514 L-7). Only with `forBrick`. Left out, the moves are written and the page lays the brick.
+   * Left out, not `null`: the service asks `lay !== undefined`, and a `null` that IsOptional let through was a TypeError (500) before anything was read.
    */
-  @IsOptional()
+  @ValidateIf((body: ApplySwapDto) => body.lay !== undefined)
   @ValidateNested()
   @Type(() => LayBrickDto)
   lay?: LayBrickDto;

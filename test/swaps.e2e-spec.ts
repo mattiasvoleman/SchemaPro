@@ -218,6 +218,8 @@ describe('Byten och flyttar (e2e)', () => {
         { forBrick: true, lay: { ...lay, partKey: 'nope' }, moves: [move(A, 1, 2)] },
         { forBrick: true, lay: { ...lay, postId: 'nope' }, moves: [move(A, 1, 2)] },
         { forBrick: true, lay: { ...lay, extra: 1 }, moves: [move(A, 1, 2)] },
+        // `null` is not "no lay": it is refused at the door, where it used to reach the service and throw a TypeError (500).
+        { forBrick: true, lay: null, moves: [move(A, 1, 2)] },
       ]) {
         harness.tx['masterLesson']!['findMany']!.mockClear();
         await request(http()).post('/api/v1/swaps/apply').set('x-test-user', admin()).send(body).expect(400);
