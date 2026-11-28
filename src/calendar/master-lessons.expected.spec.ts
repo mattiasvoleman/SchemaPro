@@ -146,6 +146,15 @@ describe('MasterLessonsService: förutsättningen (expected)', () => {
     expect(lockedAt).toBeLessThan(tx['masterLesson']!['update']!.mock.invocationCallOrder[0]!);
   });
 
+  it('takes the year\'s share of the regeneration lock before the lesson\'s row lock, never after: Generera holds the year and then every row, so a row held first is a deadlock with it (granskaren g515)', async () => {
+    await service.update(LESSON, { roomId: OTHER_ROOM, expected: SAW }, testUser());
+    const yearLockAt = tx.$executeRaw.mock.calls.findIndex(([query]) => sqlOf(query).includes('lock_years_for_grundschema_edit'));
+    const rowLockAt = tx.$queryRaw.mock.calls.findIndex(([query]) => sqlOf(query).includes('FOR NO KEY UPDATE'));
+    expect(yearLockAt).toBeGreaterThanOrEqual(0);
+    expect(rowLockAt).toBeGreaterThanOrEqual(0);
+    expect(tx.$executeRaw.mock.invocationCallOrder[yearLockAt]!).toBeLessThan(tx.$queryRaw.mock.invocationCallOrder[rowLockAt]!);
+  });
+
   it('writes a request that sends no expectation as it always was, and takes no row lock in advance', async () => {
     await service.update(LESSON, { roomId: OTHER_ROOM }, testUser());
     expect(rowLocks()).toHaveLength(0);

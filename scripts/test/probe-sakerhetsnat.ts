@@ -110,6 +110,35 @@ export async function sakerhetsnatChecks(owner: Client, api: PrismaService, chec
       }
     });
 
+    await check('(sn-h) a request with an expectation against Generera, which holds the year and then every row, is never a deadlock: the year\'s share is taken before the row (granskaren g515)', async () => {
+      const outcomes: Record<string, number> = {};
+      for (let round = 0; round < 24; round += 1) {
+        await reset(L1, 1, '09:00', '10:00', R1, T1);
+        const generera = new Client({ connectionString: process.env['PROBE_OWNER_URL'] });
+        await generera.connect();
+        const holding = (async () => {
+          try {
+            await generera.query('BEGIN');
+            await generera.query(`SELECT pg_advisory_xact_lock(hashtext('grundschema-regenerate'), hashtext($1::uuid::text))`, [a.year]);
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            await generera.query(`SELECT "id" FROM "MasterLessons" WHERE "academicYearId" = $1::uuid ORDER BY "id" FOR UPDATE`, [a.year]);
+            await generera.query('COMMIT');
+            return 'generera-ok';
+          } catch (error) {
+            await generera.query('ROLLBACK').catch(() => undefined);
+            return `generera-${(error as { code?: string }).code}`;
+          }
+        })();
+        // The request starts at another point of Generera's turn each round: before it, while it holds the year, and while it holds the rows.
+        await new Promise((resolve) => setTimeout(resolve, (round % 12) * 12));
+        const request = refusalOf(() => masters.update(L1, { roomId: R3, expected: { roomId: R1 } }, a.caller)).then((error) => (error === undefined ? 'ok' : (codeOf(error) ?? 'refused')), (error: unknown) => `error-${(error as { code?: string }).code}`);
+        const [rows, answer] = await Promise.all([holding, request]);
+        await generera.end();
+        outcomes[`${answer} | ${rows}`] = (outcomes[`${answer} | ${rows}`] ?? 0) + 1;
+      }
+      assert.deepEqual(Object.keys(outcomes), ['ok | generera-ok'], `no deadlock between a request that names what it saw and Generera: ${JSON.stringify(outcomes)}`);
+    });
+
     await check('(sn-c) a request that has read the lesson and waits for its row meets the write that held it, and is refused on that', async () => {
       await reset(L1, 1, '09:00', '10:00', R1, T1);
       // A writer held open by hand: the row is locked, as a PATCH in the middle of its transaction would have it.
