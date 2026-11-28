@@ -176,6 +176,8 @@ function roomAt(possible: PossibleWorld, allowed: readonly RoomFact[], lesson: S
   return undefined;
 }
 
+const minutesOfClock = (clock: string): number => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
+
 /** The times of the day at which something in the school begins or ends: the starts a brick can be told apart on. */
 export function pointsOf(data: SwapData, window: { fromMinutes: number; toMinutes: number }): number[] {
   const points = new Set<number>([window.fromMinutes, window.toMinutes]);
@@ -194,6 +196,12 @@ export function pointsOf(data: SwapData, window: { fromMinutes: number; toMinute
   for (const frame of data.frames) {
     points.add(frame.start);
     points.add(frame.end);
+  }
+  // Another school's hold on a room or a teacher (Delade lokaler) shuts a stretch as a closed hour does: the first start after it and the last that ends before it
+  // are starts like any other, and no lesson of this school has to begin or end there.
+  for (const hold of data.holds) {
+    points.add(minutesOfClock(hold.startTime));
+    points.add(minutesOfClock(hold.endTime));
   }
   return [...points].filter((point) => point >= window.fromMinutes && point <= window.toMinutes).sort((a, b) => a - b);
 }

@@ -17,7 +17,13 @@
  *   (fp-f) a brick whose teacher is closed all week is left, "not laid by this" (NO_FREE_START), and the answer never says it cannot be laid;
  *   (fp-g) Direkt: a parked lesson with calendar rows among the bricks, in a published period the school has not answered about, refuses Ta in with
  *          DIRECT_REACH_UNANSWERED and writes nothing (no lesson moved, no version kept); once the school has answered, the same Ta in goes;
- *   (fp-h) the proposal's time over 12, 60 and every brick of the school, with the load beside it.
+ *   (fp-h) the proposal's time over 12, 60 and every brick of the school, with the load beside it;
+ *   (fp-i) two Ta in at once, for two classes of one teacher whose only free hour is one: the second is refused (SCHEDULE_BUSY) while the first is open, and the
+ *          teacher and the room are in one place when both are done (review g517);
+ *   (fp-j) a school with a group that replaces a subject (a språkval): a proposal over a year whose class and group lessons are all bricks answers, and does not
+ *          die on the id of a lesson the fill itself laid;
+ *   (fp-k) parked lessons that stand for two classes are judged with the other class, so that Ta in takes in what the proposal said fitted;
+ *   (fp-l) a teacher with a limit on the post: the proposal records the read of the post (EMPLOYMENT), as Möjliga tider does.
  *
  * A school of its own (slug probe-lagg-det-som-gar), dropped at the start and at the end.
  */
@@ -41,6 +47,8 @@ import { PublicationsService } from '../../src/publication/publications.service'
 import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
 import { TimplanCoverageService } from '../../src/timplan/timplan-coverage.service';
 import { seedHogstadium } from '../fixtures/hogstadium-week';
+
+const EXTRA_SLUGS = [`${'probe-lagg-det-som-gar'}-i`, `${'probe-lagg-det-som-gar'}-j`, `${'probe-lagg-det-som-gar'}-k`, `${'probe-lagg-det-som-gar'}-l`];
 
 const SLUG = 'probe-lagg-det-som-gar';
 const uptime = (): string => execSync('uptime').toString().trim().replace(/^.*load averages?: /, 'load ');
@@ -253,7 +261,106 @@ async function main(): Promise<void> {
       assert.equal(applied.laid.length, 1);
       assert.equal((await q<{ isParked: boolean; isLocked: boolean }>(`SELECT "isParked", "isLocked" FROM "MasterLessons" WHERE id = $1`, [parkedRow!.id]))[0]!.isParked, false);
     });
+
+    // ---- review g517: each in a school of its own, so that nothing the checks above did is in the way. ----
+    const adminOf = (school_: { adminAuth: string; admin: string; school: string }): AuthenticatedUser => ({ authId: school_.adminAuth, role: Role.SCHOOL_ADMIN, userId: school_.admin, schoolId: school_.school, channel: 'WEB', adminProfile: 'FULL' as never, hrRead: false });
+    const takeOutOf = async (year_: string, groups: string[], count: number): Promise<string[]> => {
+      const own = (await q<{ id: string }>(`SELECT id FROM "MasterLessons" WHERE "academicYearId" = $1 AND "studentGroupId" = ANY($2::uuid[]) ORDER BY md5(id::text) LIMIT $3`, [year_, groups, count])).map((row) => row.id);
+      await owner.query(`DELETE FROM "MasterLessons" WHERE id = ANY($1::uuid[])`, [own]);
+      return own;
+    };
+    const clock = (minutes: number): string => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+
+    await check('(fp-i) two Ta in at once, for two classes of one teacher with one free hour: the second is refused while the first is open, and the teacher is in one place', async () => {
+      const seeded_ = await seedHogstadium(owner, { slug: EXTRA_SLUGS[0]!, letters: 'AB', pupils: 8 });
+      const admin_ = adminOf(seeded_);
+      const idh = seeded_.subjectIds.get('IDH')!;
+      // 7A and 9A share their idrott teacher (the fixture gives four teachers six classes); one lesson of each is taken out, and the teacher is free in one hour only.
+      const ownA = seeded_.lessons.filter((l) => l.groupId === seeded_.classes[0]!.id && l.subjectId === idh);
+      const ownB = seeded_.lessons.filter((l) => l.groupId === seeded_.classes[4]!.id && l.subjectId === idh);
+      let la = ownA[0]!;
+      let lb = ownB[0]!;
+      for (const x of ownA) for (const y of ownB) if (ownB.find((z) => z !== y)!.day !== x.day) [la, lb] = [x, y];
+      assert.equal(la.teacherId, lb.teacherId);
+      const hour = (8 + la.start) * 60;
+      const busy = (await q<{ id: string }>(`SELECT id FROM "MasterLessons" WHERE "studentGroupId" = $1 AND "dayOfWeek" = $2 AND extract(hour from "startTime") = $3 AND id <> $4`, [seeded_.classes[4]!.id, la.day, 8 + la.start, lb.id])).map((row) => row.id);
+      await owner.query(`DELETE FROM "MasterLessons" WHERE id = ANY($1::uuid[])`, [[la.id, lb.id, ...busy]]);
+      for (const day of [1, 2, 3, 4, 5]) {
+        for (const [from, to] of day === la.day ? [['07:00', clock(hour)], [clock(hour + 60), '18:00']] : [['07:00', '18:00']]) {
+          await owner.query(`INSERT INTO "AvailabilityConstraints" ("schoolId","resourceType","userId","dayOfWeek","startTime","endTime",type,"updatedAt") VALUES ($1,'TEACHER',$2,$3,$4,$5,'UNAVAILABLE',now())`, [seeded_.school, la.teacherId, day, from, to]);
+        }
+      }
+      const bricks_ = (await tray.trayOfYear(seeded_.year, undefined, admin_)).bricks;
+      const ref = (brick: (typeof bricks_)[number]) => ({ postId: brick.postId, teacherId: brick.teacherId, minutes: brick.minutes, nth: brick.nth });
+      const pa = await fill.propose({ academicYearId: seeded_.year, scope: 'BRICKS', bricks: [ref(bricks_.find((x) => x.studentGroupId === seeded_.classes[0]!.id && x.subjectId === idh)!)] }, admin_);
+      const pb = await fill.propose({ academicYearId: seeded_.year, scope: 'BRICKS', bricks: [ref(bricks_.find((x) => x.studentGroupId === seeded_.classes[4]!.id && x.subjectId === idh)!)] }, admin_);
+      assert.equal(pa.placed.length + pb.placed.length, 2, 'both proposals have a place: the hour');
+      assert.equal(pa.basis, pb.basis, 'made on one basis');
+      // The first Ta in is held open after its write; the second is asked for meanwhile.
+      let reached!: () => void;
+      let release!: () => void;
+      const reachedFirst = new Promise<void>((resolve) => (reached = resolve));
+      const releaseFirst = new Promise<void>((resolve) => (release = resolve));
+      const held = { withRls: (user: AuthenticatedUser, work: (tx: never) => Promise<unknown>) => (api as never as { withRls: (user: AuthenticatedUser, work: (tx: never) => Promise<unknown>, options: unknown) => Promise<unknown> }).withRls(user, async (tx) => { try { return await work(tx); } finally { reached(); await releaseFirst; } }, { timeoutMs: 60_000 }) } as unknown as PrismaService;
+      const first = new BoardFillService(held, tray, masters, possible, versions);
+      const itemsOf_ = (proposal_: FillProposal) => proposal_.placed.map((entry) => ({ key: entry.key, dayOfWeek: entry.dayOfWeek, startTime: clock(entry.startMinutes), roomId: entry.roomId }));
+      const firstDone = first.apply({ academicYearId: seeded_.year, basis: pa.basis, items: itemsOf_(pa) }, admin_);
+      await reachedFirst;
+      const second = await refusal(fill.apply({ academicYearId: seeded_.year, basis: pb.basis, items: itemsOf_(pb) }, admin_));
+      release();
+      await firstDone;
+      assert.equal(second.status, 409);
+      assert.equal(second.code, 'SCHEDULE_BUSY');
+      const there = await q<{ n: string }>(`SELECT count(*) AS n FROM "MasterLessons" WHERE "academicYearId" = $1 AND "teacherId" = $2 AND "dayOfWeek" = $3 AND extract(hour from "startTime") = $4`, [seeded_.year, la.teacherId, la.day, 8 + la.start]);
+      assert.equal(Number(there[0]!.n), 1, 'the teacher has one lesson at the one hour');
+      // And once the first has committed, the second one's proposal is stale and nothing is written.
+      const stale_ = await refusal(fill.apply({ academicYearId: seeded_.year, basis: pb.basis, items: itemsOf_(pb) }, admin_));
+      assert.deepEqual([stale_.status, stale_.code], [409, 'BOARD_FILL_STALE']);
+      assert.equal((await q<{ n: string }>(`SELECT count(*) AS n FROM "ScheduleVersions" WHERE "academicYearId" = $1`, [seeded_.year]))[0]!.n, '1', 'one version, the first one\'s: the refused ones left none');
+    });
+
+    await check('(fp-j) a school with a group that replaces a subject: the proposal answers, and the fill\'s own lessons never reach the database as ids', async () => {
+      const seeded_ = await seedHogstadium(owner, { slug: EXTRA_SLUGS[1]!, letters: 'AB', pupils: 8 });
+      const admin_ = adminOf(seeded_);
+      const group = seeded_.blockGroups.find((entry) => entry.year === 0 && entry.kind === 'LANG')!;
+      await owner.query(`UPDATE "StudentGroups" SET "replacesSubjectId" = $2 WHERE id = $1`, [group.groupId, seeded_.subjectIds.get('EN')!]);
+      await owner.query(`UPDATE "TeachingRequirements" SET "blockId" = NULL WHERE "studentGroupId" = $1`, [group.groupId]);
+      const sevens = seeded_.classes.filter((entry) => entry.grade === 7).map((entry) => entry.id);
+      await owner.query(`DELETE FROM "MasterLessons" WHERE "academicYearId" = $1 AND "studentGroupId" = ANY($2::uuid[])`, [seeded_.year, [...sevens, group.groupId]]);
+      const proposal_ = await fill.propose({ academicYearId: seeded_.year, scope: 'GRADE', gradeLevel: 7 }, admin_);
+      assert.ok(proposal_.placed.length >= proposal_.asked * 0.8, `most of the year is laid: ${proposal_.placed.length} of ${proposal_.asked}`);
+      assert.equal(proposal_.placed.length + proposal_.left.length, proposal_.asked);
+    });
+
+    await check('(fp-k) parked lessons that stand for two classes: the proposal asks the judge about the other class, and Ta in takes in what it said fitted', async () => {
+      const seeded_ = await seedHogstadium(owner, { slug: EXTRA_SLUGS[2]!, letters: 'AB', pupils: 8 });
+      const admin_ = adminOf(seeded_);
+      const own = (await q<{ id: string }>(`SELECT id FROM "MasterLessons" WHERE "academicYearId" = $1 AND "studentGroupId" = $2 ORDER BY id LIMIT 10`, [seeded_.year, seeded_.classes[0]!.id])).map((row) => row.id);
+      for (const id of own) await owner.query(`INSERT INTO "MasterLessonGroups" ("schoolId","masterLessonId","studentGroupId") VALUES ($1,$2,$3)`, [seeded_.school, id, seeded_.classes[1]!.id]);
+      await owner.query(`UPDATE "MasterLessons" SET "isParked" = true WHERE id = ANY($1::uuid[])`, [own]);
+      const bricks_ = (await tray.trayOfYear(seeded_.year, undefined, admin_)).bricks.filter((brick) => brick.lessonId !== null && own.includes(brick.lessonId));
+      assert.equal(bricks_.length, own.length, 'the parked lessons are bricks');
+      const proposal_ = await fill.propose({ academicYearId: seeded_.year, scope: 'BRICKS', bricks: bricks_.map((brick) => ({ postId: brick.postId, teacherId: brick.teacherId, minutes: brick.minutes, nth: brick.nth })) }, admin_);
+      assert.ok(proposal_.placed.length > 0);
+      const applied_ = await fill.apply({ academicYearId: seeded_.year, basis: proposal_.basis, items: proposal_.placed.map((entry) => ({ key: entry.key, dayOfWeek: entry.dayOfWeek, startTime: clock(entry.startMinutes), roomId: entry.roomId })) }, admin_);
+      assert.equal(applied_.laid.length, proposal_.placed.length);
+    });
+
+    await check('(fp-l) a teacher with a day limit on the post: the proposal records the read of the post, as Möjliga tider does', async () => {
+      const seeded_ = await seedHogstadium(owner, { slug: EXTRA_SLUGS[3]!, letters: 'AB', pupils: 8 });
+      const admin_ = adminOf(seeded_);
+      const classes_ = seeded_.classes.map((entry) => entry.id);
+      const gone_ = await q<{ id: string; teacherId: string }>(`SELECT id, "teacherId" FROM "MasterLessons" WHERE "academicYearId" = $1 AND "studentGroupId" = ANY($2::uuid[]) AND "teacherId" IS NOT NULL ORDER BY md5(id::text) LIMIT 3`, [seeded_.year, classes_]);
+      await owner.query(`DELETE FROM "MasterLessons" WHERE id = ANY($1::uuid[])`, [gone_.map((row) => row.id)]);
+      await owner.query(`UPDATE "TeacherEmployments" SET "maxTeachingDaysPerWeek" = 3 WHERE "academicYearId" = $1 AND "userId" = ANY($2::uuid[])`, [seeded_.year, gone_.map((row) => row.teacherId)]);
+      const reads = async () => Number((await q<{ n: string }>(`SELECT count(*) AS n FROM "PersonalDataAccess" WHERE "schoolId" = $1 AND kind = 'EMPLOYMENT'`, [seeded_.school]))[0]!.n);
+      const before_ = await reads();
+      const proposal_ = await fill.propose({ academicYearId: seeded_.year, scope: 'SCHOOL' }, admin_);
+      assert.ok(proposal_.placed.length > 0);
+      assert.ok((await reads()) > before_, 'the proposal recorded an EMPLOYMENT read');
+    });
   } finally {
+    await owner.query(`DELETE FROM "Schools" WHERE slug = ANY($1::text[])`, [EXTRA_SLUGS]).catch((error) => console.error('sweep:', error));
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [SLUG]).catch((error) => console.error('sweep:', error));
     await api.$disconnect();
     await owner.end();

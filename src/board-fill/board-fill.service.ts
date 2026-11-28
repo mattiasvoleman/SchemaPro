@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { LessonRecurrence, PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { judgeLessons, type JudgeItem } from '../calendar/lesson-judge';
@@ -7,17 +7,18 @@ import { MasterLessonsService } from '../calendar/master-lessons.service';
 import { PossibleTimesService } from '../calendar/possible-times.service';
 import { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import { requireSchoolId } from '../common/utils/request-context';
+import { recordRead } from '../access-log/access-log';
 import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
 import { PrismaService } from '../database/prisma.service';
 import { gradeSpanOf } from '../optimization/room-eligibility';
-import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
+import { lockYearForRegeneration } from '../optimization/regeneration-lock';
 import { BoardTrayService, type BoardTrayResponse, type TrayBrick } from '../board-tray/board-tray.service';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { lockPostForShares } from '../resources/requirement-shares';
 import { SwapContext } from '../swaps/swap-context';
 import { readSwapData, type SwapData } from '../swaps/swap-snapshot';
 import type { SoftCost, SwapLesson } from '../swaps/swap-types';
-import type { FillApplyDto, FillBrickRefDto, FillProposeDto } from './dto/fill.dto';
+import { FILL_MAX_BRICKS, type FillApplyDto, type FillBrickRefDto, type FillProposeDto } from './dto/fill.dto';
 import { FillReads } from './fill-reads';
 import { planFill, windowOfFrames, type FillBrick, type FillCandidate, type FillLeftReason, type FillPlaced } from './fill-plan';
 
@@ -45,8 +46,15 @@ import { planFill, windowOfFrames, type FillBrick, type FillCandidate, type Fill
 export const BOARD_FILL_STALE = 'BOARD_FILL_STALE';
 /** What the proposal is given to be made: after it the bricks not yet begun are left with the reason TIME (decision 8: 20 s). */
 export const FILL_BUDGET_MS = 20_000;
-/** The prefix of the id a brick has as a lesson that stands nowhere. */
-const FILL_ID = 'fill:';
+/**
+ * The id a brick has as a lesson that stands nowhere: a UUID in form and in no table. The judge names a lesson its clash rule meets by reading that lesson's row
+ * (namesOf), and the fill's own lessons stand in its reads as they are laid, so a prefixed key such as `fill:<post>|<teacher>|60|1` reached Postgres as a uuid
+ * and the whole proposal answered 500 (P2007) whenever the judge met a lesson the prune had not: a school with a group that replaces a subject.
+ */
+export function fillIdOf(key: string): string {
+  const hex = createHash('sha256').update(`fill|${key}`).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
 
 export type FillLeftViewReason = FillLeftReason | 'BLOCK' | 'NO_TEACHER';
 
@@ -103,6 +111,9 @@ export interface FillApplyResult {
   laid: Array<{ key: string; lessonId: string; created: boolean; noRoom: boolean }>;
 }
 
+/** The problem `code` of a question about more bricks than Ta in can take in at once (FILL_MAX_BRICKS): the page narrows it to a year or a class. */
+export const BOARD_FILL_TOO_MANY = 'BOARD_FILL_TOO_MANY';
+
 const dateOf = (value: string | null): Date | null => (value ? new Date(`${value}T00:00:00.000Z`) : null);
 const keyOf = (brick: Pick<TrayBrick, 'postId' | 'teacherId' | 'minutes' | 'nth'>): string => `${brick.postId}|${brick.teacherId ?? '-'}|${brick.minutes}|${brick.nth}`;
 
@@ -111,9 +122,9 @@ function viewOf(brick: TrayBrick): FillBrickView {
 }
 
 /** A brick as a lesson that stands nowhere, for the world the planner reads. */
-function lessonOfBrick(brick: TrayBrick): SwapLesson {
+export function lessonOfBrick(brick: TrayBrick): SwapLesson {
   return {
-    id: `${FILL_ID}${keyOf(brick)}`,
+    id: fillIdOf(keyOf(brick)),
     subjectId: brick.subjectId,
     subjectName: '',
     studentGroupId: brick.studentGroupId,
@@ -131,6 +142,33 @@ function lessonOfBrick(brick: TrayBrick): SwapLesson {
     isGenerated: false,
     extraGroupIds: [],
     studentIds: [],
+  };
+}
+
+/** What a lesson on the tray has that its post does not say: the lesson's own co-teacher, weeks, other classes and named pupils. */
+interface OwnOfLesson {
+  id: string;
+  coTeacherId: string | null;
+  recurrence: string;
+  startDate: Date | null;
+  endDate: Date | null;
+  extraGroups: Array<{ studentGroupId: string }>;
+  participants: Array<{ studentId: string }>;
+}
+
+const dayOf = (value: Date | null): string | null => (value ? value.toISOString().slice(0, 10) : null);
+
+/** The brick as the lesson it is when it is one: updateIn keeps these of the lesson, so the proposal judges them too. */
+export function withOwn(lesson: SwapLesson, own: OwnOfLesson | undefined): SwapLesson {
+  if (!own) return lesson;
+  return {
+    ...lesson,
+    coTeacherId: own.coTeacherId,
+    recurrence: own.recurrence as LessonRecurrence,
+    startDate: dayOf(own.startDate),
+    endDate: dayOf(own.endDate),
+    extraGroupIds: own.extraGroups.map((entry) => entry.studentGroupId).filter((id) => id !== lesson.studentGroupId).sort(),
+    studentIds: own.participants.map((entry) => entry.studentId).sort(),
   };
 }
 
@@ -165,6 +203,16 @@ export class BoardFillService {
         const trayOfYear = await this.tray.trayIn(tx, dto.academicYearId, undefined);
         const data = await readSwapData(tx, user, dto.academicYearId);
         const asked = this.bricksAsked(dto, trayOfYear, data);
+        // Ta in takes in at most FILL_MAX_BRICKS lessons (its DTO and its transaction are sized to it), so a proposal longer than that could never be taken in: a school
+        // that fills a year from nothing would be given 700 lessons and refused 400 "items must contain no more than 600 elements" when it said yes.
+        const placeable = asked.filter((brick) => brick.cannotPlace === null).length;
+        if (placeable > FILL_MAX_BRICKS) {
+          throw new BadRequestException({
+            message: `Det är ${placeable} brickor att lägga, och ett förslag rymmer högst ${FILL_MAX_BRICKS}. Fyll en årskurs eller en klass i taget.`,
+            code: BOARD_FILL_TOO_MANY,
+            params: { asked: placeable, max: FILL_MAX_BRICKS },
+          });
+        }
 
         const bricks = asked.filter((brick) => brick.cannotPlace === null);
         const left: FillLeftView[] = asked.filter((brick) => brick.cannotPlace !== null).map((brick) => ({ ...viewOf(brick), reason: brick.cannotPlace as FillLeftViewReason }));
@@ -173,7 +221,10 @@ export class BoardFillService {
 
         if (bricks.length === 0) return this.answer(dto.academicYearId, basis, asked.length, [], left, false, { elapsedMs: 0, worldMs: 0, probeMs: 0, costMs: 0, judgeMs: 0, worlds: 0 });
 
-        const fillBricks: FillBrick[] = bricks.map((brick) => ({ key: keyOf(brick), lesson: lessonOfBrick(brick) }));
+        // A brick that is a lesson on the tray is that lesson, and the write that takes it in (updateIn) judges it with what it has: its other classes, the pupils
+        // named on it and the weeks it runs. The proposal must ask the judge the same, or Ta in refuses (409) what the proposal said fitted.
+        const own = await this.ownOfLessons(tx, bricks);
+        const fillBricks: FillBrick[] = bricks.map((brick) => ({ key: keyOf(brick), lesson: withOwn(lessonOfBrick(brick), own.get(brick.lessonId ?? '')) }));
         const facts = await this.possible.worldFactsOf(tx, data);
         const initial = new SwapContext(data, { unplaced: fillBricks.map((brick) => brick.lesson), ...facts });
         const possible = await this.possible.worldOf(tx, data, initial, fillBricks.map((brick) => brick.lesson));
@@ -208,10 +259,26 @@ export class BoardFillService {
           costs: entry.costs,
         }));
         for (const entry of plan.left) left.push({ ...viewOf(byKey.get(entry.brick.key)!), reason: entry.reason });
+        // A teacher's day or stretch counted against a limit of their post is a read of that post (HR data): the cost every start was ranked by read it, for each brick
+        // that was costed (laid, or tried and refused by the judge). Möjliga tider, Vad får plats and the swap search record the same read (EMPLOYMENT).
+        const costed = [...plan.placed.map((entry) => entry.brick), ...plan.left.filter((entry) => entry.reason === 'JUDGE').map((entry) => entry.brick)];
+        const limited = costed.flatMap((brick) => [brick.lesson.teacherId, brick.lesson.coTeacherId]).filter((id): id is string => id !== null && data.postLimited.has(id));
+        await recordRead(tx, 'EMPLOYMENT', limited, user.channel);
         return this.answer(dto.academicYearId, basis, asked.length, placed, left, plan.left.some((entry) => entry.reason === 'TIME'), plan.stats);
       },
       { timeoutMs: this.budgetMs + 30_000 },
     );
+  }
+
+  /** The lessons on the tray that the bricks asked for are, with what each has of its own. One read, and none when no brick is a lesson. */
+  private async ownOfLessons(tx: PrismaClient, bricks: readonly TrayBrick[]): Promise<Map<string, OwnOfLesson>> {
+    const ids = bricks.flatMap((brick) => (brick.lessonId === null ? [] : [brick.lessonId]));
+    if (ids.length === 0) return new Map();
+    const rows = await tx.masterLesson.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, coTeacherId: true, recurrence: true, startDate: true, endDate: true, extraGroups: { select: { studentGroupId: true } }, participants: { select: { studentId: true } } },
+    });
+    return new Map(rows.map((row) => [row.id, row]));
   }
 
   /** The judge's item for a candidate: a lesson that does not exist yet, standing nowhere, with no exemption asked. */
@@ -327,7 +394,15 @@ export class BoardFillService {
       user,
       async (tx) => {
         await enterGrundschemaWrite(tx, requireSchoolId(user));
-        await lockYearForGrundschemaEdit(tx, dto.academicYearId);
+        // The year is the school's before its lock is taken (the row is read under row-level security, so another school's year is not found): an exclusive lock on a
+        // year that is nobody's here would queue the school that owns it behind a stranger's request, and every hand edit of that school behind the queue.
+        if (!(await tx.academicYear.findUnique({ where: { id: dto.academicYearId }, select: { id: true } }))) throw new NotFoundException('Läsåret finns inte.');
+        // The year's lock EXCLUSIVE, as the three other writers of many lessons take it (Generera's persist, an apply of a candidate, a restore): a hand edit takes it
+        // shared and runs beside others, which is right for one lesson and wrong for a Ta in. Two proposals made on the same basis (two administrators filling two
+        // classes of one teacher) both pass the basis and the judge when each reads the grundschema without the other's uncommitted lessons, and both commit: a
+        // teacher and a room in two places at once, locked. The second Ta in now queues for up to 5 s (409 SCHEDULE_BUSY) and, when it gets the lock, reads the
+        // grundschema after the first, so its basis is stale (409 BOARD_FILL_STALE) and nothing is written.
+        await lockYearForRegeneration(tx, dto.academicYearId);
         // The posts' locks in id order, before the tray is read under them: two administrators that lay bricks of one post queue here.
         const postIds = [...new Set(keys.map((key) => key.split('|')[0]!))].sort();
         for (const postId of postIds) await lockPostForShares(tx, postId);
