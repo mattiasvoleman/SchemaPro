@@ -152,6 +152,16 @@ export function VersionsDialog({
     setRenamingId(null);
     setConfirmingId(null);
   }
+  // A version that is deleted (here or in another tab) is no longer a comparison: its detail stays in the query cache, and the dialog would go on saying
+  // "changes since" a version that is gone, or beside a list that already shows the grid.
+  if (versions) {
+    if (comparingId !== null && !versions.some((version) => version.id === comparingId)) {
+      setComparingId(null);
+      setAgainstId("live");
+    } else if (againstId !== "live" && !versions.some((version) => version.id === againstId)) {
+      setAgainstId("live");
+    }
+  }
   const { data: comparing } = useScheduleVersionDetail(comparingId);
   const { data: against } = useScheduleVersionDetail(againstId === "live" ? null : againstId);
   const { data: confirming } = useScheduleVersionDetail(confirmingId);

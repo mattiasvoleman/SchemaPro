@@ -136,6 +136,25 @@ describe("two versions against each other", () => {
       DETAILS["v-b"] = { id: "v-b", name: "Efter lovet", lessons: [lesson({ dayOfWeek: 3 }), lesson({ subjectId: "no", studentGroupId: "g-8b", dayOfWeek: 2 })] };
     }
   });
+
+  it("drops a comparison whose version is deleted: the other one is no longer the partner, and the one being read is no longer read", async () => {
+    const kept = [...VERSIONS];
+    const { rerender } = render(wrap(<VersionsDialog {...props([])} />));
+    try {
+      await userEvent.click(screen.getByRole("button", { name: "Jämför ”Före lovet” med nuvarande" }));
+      await userEvent.selectOptions(screen.getByLabelText("Jämför med"), "v-b");
+      expect(screen.getByRole("region", { name: "Skillnader mellan ”Före lovet” och ”Efter lovet”" })).toBeTruthy();
+      VERSIONS.splice(1, 1);
+      rerender(wrap(<VersionsDialog {...props([])} />));
+      expect((screen.getByLabelText("Jämför med") as HTMLSelectElement).value).toBe("live");
+      expect(screen.getByRole("region", { name: "Ändringar sedan ”Före lovet”" })).toBeTruthy();
+      VERSIONS.splice(0, 1);
+      rerender(wrap(<VersionsDialog {...props([])} />));
+      expect(screen.queryByRole("region")).toBeNull();
+    } finally {
+      VERSIONS.splice(0, VERSIONS.length, ...kept);
+    }
+  });
 });
 
 describe("renaming a version", () => {
