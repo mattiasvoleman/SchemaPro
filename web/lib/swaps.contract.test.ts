@@ -132,7 +132,8 @@ describe("the bodies the web sends are the gateway's DTOs", () => {
   });
 
   it("the apply takes what applyBody writes, and nothing the web leaves out that it needs", () => {
-    expect(dtoFields("ApplySwapDto")).toEqual(["alsoPicked", "forBrick", "lessonId", "moves", "propagate", "versionName"]);
+    // `lay` (E5a, g514 L-7) is the brick a swap that makes room lays in the same transaction: the web does not send it yet, so it is not in the loop below.
+    expect(dtoFields("ApplySwapDto")).toEqual(["alsoPicked", "forBrick", "lay", "lessonId", "moves", "propagate", "versionName"]);
     const body = /export const applyBody = \([\s\S]*?\n\}\);\n|export const applyBody = \([\s\S]*?\n\);\n/.exec(WEB)?.[0] ?? "";
     for (const sent of ["lessonId", "moves", "versionName", "alsoPicked", "forBrick"]) expect(body, sent).toContain(sent);
   });

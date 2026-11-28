@@ -135,50 +135,57 @@ export class BoardTrayService {
    * hand edit's write would have to ask the question itself.
    */
   async lay(dto: LayBrickDto, user: AuthenticatedUser): Promise<LayBrickResult> {
-    return this.prisma.withRls(user, async (tx) => {
-      const year = await tx.academicYear.findUnique({ where: { id: dto.academicYearId }, select: { id: true } });
-      if (!year) throw new NotFoundException('Läsåret finns inte.');
-      const post = await tx.teachingRequirement.findUnique({ where: { id: dto.postId }, select: { academicYearId: true } });
-      if (!post || post.academicYearId !== dto.academicYearId) throw new NotFoundException('Timplansposten finns inte i läsåret.');
-      await enterGrundschemaWrite(tx, requireSchoolId(user));
-      await lockYearForGrundschemaEdit(tx, dto.academicYearId);
-      await lockPostForShares(tx, dto.postId);
+    return this.prisma.withRls(user, (tx) => this.layIn(tx, dto, user));
+  }
 
-      const bricks = (await this.trayIn(tx, dto.academicYearId, undefined)).bricks.filter(
-        (brick) => brick.postId === dto.postId && brick.minutes === dto.minutes && brick.teacherId === (dto.teacherId ?? null),
-      );
-      const brick = bricks[0];
-      if (!brick || brick.partKey !== dto.partKey) throw staleConflict(dto.postId);
-      // Every brick of the part is a lesson on the tray (a brick is that lesson, namely itself): a request that names none of them asks for a new
-      // lesson beside the parked one, which would stay on the tray while the post counts the new one. The picture the request read is not the part's
-      // way of being laid now; it names the lesson (`lessonId` of the brick) or it is stale.
-      if (dto.lessonId === undefined && bricks.every((entry) => entry.lessonId !== null)) throw staleConflict(dto.postId);
-      if (brick.cannotPlace !== null) {
-        throw new ConflictException({
-          message:
-            brick.cannotPlace === 'BLOCK'
-              ? 'Lektionen ligger i ett parallellt block och läggs med blocket.'
-              : 'Lektionen har ingen lärare och kan inte läggas förrän posten har en.',
-          code: BOARD_BRICK_CANNOT_BE_LAID,
-          params: { requirementId: dto.postId, reason: brick.cannotPlace },
-        });
-      }
-      return this.writeBrick(
-        tx,
-        brick,
-        {
-          academicYearId: dto.academicYearId,
-          postId: dto.postId,
-          dayOfWeek: dto.dayOfWeek,
-          startTime: dto.startTime,
-          roomId: dto.roomId ?? null,
-          lessonId: dto.lessonId,
-          exempt: dto.exempt,
-          ownLessonIds: new Set(bricks.flatMap((entry) => (entry.lessonId === null ? [] : [entry.lessonId]))),
-        },
-        user,
-      );
-    });
+  /**
+   * `lay` inside a transaction the caller holds, with every check and lock `lay` makes and nothing else: the swap that makes room for a brick (E5a,
+   * `forBrick`) writes its moves and lays the brick in ONE transaction, so that a lay refused for a stale part, a room that does not fit or Direkt's
+   * question takes the moves back with it and nobody is left with a timetable moved for a brick that was not laid (g514 L-7).
+   */
+  async layIn(tx: PrismaClient, dto: LayBrickDto, user: AuthenticatedUser): Promise<LayBrickResult> {
+    const year = await tx.academicYear.findUnique({ where: { id: dto.academicYearId }, select: { id: true } });
+    if (!year) throw new NotFoundException('Läsåret finns inte.');
+    const post = await tx.teachingRequirement.findUnique({ where: { id: dto.postId }, select: { academicYearId: true } });
+    if (!post || post.academicYearId !== dto.academicYearId) throw new NotFoundException('Timplansposten finns inte i läsåret.');
+    await enterGrundschemaWrite(tx, requireSchoolId(user));
+    await lockYearForGrundschemaEdit(tx, dto.academicYearId);
+    await lockPostForShares(tx, dto.postId);
+
+    const bricks = (await this.trayIn(tx, dto.academicYearId, undefined)).bricks.filter(
+      (brick) => brick.postId === dto.postId && brick.minutes === dto.minutes && brick.teacherId === (dto.teacherId ?? null),
+    );
+    const brick = bricks[0];
+    if (!brick || brick.partKey !== dto.partKey) throw staleConflict(dto.postId);
+    // Every brick of the part is a lesson on the tray (a brick is that lesson, namely itself): a request that names none of them asks for a new
+    // lesson beside the parked one, which would stay on the tray while the post counts the new one. The picture the request read is not the part's
+    // way of being laid now; it names the lesson (`lessonId` of the brick) or it is stale.
+    if (dto.lessonId === undefined && bricks.every((entry) => entry.lessonId !== null)) throw staleConflict(dto.postId);
+    if (brick.cannotPlace !== null) {
+      throw new ConflictException({
+        message:
+          brick.cannotPlace === 'BLOCK'
+            ? 'Lektionen ligger i ett parallellt block och läggs med blocket.'
+            : 'Lektionen har ingen lärare och kan inte läggas förrän posten har en.',
+        code: BOARD_BRICK_CANNOT_BE_LAID,
+        params: { requirementId: dto.postId, reason: brick.cannotPlace },
+      });
+    }
+    return this.writeBrick(
+      tx,
+      brick,
+      {
+        academicYearId: dto.academicYearId,
+        postId: dto.postId,
+        dayOfWeek: dto.dayOfWeek,
+        startTime: dto.startTime,
+        roomId: dto.roomId ?? null,
+        lessonId: dto.lessonId,
+        exempt: dto.exempt,
+        ownLessonIds: new Set(bricks.flatMap((entry) => (entry.lessonId === null ? [] : [entry.lessonId]))),
+      },
+      user,
+    );
   }
 
   /**

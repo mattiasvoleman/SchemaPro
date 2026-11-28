@@ -449,10 +449,22 @@ both are applied by `POST /api/v1/swaps/apply` as above.
 - **The staff room is told after the commit** (g465 L-3). `apply` announces the move through `PrismaService.onCommit`, with the ids of the
   lessons that moved, as `MasterLessonsService` announces a hand edit: told inside the transaction, the page read the year before the commit and
   found the lessons as they were, and a swap rolled back after the announcement had been announced all the same.
-- **Not in the apply: laying a brick.** A swap that makes room for a brick is applied as the moves that vacate the time (`forBrick`: one move
-  is a proposal, and no moved lesson may be locked), and the brick is laid by `POST /api/v1/board-tray/lay` (a lesson on the tray by moving it
-  back). They are two requests, which the page runs one after the other, taking the moves back with `undo` if the lay is refused. One
-  transaction needs a `layIn(tx, …)` in the tray's service, whose partKey check lives in a private read there.
+- **Laying a brick, in the same transaction (g514 L-7).** A swap that makes room for a brick is applied as the moves that vacate the time
+  (`forBrick`: no moved lesson may be locked) and, with `lay` (the body of `POST /api/v1/board-tray/lay`: the part, its `partKey`, where and in which
+  room), the brick is laid IN THE SAME TRANSACTION, after the moves, through `BoardTrayService.layIn(tx, …)`: every check and lock of Att lägga (the
+  part's picture, Direkt's question, the room the generator would not take, the hand edit's judge, which reads the room the moves made). A lay that is
+  refused takes the moves back with it, so nobody is left with a timetable moved for a brick that was not laid; `apply` then answers `laid` (the lesson
+  made, or the parked lesson moved back). The post is locked before the lessons' rows, the order Att lägga takes them in. Without `lay`, `forBrick`
+  writes the moves alone, as it did, and the page lays the brick itself. The undo of a swap with a lay is two steps: take the lesson laid back
+  by the tray's own way, then send `undo`.
+- **One lesson's move is a proposal (g514 L-4).** A free time is answered by Gör plats with the single move, and `apply` takes it: the lesson is
+  moved, locked and logged as any hand move is, after a safety version, and the undo is the move reversed. Not for a brick only.
+- **Two applies at once (g514 L-6).** Two requests that are each valid alone (two lessons of one class moved to one place at once) are not
+  serialised by the shared year lock, as two hand edits are not (measured on real Postgres, two applies and two PATCHes started together each double-booked
+  the class and the teacher every time). Not changed here: the window is the part of one transaction between the clash read and the COMMIT, tens of
+  milliseconds and not a few (about 15 ms for a school of 24 lessons, 40 ms for 600, 80 ms for 600 with a `lay`, the year's safety version and the tray's
+  read being in it) and the same as a hand edit's, the year's exclusive lock (as Ta in takes it, g517 H-1) would make every hand edit wait for or refuse a swap with `SCHEDULE_BUSY`, and the
+  rule that would close it for every writer is the one the migration `a_room_is_booked_once` names for rooms.
 
 ## Lesson participants (multi-class & individual students)
 

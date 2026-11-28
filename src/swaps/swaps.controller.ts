@@ -61,8 +61,11 @@ export class SwapsController {
    * double booking. Sent with `undo` from a previous answer, it takes one back.
    * `alsoPicked` names the other lesson of a Byt plats (a person's own choice,
    * which may be locked); `forBrick` makes room for a lesson that stands
-   * nowhere, where one move is a proposal and none of the moved lessons may be
-   * locked. The staff room is told after the commit, with the lessons that moved.
+   * nowhere, where none of the moved lessons may be locked, and `lay` (only
+   * with `forBrick`) lays that brick in the same transaction, after the moves:
+   * a lay that is refused takes the moves with it. One lesson's move is a
+   * proposal for every request (a free time needs no one else to go). The staff
+   * room is told after the commit, with the lessons that moved.
    */
   @Post('apply')
   @HttpCode(200)

@@ -22,6 +22,8 @@ import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requirementName } from '../optimization/optimization-proxy.service';
 import { lockYearsOfLessonsForGrundschemaEdit } from '../optimization/regeneration-lock';
+import { lockPostForShares } from '../resources/requirement-shares';
+import { BoardTrayService, type LayBrickResult } from '../board-tray/board-tray.service';
 import { enterGrundschemaWrite, publishModeOf } from '../publication/publish-mode';
 import { requireDirectReachAnswered } from '../publication/direct-reach';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -173,6 +175,8 @@ export interface SwapApplyResult {
   versionId: string;
   /** The moves that take it back: send them to the same route. */
   undo: SwapMove[];
+  /** `lay`: the lesson the brick became (or the parked lesson that was moved back), written in the same transaction as the moves. */
+  laid?: LayBrickResult;
   /**
    * Undantag med flit: a moved lesson that stood against a rule of the board on purpose lost it (MasterLessons_exemption_ends: an exemption is for the
    * time it was given for). `rules` are the names, comma-joined, as on a PATCH's EXEMPTION_ENDED. Empty when no moved lesson had one.
@@ -222,6 +226,11 @@ export class SwapsService {
    * holds nothing but the two services it is given, and CalendarModule need not export it for this.
    */
   private readonly possible: PossibleTimesService;
+  /**
+   * Att lägga's write (E4), for a swap that makes room for a brick and lays it in the same transaction (`lay` of the apply, g514 L-7). Made here for the
+   * same reason as `possible`: it holds nothing but the two services it is given, and the constructor's callers (probes and benches among them) need not change.
+   */
+  private readonly tray: BoardTrayService;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -231,6 +240,7 @@ export class SwapsService {
     private readonly notifications: NotificationsService,
   ) {
     this.possible = new PossibleTimesService(prisma, masterLessons);
+    this.tray = new BoardTrayService(prisma, masterLessons);
   }
 
   // ---------------------------------------------------------------------------
@@ -769,8 +779,9 @@ export class SwapsService {
   // ---------------------------------------------------------------------------
 
   async apply(dto: ApplySwapDto, user: AuthenticatedUser): Promise<SwapApplyResult> {
-    // One move is a proposal only when it makes room for a lesson that stands nowhere (forBrick); a swap moves two, said before anything is read.
-    if (dto.forBrick !== true && dto.moves.length < 2) throw new BadRequestException('moves: a swap moves at least two lessons.');
+    // A brick is laid by a swap that makes room for one, said before anything is read.
+    if (dto.lay !== undefined && dto.forBrick !== true) throw new BadRequestException('lay: a brick is laid only by a swap that makes room for one (forBrick).');
+    if (dto.forBrick !== true && dto.lessonId === undefined) throw new BadRequestException('lessonId: name the lesson the schemaläggare picked.');
     try {
       return await this.applyIn(dto, user);
     } catch (error) {
@@ -786,13 +797,16 @@ export class SwapsService {
       if (ids.length !== dto.moves.length) throw new BadRequestException('moves: a lesson is named twice.');
       // The lessons the schemaläggare chose themselves, and so may be locked: the picked one and, for a swap of two marked, the other. With
       // forBrick the moves make room for a lesson that stands nowhere and no lesson of them was chosen: every one is an automat's to move.
-      const chosen = dto.forBrick === true ? [] : [dto.lessonId, ...(dto.alsoPicked ?? [])];
+      const chosen = dto.forBrick === true ? [] : [dto.lessonId!, ...(dto.alsoPicked ?? [])];
       if (chosen.some((id) => !ids.includes(id))) throw new BadRequestException('lessonId: the picked lesson is not among the moves.');
 
       // The edit's share of the year's regeneration lock, then the rows held to
       // COMMIT in id order, before anything is read: the slots compared below
       // are the slots written over.
       await lockYearsOfLessonsForGrundschemaEdit(tx, ids);
+      // The brick's post before the lessons' rows: the order Att lägga takes them in (the year, the post, then the lessons it writes), so that a lay
+      // beside a swap cannot wait for each other.
+      if (dto.lay !== undefined) await lockPostForShares(tx, dto.lay.postId);
       await tx.$queryRaw`
         SELECT 1 FROM "MasterLessons" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR NO KEY UPDATE`;
       const rows = await tx.masterLesson.findMany({
@@ -834,6 +848,7 @@ export class SwapsService {
       }
       const leader = rows[0]!;
       if (rows.some((row) => row.academicYearId !== leader.academicYearId)) throw swapStale();
+      if (dto.lay !== undefined && dto.lay.academicYearId !== leader.academicYearId) throw new BadRequestException('lay: not the läsår of the moves.');
 
       // The minutes are the parsed clocks' — the very values written below — so that
       // the clash rule judges the time that is stored.
@@ -851,7 +866,7 @@ export class SwapsService {
         }
         if (move.to.dayOfWeek < 1 || move.to.dayOfWeek > WEEKDAY_MAX) throw new BadRequestException('moves: no such weekday.');
         // The school week is Monday to Friday: the judge refuses a Saturday (SCHOOL_DAY) on every other road, and a lesson written there is locked by
-        // this very write and sent to the engine as a fixed lesson on a day it does not schedule. Since `forBrick` one move is enough to ask for it (g514).
+        // this very write and sent to the engine as a fixed lesson on a day it does not schedule. One move is enough to ask for it (g514 L-4).
         if (move.to.dayOfWeek > SCHOOL_WEEK_END) throw new BadRequestException('moves: not a school day (Monday to Friday).');
         // Where the page saw it, or the proposal is about a timetable that has moved.
         if (
@@ -869,7 +884,7 @@ export class SwapsService {
       // Ångra: the lock a swap put on a lesson goes with the swap, so a request that takes the last move of a locked lesson back (where that move
       // found it, and that move was what locked it) is let move it and takes the lock off again. The undo is the same moves reversed.
       const takenBack = await this.locksTakenBack(tx, rows, moves);
-      this.assertWhole(context, chosen, moves, takenBack, dto.forBrick === true);
+      this.assertWhole(context, chosen, moves, takenBack);
       // A lesson of a parallel block whose other lessons the swap leaves unlocked is not locked (swap-block-lock.ts): Generera refuses a partly locked block.
       const leftUnlocked = lessonsLeftUnlockedByBlock(data, new Set(moves.map((move) => move.lessonId)));
 
@@ -975,8 +990,11 @@ export class SwapsService {
         reached: propagatedLessons + removedCalendarLessons,
       });
 
+      // The brick the moves made room for, laid in this transaction with the checks and the write of Att lägga: refused, it takes the moves with it.
+      const laid = dto.lay === undefined ? undefined : await this.tray.layIn(tx, dto.lay, user);
+
       this.logger.log(
-        `Swap applied [lessons=${moves.length}, propagated=${propagatedLessons}, removed=${removedCalendarLessons}, version=${version.id}]`,
+        `Swap applied [lessons=${moves.length}, propagated=${propagatedLessons}, removed=${removedCalendarLessons}, version=${version.id}${laid ? ', laid=1' : ''}]`,
       );
       this.announce(tx, leader.school.id, mode, ids);
 
@@ -1008,6 +1026,7 @@ export class SwapsService {
         exemptionsEnded,
         lockedLessonIds,
         ...(lockedLessonIds.length > 0 ? { lockedByMove: true as const } : {}),
+        ...(laid ? { laid } : {}),
       };
     });
   }
@@ -1065,7 +1084,6 @@ export class SwapsService {
     chosenIds: readonly string[],
     moves: readonly SwapMove[],
     takenBack: ReadonlySet<string> = new Set(),
-    forBrick = false,
   ): void {
     const moved = new Map(moves.map((move) => [move.lessonId, move]));
     // The units of the lessons the schemaläggare chose: the only ones that may be locked.
@@ -1075,11 +1093,9 @@ export class SwapsService {
       if (!chosenUnit) throw swapStale();
       chosenUnits.add(chosenUnit.id);
     }
-    const units = new Set<string>();
     for (const move of moves) {
       const unit = context.unitOf.get(move.lessonId);
       if (!unit) throw swapStale();
-      units.add(unit.id);
       // Where the members that ARE named go; the one asked about is among them, so there is one.
       const landing = moved.get(unit.members.find((member) => moved.has(member.id))!.id)!.to;
       const missing = unit.members.filter((member) => !moved.has(member.id));
@@ -1106,7 +1122,6 @@ export class SwapsService {
         });
       }
     }
-    if (units.size < 2 && !forBrick) throw new BadRequestException('moves: a swap moves at least two units.');
   }
 }
 

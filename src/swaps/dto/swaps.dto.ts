@@ -15,6 +15,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import { LayBrickDto } from '../../board-tray/dto/lay-brick.dto';
 import { PossibleBrickDto } from '../../calendar/dto/possible-times.dto';
 
 /**
@@ -129,7 +130,7 @@ export class ApplySwapDto {
   /** The lesson the schemaläggare picked: the only unit that may be locked (and the ones `alsoPicked` names). Not needed with `forBrick`. */
   @ValidateIf((body: ApplySwapDto) => body.forBrick !== true)
   @IsUUID('4')
-  lessonId!: string;
+  lessonId?: string;
 
   /**
    * Byt plats (E5a): the other lessons the schemaläggare chose themselves. A locked lesson the person marked is the person's to move,
@@ -142,14 +143,25 @@ export class ApplySwapDto {
   alsoPicked?: string[];
 
   /**
-   * Gör plats for a lesson that stands nowhere (E5a): the moves make room for a brick or a parked lesson, which the page lays in the
-   * room made. Every lesson of the moves is then one an automat moved, so none may be locked, and a single move is a proposal.
+   * Gör plats for a lesson that stands nowhere (E5a): the moves make room for a brick or a parked lesson. Every lesson of the moves is then one
+   * an automat moved, so none may be locked. The brick is laid by `lay`, in the same transaction, or by the page in a request of its own.
    */
   @IsOptional()
   @IsBoolean()
   forBrick?: boolean;
 
-  // One move is a proposal only for `forBrick`: the service says so before it reads anything.
+  /**
+   * Att lägga, as `POST /board-tray/lay` takes it: the brick the moves made room for, laid in THE SAME TRANSACTION as the moves, after them. A lay that
+   * is refused (a part that has changed, a room that does not fit, Direkt's question) takes the moves back with it, so nobody is left with a
+   * timetable moved for a brick that was not laid (g514 L-7). Only with `forBrick`. Left out, the moves are written and the page lays the brick.
+   * Left out, not `null`: the service asks `lay !== undefined`, and a `null` that IsOptional let through was a TypeError (500) before anything was read.
+   */
+  @ValidateIf((body: ApplySwapDto) => body.lay !== undefined)
+  @ValidateNested()
+  @Type(() => LayBrickDto)
+  lay?: LayBrickDto;
+
+  // One lesson's move is a proposal too (a time that was free needs no one else to go): g514 L-4.
   @IsArray()
   @ArrayMinSize(1)
   // A chain of three units of a block of a handful of members each.

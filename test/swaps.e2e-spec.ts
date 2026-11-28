@@ -100,11 +100,10 @@ describe('Byten och flyttar (e2e)', () => {
         .expect(403);
     });
 
-    it('refuses a move set that is not two or more well-formed moves, before the service', async () => {
+    it('refuses a move set that is not one or more well-formed moves, before the service', async () => {
       const bad = [
         {},
         { lessonId: A, moves: [] },
-        { lessonId: A, moves: [move(A, 1, 2)] },
         { lessonId: A, moves: [move(A, 1, 2), { lessonId: B, from: slot(2), to: { dayOfWeek: 9, startTime: '08:00', endTime: '09:00' } }] },
         { lessonId: A, moves: [move(A, 1, 2), { lessonId: B, from: slot(2), to: { dayOfWeek: 1, startTime: '8:00', endTime: '09:00' } }] },
         { lessonId: A, moves: [move(A, 1, 2), move('nope', 2, 1)] },
@@ -203,10 +202,34 @@ describe('Byten och flyttar (e2e)', () => {
       harness.tx['masterLesson']!['findMany']!.mockResolvedValue([]);
       const response = await request(http()).post('/api/v1/swaps/apply').set('x-test-user', admin()).send({ forBrick: true, moves: [move(A, 1, 2)] }).expect(409);
       expect(response.body).toMatchObject({ code: 'SWAP_STALE' });
-      // Without forBrick one move is no swap, and nothing is read for it.
+      // One move of the picked lesson is a proposal too (g514 L-4): it reaches the service, and the lesson is not there to move.
+      const alone = await request(http()).post('/api/v1/swaps/apply').set('x-test-user', admin()).send({ lessonId: A, moves: [move(A, 1, 2)] }).expect(409);
+      expect(alone.body).toMatchObject({ code: 'SWAP_STALE' });
+      // A request for no brick that names no lesson is refused before anything is read.
       harness.tx['masterLesson']!['findMany']!.mockClear();
-      await request(http()).post('/api/v1/swaps/apply').set('x-test-user', admin()).send({ lessonId: A, moves: [move(A, 1, 2)] }).expect(400);
+      await request(http()).post('/api/v1/swaps/apply').set('x-test-user', admin()).send({ moves: [move(A, 1, 2)] }).expect(400);
       expect(harness.tx['masterLesson']!['findMany']).not.toHaveBeenCalled();
+    });
+
+    it('takes a lay for a brick with forBrick, refuses one without it, and refuses a lay that is not one, before the service', async () => {
+      const lay = { academicYearId: A, postId: B, minutes: 60, teacherId: null, partKey: 'abcdef0123456789', dayOfWeek: 3, startTime: '10:00' };
+      for (const body of [
+        { lessonId: A, lay, moves: [move(A, 1, 2)] },
+        { forBrick: true, lay: { ...lay, partKey: 'nope' }, moves: [move(A, 1, 2)] },
+        { forBrick: true, lay: { ...lay, postId: 'nope' }, moves: [move(A, 1, 2)] },
+        { forBrick: true, lay: { ...lay, extra: 1 }, moves: [move(A, 1, 2)] },
+        // `null` is not "no lay": it is refused at the door, where it used to reach the service and throw a TypeError (500).
+        { forBrick: true, lay: null, moves: [move(A, 1, 2)] },
+      ]) {
+        harness.tx['masterLesson']!['findMany']!.mockClear();
+        await request(http()).post('/api/v1/swaps/apply').set('x-test-user', admin()).send(body).expect(400);
+        expect(harness.tx['masterLesson']!['findMany']).not.toHaveBeenCalled();
+      }
+      // With forBrick it reaches the service, which finds no lesson to move.
+      harness.tx.$queryRaw.mockResolvedValue([{ mode: 'DIRECT' }]);
+      harness.tx['masterLesson']!['findMany']!.mockResolvedValue([]);
+      const response = await request(http()).post('/api/v1/swaps/apply').set('x-test-user', admin()).send({ forBrick: true, lay, moves: [move(A, 1, 2)] }).expect(409);
+      expect(response.body).toMatchObject({ code: 'SWAP_STALE' });
     });
   });
 });

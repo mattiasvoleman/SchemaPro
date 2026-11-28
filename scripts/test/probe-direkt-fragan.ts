@@ -23,7 +23,9 @@
  *   (g) a läsare cannot answer for the school (the settings row is the Publicering area's), and nothing is written;
  *   (h) a swap that reached published lessons is refused whole, its safety version rolled back with it, and goes once the school has answered;
  *   (i) att lägga (E4): a brick that is a parked lesson with calendar rows, laid back in a published period, is refused as a drag is and nothing is written
- *       (g490 M-5); a brick that is no lesson yet reaches nobody; the answer lets the lay go, and the class is told.
+ *       (g490 M-5); a brick that is no lesson yet reaches nobody; the answer lets the lay go, and the class is told;
+ *   (j) en bricka som läggs i samma transaktion som flytterna som gjorde plats (E5a, g514 L-7): när flytterna inte når någon men läggningen når publicerade
+ *       lektioner är hela bytet nekat, flytten, säkerhetsversionen och loggraderna med, och det går när skolan har svarat.
  *
  * Each in a school of its own (slug <marker>-direkt-<n>), swept whole after, and before the first. The year is in 2096, so every day of
  * it lies ahead and nothing a check writes is ever "the past".
@@ -429,6 +431,51 @@ async function main(): Promise<void> {
         assert.equal(await parkedState(), 'false|4|true');
         assert.match(await standing(tuesday.id), /^4\|/);
         assert.deepEqual(told(), ['SCHEDULE_CHANGED']);
+      });
+    });
+
+    await check('(j) a swap that makes room for a parked lesson and lays it in the same transaction is refused whole when the lay reaches published lessons the moves did not', async () => {
+      await inSchool('j', async (s, spy, svc) => {
+        const subject = await owner.subject.create({ data: { schoolId: s.schoolId, name: `${MARKER}-j idrott` } });
+        const post = await owner.teachingRequirement.create({
+          data: { schoolId: s.schoolId, academicYearId: s.yearId, subjectId: subject.id, studentGroupId: s.groupId, teacherId: s.teacherId, lessonsPerWeek: 1, minutesPerLesson: 60 },
+        });
+        const tuesday = await owner.masterLesson.create({
+          data: { schoolId: s.schoolId, academicYearId: s.yearId, subjectId: subject.id, studentGroupId: s.groupId, teacherId: s.teacherId, dayOfWeek: 2, startTime: time('09:00'), endTime: time('10:00'), isLocked: true },
+        });
+        await publish(s, svc);
+        // The lesson goes to the tray the way the page puts it (the school answered for that), its calendar rows stay, and the question is open again.
+        await svc.reach.acknowledge(s.admin);
+        await svc.masters.update(tuesday.id, { isParked: true }, s.admin);
+        await owner.$executeRaw`UPDATE "PublicationSettings" SET "directReachAcknowledgedAt" = NULL WHERE "schoolId" = ${s.schoolId}::uuid`;
+        spy.sent.length = 0;
+        const brickOf = async () => (await svc.tray.trayOfYear(s.yearId, undefined, s.admin)).bricks.find((entry) => entry.postId === post.id && entry.lessonId === tuesday.id)!;
+        const brick = await brickOf();
+        assert.ok(brick, 'the parked lesson is a brick of the post');
+        // The Monday lesson goes to Friday and the parked lesson is laid where it stood: `propagate: false` makes the moves reach nobody, so the apply's own
+        // question is not asked, and the lay (a parked lesson with calendar rows, moved back) reaches the published lessons and asks it.
+        const body = (partKey: string) => ({
+          forBrick: true,
+          propagate: false,
+          moves: [{ lessonId: s.monday, from: { dayOfWeek: 1, startTime: '08:00', endTime: '09:00' }, to: { dayOfWeek: 5, startTime: '13:00', endTime: '14:00' } }],
+          lay: { academicYearId: s.yearId, postId: post.id, teacherId: s.teacherId, minutes: 60, partKey, lessonId: tuesday.id, dayOfWeek: 1, startTime: '08:00', roomId: null },
+        });
+        const mondayBefore = await owner.masterLesson.findUniqueOrThrow({ where: { id: s.monday }, select: { dayOfWeek: true, isLocked: true } });
+        const versionsBefore = await owner.scheduleVersion.count({ where: { schoolId: s.schoolId } });
+        const logsBefore = await owner.scheduleChangeLog.count({ where: { schoolId: s.schoolId } });
+        const refusal = await refusalOf(svc.swaps.apply(body(brick.partKey) as never, s.admin));
+        assert.equal(refusal.code, 'DIRECT_REACH_UNANSWERED');
+        assert.deepEqual(await owner.masterLesson.findUniqueOrThrow({ where: { id: s.monday }, select: { dayOfWeek: true, isLocked: true } }), mondayBefore, 'the Monday lesson did not move');
+        assert.equal((await owner.masterLesson.findUniqueOrThrow({ where: { id: tuesday.id }, select: { isParked: true } })).isParked, true, 'the lesson is still on the tray');
+        assert.equal(await owner.scheduleVersion.count({ where: { schoolId: s.schoolId } }), versionsBefore, 'the safety version the swap took first was rolled back with it');
+        assert.equal(await owner.scheduleChangeLog.count({ where: { schoolId: s.schoolId } }), logsBefore, 'no log row');
+        assert.deepEqual(spy.sent, [], 'nobody was told');
+        // Answered, the same swap goes, in one transaction: the Monday lesson on Friday, the parked lesson back on Monday 08:00.
+        await svc.reach.acknowledge(s.admin);
+        const done = await svc.swaps.apply(body((await brickOf()).partKey) as never, s.admin);
+        assert.ok(done.laid, 'the answer names what was laid');
+        assert.equal((await owner.masterLesson.findUniqueOrThrow({ where: { id: s.monday }, select: { dayOfWeek: true } })).dayOfWeek, 5);
+        assert.deepEqual(await owner.masterLesson.findUniqueOrThrow({ where: { id: tuesday.id }, select: { isParked: true, dayOfWeek: true } }), { isParked: false, dayOfWeek: 1 });
       });
     });
   } finally {
