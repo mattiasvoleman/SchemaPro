@@ -76,6 +76,8 @@
       "LANGUAGE_BLOCK_HAS_OTHER_LESSONS": "The block's entries have other lessons or weeks than the language choice's new entries, and the entries of a block must have the same lessons and weeks. Change the block's lessons with Change lessons under Blocks on Curriculum entries, choose a lesson length that gives the block's lessons, or rename the block so a new one is created.",
       "LANGUAGE_BLOCK_IN_OTHER_GRADE": "The school year already has a block with that name, and it holds entries in another grade. The language choice is not put in it. Rename that block under Blocks on Curriculum entries, and then create the curriculum entries again.",
       "LAST_DECIDER": "The school needs at least one active principal or full administrator. Give someone else that role first.",
+      "LESSON_CHANGED": "The lesson was changed by someone else after the page read it, and your change was not made. Reload the timetable and make the change again if it still applies.",
+      "LESSON_DATE_FORM": "The day is not written as YYYY-MM-DD. Write it that way, for example 2026-08-17.",
       "LESSON_LENGTHS_MISMATCH": "The lesson lengths do not match the number of lessons and the length of the longest. Change them so they match, or give only the lesson lengths.",
       "LESSON_LENGTHS_TOO_MANY_KINDS": "A curriculum entry can have at most three different lesson lengths.",
       "LESSON_LOG_NOT_YOURS": "Only the lesson's teacher and its substitute write the lesson log.",
@@ -2790,6 +2792,8 @@
     "bulkUnlock": "Unlock",
     "bulkDelete": "Delete",
     "bulkClear": "Clear",
+    "bulkSwap": "Swap places",
+    "bulkSwapNeedsTwo": "Mark exactly two lessons to swap their places.",
     "bulkDone": "{count} lessons updated",
     "bulkDeleted": "{count} lessons deleted",
     "selectionReleased": "The bar for the selected lessons could not be loaded, so the selection was released. Select again to try once more.",
@@ -2803,8 +2807,6 @@
     "versionCompare": "Compare with current",
     "diffTitle": "Changes since “{name}”",
     "diffIdentical": "The current timetable is identical to this snapshot.",
-    "diffAdded": "{count} added since snapshot",
-    "diffRemoved": "{count} removed since snapshot",
     "diffOnTray": "on the tray",
     "diffCoTeacher": "co-teacher {name}",
     "diffRoom": "room {name}",
@@ -2905,6 +2907,47 @@
     "versionDeleteNamed": "Delete “{name}”",
     "versionsLoadFailed": "The versions could not be loaded",
     "versionsLoadFailedHint": "No version has been saved, restored or deleted, and the master timetable is untouched. Close Versions and open it again.",
+    "versionRename": "Rename the version",
+    "versionRenameNamed": "Rename “{name}”",
+    "versionRenameLabel": "New name of the version",
+    "versionRenameSave": "Save the name",
+    "versionRenameCancel": "Cancel",
+    "versionRenamed": "The version is now called “{name}”",
+    "versionRestoreConfirmTitle": "Restore “{name}”?",
+    "versionRestoreConfirmBody": "The whole master timetable is replaced by the version. The current timetable is saved as a version first, so the restore can be taken back.",
+    "versionRestoreConfirmCounts": "Compared with the current timetable: {counts}.",
+    "versionRestoreConfirmSame": "The version is identical to the current timetable.",
+    "diffAgainst": "Compare with",
+    "diffAgainstLive": "Current timetable",
+    "diffBetween": "Differences between “{from}” and “{to}”",
+    "diffIdenticalVersions": "The two versions are identical.",
+    "diffLoading": "Reading the version…",
+    "diffNobody": "nobody",
+    "diffNoRoom": "no room",
+    "diffEveryWeek": "every week",
+    "diffAspectTeacher": "teacher",
+    "diffAspectCoTeacher": "co-teacher",
+    "diffAspectRoom": "room",
+    "diffAspectWeeks": "weeks",
+    "diffAspectGroups": "classes",
+    "diffAspectPupils": "pupils",
+    "diffAspectLocked": "locking",
+    "diffLocked": "locked",
+    "diffUnlocked": "unlocked",
+    "diffAspectExempt": "exemption",
+    "diffExemptNone": "none",
+    "diffCount": {
+      "moved": "{count, plural, one {# moved} other {# moved}}",
+      "changed": "{count, plural, one {# changed} other {# changed}}",
+      "added": "{count, plural, one {# added} other {# added}}",
+      "removed": "{count, plural, one {# removed} other {# removed}}"
+    },
+    "diffKind": {
+      "moved": "Moved",
+      "changed": "Changed",
+      "added": "Added",
+      "removed": "Removed"
+    },
     "blocks": {
       "split": "Split",
       "apart": "{name} · split",
@@ -2936,8 +2979,32 @@
       "unlock": "Unlock",
       "unlocked": "Unlocked: Generera may move {count, plural, one {the lesson} other {the lessons}} again."
     },
+    "changed": {
+      "refused": "The lesson was changed by someone else after you read it, and your change was not made.",
+      "now": "It is now: {now}.",
+      "unread": "The timetable is being read again.",
+      "gone": "The lesson was removed by someone else, and your change was not made.",
+      "when": "{day} {start}–{end}",
+      "room": "room {room}",
+      "noRoom": "without a room",
+      "otherRoom": "in another room",
+      "teacher": "teacher {teacher}",
+      "noTeacher": "without a teacher",
+      "otherTeacher": "with another teacher",
+      "locked": "locked",
+      "unlocked": "unlocked",
+      "parked": "set aside",
+      "placed": "placed in the timetable",
+      "pupils": "with other classes or pupils",
+      "exempt": "with a changed exemption",
+      "again": "Make my change again",
+      "done": "Your change is made.",
+      "failed": "Your change could not be made again."
+    },
     "motor": {
       "kept": {
+        "WEEKS": "Locked for the engine: other weeks make the lesson hand-made, and Generate leaves it as it is.",
+        "MOVED": "Locked for the engine: Save locks a lesson that is moved, and Generate leaves it where you put it.",
         "LOCKED": "Locked for the generator: Generera leaves the lesson where it is.",
         "HANDMADE": "Locked for the generator: the lesson is made by hand, and Generera leaves it.",
         "PUPILS": "Locked for the generator: the lesson has an extra class or chosen pupils, and Generera leaves it."
@@ -3257,7 +3324,58 @@
     "lockedPartner": "The swap would move a locked lesson, so nothing changed. The proposals are fetched again.",
     "undoStale": "The timetable has changed since the swap, so it cannot be undone from here. Restore the version “Före byte” under Versions.",
     "openButton": "Suggest swaps",
-    "lockedByMove": "{count, plural, one {The lesson is locked} other {# lessons are locked}}, so the next Generera does not move {count, plural, one {it} other {them}}. Undo takes the lock off."
+    "lockedByMove": "{count, plural, one {The lesson is locked} other {# lessons are locked}}, so the next Generera does not move {count, plural, one {it} other {them}}. Undo takes the lock off.",
+    "exemptionsEnded": "{count, plural, one {A lesson stood against a rule on purpose} other {# lessons stood against a rule on purpose}}, and the exemption is gone: it was for the time the lesson had. Undo moves the lesson back but not the exemption.",
+    "makeRoom": "Make room",
+    "level": "moves to make room, level {level}",
+    "showOnBoard": "Show on the board",
+    "shownOnBoard": "Shown on the board",
+    "pair": {
+      "title": "Swap places",
+      "body": "The two marked lessons swap places: each takes the other's day and start and keeps its own length. The proposal is judged by the same rules as a hand move, and you see what it costs before anything changes.",
+      "dropTitle": "Swap with the lesson standing there",
+      "refused": "The swap cannot be made:"
+    },
+    "room": {
+      "title": "Proposals that make room",
+      "standsThere": "What stands there",
+      "none": "No lesson can be moved so that the time is free without a double booking or a broken rule.",
+      "dropNoOne": "No lesson is in the way at that time, so there is none to swap with.",
+      "dropSeveral": "Several lessons are in the way, so there is no single lesson to swap with. Make room instead.",
+      "immovable": {
+        "PARKED": "The lesson is on the tray and has no time to move away from. Put it back in the timetable first.",
+        "PLACED": "The lesson is placed, and Generera writes it again from the placement. Move it by changing the placement.",
+        "NOT_PLACED": "The lesson is not in the master timetable.",
+        "EXEMPT": "The lesson stands against a rule on purpose (an exemption). No automat moves it out of the exemption: move it by hand."
+      },
+      "stuck": {
+        "CLOSED": "The time is shut by a rule (the frame times, the class's lunch, a rule for the year group, another school's time or an unavailability), so no lesson can stand there.",
+        "LOCKED_IN_THE_WAY": "A locked lesson is in the way and an automat does not move it. Unlock it, or move it by hand, if the place is to be free.",
+        "TOO_MANY": "More lessons are in the way than a proposal may move."
+      },
+      "pairImmovable": {
+        "PARKED": "One of the lessons is on the tray and has no time to swap. Put it back in the timetable first.",
+        "PLACED": "One of the lessons is placed, and Generera writes it again from the placement. Change the placement instead.",
+        "NOT_PLACED": "One of the lessons is not in the master timetable.",
+        "SAME_UNIT": "The two lessons stand in parallel and always move together, so they cannot swap places with each other.",
+        "SAME_PLACE": "The two lessons start at the same time, so there is nothing to swap."
+      }
+    },
+    "dropOffers": {
+      "title": "What stands there can move",
+      "body": "Swap places with the lesson standing there, or let it and what is in its way move, so that the place is free. You see the proposals on the board, and what they cost, before anything changes.",
+      "swap": "Swap",
+      "room": "Make room",
+      "swapTitle": "Swap with the lesson standing there",
+      "swapBody": "The lesson you let go and the lesson standing there take each other's start.",
+      "roomTitle": "Make room",
+      "roomBody": "What is in the way moves to an empty place or to a place another lesson leaves, at most three steps deep. No locked lesson is moved.",
+      "back": "Back to the times"
+    }
+  },
+  "swapLayer": {
+    "arrives": "{lesson} comes here",
+    "leaves": "{lesson} leaves, to {to}"
   },
   "dayPlanner": {
     "title": "Day planner",

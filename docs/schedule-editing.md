@@ -13,7 +13,7 @@ Implemented feature set (Tiers 1–3 of the flexibility roadmap).
 - **Bulk editing** — shift-click lessons to multi-select, then Lock / Unlock / Delete from the bulk bar (single undo step).
 - **Conflict surfacing** — existing clashes (teacher/room/group double-bookings, weekly UNAVAILABLE constraints) are highlighted with a red ring and counted in a banner; detection in `web/lib/conflicts.ts` mirrors server validation.
 - **Views** — combined grid plus "By teacher / By room / By class" lane views; all lanes stay fully editable.
-- **Versions** — save named snapshots, restore any snapshot (an automatic safety snapshot is taken first). `api/v1/schedule-versions`.
+- **Versions** — save named snapshots, rename them, compare one with the grid or with another version, restore any snapshot after being asked (an automatic safety snapshot is taken first). `api/v1/schedule-versions`. See *Versionerna (E9)* below.
 - **Audit trail** — every create/update/delete/regenerate/restore is appended to `ScheduleChangeLogs` (before/after JSON, actor).
 
 ## One judge for a hand edit (En domare med ord, E1)
@@ -204,14 +204,40 @@ whatever the request names (decision 5: no forced clash).
   de stod vid varje Spara, och Ångra skickar dem vid varje återställning. Bara veckor som skiljer sig från lektionens egna lämnar en lektion Generera lagt över till
   skolan (`isGenerated: false`; Generera kan inte lägga datum eller udda och jämna veckor utanför en posts egna, så det enda sättet att behålla dem är att lektionen står
   kvar). Dagen är fönstret: samma dag skriven som tidsstämpel (`2026-08-17T23:59:59+02:00`) är samma första dag. En ny sal, en ny lärare eller en flytt med veckorna som de
-  stod lämnar lektionen Generera lagd, och sidans mening "Fri för motorn" stämmer därför också efter Spara, för en ny sal, en ny lärare och ett lås som brytaren visar; en
-  flytt eller andra veckor ändrar vem som äger lektionen, och meningen läser inte dem (webben). En flytt låser lektionen (ett lås vid en flytt, ovan), och det är låset som
+  stod lämnar lektionen Generera lagd, och sidans mening "Fri för motorn" stämmer därför också efter Spara, för en ny sal, en ny lärare och ett lås som brytaren visar. En
+  flytt eller andra veckor ändrar vem som äger lektionen, och meningen läser dem också (granskaren g511, L-3; `web/lib/motor-owner.ts`): andra veckor än lektionens egna
+  säger "Låst för motorn: andra veckor gör lektionen handgjord", och en flyttad olåst lektion säger att Spara låser den (en som läsaren låser upp i samma Spara står kvar fri,
+  som `locksByMove` säger). Veckor som skrivs om utan att ändras säger fortfarande "Fri". En flytt låser lektionen (ett lås vid en flytt, ovan), och det är låset som
   håller den. En lektion i ett block frågas om sitt block bara när den flyttas. En lektion i ett block som står i inget kort när den flyttas (inget kort att lämna, inget att
   gå med i) får inget lås och lämnas inte över: Generera lägger om blocket, som efter en dragning (ett PATCH har alltid gjort så). Dialogen gjorde den handgjord förut, av
   samma slump som ovan.
 - **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, en dubbelbokad
   lektion kan låsas, ett byte låser sina två lektioner och Ångra tar låset av, ett blockkort låser hela sitt block, och Justera lektions Spara lämnar bara över en lektion vars veckor ändrats, br-w), `src/calendar/master-lessons.lock-at-move.spec.ts`,
   `src/swaps/swaps.apply.spec.ts` och blockkortets prov i `master-lessons.service.spec.ts`.
+
+## Säkerhetsnät (E9)
+
+- **En ändring av en lektion nekas med besked när någon annan har ändrat den sedan sidan läste den.** `PATCH /api/v1/master-lessons/:id` tar `expected`: det sidan såg av de
+  fält begäran skriver (`dayOfWeek`, `startTime`, `endTime`, `roomId`, `teacherId`, `coTeacherId`, `isLocked`, `isParked`, `recurrence`, `startDate`, `endDate`,
+  `extraGroupIds`, `studentIds`, `exempt`, i begärans egna former; `null` är ett svar: ingen sal, ingen första dag). Gatewayen håller `expected` mot lektionen som den står
+  **under lektionens radlås, i skrivningens egen transaktion** (`FOR NO KEY UPDATE`, som blockkortets rader; lektionen läses om bara när någon skrev den mellan första läsningen
+  och låset). Ett värde som inte är det sidan läste är en annans ändring: `409 LESSON_CHANGED` med `params.fields` (namnen, kommaskilda, i fast ordning), ingenting skrivs och
+  domaren frågas inte. Två skribenter på samma läsning: en skrivs, den andra nekas, aldrig båda (`scripts/test/probe-sakerhetsnat.ts`, sn-b: trettio varv av två samtidiga).
+- **Värden och inte tidsstämpel.** Det en skrivning inte får göra är att lägga sitt värde över ett som någon annan ändrat. En kollegas ändring av något begäran inte skriver
+  (ett lås, en sal medan lektionen flyttas) är inte i vägen, och sidans egna skrivningar (ett drag som släpps två gånger i rad, ett Ångra) är det lektionen står på då. Dialogen
+  skriver alla sina fält och nämner dem alla: en kollegas ny lärare läggs inte tillbaka av en Spara som ändrade salen (sn-d).
+  Ett fält som begäran själv skriver till det värde som redan står är inget som skrivs över, vad sidan än såg: en Spara som skickas två gånger och ett lås som en kollega
+  också har satt är ingen krock (sn-g; granskaren g515).
+- **Utan `expected` skrivs begäran som förut.** Mobilen och en äldre webb skickar ingen, och de tar inget lås i förväg: bara en begäran som nämner vad sidan såg kostar ett
+  uttalande till (radlåset). Fältet är additivt; en gateway som är äldre än webben nekar det med 400 (`forbidNonWhitelisted`), så gatewayen går före webben.
+- **Webben** (`web/lib/lesson-expected.ts`, `lesson-changed.ts`): ett drag, en dialog och en Gör om skickar det de läste av de fält de skriver; ett Ångra hålls mot det lektionen
+  hade efter skrivningen (gatewayens svar, så ett lås servern satte inte väntas på) och ett Gör om mot det före. Ett nej berättas som vad det är: lektionen läses om och läggs i
+  schemat, toasten säger vad den har blivit i de fält som nämndes ("Nu är den: tisdag 10:00–11:00, sal A12"), att ändringen inte gjordes, och erbjuder **Gör om min ändring** på
+  lektionen som den står nu. Ett Ångra som möter det är ett Ångra som inte går, och steget tas ur historiken så att de äldre inte stängs bakom det.
+- **Dagar som inte är ÅÅÅÅ-MM-DD** (granskaren g511, L-6). Valideringen tar ISO 8601:s andra former (`20260817`, `2026-W34-1`, `2026-229`) som datum, och de gav 500 när
+  lektionen berättades. De är nu `400 LESSON_DATE_FORM`, från både PATCH, POST och den läsande frågan; en dag med klockslag efter sig är fortfarande en dag.
+- **Hålls av** `src/calendar/master-lessons.expected.spec.ts`, `test/lesson-changed.e2e-spec.ts` (koden och `fields` når klienten), `scripts/test/probe-sakerhetsnat.ts` (mot riktig
+  Postgres, i CIs Database-jobb) och webbens `lib/lesson-expected.test.ts` (som läser gatewayens fältlista som text), `lib/lesson-changed.test.ts` och `use-undoable-edits.test.ts`.
 
 ## Skriv in förläggningarna (E4b)
 
@@ -238,6 +264,26 @@ skriva något (varje administratör får läsa det, skrivningen är schemalägga
 - **Hålls av** `src/requirement-placements/placement-write-in.spec.ts` (vad som skrivs, lämnas och ersätts), `placement-write-in.service.spec.ts` (ordningen, förhandsvisning, utkast, 409),
   `test/placement-write-in.e2e-spec.ts` (vägarna och vem som får), `scripts/test/probe-skriv-in.ts` och `probe-skriv-in-direkt.ts` (mot riktig Postgres, i CI) och, för hand mot en riktig motor, `scripts/test/probe-skriv-in-motor.ts`:
   Generera, körd efter bron, skriver samma lektioner ur samma rader, och bron efter Generera ändrar ingenting.
+
+## Versionerna (E9)
+
+- **En flytt är en rad.** Ett schema har inga lektions-id i en version (en återställning lägger varje lektion på nytt under ett nytt), så "samma lektion" läses av vad den är: ämne, klass,
+  lärare, medlärare, veckor, andra klasser och namngivna elever (`web/lib/version-diff.ts`, ren och provad för sig). Två lektioner som är lika i allt detta men står på en annan dag
+  eller ett annat klockslag, eller på bricklådan och inte, är **en lektion som flyttats** (`moved`, med en notis om salen också är en annan). En lektion som står där den stod men har
+  en annan lärare, sal, vecka, klass, elever, ett annat lås eller andra undantag (Lägg ändå) är **ändrad** (`changed`, med vad: "lärare: K. Ek → N. Berg"; lås och undantag skriver en återställning också, så
+  de är med). Det som blir kvar är tillagt eller borttaget. Två identiska lektioner räknas som två, så en av dem borta är en borttagen. Parningen ger så många par som lektionerna tillåter (per ämne och klass,
+  med en förlängande väg när en lektions partner är tagen), och föredrar samma lektion på samma plats, sedan samma lektion på annan plats, sedan samma plats med något annat ändrat. Ordningen är fast:
+  samma lektioner parar ihop sig i ordning, och en lektion hamnar i en rad. En lektion som både flyttats och fått en annan lärare är en borttagen och en tillagd: ingenting säger att det är samma lektion.
+- **Hela listan, per klass.** Varje klass som har något har en rubrik med sina tal ("7A · 1 flyttad, 2 tillagda") och alla sina rader i ordningen flyttade, ändrade, tillagda, borttagna.
+  Listan avkortades förut vid åtta rader. Tecknet före raden (↔ ~ + −) är för ögat och ordet före det (Flyttad, Ändrad, Tillagd, Borttagen) för örat.
+- **Två versioner mot varandra.** Jämför-knappen jämför versionen med schemat på skärmen, och listan "Jämför med" byter motparten till en annan version. Båda läses med
+  `GET /api/v1/schedule-versions/:id` (ingen ny läsväg i gatewayen: en version är en blob och jämförelsen görs i webben).
+- **Döp om.** `PATCH /api/v1/schedule-versions/:id` med `{ name }` (1 till 120 tecken, trimmat). Bara namnet kan ändras: en version är en ögonblicksbild. En annan skolas version är 404 (RLS),
+  ett namn av blanksteg 400. Ligger i `ScheduleVersionNamesService` och rör inte `ScheduleVersionsService`. Kräver samma område som att spara en version (SCHEMALAGGNING).
+- **Frågan före en återställning.** Återställ öppnar en fråga som säger att hela grundschemat ersätts, att det nuvarande schemat sparas som en version först, och vad som ändras
+  jämfört med schemat på skärmen ("1 flyttad, 3 tillagda") eller att versionen är identisk med det. Ingenting ersätts före ett ja.
+- **Hålls av** `web/lib/version-diff.test.ts`, `components/schedule/versions-dialog.diff.test.tsx` och sidprovet "comparing a version with the timetable", `src/calendar/schedule-version-names.service.spec.ts`,
+  `test/schedule-version-rename.e2e-spec.ts` och `scripts/test/probe-versioner.ts` (mot riktig Postgres under RLS: en annan skolas version döps inte om).
 
 ## Lägg det som går (E7a)
 
@@ -274,7 +320,7 @@ Ett förslag rymmer högst 600 brickor som går att lägga (Ta ins gräns): frå
 - **Richer objectives** — PREFERRED_FREE/BUSY now also apply to rooms and student groups; a `spread` objective penalizes same-subject lessons stacked on one weekday.
 - **Optimization profile UI** — sliders on the Generate page (stability / spread / preferred-free / preferred-busy), saved for the school (`OptimizationProfiles`, DEPLOYMENT §43), sent per run, all engine-side defaults env-overridable (`WEIGHT_DISRUPTION`, `WEIGHT_SPREAD`).
 - **Durable job store** — `OptimizationJobs` table replaces the in-memory queue: the row outlives the API process, and powers the run-history list on the Generate page (`GET /api/v1/optimization/jobs?academicYearId=…`). A run is a queue entry: a lease the process renews while it works, at most one active run per school year (a second start is 409 `GENERATE_ALREADY_RUNNING`), and a sweep that ends a run whose process went away as `ENGINE_RUN_ABANDONED` — see docs/DEPLOYMENT.md §27.
-- **Version diff** — compare any snapshot against the live timetable (added/removed lessons) before restoring (`GET /api/v1/schedule-versions/:id`).
+- **Version diff** — compare any snapshot against the live timetable, or against another snapshot, before restoring (`GET /api/v1/schedule-versions/:id`); see *Versionerna (E9)* for what the comparison says.
 - **iCal export & print** — download the filtered timetable as weekly-recurring `.ics` events, or print the current view.
 - **Keyboard editing** — focus a lesson: arrow keys move it (±15 min / ±1 day, validated like drags), Enter opens the editor, Shift+Enter toggles selection.
 
@@ -295,6 +341,18 @@ to A's) that hold every hard rule, each with the parallel lessons that go along
 and what it costs in the soft ones. `POST /api/v1/swaps/apply` writes a
 proposal. Code in `src/swaps/`, dialog in `web/components/schedule/swap-dialog.tsx`
 (button "Föreslå byten" in Justera lektion).
+
+**On the board (E5a, webben).** Two more doors to the same code, in the grundschema's board and not in Justera lektion. *Byt plats*: with exactly
+two lessons marked (Shift+click), the button in the selection's bar asks `POST /api/v1/swaps/pair` and lists the swap with its price, or the
+judge's reasons by lesson (`SwapPairDialog`). *Byt* and *Gör plats*: a lesson put down on a taken time (a drag, or Enter on the marker) is refused
+as before, and the dialog of the nearest free times now also offers the swap with the one lesson that stands there and what makes room
+(`POST /api/v1/swaps/suggest` with `makeRoom`; `SuggestPlacementsDialog`, `SwapProposals`). Both lists are in a dialog that is not modal, so the
+board stays in reach, and the proposal in view is drawn on it (`web/lib/swap-store.ts`, `swap-behind.tsx`, `swap-layer.tsx`: the grid's `behind`
+slot, the only code of it in the route's first load): an outline where each lesson goes and a dotted one where it leaves, with the lesson's
+name and where it is going in words. *Tillämpa* sends `POST /api/v1/swaps/apply` with the picked lesson, and for a swap of two marked lessons
+the other one as `alsoPicked` (a person's own choice, which may be locked); *Ångra* on the toast sends the same moves reversed. A lesson on the
+tray, one written from a förläggning and a brick are not offered Byt and Gör plats here: the gateway answers for them (`lay`, `forBrick`),
+the page lays them by the road a lesson is laid by, which is the next step.
 
 - **One definition of the hard rules.** Every proposal offered has been judged by
   `MasterLessonsService.findConflicts` (teacher, room, class and shared pupils,

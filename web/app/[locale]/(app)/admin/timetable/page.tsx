@@ -64,6 +64,7 @@ import { FilterBar } from "@/components/ui/filter-bar";
 import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
+import { boardBehind } from "@/components/schedule/board-behind";
 import {
   Select,
   SelectContent,
@@ -253,6 +254,7 @@ export default function TimetablePage() {
   const [suggesting, setSuggesting] = useState<{
     lesson: MasterLesson;
     options: PlacementSuggestion[];
+    drop: LessonChange;
   } | null>(null);
   // Krocklistan: open or not, and whether it has been asked for this visit (the latch keeps it out of the tree until the first press).
   const [conflictsOpen, setConflictsOpen] = useState(false);
@@ -680,7 +682,7 @@ export default function TimetablePage() {
           // The drag's own judge, so that no time is offered that the drag then refuses (post mr-3), and what the gateway lets through.
           allows: (attempt) => validateChange(id, attempt) && lets(attempt.dayOfWeek, attempt.startMinutes),
         });
-        setSuggesting({ lesson, options });
+        setSuggesting({ lesson, options, drop: change });
       }, showError);
     },
     [
@@ -1027,6 +1029,7 @@ export default function TimetablePage() {
                 // would move a lesson nobody can see.
                 setGroupFilters([]);
                 setSelectedIds(new Set());
+                setSuggesting(null);
                 setPlacingLunch(false);
                 history.clear();
                 planning.choose(yearId);
@@ -1533,6 +1536,7 @@ export default function TimetablePage() {
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onSlotClick={lunchMode ? (day, minute) => void placeLunch(day, minute) : openCreate}
+          behind={boardBehind}
           bands={lunchBands}
           onBandMove={(id, day, minute) => void moveLunch(id, day, minute)}
           onBandRemove={(id) => void removeLunch(id)}
@@ -1757,6 +1761,9 @@ export default function TimetablePage() {
               options={suggesting?.options ?? []}
               onPick={(option) => void applySuggestion(option)}
               onClose={() => setSuggesting(null)}
+              refused={suggesting}
+              onApplied={afterSwap}
+              guard={directReach.ask}
             />
           </Suspense>
         )}

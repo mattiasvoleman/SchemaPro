@@ -21235,6 +21235,68 @@
             "SCHEMALAGGNING"
           ]
         }
+      },
+      "patch": {
+        "tags": [
+          "ScheduleVersions"
+        ],
+        "operationId": "ScheduleVersionsController_rename",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameScheduleVersionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING"
+          ]
+        }
       }
     },
     "/api/v1/schedule-versions/{id}/restore": {
@@ -32831,6 +32893,85 @@
           "planHash"
         ]
       },
+      "ExpectedLessonDto": {
+        "type": "object",
+        "properties": {
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 7
+          },
+          "startTime": {
+            "type": "string"
+          },
+          "endTime": {
+            "type": "string"
+          },
+          "roomId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "teacherId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "coTeacherId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "isLocked": {
+            "type": "boolean"
+          },
+          "isParked": {
+            "type": "boolean"
+          },
+          "recurrence": {
+            "type": "string",
+            "enum": [
+              "ALL_WEEKS",
+              "EVEN_WEEKS",
+              "ODD_WEEKS"
+            ]
+          },
+          "startDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "endDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "extraGroupIds": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "studentIds": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "exempt": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FRAME",
+                "LUNCH"
+              ]
+            }
+          }
+        }
+      },
       "ExportDto": {
         "type": "object",
         "properties": {
@@ -35470,6 +35611,19 @@
           "locale"
         ]
       },
+      "RenameScheduleVersionDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
       "ReplaceBlockPlacementsDto": {
         "type": "object",
         "properties": {
@@ -37299,6 +37453,9 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          "expected": {
+            "$ref": "#/components/schemas/ExpectedLessonDto"
           }
         }
       },

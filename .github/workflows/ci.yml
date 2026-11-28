@@ -567,6 +567,23 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-brickor.ts
 
+      # Versionerna (E9): a version renamed by the school's administrator (the name trimmed, nothing else in the row changes), and one of another school
+      # that is not there for them (RLS, 404). It drops its schools.
+      - name: Versioner probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-versioner.ts
+      # Säkerhetsnät (E9): two writers on one lesson, over real Postgres: the second, which wrote on what it read before the first committed, is refused with the
+      # fields and nothing is written over (also thirty times at the same moment, and with the row held by a writer in the middle of its transaction); a request
+      # that names only what it writes passes a colleague's change of something else, a request with no expectation is written as before, and a day that is no
+      # YYYY-MM-DD is a 400 with a code. It drops its school.
+      - name: Säkerhetsnät probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-sakerhetsnat.ts
+
       # Skriv in förläggningarna (E4b): the year's förläggningar that hold and name a room written to the grundschema as Generera writes them, with
       # no engine; what it leaves and why, what it replaces, the one rewrite of the year at a time. It drops its schools. (probe-skriv-in-motor.ts shows
       # that Generera writes the same lessons from the same rows against a real engine, by hand.)
