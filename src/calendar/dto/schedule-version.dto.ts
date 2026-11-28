@@ -10,3 +10,11 @@ export class CreateScheduleVersionDto {
   @MaxLength(120)
   name!: string;
 }
+
+/** Byter namn på en version (E9). Allt annat i en version är en ögonblicksbild och ändras inte. */
+export class RenameScheduleVersionDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  name!: string;
+}

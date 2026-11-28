@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -21,14 +22,18 @@ import {
   type ScheduleVersionSummary,
   type VersionLesson,
 } from './schedule-versions.service';
-import { CreateScheduleVersionDto } from './dto/schedule-version.dto';
+import { CreateScheduleVersionDto, RenameScheduleVersionDto } from './dto/schedule-version.dto';
+import { ScheduleVersionNamesService } from './schedule-version-names.service';
 
 @Controller('api/v1/schedule-versions')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
 @Area('SCHEMALAGGNING')
 export class ScheduleVersionsController {
-  constructor(private readonly versions: ScheduleVersionsService) {}
+  constructor(
+    private readonly versions: ScheduleVersionsService,
+    private readonly names: ScheduleVersionNamesService,
+  ) {}
 
   /** `GET /api/v1/schedule-versions?academicYearId=…` — list saved snapshots. */
   @Get()
@@ -56,6 +61,19 @@ export class ScheduleVersionsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ScheduleVersionSummary & { lessons: VersionLesson[] }> {
     return this.versions.get(id, user);
+  }
+
+  /**
+   * `PATCH /api/v1/schedule-versions/:id` — döp om en version (E9). Bara namnet kan ändras: en version är en ögonblicksbild. 404 för en version som inte är
+   * skolans, 400 för ett namn som är tomt eller längre än 120 tecken.
+   */
+  @Patch(':id')
+  rename(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: RenameScheduleVersionDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ScheduleVersionSummary> {
+    return this.names.rename(id, dto.name, user);
   }
 
   /**
