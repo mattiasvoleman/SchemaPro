@@ -106,3 +106,15 @@ describe("VersionsDialog's rows and list", () => {
     }
   });
 });
+
+describe("VersionsDialog's list of the session's steps (E9)", () => {
+  const history = { push: () => {}, steps: () => ({ done: [], undone: [] }), undo: async () => null, redo: async () => null, canUndo: false, canRedo: false, clear: () => {} };
+
+  it("shows the list when the page passes its history, and not when it does not", () => {
+    const { unmount } = render(wrap(<VersionsDialog {...props(true, "y-1", [lessonA])} history={history} />));
+    expect(screen.getByText("Det du har gjort i den här sessionen (0)")).toBeTruthy();
+    unmount();
+    render(wrap(<VersionsDialog {...props(true, "y-1", [lessonA])} />));
+    expect(screen.queryByText(/Det du har gjort i den här sessionen/)).toBeNull();
+  });
+});

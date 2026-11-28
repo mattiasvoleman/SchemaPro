@@ -12,6 +12,27 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/**
+ * What a step was about, as data: the list of the session's steps says it in words (components/schedule/versions-dialog.tsx, which is fetched the first time
+ * Versioner is pressed), so the words are not in the code of the page. A step without it is named by its label.
+ */
+export type HistoryMeta =
+  | { what: "update"; lesson: HistoryLesson; patch: object }
+  | { what: "create" | "delete"; lesson: HistoryLesson }
+  | { what: "bulk-lock"; locked: boolean; count: number }
+  | { what: "bulk-delete"; count: number };
+
+/** The lesson a step is about: what names it ("Matematik 7A"). */
+export interface HistoryLesson {
+  subjectId: string;
+  studentGroupId: string;
+  extraGroupIds?: readonly string[];
+  /** Where it stood, which a change that names only a clock is about. */
+  dayOfWeek?: number;
+  startTime?: string;
+  endTime?: string;
+}
+
 /** Mutable holder so undo/redo closures survive id changes across recreates. */
 export interface IdRef {
   id: string;
@@ -20,6 +41,10 @@ export interface IdRef {
 export interface HistoryEntry {
   /** Short human label, e.g. "move", "create" — used in toasts. */
   label: string;
+  /** What the step was about, for the list of the session's steps (E9). */
+  meta?: HistoryMeta;
+  /** When it was taken (`push` says it): the list shows the clock. */
+  at?: number;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
   /**
@@ -32,6 +57,8 @@ export interface HistoryEntry {
 
 export interface ScheduleHistory {
   push: (entry: HistoryEntry) => void;
+  /** The session's steps as they stand: the ones done, oldest first, and the ones undone, in the order a redo takes them (E9). */
+  steps: () => { done: readonly HistoryEntry[]; undone: readonly HistoryEntry[] };
   undo: () => Promise<HistoryEntry | null>;
   redo: () => Promise<HistoryEntry | null>;
   canUndo: boolean;
@@ -49,6 +76,7 @@ export function useScheduleHistory(): ScheduleHistory {
   const refresh = () => bump((n) => n + 1);
 
   const push = useCallback((entry: HistoryEntry) => {
+    entry.at ??= Date.now();
     undoStack.current.push(entry);
     if (undoStack.current.length > MAX_DEPTH) undoStack.current.shift();
     redoStack.current = [];
@@ -88,6 +116,8 @@ export function useScheduleHistory(): ScheduleHistory {
     }
   }, []);
 
+  const steps = useCallback(() => ({ done: [...undoStack.current], undone: [...redoStack.current].reverse() }), []);
+
   const clear = useCallback(() => {
     undoStack.current = [];
     redoStack.current = [];
@@ -96,6 +126,7 @@ export function useScheduleHistory(): ScheduleHistory {
 
   return {
     push,
+    steps,
     undo,
     redo,
     canUndo: undoStack.current.length > 0,

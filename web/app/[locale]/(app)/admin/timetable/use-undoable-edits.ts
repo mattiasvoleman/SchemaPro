@@ -127,6 +127,7 @@ export function useUndoableEdits(inputs: {
       const written = seenOf({ ...patch, ...result, exempt: undefined }, patch);
       history.push({
         label: "update",
+        meta: { what: "update", lesson, patch },
         // The judge's final no (a lesson put back on a time that breaks a rule, beslut 4) and a lesson somebody else has changed since are
         // dropped from the history, so that the older steps are not shut behind them; the toast says so (t("undoRefused")).
         refusedUndo: (error) => error instanceof ApiError && (error.code === "MASTER_LESSON_REFUSED" || error.code === "LESSON_CHANGED"),
@@ -154,6 +155,7 @@ export function useUndoableEdits(inputs: {
       const ref = { id: created.id };
       history.push({
         label: "create",
+        meta: { what: "create", lesson: input },
         undo: async () => {
           await deleteLesson.mutateAsync(ref.id);
         },
@@ -174,6 +176,7 @@ export function useUndoableEdits(inputs: {
       const ref = { id: lesson.id };
       history.push({
         label: "delete",
+        meta: { what: "delete", lesson },
         undo: async () => {
           const again = await createLesson.mutateAsync(input);
           ref.id = again.id;

@@ -64,6 +64,8 @@ describe("Lås upp on a selection, and its Ångra (Undantag med flit)", () => {
     const { pushed, mutate } = draw([exempt, plain]);
     fireEvent.click(screen.getByRole("button", { name: /Lås upp/ }));
     await vi.waitFor(() => expect(pushed).toHaveLength(1));
+    // The step says what it was about for the list of the session's steps (E9): two locked lessons were selected and the step unlocked both.
+    expect(pushed[0]!.meta).toEqual({ what: "bulk-lock", locked: false, count: 2 });
     // Each write says the lock the lesson had when it was selected (E9), so that a colleague's lock or unlock since is not written over.
     expect(mutate).toHaveBeenNthCalledWith(1, { id: "a", isLocked: false, propagate: false, expected: { isLocked: true } });
 

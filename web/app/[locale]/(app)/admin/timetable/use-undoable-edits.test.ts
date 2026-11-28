@@ -462,3 +462,20 @@ describe("a lesson somebody else has changed (E9)", () => {
     expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ dayOfWeek: 1, expected: { dayOfWeek: 3 } }));
   });
 });
+
+/*
+ * The list of the session's steps (E9) says each step in words from data the page pushes with it (HistoryEntry.meta): what was changed, of which lesson.
+ */
+describe("what a step says it was about (E9)", () => {
+  it("names the lesson and the patch of an update, the input of a create and the lesson of a delete", async () => {
+    const { view } = setup();
+    await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 3 })));
+    await act(async () => void (await view.result.current.edits.undoableCreate({ academicYearId: "y-1", subjectId: "s-1", studentGroupId: "g-1", dayOfWeek: 1, startTime: "08:00", endTime: "09:00" } as never)));
+    await act(async () => void (await view.result.current.edits.undoableDelete(lesson)));
+    const steps = view.result.current.history.steps().done;
+    expect(steps.map((entry) => entry.meta?.what)).toEqual(["update", "create", "delete"]);
+    expect(steps[0]!.meta).toMatchObject({ what: "update", lesson: { id: "l-1", subjectId: "s-1", studentGroupId: "g-1" }, patch: { dayOfWeek: 3 } });
+    expect(steps[1]!.meta).toMatchObject({ what: "create", lesson: { subjectId: "s-1", studentGroupId: "g-1" } });
+    expect(steps[2]!.meta).toMatchObject({ what: "delete", lesson: { id: "l-1" } });
+  });
+});

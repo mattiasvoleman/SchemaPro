@@ -73,6 +73,7 @@ export function SelectionBar({
       }
       history.push({
         label: "bulk-lock",
+        meta: { what: "bulk-lock", locked: isLocked, count: targets.length },
         undo: async () => {
           for (const lesson of targets) {
             await updateLesson.mutateAsync({
@@ -117,6 +118,7 @@ export function SelectionBar({
       }
       history.push({
         label: "bulk-delete",
+        meta: { what: "bulk-delete", count: targets.length },
         undo: async () => {
           for (let i = 0; i < inputs.length; i++) {
             const again = await createLesson.mutateAsync(inputs[i]);
