@@ -182,6 +182,11 @@ export async function searchMakeRoom(input: MakeRoomInput): Promise<MakeRoomResu
     ...over,
   });
 
+  // Nothing to make room for: a unit that stands at the target already (a unit that stands nowhere has no place of its own), and a landing
+  // that runs past midnight, which is no place (g514: both used to be answered with a proposal, the first a move from a place to itself).
+  if (input.placed && picked.slot.dayOfWeek === pickedAt.dayOfWeek && picked.slot.startMinutes === pickedAt.startMinutes) return empty({});
+  if (pickedAt.endMinutes > 24 * 60) return empty({ stuck: 'CLOSED' });
+
   // Level 0: the picked unit at the target.
   const first = world.inTheWay(picked, pickedAt);
   const pickedIds = new Set(picked.members.map((member) => member.id));
