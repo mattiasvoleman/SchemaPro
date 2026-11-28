@@ -14,6 +14,9 @@
  *
  *   (ra) a restore in Direkt of a version of the published grundschema, then a publication: the school has as many published lessons as the
  *        grundschema gives, and not twice as many (before: 130 became 260, two lessons on every time);
+ *   (rj) the sweep takes the rows from the school's own today (two schools a whole day apart, so that the UTC date is wrong for at least one of
+ *        them at any hour): yesterday stays, today and tomorrow go, a row with attendance and a cancelled row stay; and what the restore says it
+ *        took, in the refusal and in the answer, is what the delete took;
  *   (rb) the same, with the rows looked at: no orphan, the same rows, under the restored lessons;
  *   (rc) a vikarie, a changed room and a note on published lessons the version holds unchanged follow them over: the same rows, the same
  *        vikarie, and the next publication adds nothing;
@@ -90,10 +93,10 @@ interface School {
   roomId: string;
 }
 
-async function givenSchool(owner: Owner, suffix: string): Promise<School> {
+async function givenSchool(owner: Owner, suffix: string, timezone = 'Europe/Stockholm'): Promise<School> {
   const slug = `${MARKER}-${suffix}`;
   await owner.school.deleteMany({ where: { slug } });
-  const school = await owner.school.create({ data: { name: slug, slug, timezone: 'Europe/Stockholm' } });
+  const school = await owner.school.create({ data: { name: slug, slug, timezone } });
   const person = (key: string, role: 'SCHOOL_ADMIN' | 'TEACHER', extra: Record<string, unknown> = {}) =>
     owner.user.create({
       data: { schoolId: school.id, authId: randomUUID(), role, firstName: key, lastName: 'Aterstall', email: `${key.toLowerCase()}-${slug}@probe.example.com`, ...extra },
@@ -166,8 +169,8 @@ async function main(): Promise<void> {
   const sweep = async () => {
     await owner.school.deleteMany({ where: { slug: { startsWith: `${MARKER}-` } } });
   };
-  const inSchool = async (suffix: string, body: (s: School, svc: ReturnType<typeof servicesOf>) => Promise<void>) => {
-    await body(await givenSchool(owner, suffix), servicesOf(api));
+  const inSchool = async (suffix: string, body: (s: School, svc: ReturnType<typeof servicesOf>) => Promise<void>, timezone?: string) => {
+    await body(await givenSchool(owner, suffix, timezone), servicesOf(api));
   };
   const publish = (s: School, svc: ReturnType<typeof servicesOf>) => svc.publications.legacyPublish({ academicYearId: s.yearId, fromDate: YEAR_START }, s.admin);
 
@@ -239,6 +242,57 @@ async function main(): Promise<void> {
         assert.deepEqual(restored.calendar, { kept: before.rows.length, removed: 0, handChanged: 0 }, 'the restore says every row went with its lesson to the restored one');
       });
     });
+
+    for (const [suffix, timezone] of [['j1', 'Pacific/Kiritimati'], ['j2', 'Pacific/Pago_Pago']] as const) {
+      await check(`(rj) ${timezone}: the sweep takes the rows from the school's today, and the count is what it took`, async () => {
+        await inSchool(
+          suffix,
+          async (s, svc) => {
+            const pupil = await owner.user.create({ data: { schoolId: s.schoolId, authId: randomUUID(), role: 'STUDENT', firstName: 'Elev', lastName: 'Aterstall', email: `elev-${MARKER}-${suffix}@probe.example.com`, studentGroupId: s.groupId } });
+            await publish(s, svc);
+            const version = await svc.versions.create(s.yearId, 'före', s.admin);
+            await owner.masterLesson.update({ where: { id: s.monday }, data: { teacherId: s.secondTeacherId } });
+            const rows = (await calendarOf(s)).rows.filter((row) => row.masterLessonId === s.monday);
+            // The school's days, read as the code reads them: the date in the school's own zone.
+            const dayOf = (offset: number) => {
+              const day = new Date(`${new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())}T00:00:00.000Z`);
+              day.setUTCDate(day.getUTCDate() + offset);
+              return day.toISOString().slice(0, 10);
+            };
+            const place = (id: string, day: string, hour: string) =>
+              owner.$executeRaw`UPDATE "CalendarLessons" SET "date" = ${day}::date, "startsAt" = (${day}::date + ${hour}::time) AT TIME ZONE ${timezone}, "endsAt" = (${day}::date + ${hour}::time + interval '1 hour') AT TIME ZONE ${timezone} WHERE "id" = ${id}::uuid`;
+            const yesterday = rows[0]!.id;
+            const today = rows[1]!.id;
+            const tomorrow = rows[2]!.id;
+            const attended = rows[3]!.id;
+            const cancelled = rows[4]!.id;
+            await place(yesterday, dayOf(-1), '09:00');
+            await place(today, dayOf(0), '00:30');
+            await place(tomorrow, dayOf(1), '09:00');
+            await place(attended, dayOf(1), '10:00');
+            await place(cancelled, dayOf(1), '11:00');
+            await owner.attendanceRecord.create({ data: { schoolId: s.schoolId, calendarLessonId: attended, studentId: pupil.id } });
+            await owner.calendarLesson.update({ where: { id: cancelled }, data: { status: 'CANCELLED' } });
+            const before = (await calendarOf(s)).rows.length;
+            const stays = new Set([yesterday, attended, cancelled]);
+
+            const refusal = await refusalOf(svc.versions.restore(version.id, s.admin));
+            assert.equal(refusal.code, 'DIRECT_REACH_UNANSWERED');
+            await svc.reach.acknowledge(s.admin);
+            const restored = await svc.versions.restore(version.id, s.admin);
+            const after = await calendarOf(s);
+            const ids = new Set(after.rows.map((row) => row.id));
+            assert.ok([...stays].every((id) => ids.has(id)), 'what has happened (yesterday, attendance, cancelled) stays');
+            assert.ok(!ids.has(today) && !ids.has(tomorrow), 'today and tomorrow go');
+            assert.equal(before - after.rows.length, rows.length - stays.size, 'every other row of the lesson went');
+            assert.equal(refusal.params?.['removed'], before - after.rows.length, 'the refusal said what the restore then took');
+            assert.equal(restored.calendar?.removed, before - after.rows.length, 'and so does the answer');
+            assert.equal(refusal.params?.['handChanged'], 0, 'nothing in it had been worked on by hand: the question is asked for the rows alone');
+          },
+          timezone,
+        );
+      });
+    }
 
     await check('(rc) a vikarie, a changed room and a note on a lesson the version holds unchanged follow it over', async () => {
       await inSchool('c', async (s, svc) => {
