@@ -26,10 +26,13 @@ export interface DiffLesson {
   endDate?: string | null;
   extraGroupIds?: string[];
   studentIds?: string[];
+  /** A restore writes the lock and the exemptions too: a lesson that stands the same but is locked on one side only is not the same on both. Absent is not locked and none. */
+  isLocked?: boolean;
+  exemptFrom?: readonly string[];
 }
 
 /** What of a lesson that stands where it stood has changed. */
-export type Aspect = "teacher" | "coTeacher" | "room" | "weeks" | "groups" | "pupils";
+export type Aspect = "teacher" | "coTeacher" | "room" | "weeks" | "groups" | "pupils" | "locked" | "exempt";
 
 export type DiffEntry<L extends DiffLesson = DiffLesson> =
   /** The same lesson at another day or clock, or on the tray or off it; `room` says whether the room is another one too. */
@@ -58,7 +61,7 @@ const whatOf = (lesson: DiffLesson): string =>
   [lesson.subjectId, lesson.studentGroupId, lesson.teacherId ?? "", lesson.coTeacherId ?? "", weeksOf(lesson), sorted(lesson.extraGroupIds), sorted(lesson.studentIds)].join("#");
 
 /** Everything a restore writes. */
-const wholeOf = (lesson: DiffLesson): string => `${whatOf(lesson)}#${lesson.roomId ?? ""}#${placeOf(lesson)}`;
+const wholeOf = (lesson: DiffLesson): string => `${whatOf(lesson)}#${lesson.roomId ?? ""}#${placeOf(lesson)}#${lesson.isLocked ? "locked" : ""}#${sorted(lesson.exemptFrom)}`;
 
 /** The lessons' own order, so that two runs over the same schedules pair the same lessons: by place, then by what they are. */
 const inOrder = <L extends DiffLesson>(lessons: L[]): L[] => [...lessons].sort((a, b) => (placeOf(a) + whatOf(a)).localeCompare(placeOf(b) + whatOf(b)));
@@ -145,6 +148,8 @@ const aspectsOf = (from: DiffLesson, to: DiffLesson): Aspect[] => {
   if (weeksOf(from) !== weeksOf(to)) found.push("weeks");
   if (sorted(from.extraGroupIds) !== sorted(to.extraGroupIds)) found.push("groups");
   if (sorted(from.studentIds) !== sorted(to.studentIds)) found.push("pupils");
+  if (Boolean(from.isLocked) !== Boolean(to.isLocked)) found.push("locked");
+  if (sorted(from.exemptFrom) !== sorted(to.exemptFrom)) found.push("exempt");
   return found;
 };
 

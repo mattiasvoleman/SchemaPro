@@ -2927,6 +2927,11 @@
     "diffAspectWeeks": "veckor",
     "diffAspectGroups": "klasser",
     "diffAspectPupils": "elever",
+    "diffAspectLocked": "låsning",
+    "diffLocked": "låst",
+    "diffUnlocked": "olåst",
+    "diffAspectExempt": "undantag",
+    "diffExemptNone": "inget",
     "diffCount": {
       "moved": "{count, plural, one {# flyttad} other {# flyttade}}",
       "changed": "{count, plural, one {# ändrad} other {# ändrade}}",

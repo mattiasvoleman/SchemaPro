@@ -2927,6 +2927,11 @@
     "diffAspectWeeks": "weeks",
     "diffAspectGroups": "classes",
     "diffAspectPupils": "pupils",
+    "diffAspectLocked": "locking",
+    "diffLocked": "locked",
+    "diffUnlocked": "unlocked",
+    "diffAspectExempt": "exemption",
+    "diffExemptNone": "none",
     "diffCount": {
       "moved": "{count, plural, one {# moved} other {# moved}}",
       "changed": "{count, plural, one {# changed} other {# changed}}",

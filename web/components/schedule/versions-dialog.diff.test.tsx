@@ -104,6 +104,14 @@ describe("a lesson that more than one class has", () => {
   });
 });
 
+describe("a lock", () => {
+  it("is a change of a lesson that stands where it stood, told as locking: before → after", async () => {
+    render(wrap(<VersionsDialog {...props([lesson({ isLocked: true }), DETAILS["v-a"]!.lessons[1]])} />));
+    await userEvent.click(screen.getByRole("button", { name: "Jämför ”Före lovet” med nuvarande" }));
+    expect(entries(screen.getByRole("region", { name: /Ändringar sedan/ }))).toEqual(["~ Matematik · Måndag 08:00–09:00 · låsning: olåst → låst"]);
+  });
+});
+
 describe("two versions against each other", () => {
   it("compares the version with another one chosen in the list, and reads the other's name in the title", async () => {
     render(wrap(<VersionsDialog {...props([])} />));
@@ -212,6 +220,13 @@ describe("restoring a version", () => {
     await userEvent.click(within(screen.getByRole("dialog", { name: "Återställa ”Före lovet”?" })).getByRole("button", { name: "Avbryt" }));
     expect(actions.restore).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: "Återställa ”Före lovet”?" })).toBeNull();
+  });
+
+  it("does not say the version is identical when it differs in what a restore also writes: a lock", async () => {
+    render(wrap(<VersionsDialog {...props(DETAILS["v-a"]!.lessons.map((one) => ({ ...(one as object), isLocked: true })))} />));
+    await userEvent.click(screen.getByRole("button", { name: "Återställ ”Före lovet”" }));
+    expect(screen.queryByText(/Versionen är identisk med det nuvarande schemat\./)).toBeNull();
+    expect(screen.getByText(/Jämfört med det nuvarande schemat: 2 ändrade\./)).toBeTruthy();
   });
 
   it("says when the version is the schedule that is on screen", async () => {

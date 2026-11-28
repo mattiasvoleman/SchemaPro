@@ -312,6 +312,12 @@ export function VersionsDialog({
           return `${t("diffAspectWeeks")}: ${weeks(from)} → ${weeks(to)}`;
         case "groups":
           return `${t("diffAspectGroups")}: ${groupLabel({ studentGroupId: from.studentGroupId, extraGroupIds: from.extraGroupIds ?? [] })} → ${groupLabel({ studentGroupId: to.studentGroupId, extraGroupIds: to.extraGroupIds ?? [] })}`;
+        case "locked":
+          return `${t("diffAspectLocked")}: ${from.isLocked ? t("diffLocked") : t("diffUnlocked")} → ${to.isLocked ? t("diffLocked") : t("diffUnlocked")}`;
+        case "exempt": {
+          const rules = (lesson: DiffLesson) => (lesson.exemptFrom ?? []).map((rule) => t(`exemptRule${rule}`)).join(t("exemptAnd")) || t("diffExemptNone");
+          return `${t("diffAspectExempt")}: ${rules(from)} → ${rules(to)}`;
+        }
         case "pupils":
           return `${t("diffAspectPupils")}: ${[...[...after].filter((id) => !before.has(id)).map((id) => `+${pupilName(id)}`), ...[...before].filter((id) => !after.has(id)).map((id) => `−${pupilName(id)}`)].sort().join(", ")}`;
       }

@@ -43,9 +43,18 @@ describe("what two schedules do not share", () => {
     ["weeks", { startDate: "2026-10-05" }],
     ["groups", { extraGroupIds: ["8a"] }],
     ["pupils", { studentIds: ["p1"] }],
+    ["locked", { isLocked: true }],
+    ["exempt", { exemptFrom: ["FRAME"] }],
   ])("says %s when it is what changed in a lesson that stands where it stood", (aspect, change) => {
     const [entry] = diffLessons([lesson()], [lesson(change)]);
     expect(entry).toMatchObject({ kind: "changed", aspects: [aspect] });
+  });
+
+  it("does not call two lessons the same when a restore would lock or unlock one of them, and calls two locked ones the same", () => {
+    expect(diffLessons([lesson({ isLocked: true })], [lesson({ isLocked: false })])).toHaveLength(1);
+    expect(diffLessons([lesson({ isLocked: true, exemptFrom: ["FRAME", "LUNCH"] })], [lesson({ isLocked: true, exemptFrom: ["LUNCH", "FRAME"] })])).toEqual([]);
+    // A snapshot from before the lock was written has no key: not locked.
+    expect(diffLessons([lesson()], [lesson({ isLocked: false })])).toEqual([]);
   });
 
   it("says each thing that changed, in a fixed order", () => {
