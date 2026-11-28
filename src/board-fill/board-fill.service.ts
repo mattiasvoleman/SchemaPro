@@ -8,6 +8,7 @@ import { PossibleTimesService } from '../calendar/possible-times.service';
 import { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { recordRead } from '../access-log/access-log';
+import { outOfTime } from '../common/bulk';
 import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
 import { PrismaService } from '../database/prisma.service';
 import { gradeSpanOf } from '../optimization/room-eligibility';
@@ -56,6 +57,22 @@ export const FILL_APPLY_CEILING_MS = 120_000;
 
 /** The transaction's time for a Ta in of this many lessons: 10 s and 0.6 s a lesson, 13 times what a lesson took, and never more than the ceiling. */
 export const applyTimeoutMs = (lessons: number): number => Math.min(FILL_APPLY_CEILING_MS, Math.max(15_000, 10_000 + lessons * 600));
+/** The code of a Ta in whose transaction ran out of its time: nothing was written and no version was kept (the transaction is rolled back with its version). */
+export const BOARD_FILL_TIMED_OUT = 'BOARD_FILL_TIMED_OUT';
+
+/**
+ * What a school is told when Ta in's transaction ran out of its time (Prisma's P2028 or the database's own cancelling). Left alone it reached the page as the
+ * filter's anonymous 500 "An unexpected database error occurred.", which says neither that nothing was written nor what to do; and the same proposal asked again
+ * runs out the same way. Each lesson is some forty round trips to the database, so what fits in the time depends on how far the database is: fewer at a time fits.
+ */
+function timedOut(lessons: number): ConflictException {
+  const seconds = Math.round(applyTimeoutMs(lessons) / 1000);
+  return new ConflictException({
+    message: `Ta in hann inte på ${seconds} sekunder, så ingenting skrevs och ingen version sparades. Ta in färre åt gången: en klass eller en årskurs i taget.`,
+    code: BOARD_FILL_TIMED_OUT,
+    params: { lessons, seconds },
+  });
+}
 /**
  * The id a brick has as a lesson that stands nowhere: a UUID in form and in no table. The judge names a lesson its clash rule meets by reading that lesson's row
  * (namesOf), and the fill's own lessons stand in its reads as they are laid, so a prefixed key such as `fill:<post>|<teacher>|60|1` reached Postgres as a uuid
@@ -393,6 +410,8 @@ export class BoardFillService {
       return await this.applyIn(dto, user);
     } catch (error) {
       if (isWriteConflict(error)) throw writeConflict();
+      // The transaction was rolled back when its time ran out, so a second try is as safe as the first (a connection that never came free is the filter's 503 DATABASE_BUSY).
+      if (outOfTime(error) === 'ran out') throw timedOut(dto.items.length);
       throw error;
     }
   }

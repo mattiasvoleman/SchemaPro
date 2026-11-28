@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
 import type { MasterLessonsService } from '../calendar/master-lessons.service';
 import type { PossibleTimesService } from '../calendar/possible-times.service';
@@ -11,7 +12,7 @@ import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { lockPostForShares } from '../resources/requirement-shares';
 import { makeWorld } from '../swaps/__fixtures__/swap-world';
 import { readSwapData } from '../swaps/swap-snapshot';
-import { BOARD_FILL_STALE, BoardFillService, FILL_APPLY_CEILING_MS, applyTimeoutMs } from './board-fill.service';
+import { BOARD_FILL_STALE, BOARD_FILL_TIMED_OUT, BoardFillService, FILL_APPLY_CEILING_MS, applyTimeoutMs } from './board-fill.service';
 
 /*
  * LÄGG DET SOM GÅR, the service (E7a): what it reads and what it writes, with the tray, the judge and the world faked. The planner has its own spec
@@ -236,6 +237,27 @@ describe('BoardFillService', () => {
       expect(calls.at(-1)![2]).toEqual({ timeoutMs: FILL_APPLY_CEILING_MS });
       await service.apply({ academicYearId: YEAR, basis: await basisNow(), items: items() }, asAdmin);
       expect((prisma.withRls.mock.calls as unknown as Array<[unknown, unknown, { timeoutMs: number }]>).at(-1)![2]).toEqual({ timeoutMs: applyTimeoutMs(2) });
+    });
+
+    it('answers 409 BOARD_FILL_TIMED_OUT, in words, when the transaction runs out of its time: nothing was written, and fewer at a time is the way on (g523)', async () => {
+      const expired = new Prisma.PrismaClientKnownRequestError('Transaction API error: A query cannot be executed on an expired transaction. The timeout for this transaction was 15000 ms.', { code: 'P2028', clientVersion: 'test' });
+      tray.writeBrick.mockRejectedValue(expired);
+      const refused = await service.apply({ academicYearId: YEAR, basis: await basisNow(), items: items() }, asAdmin).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(ConflictException);
+      const body = (refused as ConflictException).getResponse() as { message: string; code: string; params: Record<string, number> };
+      expect(body.code).toBe(BOARD_FILL_TIMED_OUT);
+      expect(body.params).toEqual({ lessons: 2, seconds: 15 });
+      expect(body.message).toMatch(/ingenting skrevs/);
+      expect(body.message).toMatch(/färre åt gången/);
+    });
+
+    it('leaves a connection that never came free to the filter (503 DATABASE_BUSY), and any other failure as it is', async () => {
+      const never = new Prisma.PrismaClientKnownRequestError('Unable to start a transaction in the given time.', { code: 'P2028', clientVersion: 'test' });
+      tray.writeBrick.mockRejectedValueOnce(never);
+      await expect(service.apply({ academicYearId: YEAR, basis: await basisNow(), items: items() }, asAdmin)).rejects.toBe(never);
+      const other = new Error('boom');
+      tray.writeBrick.mockRejectedValueOnce(other);
+      await expect(service.apply({ academicYearId: YEAR, basis: await basisNow(), items: items() }, asAdmin)).rejects.toBe(other);
     });
 
     it('writes nothing and saves no version when the grundschema is not the one the proposal was made on', async () => {
