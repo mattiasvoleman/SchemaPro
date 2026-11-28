@@ -122,9 +122,11 @@ export function useUndoableEdits(inputs: {
         throw error;
       }
       const after = { ...before, ...patch };
-      // What the lesson holds of them now, as the gateway answered (what it did not say is what was asked): the undo is held to it, so that a colleague's later move of the lesson
-      // is not moved back (and the lock the move set, which the patch did not name, is not what it waits for).
-      const written = seenOf({ ...patch, ...result, exempt: undefined }, patch);
+      // What the lesson holds of EVERY field the undo writes (the whole snapshot, not only what the patch set), as the gateway answered (what it did not say is what the page
+      // had): the undo is held to it, so that a colleague's later change of the lesson, of any field, is not put back, and the lock a move set is what it waits for.
+      const written = seenOf({ ...before, ...patch, ...result, exempt: undefined }, after);
+      // And the redo, which writes the same snapshot, to what the lesson holds once the undo has put it back: what the page saw before.
+      const sawBefore = seenOf(before, after);
       history.push({
         label: "update",
         // The judge's final no (a lesson put back on a time that breaks a rule, beslut 4) and a lesson somebody else has changed since are
@@ -139,7 +141,7 @@ export function useUndoableEdits(inputs: {
           }
         },
         redo: async () => {
-          await updateLesson.mutateAsync({ id: lesson.id, ...after, expected: seen });
+          await updateLesson.mutateAsync({ id: lesson.id, ...after, expected: sawBefore });
         },
       });
       return result;
