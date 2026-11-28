@@ -127,6 +127,21 @@ describe("the toast of a Ta in", () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(2));
   });
 
+  it("restores once however often the button is pressed: sonner keeps the toast and its button for 200 ms after a press (g523)", async () => {
+    undo.mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve({ restoredLessons: 1, safetyVersionId: "v-safety" }), 30)));
+    await takeIn();
+    const { action } = toastAction();
+    action.onClick();
+    action.onClick();
+    action.onClick();
+    await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(2));
+    expect(undo).toHaveBeenCalledTimes(1);
+    // And after it has answered: the same version is not restored again from the same toast.
+    action.onClick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(undo).toHaveBeenCalledTimes(1);
+  });
+
   it("says that another run is rewriting the year when the restore is answered 409 SCHEDULE_BUSY, and leaves the page as it was", async () => {
     undo.mockRejectedValue(new ApiError(409, "busy", "SCHEDULE_BUSY"));
     const onApplied = vi.fn();

@@ -73,6 +73,8 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
   const [versionName, setVersionName] = useState<string | null>(null);
   const [error, setError] = useState<{ text: string; stale: boolean } | null>(null);
   const asking = useRef<AbortController | null>(null);
+  /** The versions whose Ångra has been pressed. Sonner keeps a toast and its button for 200 ms after a press, so a double click pressed it twice: two restores of one version, and a safety version for each. */
+  const spent = useRef(new Set<string>());
 
   // The classes that have a brick left, and the years they are in, with their counts: what the gateway counts for each, read from the tray.
   const classes = useMemo(
@@ -161,9 +163,12 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
   /**
    * The Ångra on the toast of a Ta in: the version saved before it, restored. It is the whole grundschema as that version had it, so a colleague's change after
    * the Ta in goes too: the toast says so, is up for a few seconds only, and the restore saves a version of its own first. It runs from a toast, after the
-   * dialog may be gone, so it uses only what it was given. A restore writes no calendar row, so it asks nothing of the school in Direkt.
+   * dialog may be gone, so it uses only what it was given. In Direkt the restore carries the published rows with it (restore-calendar.ts, E9's återställning i
+   * Direkt): a gateway without that leaves every published lesson of the year without its master, and the next publication writes the week twice.
    */
   const undo = async (versionId: string) => {
+    if (spent.current.has(versionId)) return;
+    spent.current.add(versionId);
     try {
       const result = await undoFill(versionId);
       for (const key of [TRAY_KEY, "masterLessons", "calendarLessons", "teacherLessons", "scheduleVersions"]) void queryClient.invalidateQueries({ queryKey: [key] });
