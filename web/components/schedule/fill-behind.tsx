@@ -1,23 +1,24 @@
 "use client";
 
-import { lazy, Suspense, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { fillPreview } from "@/lib/fill-store";
+import { useLazyModule } from "@/lib/use-lazy-module";
 import type { FillOnly } from "./fill-layer";
 
 /*
  * The board's layer for a proposal of Lägg det som går (E7a), as the grid takes a layer: `behind` is called for each day's column with the scale. All
- * that is in the route's first load is this: the store's value and a lazy wrapper. The layer itself is fetched the first time a proposal is looked
- * at, and not before (React's lazy() fetches at first render, and nothing is rendered while the store is empty).
+ * that is in the route's first load is this: the store's value and a hook that fetches the layer the first time a proposal is looked at, and not before
+ * (nothing is fetched while the store is empty).
+ *
+ * Fetched with useLazyModule and not with lazy(): the grid has no boundary over it, and a lazy() at module level whose chunk did not arrive (a tab left
+ * open over a deploy) holds the failed import for the tab's whole life and throws it into the render of every column, which the app answers with Next's
+ * client-exception screen over the whole page (g516 M-3, the same in Gör plats' layer). Here a chunk that does not arrive draws nothing, and the dialog the
+ * proposal came from says the same in words. (The grid's own layers, board-keys and possible-layer, are fetched the same way.)
  */
-const Layer = lazy(() => import("./fill-layer"));
-
 function FillDay({ day, scale, only }: { day: number; scale: { startMinutes: number; pxPerMinute: number }; only?: FillOnly }) {
   const shown = useSyncExternalStore(fillPreview.subscribe, fillPreview.get, () => null);
-  return shown ? (
-    <Suspense fallback={null}>
-      <Layer day={day} scale={scale} shown={shown} only={only} />
-    </Suspense>
-  ) : null;
+  const layer = useLazyModule(() => import("./fill-layer"), () => undefined, shown !== null);
+  return shown && layer ? <layer.default day={day} scale={scale} shown={shown} only={only} /> : null;
 }
 
 /**
