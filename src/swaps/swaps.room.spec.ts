@@ -3,11 +3,13 @@ import { judgeLessons, type JudgeItem, type LessonVerdict } from '../calendar/le
 import { MasterLessonsService } from '../calendar/master-lessons.service';
 import { fakeTx, makeWorld, rowOf, YEAR, type World } from './__fixtures__/swap-world';
 import { proposalId } from './swap-search';
+import { recordRead } from '../access-log/access-log';
 import { readSwapData } from './swap-snapshot';
 import type { SwapLesson, SwapMove } from './swap-types';
 import { SwapsService } from './swaps.service';
 
 jest.mock('./swap-snapshot', () => ({ readSwapData: jest.fn() }));
+jest.mock('../access-log/access-log', () => ({ recordRead: jest.fn(async () => undefined) }));
 jest.mock('../calendar/lesson-judge', () => ({ ...jest.requireActual('../calendar/lesson-judge'), judgeLessons: jest.fn() }));
 
 /*
@@ -411,4 +413,82 @@ describe('POST /swaps/pair: Byt plats, two marked lessons that each take the oth
     await expect(service({ world }).swaps.pair({ lessonId: a.id, otherLessonId: a.id }, user)).rejects.toBeInstanceOf(BadRequestException);
     await expect(service({ world }).swaps.pair({ lessonId: a.id, otherLessonId: '00000000-0000-4000-8000-000000009999' }, user)).rejects.toBeInstanceOf(NotFoundException);
   });
+});
+
+describe('the läslogg: a post read by Gör plats and Byt plats is a row (EMPLOYMENT), as it is for the swaps and chains of three (g514)', () => {
+  /** The teacher of a lesson, made the holder of a post with a limit in the snapshot (the read that counts the breaches a proposal makes). */
+  const limited = (world: World, lesson: SwapLesson) => {
+    world.data.postLimited = new Set([lesson.teacherId!]);
+    return lesson.teacherId!;
+  };
+  const employmentReads = () => (recordRead as jest.Mock).mock.calls.filter((call) => call[1] === 'EMPLOYMENT').map((call) => [...(call[2] as string[])].sort());
+
+  beforeEach(() => (recordRead as jest.Mock).mockClear());
+
+  it('a make-room answer with proposals records the posts of the limited teachers it names, and one with none records nothing', async () => {
+    const world = makeWorld({ seed: 7 });
+    const { swaps } = service({ world });
+    let named = 0;
+    for (const picked of world.data.lessons.filter((_, index) => index % 9 === 4)) {
+      const teacher = limited(world, picked);
+      (recordRead as jest.Mock).mockClear();
+      const answer = await swaps.suggest({ lessonId: picked.id, makeRoom: { dayOfWeek: 3, startTime: '10:00', depth: 2 }, limit: 5 }, user);
+      if (answer.proposals.length === 0) {
+        expect(employmentReads()).toEqual([]);
+        continue;
+      }
+      // The picked lesson is in every proposal, so its teacher is the one post named.
+      expect(employmentReads()).toEqual([[teacher]]);
+      named += 1;
+    }
+    expect(named).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('a swap of two that goes records the posts of the limited teachers of the two, and a refused one records nothing', async () => {
+    const world = makeWorld({ seed: 7 });
+    const { swaps } = service({ world });
+    let goes = 0;
+    let refused = 0;
+    const lessons = world.data.lessons;
+    for (let i = 0; i < lessons.length && (goes < 3 || refused < 3); i += 3) {
+      for (let j = 1; j < lessons.length && (goes < 3 || refused < 3); j += 7) {
+        const [a, b] = [lessons[i]!, lessons[j]!];
+        if (a.id === b.id || (a.dayOfWeek === b.dayOfWeek && a.startMinutes === b.startMinutes)) continue;
+        const teacher = limited(world, a);
+        (recordRead as jest.Mock).mockClear();
+        const answer = await swaps.pair({ lessonId: a.id, otherLessonId: b.id }, user);
+        if (answer.ok) {
+          goes += 1;
+          expect(employmentReads()).toContainEqual([teacher]);
+        } else {
+          refused += 1;
+          expect(employmentReads()).toEqual([]);
+        }
+      }
+    }
+    expect(goes).toBeGreaterThan(0);
+    expect(refused).toBeGreaterThan(0);
+  }, 120_000);
+});
+
+describe('Gör plats offers a displaced lesson the school’s own start clocks, not one clock (g514)', () => {
+  it('lets a displaced lesson land at a clock that is neither the picked lesson’s nor the target’s', async () => {
+    const world = makeWorld({ seed: 11 });
+    const { swaps } = service({ world });
+    let elsewhere = 0;
+    let asked = 0;
+    for (const picked of world.data.lessons.filter((_, index) => index % 7 === 2)) {
+      for (const [dayOfWeek, startMinutes] of [[2, 600], [4, 540]] as const) {
+        const answer = await swaps.suggest({ lessonId: picked.id, makeRoom: { dayOfWeek, startTime: clock(startMinutes), depth: 2 }, limit: 30 }, user);
+        asked += 1;
+        for (const proposal of answer.proposals) {
+          for (const move of proposal.moves) {
+            if (move.lessonId !== picked.id && move.to.startMinutes !== picked.startMinutes && move.to.startMinutes !== startMinutes) elsewhere += 1;
+          }
+        }
+      }
+    }
+    expect(asked).toBeGreaterThan(5);
+    expect(elsewhere).toBeGreaterThan(0);
+  }, 120_000);
 });
