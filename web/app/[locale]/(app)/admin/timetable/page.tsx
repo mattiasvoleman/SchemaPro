@@ -92,6 +92,7 @@ import { useScheduleEngine } from "./use-schedule-engine";
 import { useTimetableView } from "./use-timetable-view";
 import { useUndoableEdits } from "./use-undoable-edits";
 import { useDirectReachAsk } from "@/lib/use-direct-reach-ask";
+import { DirectReachDeclined } from "@/lib/direct-reach";
 import { useLunchEdits } from "./use-lunch-edits";
 
 export default function TimetablePage() {
@@ -1298,6 +1299,8 @@ export default function TimetablePage() {
               subjectById={subjectById}
               teacherById={teacherById}
               writable={!readOnly}
+              guard={directReach.ask}
+              declined={(error) => error instanceof DirectReachDeclined}
               onClose={() => setTrayOpen(false)}
             />
           </Suspense>
