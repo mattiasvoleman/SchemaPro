@@ -504,6 +504,10 @@ describe('the roster-reader inventory', () => {
       // by findConflicts, which reads pupils through the year's basis: the laying (BoardTrayController.lay) answers R6's 409 for a year two
       // steps ahead as the hand edit does. The tray's own read (the bricks) counts posts and lessons and asks for no basis.
       //
+      // Lägg det som går (E7a) reads the year as the swap search reads it (readSwapData, through rostersOfYear) and judges every start it chooses by
+      // the judge's own word, so its proposal (BoardFillController.propose) answers R6's 409 for a year two steps ahead, and Ta in
+      // (BoardFillController.apply) lays each lesson through the tray's own write, which answers it as the laying does.
+      //
       // Skriv in förläggningarna (E4b) judges the year's förläggningar by the week's own call (RequirementPlacementsService.judgedYear, which reads
       // pupils through the year's basis as the hand edit's clash check does), for its preview and for its write, so a year two steps ahead
       // answers R6's 409 on both as the week of förläggningar does.
@@ -531,6 +535,8 @@ describe('the roster-reader inventory', () => {
         'AnalysisController.payrollFile',
         'BlockPlacementsController.listOfBlock',
         'BlockPlacementsController.replace',
+        'BoardFillController.apply',
+        'BoardFillController.propose',
         'BoardTrayController.lay',
         'CalendarController.publish',
         'CalendarLessonsController.assignSubstitute',
