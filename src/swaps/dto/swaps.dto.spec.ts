@@ -99,7 +99,7 @@ describe('E5a: what the doors take', () => {
     expect(await check(ApplySwapDto, { lessonId: A, forBrick: 'yes', moves })).toEqual(['forBrick']);
     expect(await check(ApplySwapDto, { forBrick: true, moves: [move(A)] })).toEqual([]);
     expect(await check(ApplySwapDto, { moves })).toEqual(['lessonId']);
-    // One move is the service's to judge: it is a proposal only for a brick, and the service says so before it reads anything.
+    // One move is a proposal for every request (g514 L-4): the door takes it, and the service judges it as the picked lesson's move.
     expect(await check(ApplySwapDto, { lessonId: A, moves: [move(A)] })).toEqual([]);
     expect(await check(ApplySwapDto, { lessonId: A, moves: [] })).toEqual(['moves']);
   });

@@ -402,8 +402,10 @@ both are applied by `POST /api/v1/swaps/apply` as above.
 - **One lesson's move is a proposal (g514 L-4).** A free time is answered by Gör plats with the single move, and `apply` takes it: the lesson is
   moved, locked and logged as any hand move is, after a safety version, and the undo is the move reversed. Not for a brick only.
 - **Two applies at once (g514 L-6).** Two requests that are each valid alone (two lessons of one class moved to one place at once) are not
-  serialised by the shared year lock, as two hand edits are not. Not changed here: the window is the milliseconds of one transaction of at most six
-  lessons, the year's exclusive lock (as Ta in takes it, g517 H-1) would make every hand edit wait for or refuse a swap with `SCHEDULE_BUSY`, and the
+  serialised by the shared year lock, as two hand edits are not (measured on real Postgres, two applies and two PATCHes started together each double-booked
+  the class and the teacher every time). Not changed here: the window is the part of one transaction between the clash read and the COMMIT, tens of
+  milliseconds and not a few (about 15 ms for a school of 24 lessons, 40 ms for 600, 80 ms for 600 with a `lay`, the year's safety version and the tray's
+  read being in it) and the same as a hand edit's, the year's exclusive lock (as Ta in takes it, g517 H-1) would make every hand edit wait for or refuse a swap with `SCHEDULE_BUSY`, and the
   rule that would close it for every writer is the one the migration `a_room_is_booked_once` names for rooms.
 
 ## Lesson participants (multi-class & individual students)
