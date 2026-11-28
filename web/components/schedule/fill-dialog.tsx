@@ -30,6 +30,12 @@ import { fillPreview } from "@/lib/fill-store";
 const TRAY_KEY = "boardTray";
 /** How long the toast of a Ta in, and with it its Ångra, stays up (as after the room optimisation and a swap). */
 const UNDO_TOAST_MS = 15_000;
+/**
+ * One toast of a Ta in at a time. A school that fills a class at a time (the advice of a proposal that is too long) takes in again within the 15 seconds, and a toast
+ * of its own for each left the first Ångra standing under the second: it restores the version before the FIRST fill, so it took the second fill with it, and the
+ * words on it ("före påfyllningen") did not say which. The same id makes sonner replace the old toast, and its Ångra, with the new one (g523).
+ */
+const UNDO_TOAST_ID = "fill-undo";
 
 export interface FillDialogProps {
   open: boolean;
@@ -188,6 +194,7 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
     try {
       const answer = await (guard ? guard(() => applyFill(proposal, versionName ?? undefined)) : applyFill(proposal, versionName ?? undefined));
       toast.success(t("taken", { count: answer.laid.length }), {
+        id: UNDO_TOAST_ID,
         description: t("takenNote"),
         duration: UNDO_TOAST_MS,
         action: { label: t("undo"), onClick: () => void undo(answer.versionId) },

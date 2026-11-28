@@ -95,6 +95,19 @@ describe("the version saved before Ta in", () => {
 });
 
 describe("the toast of a Ta in", () => {
+  it("is one toast at a time: a second Ta in within the 15 seconds replaces the first toast and its Ångra, which would have taken the second fill with it (g523)", async () => {
+    await takeIn();
+    const first = toastAction() as unknown as { id?: string };
+    cleanup();
+    await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+    // The second Ta in, as the page does it a few seconds later: a toast with the same id, which sonner puts in the place of the first.
+    fillPreview.set(null);
+    await takeIn();
+    const second = (toast.success as unknown as { mock: { calls: Array<[string, { id?: string }]> } }).mock.calls[1]![1];
+    expect(first.id).toBeDefined();
+    expect(second.id).toBe(first.id);
+  });
+
   it("offers Ångra for a few seconds, and says what it does: the whole schedule as it was before the fill", async () => {
     await takeIn();
     const options = toastAction();
