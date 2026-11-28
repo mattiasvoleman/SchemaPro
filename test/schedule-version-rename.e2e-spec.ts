@@ -38,6 +38,17 @@ describe('Döp om en version (e2e)', () => {
     expect(harness.tx['scheduleVersion']!['update']).not.toHaveBeenCalled();
   });
 
+  it('is the schemaläggning area\'s: the profiles that write it reach the service, expedition and läsare are refused by name before it, and so are a guardian and the huvudman', async () => {
+    for (const adminProfile of ['FULL', 'REKTOR', 'SCHEMALAGGARE']) await rename({ name: 'Nytt' }, asUser({ adminProfile, hrRead: false } as never)).expect(200);
+    expect(harness.tx['scheduleVersion']!['update']).toHaveBeenCalledTimes(3);
+    for (const adminProfile of ['EXPEDITION', 'LASARE']) {
+      const refused = await rename({ name: 'Nytt' }, asUser({ adminProfile, hrRead: false } as never)).expect(403);
+      expect(refused.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
+    }
+    for (const role of [Role.GUARDIAN, Role.HUVUDMAN]) await rename({ name: 'Nytt' }, asUser({ role })).expect(403);
+    expect(harness.tx['scheduleVersion']!['update']).toHaveBeenCalledTimes(3);
+  });
+
   it('takes a name and nothing else: an empty one, one over 120 characters, another field and an id that is no uuid are 400 before the service', async () => {
     for (const body of [{}, { name: '' }, { name: 'x'.repeat(121) }, { name: 42 }, { name: 'Nytt', lessonCount: 0 }, { name: 'Nytt', lessons: [] }]) {
       await rename(body).expect(400);
