@@ -63,6 +63,7 @@ vi.mock("@/lib/staffing-queries", () => ({
 }));
 vi.mock("@/i18n/navigation", () => ({ Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a> }));
 vi.mock("next-intl", () => ({
+  useLocale: () => "sv",
   useTranslations: (namespace: string) => (key: string) => `${namespace}.${key}`,
 }));
 // The card's chunk never arrives.

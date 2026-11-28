@@ -20339,6 +20339,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('MasterLessons', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
   ('Notifications', '{DRIFT}', '{}', '{}', '{}'),
   ('OptimizationJobs', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
+  ('OptimizationProfiles', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}', '{}'),
   ('PayrollPseudonyms', '{}', '{}', '{}', '{}'),
   ('PersonProtectionEvents', '{}', '{}', '{}', '{}'),
   ('PersonProtections', '{PERSONAL}', '{PERSONAL}', '{DECIDES}', '{}'),
@@ -70371,4 +70372,315 @@ BEGIN
   PERFORM pg_temp.ut_expect('592 the sweep has nothing of ours to do', (SELECT (gave_up + deleted)::text FROM app.outbound_sweep()), '0');
   RAISE NOTICE 'ut 592: % checks', current_setting('ut.checks');
 END $$;
+ROLLBACK;
+
+-- ===========================================================================
+-- Frågan före en ändring i Direkt som når familjer (20270312090000, avsnitt 600; ägarsidan 600o i rls-owner-checks.sql).
+--
+-- app.direct_reach_facts(year_id) är en SECURITY DEFINER-läsare som vakten i skrivvägen inte ska behöva områdesarmarna för (inställningen och
+-- publiceringarna är Publicerings): en arm som döljer raderna ger noll rader, och en vakt som läser noll rader tiger där den ska fråga. Den
+-- svarar för den inloggades egen skola, högst en rad. API-rollen får köra den; PostgREST-rollerna gör det inte.
+--
+--   600  som API-rollen och administratör: funktionen kan köras och ger ingen rad för ett läsår som ingen publicering gäller; PostgREST-rollen
+--        får 42501
+-- ===========================================================================
+
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('600 the API role may run the reader', pg_temp.ut_try($q$SELECT * FROM app.direct_reach_facts(gen_random_uuid())$q$), 'ok');
+  PERFORM pg_temp.ut_expect('600 ... a year no publication holds gives no row',
+    (SELECT count(*)::text FROM app.direct_reach_facts(gen_random_uuid())), '0');
+  RAISE NOTICE 'ut 600: % checks', current_setting('ut.checks');
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('600 expected to act as authenticated', current_user::text, 'authenticated');
+  PERFORM pg_temp.ut_expect('600 PostgREST''s role may not run the reader', pg_temp.ut_try($q$SELECT * FROM app.direct_reach_facts(gen_random_uuid())$q$), '42501');
+  RAISE NOTICE 'ut 600 (authenticated): % checks', current_setting('ut.checks');
+END $$;
+RESET ROLE;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- g6b 1: städningen av analysen (20270313090000), med klockan stilla.
+--
+-- app.optimization_jobs_sweep() städar nu också en analys av en vägrad körning ("suggestions"): RUNNING och förbi sin lease (leaseUntil),
+-- eller, utan lease, mer än sex minuter från sin start, skrivs som FAILED ABANDONED, avslutad när leasen tog slut (utan lease: nu), eller
+-- som den färdiga analys den frågades över när den hade en (g385-L-5). Städningen av Generera är som den var (section 533) och räknar
+-- som förut: den returnerade siffran är Generera-körningarnas ensam.
+--
+-- now() är transaktionens, så en lease planterad som "nu plus en sekund" möter samma klocka som städningen. Tiderna jämförs som den text
+-- de lagras som och kastas aldrig: ett värde som ingen skrev genom tjänsten stoppar inte funktionen, som också är Genereras städning.
+-- Varje scenario planteras som schemaläggaren (hennes arm skriver raden), städas utan inloggning och läses tillbaka som hon.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  sc record;
+  rid uuid;
+  planted jsonb;
+  after jsonb;
+  want jsonb;
+  swept integer;
+  fmt constant text := 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"';
+  admin_claims constant text := json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text;
+  now_text text := to_char(now() AT TIME ZONE 'UTC', fmt);
+  asked_over jsonb := jsonb_build_object('version', 1, 'state', 'DONE', 'startedAt', '2027-03-01T08:00:00.000Z', 'finishedAt', '2027-03-01T08:01:30.000Z',
+                        'verdict', 'SOLVABLE_AS_IS', 'verified', true, 'total', 0, 'searchSeconds', 60, 'verifySeconds', 2.5,
+                        'changes', '[]'::jsonb, 'failure', NULL, 'leaseUntil', NULL, 'previous', NULL);
+  tested integer := 0;
+BEGIN
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  SELECT count(*) INTO swept FROM "OptimizationJobs" WHERE "suggestions"->>'state' = 'RUNNING';
+  IF swept <> 0 THEN RAISE EXCEPTION 'g6b 1: % RUNNING analysis(es) are left from the fixtures', swept; END IF;
+
+  FOR sc IN SELECT * FROM (VALUES
+      -- label, state, started_ago, lease text (a time offset from now, 'none', or the text itself after '=' ), previous?, what the sweep does
+      ('a lease that ran out a second ago',               'RUNNING', interval '3 minutes',  '-1 second',   'none', 'failed'),
+      ('a lease that ran out a millisecond ago',          'RUNNING', interval '3 minutes',  '-1 millisecond', 'none', 'failed'),
+      ('a lease that ends this very instant',             'RUNNING', interval '3 minutes',  '0 seconds',   'none', 'untouched'),
+      ('a lease that ends in a second',                   'RUNNING', interval '3 minutes',  '1 second',    'none', 'untouched'),
+      ('a renewed lease on an analysis older than six minutes', 'RUNNING', interval '20 minutes', '2 minutes', 'none', 'untouched'),
+      ('a lease past, asked over a finished analysis',    'RUNNING', interval '3 minutes',  '-1 second',   'DONE', 'previous'),
+      -- (The service never writes a previous that is not DONE; one that was is no list to give back: the analysis is written as what it is.)
+      ('a lease past, asked over what is not a finished analysis', 'RUNNING', interval '3 minutes', '-1 second', 'FAILED', 'failed'),
+      ('no lease, six minutes and a second old',          'RUNNING', interval '6 minutes 1 second', 'none', 'none', 'failed-now'),
+      ('no lease, one second short of six minutes',       'RUNNING', interval '5 minutes 59 seconds', 'none', 'none', 'untouched'),
+      ('no lease, old, asked over a finished analysis',   'RUNNING', interval '20 minutes', 'none',        'DONE', 'previous'),
+      ('a lease that is no time, the analysis old',       'RUNNING', interval '7 minutes',  '=soon',       'none', 'failed-now'),
+      ('a lease that is no time, the analysis young',     'RUNNING', interval '1 minute',   '=soon',       'none', 'untouched'),
+      ('a lease with no millisecond, the analysis old',   'RUNNING', interval '7 minutes',  '=2027-03-13T09:00:00Z', 'none', 'failed-now'),
+      ('an analysis that ended, its old lease left over', 'FAILED',  interval '2 hours',    '-1 hour',     'none', 'untouched'),
+      ('a finished analysis',                             'DONE',    interval '2 hours',    'none',        'none', 'untouched')
+    ) AS t(label, state, started_ago, lease, has_previous, outcome) LOOP
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    planted := jsonb_build_object(
+      'version', 1, 'state', sc.state,
+      'startedAt', to_char((now() - sc.started_ago) AT TIME ZONE 'UTC', fmt),
+      'finishedAt', CASE WHEN sc.state = 'RUNNING' THEN NULL ELSE now_text END,
+      'verdict', NULL, 'verified', false, 'total', 0, 'searchSeconds', NULL, 'verifySeconds', NULL,
+      'changes', '[]'::jsonb,
+      'failure', CASE WHEN sc.state = 'FAILED' THEN 'ENGINE_FAILED' END,
+      'leaseUntil', CASE WHEN sc.lease = 'none' THEN NULL
+                         WHEN left(sc.lease, 1) = '=' THEN substr(sc.lease, 2)
+                         ELSE to_char((now() + sc.lease::interval) AT TIME ZONE 'UTC', fmt) END,
+      'previous', CASE WHEN sc.has_previous <> 'none' THEN jsonb_set(asked_over, '{state}', to_jsonb(sc.has_previous)) END);
+    -- (A key that is not there is a lease that was never written: an API from before the lease.)
+    IF sc.lease = 'none' THEN planted := planted - 'leaseUntil'; END IF;
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt", "suggestions")
+    VALUES (school, yr, app.current_user_id(), 'SUCCEEDED', 'INFEASIBLE', now(), planted)
+    RETURNING id INTO rid;
+
+    PERFORM set_config('request.jwt.claims', '', true);
+    swept := app.optimization_jobs_sweep();
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    IF swept <> 0 THEN RAISE EXCEPTION 'g6b 1: %: the sweep reported % run(s): an analysis is not a run it counts', sc.label, swept; END IF;
+    SELECT "suggestions" INTO after FROM "OptimizationJobs" WHERE id = rid;
+
+    want := CASE sc.outcome
+      WHEN 'untouched' THEN planted
+      WHEN 'previous' THEN asked_over
+      ELSE jsonb_build_object(
+             'version', 1, 'state', 'FAILED', 'startedAt', planted->'startedAt',
+             'finishedAt', CASE sc.outcome WHEN 'failed' THEN planted->'leaseUntil' ELSE to_jsonb(now_text) END,
+             'verdict', NULL, 'verified', false, 'total', 0, 'searchSeconds', NULL, 'verifySeconds', NULL,
+             'changes', '[]'::jsonb, 'failure', 'ABANDONED', 'leaseUntil', NULL, 'previous', NULL)
+    END;
+    IF after IS DISTINCT FROM want THEN
+      RAISE EXCEPTION 'g6b 1: %: swept to %, expected %', sc.label, after, want;
+    END IF;
+    -- The row is the run's own otherwise: nothing but the column was touched.
+    IF NOT EXISTS (SELECT 1 FROM "OptimizationJobs" WHERE id = rid AND status = 'SUCCEEDED' AND "solverStatus" = 'INFEASIBLE' AND "errorCode" IS NULL) THEN
+      RAISE EXCEPTION 'g6b 1: %: the run itself was touched', sc.label;
+    END IF;
+    -- En andra gång städar ingenting till.
+    PERFORM set_config('request.jwt.claims', '', true);
+    PERFORM app.optimization_jobs_sweep();
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    IF (SELECT "suggestions" FROM "OptimizationJobs" WHERE id = rid) IS DISTINCT FROM want THEN
+      RAISE EXCEPTION 'g6b 1: %: a second sweep changed the column', sc.label;
+    END IF;
+    DELETE FROM "OptimizationJobs" WHERE id = rid;
+    tested := tested + 1;
+  END LOOP;
+  IF tested <> 15 THEN RAISE EXCEPTION 'g6b 1: % scenarios ran, expected 15', tested; END IF;
+  RAISE NOTICE 'g6b 1: an analysis past its lease (or, with none, six minutes) is written as abandoned or as the analysis it was asked over, at the edges, and none else is touched';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- g6b 2: Genereras städning är som den var, och en analys i samma anrop ändrar inte vad den räknar.
+--
+-- Ett anrop som städar en Generera-körning och en analys räknar körningen ensam (1), och körningen blir som section 533 säger. Värden
+-- som ingen skrev genom tjänsten (en startedAt som inte är en tid, en tom sträng, ett tal) kastar inget: funktionen är också Genereras.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  gen uuid;
+  other_yr uuid;
+  ana uuid;
+  swept integer;
+  got record;
+  admin_claims constant text := json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text;
+  fmt constant text := 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"';
+  bad text;
+  bads text[] := ARRAY['{"state":"RUNNING"}', '{"state":"RUNNING","startedAt":"yesterday"}', '{"state":"RUNNING","startedAt":""}',
+                       '{"state":"RUNNING","startedAt":7}', '{"state":"RUNNING","startedAt":null,"leaseUntil":null}',
+                       '{"state":"RUNNING","startedAt":"2027-02-31T25:61:61.000Z"}', '{"state":"RUNNING","leaseUntil":"2027-02-31T25:61:61.000Z"}',
+                       '{"state":"RUNNING","leaseUntil":{"a":1}}', '{"state":["RUNNING"]}', '{"state":"RUNNING","previous":"x"}'];
+BEGIN
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "createdAt", "heartbeatAt", "leaseUntil")
+  VALUES (school, yr, 'RUNNING', now() - interval '6 minutes', now() - interval '5 minutes', now() - interval '1 second') RETURNING id INTO gen;
+  -- An analysis of an earlier run of the same year, lapsed, in the same sweep.
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt", "createdAt", "suggestions")
+  VALUES (school, yr, app.current_user_id(), 'SUCCEEDED', 'INFEASIBLE', now() - interval '1 hour', now() - interval '2 hours',
+          jsonb_build_object('version', 1, 'state', 'RUNNING', 'startedAt', to_char((now() - interval '10 minutes') AT TIME ZONE 'UTC', fmt),
+                             'finishedAt', NULL, 'verdict', NULL, 'verified', false, 'total', 0, 'searchSeconds', NULL, 'verifySeconds', NULL,
+                             'changes', '[]'::jsonb, 'failure', NULL,
+                             'leaseUntil', to_char((now() - interval '1 minute') AT TIME ZONE 'UTC', fmt), 'previous', NULL))
+  RETURNING id INTO ana;
+
+  PERFORM set_config('request.jwt.claims', '', true);
+  swept := app.optimization_jobs_sweep();
+  PERFORM set_config('request.jwt.claims', admin_claims, true);
+  IF swept <> 1 THEN RAISE EXCEPTION 'g6b 2: the sweep reported % run(s), expected the Generera run alone', swept; END IF;
+  SELECT status::text AS status, "errorCode", "errorParams", "finishedAt", "leaseUntil" INTO got FROM "OptimizationJobs" WHERE id = gen;
+  IF got.status <> 'FAILED' OR got."errorCode" <> 'ENGINE_RUN_ABANDONED' OR got."errorParams" IS NOT NULL
+     OR got."finishedAt" IS DISTINCT FROM got."leaseUntil" THEN
+    RAISE EXCEPTION 'g6b 2: the Generera run was swept to %', row_to_json(got);
+  END IF;
+  IF (SELECT "suggestions"->>'state' || ' ' || ("suggestions"->>'failure') FROM "OptimizationJobs" WHERE id = ana) IS DISTINCT FROM 'FAILED ABANDONED' THEN
+    RAISE EXCEPTION 'g6b 2: the analysis of the same sweep was not written as abandoned';
+  END IF;
+  DELETE FROM "OptimizationJobs" WHERE id IN (gen, ana);
+
+  -- Values nobody wrote through the service: the sweep neither stops nor changes what it does to Generera.
+  FOREACH bad IN ARRAY bads LOOP
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt", "suggestions")
+    VALUES (school, yr, app.current_user_id(), 'SUCCEEDED', 'INFEASIBLE', now(), bad::jsonb) RETURNING id INTO ana;
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "createdAt", "heartbeatAt", "leaseUntil")
+    VALUES (school, yr, 'RUNNING', now() - interval '6 minutes', now() - interval '5 minutes', now() - interval '1 second') RETURNING id INTO gen;
+    PERFORM set_config('request.jwt.claims', '', true);
+    BEGIN
+      swept := app.optimization_jobs_sweep();
+    EXCEPTION WHEN OTHERS THEN
+      RAISE EXCEPTION 'g6b 2: the sweep stopped on the value % with %', bad, SQLERRM;
+    END;
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    IF swept <> 1 OR (SELECT status::text FROM "OptimizationJobs" WHERE id = gen) <> 'FAILED' THEN
+      RAISE EXCEPTION 'g6b 2: with the value % the sweep reported % and Generera''s run is %', bad, swept, (SELECT status FROM "OptimizationJobs" WHERE id = gen);
+    END IF;
+    DELETE FROM "OptimizationJobs" WHERE id IN (gen, ana);
+  END LOOP;
+  RAISE NOTICE 'g6b 2: Generera''s sweep counts and writes what it did, an analysis beside it changes neither, and no value in the column stops it';
+END $$;
+ROLLBACK;
+
+-- ===========================================================================
+-- Optimeringsprofilen (20270314090000, avsnitt 601).
+--
+-- OptimizationProfiles: en rad per skola med de fem vikterna Generera-sidans reglage sätter. Varje administratör läser den (också en
+-- läsare); Schemaläggning skriver den (full, rektor och schemaläggare, inte expeditionen och inte läsaren); ingen lärare, ingen annan skola
+-- och ingen PostgREST-roll ser eller rör den; ingen raderar den; en vikt utanför 0–1000 vägras av databasen.
+--
+--   601  rollerskolans administratörer av varje profil, en lärare, en annan skola och PostgREST-rollen mot tabellen
+-- ===========================================================================
+
+BEGIN;
+SELECT set_config('ut.school_b', :'school_b', true);
+DO $$
+DECLARE
+  roller uuid;
+  school_a uuid;
+  other uuid := current_setting('ut.school_b')::uuid;
+  col text;
+BEGIN
+  -- School A (the runner's administrator): no row yet. The first administrator who saves makes it, with the defaults a school starts from.
+  PERFORM pg_temp.ut_as(current_setting('ut.admin'));
+  school_a := app.current_school_id();
+  PERFORM pg_temp.ut_expect('601 a school with no row reads none', (SELECT count(*)::text FROM "OptimizationProfiles"), '0');
+  INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (school_a);
+  PERFORM pg_temp.ut_expect('601 the defaults are 10, 5, 8, 3, 2',
+    (SELECT concat_ws(',', "preferredFree", "preferredBusy", disruption, spread, "teacherGap") FROM "OptimizationProfiles"), '10,5,8,3,2');
+  PERFORM pg_temp.ut_expect('601 one row a school', split_part(pg_temp.ut_try(format($q$INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (%L)$q$, school_a)), ' ', 1), '23505');
+  PERFORM pg_temp.ut_expect('601 not even a full administrator removes it', pg_temp.ut_try('DELETE FROM "OptimizationProfiles"'), '42501');
+  -- The row goes with its school: the key to Schools cascades (a school deleted, the demo school reset, leaves no row of it behind).
+  PERFORM pg_temp.ut_expect('601 the key to Schools cascades on delete',
+    (SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = '"OptimizationProfiles"'::regclass AND c.contype = 'f'),
+    'FOREIGN KEY ("schoolId") REFERENCES "Schools"(id) ON UPDATE CASCADE ON DELETE CASCADE');
+  -- Each of the five weights has its own bounds in the CHECK: 0 and 1000 are weights, -1 and 1001 are not, for every one of them.
+  FOREACH col IN ARRAY ARRAY['preferredFree', 'preferredBusy', 'disruption', 'spread', 'teacherGap'] LOOP
+    PERFORM pg_temp.ut_expect('601 ' || col || ' over 1000 is refused', pg_temp.ut_try(format('UPDATE "OptimizationProfiles" SET %I = 1001', col)), '23514');
+    PERFORM pg_temp.ut_expect('601 ' || col || ' under 0 is refused', pg_temp.ut_try(format('UPDATE "OptimizationProfiles" SET %I = -1', col)), '23514');
+    PERFORM pg_temp.ut_expect('601 ' || col || ' of 1000 is a weight', pg_temp.ut_try(format('UPDATE "OptimizationProfiles" SET %I = 1000', col)), 'ok');
+    PERFORM pg_temp.ut_expect('601 ' || col || ' of 0 is a weight', pg_temp.ut_try(format('UPDATE "OptimizationProfiles" SET %I = 0', col)), 'ok');
+  END LOOP;
+
+  -- The roller school's administrators, as the fixtures make them (section 107's list), and the row the fixtures plant for the matrix.
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000105');
+  roller := app.current_school_id();
+  PERFORM pg_temp.ut_expect('601 the fixtures hold the roller school', (SELECT slug FROM "Schools" WHERE id = roller), 'rls-roller-school');
+  PERFORM pg_temp.ut_expect('601 ... and its row, which is school A''s no more than school A''s is its', (SELECT count(*)::text FROM "OptimizationProfiles"), '1');
+
+  -- Every administrator reads it; rektor and the schemaläggare change it; the expedition and the läsare cannot, and cannot make one.
+  FOR i IN 1..6 LOOP
+    PERFORM pg_temp.ut_as((ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000106', '00000000-0000-4000-8000-000000000107',
+                                  '00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000110', '00000000-0000-4000-8000-000000000115'])[i]);
+    PERFORM pg_temp.ut_expect('601 an administrator reads the row (' || i || ')', (SELECT count(*)::text FROM "OptimizationProfiles"), '1');
+  END LOOP;
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000106');
+  UPDATE "OptimizationProfiles" SET spread = 20;
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000107');
+  UPDATE "OptimizationProfiles" SET spread = 30;
+  PERFORM pg_temp.ut_expect('601 rektor and the schemaläggare changed it', (SELECT spread::text FROM "OptimizationProfiles"), '30');
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000108');
+  PERFORM pg_temp.ut_expect('601 the expedition may not change it', pg_temp.ut_try('UPDATE "OptimizationProfiles" SET spread = 1'), '42501');
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000115');
+  PERFORM pg_temp.ut_expect('601 nor the läsare', pg_temp.ut_try('UPDATE "OptimizationProfiles" SET spread = 1'), '42501');
+  PERFORM pg_temp.ut_expect('601 ... and the row is as it was', (SELECT spread::text FROM "OptimizationProfiles"), '30');
+
+  -- A teacher reads nothing and writes nothing.
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000111');
+  PERFORM pg_temp.ut_expect('601 a teacher sees no row', (SELECT count(*)::text FROM "OptimizationProfiles"), '0');
+  PERFORM pg_temp.ut_expect('601 and makes none', pg_temp.ut_try(format($q$INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (%L)$q$, roller)), '42501');
+
+  -- Another school's administrator sees none of the roller school's row, and cannot make or change one for it.
+  PERFORM pg_temp.ut_as(current_setting('ut.admin'));
+  PERFORM pg_temp.ut_expect('601 another school sees none of the roller school''s row', (SELECT count(*)::text FROM "OptimizationProfiles" WHERE "schoolId" = roller), '0');
+  PERFORM pg_temp.ut_expect('601 and writes none for it', pg_temp.ut_try(format($q$INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (%L)$q$, roller)), '42501');
+  PERFORM pg_temp.ut_expect('601 nor changes its', pg_temp.ut_try(format($q$UPDATE "OptimizationProfiles" SET spread = 1 WHERE "schoolId" = %L$q$, roller)), 'ok');
+  -- The row's own key is not a thing to change: moving school A's row to a school that has none (school B) would plant a profile there, and
+  -- onto one that has a row would be refused by the key only after the policy's check passed. The WITH CHECK of the update arm holds the school.
+  PERFORM pg_temp.ut_expect('601 school A''s row cannot be moved to a school that has none', pg_temp.ut_try(format($q$UPDATE "OptimizationProfiles" SET "schoolId" = %L WHERE "schoolId" = %L$q$, other, school_a)), '42501');
+  PERFORM pg_temp.ut_expect('601 ... nor onto the roller school''s', pg_temp.ut_try(format($q$UPDATE "OptimizationProfiles" SET "schoolId" = %L WHERE "schoolId" = %L$q$, roller, school_a)), '42501');
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.ut_expect('601 ... and nothing of the roller school''s changed', (SELECT spread::text FROM "OptimizationProfiles"), '30');
+  RAISE NOTICE 'ut 601: % checks', current_setting('ut.checks');
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('601 expected to act as authenticated', current_user::text, 'authenticated');
+  PERFORM pg_temp.ut_expect('601 PostgREST''s role reads nothing', pg_temp.ut_try('SELECT count(*) FROM "OptimizationProfiles"'), '42501');
+  PERFORM pg_temp.ut_expect('601 and writes nothing', pg_temp.ut_try('INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (gen_random_uuid())'), '42501');
+  -- Not by an arm alone: neither of PostgREST's roles holds a privilege on the table, so that an arm added to it later admits nothing it was never meant to.
+  PERFORM pg_temp.ut_expect('601 anon and authenticated hold no privilege on it',
+    (SELECT coalesce(string_agg(r || ' ' || p, ', '), 'none') FROM unnest(ARRAY['anon', 'authenticated']) r, unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+      WHERE has_table_privilege(r, '"OptimizationProfiles"', p)), 'none');
+  RAISE NOTICE 'ut 601 (authenticated): % checks', current_setting('ut.checks');
+END $$;
+RESET ROLE;
 ROLLBACK;

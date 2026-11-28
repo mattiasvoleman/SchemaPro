@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
 import { apiErrorText } from "@/lib/api-error-text";
+import { DirectReachDeclined } from "@/lib/direct-reach";
 
 /** How long the applied toast, and with it Ångra, stays up (as after the room optimisation). */
 const UNDO_TOAST_MS = 15_000;
@@ -51,6 +52,11 @@ export interface SwapDialogProps {
   roomName: (id: string) => string | null;
   /** Called after an apply and after its undo: each rewrote lessons under the page. */
   onApplied: () => void;
+  /**
+   * The question before a change in Direkt that reaches families (lib/use-direct-reach-ask.tsx), asked around an apply and never around its
+   * undo. Left out, an apply is run as it is and the gateway's own guard answers 409 DIRECT_REACH_UNANSWERED when it reached families unasked.
+   */
+  guard?: <T>(run: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -71,6 +77,7 @@ export function SwapDialog({
   teacherName,
   roomName,
   onApplied,
+  guard,
 }: SwapDialogProps) {
   const t = useTranslations("swaps");
   const tDays = useTranslations("days");
@@ -149,12 +156,15 @@ export function SwapDialog({
   const doApply = async (proposal: SwapProposal) => {
     if (!lessonId) return;
     try {
-      const result = await apply.mutateAsync(applyBody(lessonId, proposal.moves));
+      const send = () => apply.mutateAsync(applyBody(lessonId, proposal.moves));
+      const result = await (guard ? guard(send) : send());
       onApplied();
       onOpenChange(false);
       const description = [
         result.propagatedLessons > 0 ? t("calendarUpdated", { count: result.propagatedLessons }) : null,
         result.removedCalendarLessons > 0 ? t("calendarRemoved", { count: result.removedCalendarLessons }) : null,
+        // Låset vid en flytt (E4): the swap locked what it moved, and Ångra takes the lock off with it.
+        result.lockedByMove && result.lockedLessonIds?.length ? t("lockedByMove", { count: result.lockedLessonIds.length }) : null,
       ]
         .filter((part) => part !== null)
         .join(" ");
@@ -167,6 +177,8 @@ export function SwapDialog({
         },
       });
     } catch (error) {
+      // Avbryt on the question before a change in Direkt is an answer and not a failure: the proposal stands, nothing was changed.
+      if (error instanceof DirectReachDeclined) return;
       if (error instanceof ApiError && error.status === 409) {
         // Stale, parted, locked or placed: the proposals no longer describe the
         // timetable, and the clash rule's own sentence is the reason otherwise.

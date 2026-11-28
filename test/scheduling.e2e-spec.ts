@@ -1059,6 +1059,16 @@ describe('Scheduling surface (e2e)', () => {
           { studentGroupId: FR_GROUP, subjectId: SUBJECT_ID, blockId: BLOCK },
         ]);
         harness.tx['masterLesson']!['updateMany']!.mockResolvedValue({ count: 2 });
+        // The block a moved card ends by locking whole (låset vid en flytt): found, with no members, so nothing is left to lock.
+        harness.tx['teachingBlock']!['findUnique']!.mockResolvedValue({
+          id: BLOCK,
+          schoolId: '33333333-3333-4333-8333-333333333333',
+          academicYearId: YEAR_ID,
+          requirements: [],
+          sameTimesAs: null,
+          sameTimes: [],
+          sameTimesAsBlockId: null,
+        });
 
         const response = await request(http())
           .patch('/api/v1/master-lessons/block-card')
@@ -1070,6 +1080,7 @@ describe('Scheduling surface (e2e)', () => {
           [LESSON_ID, 2],
           [FR_LESSON, 2],
         ]);
+        expect(response.body.lockedLessonIds).toEqual([]);
         expect(harness.tx['masterLesson']!['updateMany']).toHaveBeenCalledTimes(1);
       });
 

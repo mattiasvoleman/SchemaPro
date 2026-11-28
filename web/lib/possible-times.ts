@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import type { BrickSubject } from "@/lib/board-tray";
 
 /*
  * MÖJLIGA TIDER, AS THE BOARD READS THEM (E3).
@@ -21,6 +22,8 @@ export interface PossibleRun {
   kind: PossibleKind;
   code?: ClosedCode;
   params?: Record<string, string | number>;
+  /** CHANGE: the room each lesson that has to stand in another than its own is free in, as the gateway's judge let it through. */
+  rooms?: Array<{ lessonId: string; roomId: string | null }>;
   blockerId?: string;
   units?: number;
   locked?: boolean;
@@ -79,11 +82,18 @@ export interface PossibleTimes {
 /** How many of the best times are numbered: one key each, 1 to 9. */
 export const NUMBERED = 9;
 
-/** Asks where a lesson can stand, the whole of the board's day, in five-minute steps. */
-export function askPossibleTimes(lessonId: string, signal?: AbortSignal): Promise<PossibleTimes> {
+/**
+ * What the question is about: a lesson that exists (its id), or a brick of Att lägga that is no lesson yet (what is known of it,
+ * lib/board-tray.ts brickSubject). The gateway takes exactly one of them.
+ */
+export type PossibleSubject = string | BrickSubject;
+const subjectBody = (subject: PossibleSubject) => (typeof subject === "string" ? { lessonId: subject } : { brick: subject });
+
+/** Asks where a lesson (or a brick) can stand, the whole of the board's day, in five-minute steps. */
+export function askPossibleTimes(subject: PossibleSubject, signal?: AbortSignal): Promise<PossibleTimes> {
   return api.post<PossibleTimes>(
     "/api/v1/master-lessons/possible-times",
-    { lessonId, from: "07:00", to: "18:00", stepMinutes: 5, limit: NUMBERED },
+    { ...subjectBody(subject), from: "07:00", to: "18:00", stepMinutes: 5, limit: NUMBERED },
     signal,
   );
 }
@@ -97,6 +107,19 @@ export function runAt(times: PossibleTimes, dayOfWeek: number, startMinutes: num
 /** The numbered time at a start, when it is one of the best. */
 export function optionAt(times: PossibleTimes, dayOfWeek: number, startMinutes: number): PossibleOption | null {
   return times.options.find((option) => option.dayOfWeek === dayOfWeek && option.startMinutes === startMinutes) ?? null;
+}
+
+/**
+ * The room the gateway judged a lesson in at a start, when it is another than the lesson's own: from the numbered time there, else from
+ * the run of "another room" that holds the start. Undefined when the lesson stands in its own room, and when the gateway has no answer.
+ * Laying the lesson with this room is what lets a square that is free only in another room be laid at all.
+ */
+export function roomAt(times: PossibleTimes, lessonId: string, dayOfWeek: number, startMinutes: number): string | null | undefined {
+  const option = optionAt(times, dayOfWeek, startMinutes);
+  if (option) return option.roomChanged ? (option.lessons.find((entry) => entry.lessonId === lessonId)?.roomId ?? null) : undefined;
+  const run = runAt(times, dayOfWeek, startMinutes);
+  if (run?.kind !== "CHANGE") return undefined;
+  return run.rooms?.find((entry) => entry.lessonId === lessonId)?.roomId ?? undefined;
 }
 
 /** The time that key 1 to 9 stands for. */
@@ -171,8 +194,8 @@ export interface RoomChoices {
   rooms: RoomChoice[];
 }
 
-/** Asks which rooms the lesson can have at a day and clock (POST /master-lessons/room-choices). */
-export function askRoomChoices(lessonId: string, dayOfWeek: number, startTime: string, signal?: AbortSignal): Promise<RoomChoices> {
-  return api.post<RoomChoices>("/api/v1/master-lessons/room-choices", { lessonId, dayOfWeek, startTime }, signal);
+/** Asks which rooms the lesson (or the brick) can have at a day and clock (POST /master-lessons/room-choices). */
+export function askRoomChoices(subject: PossibleSubject, dayOfWeek: number, startTime: string, signal?: AbortSignal): Promise<RoomChoices> {
+  return api.post<RoomChoices>("/api/v1/master-lessons/room-choices", { ...subjectBody(subject), dayOfWeek, startTime }, signal);
 }
 

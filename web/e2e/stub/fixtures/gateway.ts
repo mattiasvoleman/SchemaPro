@@ -2,6 +2,7 @@ import { route, type GatewayRoute } from "../gateway-routes";
 import { absenceStatsRoutes } from "./gateway-absence-stats";
 import { absenceWatchRoutes } from "./gateway-absence-watch";
 import { analysisRoutes } from "./gateway-analysis";
+import { boardTrayRoutes } from "./gateway-board-tray";
 import { ackRoutes } from "./gateway-ack";
 import { checklistsRoutes } from "./gateway-checklists";
 import { candidateRoutes } from "./gateway-candidates";
@@ -52,6 +53,7 @@ export const ROUTE_FILES: Array<{ file: string; routes: GatewayRoute[] }> = [
   { file: "gateway-lesson-moves.ts", routes: lessonMoveRoutes },
   { file: "gateway-lesson-judge.ts", routes: lessonJudgeRoutes },
   { file: "gateway-possible-times.ts", routes: possibleTimesRoutes },
+  { file: "gateway-board-tray.ts", routes: boardTrayRoutes },
   { file: "gateway-huvudman.ts", routes: huvudmanRoutes },
   { file: "gateway-absence-watch.ts", routes: absenceWatchRoutes },
   { file: "gateway-absence-stats.ts", routes: absenceStatsRoutes },

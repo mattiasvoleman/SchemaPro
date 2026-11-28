@@ -5147,6 +5147,19 @@ BEGIN
   VALUES (m, teacher, y, 600, now());
 END $$;
 
+-- The matrix school's row for the optimization profile (20270314090000), so that the role matrix (section 116) has a row of the table to
+-- probe: the defaults, written by the owner, once. A school with no row is the defaults too; section 601 makes the other school's.
+DO $$
+DECLARE
+  m uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "OptimizationProfiles" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (m);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

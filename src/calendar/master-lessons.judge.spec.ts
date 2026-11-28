@@ -110,7 +110,8 @@ describe('MasterLessonsService, domaren med ord', () => {
     });
     tx['academicYear']!['findUnique']!.mockResolvedValue({ gradeNumbering: 'NIOARIG' });
     tx['studentGroup']!['findMany']!.mockImplementation(async (query: { where: Row }) => {
-      const ids: string[] = query.where['id']?.in ?? [];
+      // The asked groups, and the year's classes the board reader adds (their years are a teaching group's): the stub knows the asked ones.
+      const ids: string[] = query.where['OR']?.[0]?.id?.in ?? query.where['id']?.in ?? [];
       return ids.map((id) => ({ id, name: id === G7A ? '7A' : '8B', gradeLevel: id === G7A ? 7 : 8, halfOfId: null, kind: 'CLASS', replacesSubjectId: null, academicYearId: YEAR }));
     });
     tx['subject']!['findMany']!.mockResolvedValue([]);

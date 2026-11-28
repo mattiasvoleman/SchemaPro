@@ -41,6 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { keptByMotor, motorOwner } from "@/lib/motor-owner";
 import {
   Dialog,
   DialogContent,
@@ -193,6 +194,8 @@ export function LessonEditDialog({
   const has = exempt.length > 0 && judged.status !== "checking";
   const holdsLock = exempt.length > 0 && (judged.status !== "done" || giving.length > 0);
   const takeBack = () => onDraftChange({ ...draft, exempt: [], isLocked: lesson?.isLocked ?? false });
+  // Låst eller fri för motorn (E4): the lesson with the lock as the switch shows it (a held lock is on), asked of the gateway's own rule.
+  const owner = lesson ? motorOwner({ ...lesson, isLocked: draft.isLocked || holdsLock }) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -387,6 +390,8 @@ export function LessonEditDialog({
                 </label>
                 <div id="edit-lock-hint" className="text-xs text-muted-foreground">
                   {holdsLock ? t("lockHintExempt") : t("lockHint")}
+                  {/* Låst eller fri för motorn (E4): what the next Generera does with the lesson as the switch beside it leaves it. */}
+                  {owner !== null ? <span className="mt-0.5 block">{t(`motor.${keptByMotor(owner) ? "kept" : "free"}.${owner}`)}</span> : null}
                 </div>
               </div>
             </div>

@@ -14,6 +14,7 @@ import type { LessonRecurrence } from '@prisma/client';
 import { RealtimeService } from '../realtime/realtime.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
+import { requireDirectReachAnswered } from '../publication/direct-reach';
 import { lockYearForGrundschemaEdit, lockYearsOfLessonsForGrundschemaEdit } from '../optimization/regeneration-lock';
 import { propagateTemplateChange, reconcilableLessons } from './propagate-template';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -329,6 +330,14 @@ export interface MoveBlockCardResult {
   joined: { id: string; isGenerated: boolean }[];
   /** The lessons of a block on the same times that moved with the card: what an undo takes back (`follow`). */
   followed: string[];
+  /**
+   * Låset vid en flytt (E4, beslut 2): a card moved by hand locks its block whole (every placed lesson of every member, and of a block on the
+   * same times), or the next Generera lays it again where it stood and the generation refuses a block with some lessons locked. `lockedLessonIds`
+   * are the lessons the move locked (not those locked already, and not a lesson on the tray); `lockedByMove` is said only when there are any, as
+   * on a PATCH. To take it back, unlock the block with these ids (lockBlock).
+   */
+  lockedLessonIds: string[];
+  lockedByMove?: true;
 }
 
 /** A block locked or unlocked (lockBlock): the lessons whose lock changed. */
@@ -1144,6 +1153,13 @@ export class MasterLessonsService {
               schoolId: lesson.school.id,
               academicYearId: lesson.academicYearId,
             });
+      // Direkt: the edit reached published lessons. The first one in a published period is asked of the school before it goes (P5,
+      // beslut 8); the throw rolls the whole edit back, so nothing has moved and no notice has gone.
+      await requireDirectReachAnswered(tx, {
+        academicYearId: lesson.academicYearId,
+        mode,
+        reached: propagatedLessons + removedCalendarLessons,
+      });
 
       // The ämnesfördelning, asked of the week as the PATCH leaves it. A
       // warning and never a 409: a school that puts two idrott lessons on one
@@ -1294,8 +1310,17 @@ export class MasterLessonsService {
    * THE OWNER STAYS: the engine places a block's lessons together, so a card
    * it placed is still its own after a move it could have made, and the next
    * generation places the block again (block-lessons.ts). Only day and clock
-   * are written; weeks, rooms, teachers and locks are each member's own. A
-   * lesson of the block the card lands beside joins it and takes its owner.
+   * are written to the members; weeks, rooms and teachers are each member's
+   * own. A lesson of the block the card lands beside joins it and takes its
+   * owner.
+   *
+   * A CARD MOVED BY HAND LOCKS ITS BLOCK (E4, beslut 2): the school moved it,
+   * so the next generation must not lay it again where it stood. The lock is
+   * the block's, lockBlock's own write (every placed lesson of every member,
+   * and of a block on the same times), because the generation refuses a
+   * block with only some of its lessons locked (BLOCK_PARTLY_LOCKED). The
+   * answer says `lockedByMove` and names the lessons it locked; a card put
+   * where it stood locks nothing.
    *
    * AN UNDO LEAVES BEHIND what the move took in. A card that landed beside a
    * lesson of its block answers it in `joined`, with the owner it had; the
@@ -1671,6 +1696,17 @@ export class MasterLessonsService {
         results.push(after);
         if (moved > 0 || removed > 0) notices.push({ lesson, after });
       }
+      // As update(): a card whose move reached published lessons asks the school first, once, and the throw takes the whole card back.
+      await requireDirectReachAnswered(tx, {
+        academicYearId: leader.academicYearId,
+        mode,
+        reached: propagatedLessons + removedCalendarLessons,
+      });
+      // Låset vid en flytt (E4, beslut 2): the block the card belongs to is the school's now, and locked whole (lockBlock's own write), or the
+      // next generation lays it again; a card put where it stood is no move. The lessons it locks are the block's other cards too: the generation
+      // refuses a block with only some of its lessons locked.
+      const locked = sameSlot(landing, origin) ? [] : (await this.lockBlockWrite(tx, user, { blockId, isLocked: true })).targets;
+      const lockedIds = new Set(locked.map((lesson) => lesson.id));
       // Lärarens dag once for the card, over every member's teachers: the
       // move is one, and so are its reads of the rules and of the week,
       // however many members it has. Each member goes with its name, read
@@ -1703,7 +1739,7 @@ export class MasterLessonsService {
         tx,
         leader.school.id,
         mode,
-        results.map((moved) => moved.id),
+        [...new Set([...results.map((moved) => moved.id), ...lockedIds])],
       );
       // As update() tells a class its published lessons moved: one notice per
       // member, to the roster attending it, about its own subject.
@@ -1728,12 +1764,14 @@ export class MasterLessonsService {
         });
       }
       return {
-        lessons: results,
+        lessons: results.map((moved) => (lockedIds.has(moved.id) ? { ...moved, isLocked: true } : moved)),
         propagatedLessons,
         removedCalendarLessons,
         warnings,
         joined: besideLanding.map((sibling) => ({ id: sibling.id, isGenerated: sibling.isGenerated })),
         followed: followers.map((lesson) => lesson.id),
+        lockedLessonIds: [...lockedIds],
+        ...(lockedIds.size > 0 ? { lockedByMove: true as const } : {}),
       };
     });
   }
@@ -1760,70 +1798,8 @@ export class MasterLessonsService {
   async lockBlock(dto: LockBlockDto, user: AuthenticatedUser): Promise<LockBlockResult> {
     return this.prisma.withRls(user, async (tx) => {
       const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
-      const posts = { select: { studentGroupId: true, subjectId: true } } as const;
-      const block = await tx.teachingBlock.findUnique({
-        where: { id: dto.blockId },
-        select: {
-          id: true,
-          schoolId: true,
-          academicYearId: true,
-          requirements: posts,
-          sameTimesAs: { select: { requirements: posts } },
-          sameTimes: { select: { requirements: posts } },
-        },
-      });
-      if (!block) throw new NotFoundException('Blocket finns inte.');
-      await lockYearForGrundschemaEdit(tx, block.academicYearId);
-      const members = [
-        ...block.requirements,
-        ...(block.sameTimesAs?.requirements ?? []),
-        ...block.sameTimes.flatMap((linked) => linked.requirements),
-      ];
-      const all =
-        members.length === 0
-          ? []
-          : await tx.masterLesson.findMany({
-              where: {
-                academicYearId: block.academicYearId,
-                OR: members.map((post) => ({
-                  studentGroupId: post.studentGroupId,
-                  subjectId: post.subjectId,
-                })),
-              },
-              select: LESSON_SELECT,
-            });
-      // The placed lessons only. A lesson on the tray is neither sent to the
-      // engine nor counted against its post, so a lock on it would keep it on
-      // the tray through the next generation beside the lesson the engine
-      // places for it; it is counted instead, and the page says so.
-      const lessons = all.filter((lesson) => !lesson.isParked);
-      const parked = all.length - lessons.length;
-      if (dto.lessonIds) {
-        const ofBlock = new Set(lessons.map((lesson) => lesson.id));
-        if (dto.lessonIds.some((id) => !ofBlock.has(id))) {
-          throw new BadRequestException('lessonIds: varje lektion måste höra till blockets poster.');
-        }
-      }
-      const named = dto.lessonIds ? new Set(dto.lessonIds) : null;
-      const targets = lessons.filter(
-        (lesson) => (named === null || named.has(lesson.id)) && lesson.isLocked !== dto.isLocked,
-      );
+      const { block, targets, parked } = await this.lockBlockWrite(tx, user, dto);
       if (targets.length > 0) {
-        await tx.masterLesson.updateMany({
-          where: { id: { in: targets.map((lesson) => lesson.id) } },
-          data: { isLocked: dto.isLocked },
-        });
-        for (const lesson of targets) {
-          await this.writeChangeLog(tx, {
-            schoolId: block.schoolId,
-            academicYearId: block.academicYearId,
-            masterLessonId: lesson.id,
-            actorId: user.userId ?? null,
-            action: 'UPDATE',
-            before: toResult(lesson),
-            after: toResult({ ...lesson, isLocked: dto.isLocked }),
-          });
-        }
         this.logger.log(`Block ${dto.isLocked ? 'locked' : 'unlocked'} [block=${block.id}, lessons=${targets.length}]`);
         this.announce(
           tx,
@@ -1834,6 +1810,84 @@ export class MasterLessonsService {
       }
       return { blockId: block.id, isLocked: dto.isLocked, lessonIds: targets.map((lesson) => lesson.id), parked };
     });
+  }
+
+  /**
+   * lockBlock's reads and writes inside the caller's transaction, the grundschema write already entered: the lessons whose lock changes are
+   * written, each with its change-log row, and answered. Not announced: the caller says what changed (lockBlock, and the block card's move,
+   * which locks the block it moved a card of).
+   */
+  private async lockBlockWrite(
+    tx: PrismaClient,
+    user: AuthenticatedUser,
+    dto: Pick<LockBlockDto, 'blockId' | 'isLocked' | 'lessonIds'>,
+  ): Promise<{ block: { id: string; schoolId: string; academicYearId: string }; targets: LessonRecord[]; parked: number }> {
+    const posts = { select: { studentGroupId: true, subjectId: true } } as const;
+    const block = await tx.teachingBlock.findUnique({
+      where: { id: dto.blockId },
+      select: {
+        id: true,
+        schoolId: true,
+        academicYearId: true,
+        requirements: posts,
+        sameTimesAs: { select: { requirements: posts } },
+        sameTimes: { select: { requirements: posts } },
+      },
+    });
+    if (!block) throw new NotFoundException('Blocket finns inte.');
+    await lockYearForGrundschemaEdit(tx, block.academicYearId);
+    const members = [
+      ...block.requirements,
+      ...(block.sameTimesAs?.requirements ?? []),
+      ...block.sameTimes.flatMap((linked) => linked.requirements),
+    ];
+    const all =
+      members.length === 0
+        ? []
+        : await tx.masterLesson.findMany({
+            where: {
+              academicYearId: block.academicYearId,
+              OR: members.map((post) => ({
+                studentGroupId: post.studentGroupId,
+                subjectId: post.subjectId,
+              })),
+            },
+            select: LESSON_SELECT,
+          });
+    // The placed lessons only. A lesson on the tray is neither sent to the
+    // engine nor counted against its post, so a lock on it would keep it on
+    // the tray through the next generation beside the lesson the engine
+    // places for it; it is counted instead, and the page says so.
+    const lessons = all.filter((lesson) => !lesson.isParked);
+    const parked = all.length - lessons.length;
+    if (dto.lessonIds) {
+      const ofBlock = new Set(lessons.map((lesson) => lesson.id));
+      if (dto.lessonIds.some((id) => !ofBlock.has(id))) {
+        throw new BadRequestException('lessonIds: varje lektion måste höra till blockets poster.');
+      }
+    }
+    const named = dto.lessonIds ? new Set(dto.lessonIds) : null;
+    const targets = lessons.filter(
+      (lesson) => (named === null || named.has(lesson.id)) && lesson.isLocked !== dto.isLocked,
+    );
+    if (targets.length > 0) {
+      await tx.masterLesson.updateMany({
+        where: { id: { in: targets.map((lesson) => lesson.id) } },
+        data: { isLocked: dto.isLocked },
+      });
+      for (const lesson of targets) {
+        await this.writeChangeLog(tx, {
+          schoolId: block.schoolId,
+          academicYearId: block.academicYearId,
+          masterLessonId: lesson.id,
+          actorId: user.userId ?? null,
+          action: 'UPDATE',
+          before: toResult(lesson),
+          after: toResult({ ...lesson, isLocked: dto.isLocked }),
+        });
+      }
+    }
+    return { block: { id: block.id, schoolId: block.schoolId, academicYearId: block.academicYearId }, targets, parked };
   }
 
   /**
@@ -2293,6 +2347,9 @@ export class MasterLessonsService {
           : await tx.calendarLesson.deleteMany({
               where: reconcilableLessons(id),
             });
+
+      // Direkt: the deletion took published lessons out of the calendar; asked of the school once, and the throw puts them back.
+      await requireDirectReachAnswered(tx, { academicYearId: lesson.academicYearId, mode, reached: removedCalendarLessons });
 
       await tx.masterLesson.delete({ where: { id } });
 
@@ -3394,7 +3451,7 @@ export function teacherDayWarning(
     : { code: 'TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN', params: { role, requirement } };
 }
 
-interface LessonRecord {
+export interface LessonRecord {
   id: string;
   academicYearId: string;
   subjectId: string;
@@ -3416,7 +3473,7 @@ interface LessonRecord {
   participants: Array<{ studentId: string }>;
 }
 
-function toResult(lesson: LessonRecord): MasterLessonResult {
+export function toResult(lesson: LessonRecord): MasterLessonResult {
   return {
     id: lesson.id,
     academicYearId: lesson.academicYearId,

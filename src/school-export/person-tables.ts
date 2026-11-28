@@ -63,7 +63,9 @@ export interface PersonDump {
    * them. When that person is not one of the persons asked for, their id and the columns in `hides` (their state) are empty,
    * and only the act is the extract's: who did it and when. Without it a teacher's extract would carry the pupils the teacher
    * marked found in a drill (M1 of the review), and a rektor's the level, the exception and the note of every teacher the
-   * rektor assessed (g409-L-5). The name is the first user's, the pupil; the mechanism is the same for a colleague.
+   * rektor assessed (g409-L-5). The name is the first user's, the pupil; the mechanism is the same for a colleague (aboutColleague).
+   * Where `column` is not the person asked for, the id of the person in any other person column of the row is empty too: a teacher who
+   * reported their own absence and was taken back by an administrator stands in the administrator's row twice.
    */
   pupil?: { column: string; hides: readonly string[] };
   /** Rows that belong to a person through a parent row: [column, parent table, parent's person column]. */
@@ -97,6 +99,24 @@ const aboutPupil = (decision: PersonTableDecision, column: string, hides: readon
  */
 const aboutColleague = (decision: PersonTableDecision, column: string, hides: readonly string[]): PersonTableDecision =>
   aboutPupil(decision, column, hides);
+
+/**
+ * K7b: WHICH TABLES WHERE A MEMBER OF STAFF ACTS AGAINST A COLLEAGUE ARE ABOUT THE COLLEAGUE, and which are the extract's whole. The test
+ * is what the row says about the colleague, checked against the schema and against what the page shows and to whom:
+ *
+ *   - the colleague's HR data (what the page shows only to a reader with HR-läs: tjänst %, nedsättning, löne-id, the rektor's
+ *     assessment of the level), and
+ *   - health: that a teacher was away, when, and in which category (a built-in category is "Sjukdom"; the migration of the absences calls
+ *     it health data, GDPR art. 9, and lets an administrator and the absent teacher read it and nobody else).
+ *
+ * A table with either is about the colleague: AssignmentScopeAssessments, TeacherEmploymentLogs (R1b), and TeacherAbsences,
+ * TeacherAbsenceCovers and SupervisionCovers (K7b). An administrator of any profile reads the absences, since the expedition registers
+ * them, so the expedition clerk who registered a year of sick leave must not be handed it back as a document in their own name.
+ *
+ * A table with neither is the extract's whole, and says so below: UserRoleChanges, SubstitutePoolMembers, ClassTeacherAppointments and
+ * PublicTimetableLinks. person-tables.spec.ts pins both lists, and requires every column of the first kind to be the act or the
+ * colleague's.
+ */
 
 /** The rows hold somebody else's data in these columns: see PersonDump.thirdParty. */
 const withThirdParty = (decision: PersonTableDecision, columns: readonly string[]): PersonTableDecision =>
@@ -136,6 +156,9 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   TimplanStatements: dump(['studentId'], 'TEACHING_TIME'),
 
   // Anyone.
+  // K7b, whole: the role, the administrator profile, HR-läs and whether an administrator teaches are what the people page shows every
+  // administrator (UserRoleChanges is `readOnly` in admin-areas.ts), and the row is the record of who gave whom which authority. It holds
+  // no HR figure, no health category and no free text. Not the colleague's HR data in the sense of hr-visibility.ts.
   UserRoleChanges: dump(['userId', 'actorId']),
   PersonProtections: dump(['userId']),
   // The person's code in the löneunderlag while marked (20270206091000): theirs, as the mark is.
@@ -185,9 +208,32 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   MasterLessons: dump(['teacherId', 'coTeacherId']),
   Ss12000DutyLinks: dump(['userId']),
   SupervisionShifts: away(['userId']),
-  SupervisionCovers: away(['substituteId', 'decidedByUserId', 'absentTeacherId'], [['shiftId', 'SupervisionShifts', 'userId']]),
-  TeacherAbsences: away(['userId', 'createdByUserId', 'withdrawnByUserId']),
-  TeacherAbsenceCovers: dump(['decidedByUserId', 'substituteId', 'absentTeacherId'], 'STAFF_ABSENCES', [], ['removedTeachers']),
+  // A pass the board decided on a date because its teacher was away (20261210090000). The occurrence (where, when) is the vikarie's own
+  // duty, read from this row (the pass itself is its teacher's), and what was decided and by whom is the act. Which teacher was away,
+  // which pass was theirs and which absence it was are the colleague's (K7b): the extract of the one who decided and of the vikarie has
+  // the pass and not the teacher.
+  SupervisionCovers: aboutColleague(
+    away(['substituteId', 'decidedByUserId', 'absentTeacherId'], [['shiftId', 'SupervisionShifts', 'userId']]),
+    'absentTeacherId',
+    ['shiftId', 'absenceId'],
+  ),
+  // That a teacher was away is health data (GDPR art. 9; the reason is a category, "Sjukdom" among them), read by an administrator and the
+  // absent teacher and nobody else. In the extract of the one who registered or took back a registration (an expedition clerk who registered
+  // a year of sick leave) the teacher, the period, whether it was whole days and the category are empty, and who registered it, who took it
+  // back and when stay. A teacher who reported or took back their own absence is empty in that column of someone else's row too (K7b).
+  TeacherAbsences: aboutColleague(away(['userId', 'createdByUserId', 'withdrawnByUserId']), 'userId', ['startsAt', 'endsAt', 'wholeDays', 'reasonId']),
+  // What was decided about one lesson of an absence (20261012100000): the lesson, what was decided (a substitute, cancelled, supervised
+  // study, a co-teacher), the substitute and who decided are the act. The teacher who was away, the absence, the teachers the decision took
+  // off the lesson (json that names the teacher) and the lesson's note as it was before the decision replaced it (free text, written by
+  // whoever wrote the lesson's note, and nothing says it names nobody) are the colleague's (K7b). A substitute reads no row of this table in the app and an administrator and the absent teacher do.
+  TeacherAbsenceCovers: aboutColleague(
+    dump(['decidedByUserId', 'substituteId', 'absentTeacherId'], 'STAFF_ABSENCES', [], ['removedTeachers']),
+    'absentTeacherId',
+    ['absenceId', 'removedTeachers', 'previousNote'],
+  ),
+  // K7b, whole: that the person is in the pool of substitutes the cover board draws from (a timvikarie, or a teacher who also covers) is
+  // all the row says, and every administrator reads the pool by name. No availability, no category and no figure: those are
+  // SubstituteAvailabilities, which are the person's own.
   SubstitutePoolMembers: away(['userId', 'createdByUserId']),
   SubstituteAvailabilities: away(['userId']),
   CoverRequestRecipients: away(['userId']),
@@ -210,6 +256,8 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   SharedTeacherMarks: dump(['teacherId']),
   // Klasslärarens schema (20270128090000): whom a class was given to and who gave it, and the drafts a klasslärare wrote
   // or published (their words are the dates and hours they asked for, and a note of at most 200 characters).
+  // K7b, whole: which class was given to whom and who gave it: every administrator reads the table and the teacher reads their own row
+  // (the two arms of 20270128090000). An assignment of work: no HR figure, no health category and no free text.
   ClassTeacherAppointments: dump(['userId', 'appointedByUserId']),
   ClassTeacherChanges: dump(['authorId', 'publishedByUserId']),
   ScheduleActivityTeachers: dump(['teacherId']),
@@ -221,6 +269,9 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   },
 
   // What the person decided, published or wrote.
+  // K7b, whole as to a colleague: a link to the school's published timetable of a teacher, a class, a room or a pupil. What a teacher's
+  // published timetable shows is the school's own act to publish, and the link's token is "(dold)". A link of kind STUDENT (a pupil's week
+  // behind a code) names a pupil, who is not a colleague and is not decided here: it is the extract's whole, as it was before K7b.
   PublicTimetableLinks: dump(['targetTeacherId', 'targetStudentId', 'createdByUserId']),
   PublicTimetableHidden: dump(['targetStudentId']),
   TimplanStatementPublications: dump(['publishedByUserId']),
@@ -471,7 +522,10 @@ export function emptyPupilPart(file: TableFile, rows: Array<Record<string, unkno
   for (const row of rows) {
     const about = row[pupil.column];
     if (typeof about !== 'string' || asked.has(about)) continue;
-    for (const column of [pupil.column, ...pupil.hides]) {
+    // The person may stand in another person column of the same row, as the one who registered or took back (a teacher who reported their
+    // own absence and was taken back by an administrator): the extract of the administrator must not carry them there either.
+    const elsewhere = file.dump.columns.filter((column) => column !== pupil.column && row[column] === about);
+    for (const column of [pupil.column, ...pupil.hides, ...elsewhere]) {
       if (row[column] !== null && row[column] !== undefined) emptied += 1;
       row[column] = null;
     }

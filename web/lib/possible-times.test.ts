@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TIMES } from "./possible-times.fixture";
-import { askPossibleTimes, NUMBERED, optionAt, optionNumbered, runAt } from "./possible-times";
+import { askPossibleTimes, askRoomChoices, NUMBERED, optionAt, optionNumbered, roomAt, runAt } from "./possible-times";
 import { possibleOf, possibleStore } from "./possible-store";
 
 const post = vi.hoisted(() => vi.fn());
@@ -25,6 +25,29 @@ describe("asking where a lesson can stand", () => {
   });
 });
 
+describe("asking about a brick of Att lägga, which is no lesson yet", () => {
+  const brick = { academicYearId: "y", studentGroupId: "g", subjectId: "s", minutes: 60, teacherId: "t", recurrence: "ALL_WEEKS" as const };
+
+  it("names the brick and no lesson: the gateway takes exactly one of them", async () => {
+    post.mockResolvedValue(TIMES);
+    await askPossibleTimes(brick);
+    expect(post).toHaveBeenCalledWith(
+      "/api/v1/master-lessons/possible-times",
+      { brick, from: "07:00", to: "18:00", stepMinutes: 5, limit: NUMBERED },
+      undefined,
+    );
+    expect(post.mock.calls[0]![1]).not.toHaveProperty("lessonId");
+  });
+
+  it("asks which rooms the brick can have at a day and a clock in the same way, and a lesson as before", async () => {
+    post.mockResolvedValue({ rooms: [] });
+    await askRoomChoices(brick, 2, "09:00");
+    expect(post).toHaveBeenLastCalledWith("/api/v1/master-lessons/room-choices", { brick, dayOfWeek: 2, startTime: "09:00" }, undefined);
+    await askRoomChoices("a", 2, "09:00");
+    expect(post).toHaveBeenLastCalledWith("/api/v1/master-lessons/room-choices", { lessonId: "a", dayOfWeek: 2, startTime: "09:00" }, undefined);
+  });
+});
+
 describe("reading the answer", () => {
   it("finds the run a start lies in, the first and the last start of it included", () => {
     expect(runAt(TIMES, 1, 480)?.kind).toBe("FREE");
@@ -46,6 +69,25 @@ describe("reading the answer", () => {
     expect(optionAt(TIMES, 2, 490)).toBeNull();
     expect(optionNumbered(TIMES, 3)).toMatchObject({ dayOfWeek: 3, startMinutes: 600, roomChanged: true });
     expect(optionNumbered(TIMES, 4)).toBeNull();
+  });
+});
+
+describe("the room a start was judged in", () => {
+  it("is the room of the numbered time there when that is another than the lesson's own, and of the stretch of another room otherwise", () => {
+    // 3: Wednesday 10:00, a numbered time in room r2. Wednesday 10:30 is in the same stretch of another room, not numbered.
+    expect(roomAt(TIMES, "a", 3, 600)).toBe("r2");
+    expect(roomAt(TIMES, "a", 3, 630)).toBe("r2");
+  });
+
+  it("is undefined for a time in the lesson's own room, for a square the gateway has no answer for, and for a stretch that names no room", () => {
+    expect(roomAt(TIMES, "a", 2, 480)).toBeUndefined();
+    expect(roomAt(TIMES, "a", 2, 495)).toBeUndefined();
+    expect(roomAt(TIMES, "a", 5, 480)).toBeUndefined();
+    // A gateway older than the web names no room for the stretch: the page's own check is left to say what it can.
+    const bare = { ...TIMES, days: TIMES.days.map((day) => ({ ...day, runs: day.runs.map(({ rooms: _rooms, ...run }) => run) })) };
+    expect(roomAt(bare, "a", 3, 630)).toBeUndefined();
+    // A lesson the run does not name gets no room from it.
+    expect(roomAt(TIMES, "b", 3, 630)).toBeUndefined();
   });
 });
 

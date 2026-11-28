@@ -13,8 +13,19 @@ import { GROUP_LIST, MASTER_LESSONS, ROOM_LIST, SUBJECTS } from "./world";
  * SHAPE; what the gateway's judge says is held to the real judge by scripts/test/probe-mojliga-tider.ts.
  */
 
+interface Brick {
+  academicYearId: string;
+  studentGroupId: string;
+  subjectId: string;
+  minutes: number;
+  teacherId?: string;
+  coTeacherId?: string;
+}
+
 interface Body {
   lessonId?: string;
+  /** A brick of Att lägga (E4): a lesson that does not exist yet, asked about by what is known of it. */
+  brick?: Brick;
   from?: string;
   to?: string;
   stepMinutes?: number;
@@ -33,10 +44,34 @@ type Answer =
   | { kind: "IN_THE_WAY"; blockerId: string }
   | { kind: "CROWDED"; units: number; locked: boolean };
 
+/** The lesson a question is about: one that exists, or a brick, which stands nowhere (Monday morning is only where the stub orders the times from). */
+function subjectOf(body: Pick<Body, "lessonId" | "brick">) {
+  if (body.brick) {
+    const brick = body.brick;
+    return {
+      id: "brick",
+      academicYearId: brick.academicYearId,
+      studentGroupId: brick.studentGroupId,
+      subjectId: brick.subjectId,
+      teacherId: brick.teacherId ?? null,
+      coTeacherId: brick.coTeacherId ?? null,
+      roomId: null as string | null,
+      dayOfWeek: 1,
+      startTime: "08:00:00",
+      endTime: `${String(Math.floor((480 + brick.minutes) / 60)).padStart(2, "0")}:${String((480 + brick.minutes) % 60).padStart(2, "0")}:00`,
+      isLocked: false,
+      isParked: true,
+      unplaced: true,
+    };
+  }
+  const lesson = MASTER_LESSONS.find((candidate) => candidate.id === body.lessonId);
+  return lesson ? { ...lesson, unplaced: false } : null;
+}
+
 function possibleTimes(context: GatewayContext): unknown {
   if (!context.person) return new Reply(401, { message: "Unauthorized" });
   const body = (context.body ?? {}) as Body;
-  const lesson = MASTER_LESSONS.find((candidate) => candidate.id === body.lessonId);
+  const lesson = subjectOf(body);
   if (!lesson) return new Reply(404, { detail: "Master lesson not found." });
   const from = minutes(body.from ?? "07:00");
   const to = minutes(body.to ?? "18:00");
@@ -46,7 +81,7 @@ function possibleTimes(context: GatewayContext): unknown {
   const own = { day: lesson.dayOfWeek, start: minutes(lesson.startTime) };
 
   const answerAt = (day: number, start: number): Answer => {
-    if (day === own.day && start === own.start) return { kind: "STANDS" };
+    if (!lesson.unplaced && day === own.day && start === own.start) return { kind: "STANDS" };
     const end = start + length;
     if (LUNCH_SITTINGS.some((sitting) => sitting.studentGroupId === lesson.studentGroupId && sitting.dayOfWeek === day && overlaps(start, end, minutes(sitting.startTime), minutes(sitting.endTime)))) {
       return { kind: "CLOSED", code: "LUNCH", params: {} };
@@ -111,14 +146,14 @@ function possibleTimes(context: GatewayContext): unknown {
   return {
     academicYearId: lesson.academicYearId,
     subject: {
-      lessonId: lesson.id,
+      lessonId: lesson.unplaced ? null : lesson.id,
       className: className(lesson.studentGroupId),
       subjectName: subjectName(lesson.subjectId),
       minutes: length,
-      lessonIds: [lesson.id],
+      lessonIds: lesson.unplaced ? [] : [lesson.id],
       isLocked: lesson.isLocked,
-      unplaced: false,
-      current: { dayOfWeek: own.day, startMinutes: own.start, endMinutes: own.start + length },
+      unplaced: lesson.unplaced,
+      current: lesson.unplaced ? null : { dayOfWeek: own.day, startMinutes: own.start, endMinutes: own.start + length },
     },
     stepMinutes: step,
     options,
@@ -135,8 +170,8 @@ function possibleTimes(context: GatewayContext): unknown {
  */
 function roomChoices(context: GatewayContext): unknown {
   if (!context.person) return new Reply(401, { message: "Unauthorized" });
-  const body = (context.body ?? {}) as { lessonId?: string; dayOfWeek?: number; startTime?: string };
-  const lesson = MASTER_LESSONS.find((candidate) => candidate.id === body.lessonId);
+  const body = (context.body ?? {}) as Pick<Body, "lessonId" | "brick"> & { dayOfWeek?: number; startTime?: string };
+  const lesson = subjectOf(body);
   if (!lesson) return new Reply(404, { detail: "Master lesson not found." });
   const day = body.dayOfWeek ?? lesson.dayOfWeek;
   const start = minutes(body.startTime ?? lesson.startTime);
@@ -172,7 +207,7 @@ function roomChoices(context: GatewayContext): unknown {
     row.rank = index + 1;
   });
   const rooms = [...fits, ...rows.filter((row) => row.state === "FREE" && !row.allowed), ...rows.filter((row) => row.state === "BUSY")];
-  return { academicYearId: lesson.academicYearId, lessonId: lesson.id, className: className(lesson.studentGroupId), subjectName: subjectName(lesson.subjectId), dayOfWeek: day, startMinutes: start, endMinutes: end, rooms };
+  return { academicYearId: lesson.academicYearId, lessonId: lesson.unplaced ? null : lesson.id, className: className(lesson.studentGroupId), subjectName: subjectName(lesson.subjectId), dayOfWeek: day, startMinutes: start, endMinutes: end, rooms };
 }
 
 export const possibleTimesRoutes: GatewayRoute[] = [

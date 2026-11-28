@@ -8,6 +8,7 @@ import {
   CHANGE_KINDS,
   CODES,
   CONFLICT_KINDS,
+  DIRECT_REACH_UNANSWERED_REASON,
   FRAME_REASONS,
   LESSON_IS_PLACED,
   OUTCOMES,
@@ -29,6 +30,7 @@ const TYPES = readFileSync(join(__dirname, "..", "..", "src", "class-teacher", "
 const DTO = readFileSync(join(__dirname, "..", "..", "src", "class-teacher", "dto", "class-teacher.dto.ts"), "utf8");
 const GUARD = readFileSync(join(__dirname, "..", "..", "src", "auth", "roles.guard.ts"), "utf8");
 const MASTER_LESSONS = readFileSync(join(__dirname, "..", "..", "src", "calendar", "master-lessons.service.ts"), "utf8");
+const DIRECT_REACH = readFileSync(join(__dirname, "..", "..", "src", "publication", "direct-reach.ts"), "utf8");
 
 const listOf = (name: string): string[] => {
   const body = new RegExp(`export const ${name} = \\[([^\\]]*)\\]`).exec(TYPES)?.[1] ?? "";
@@ -85,11 +87,11 @@ describe("every reason has a sentence in both languages", () => {
   const sentenceOf = (messages: typeof sv, reason: string): unknown => (messages.classTeacher.reason as Record<string, unknown>)[reason];
 
   it("has one for each reason and one for a reason the web does not know yet", () => {
-    for (const reason of [...FRAME_REASONS, LESSON_IS_PLACED, "UNKNOWN"]) {
+    for (const reason of [...FRAME_REASONS, LESSON_IS_PLACED, DIRECT_REACH_UNANSWERED_REASON, "UNKNOWN"]) {
       expect(typeof sentenceOf(sv, reason), `sv ${reason}`).toBe("string");
       expect(typeof sentenceOf(en, reason), `en ${reason}`).toBe("string");
     }
-    expect(Object.keys(sv.classTeacher.reason).sort()).toEqual([...FRAME_REASONS, LESSON_IS_PLACED, "UNKNOWN"].sort());
+    expect(Object.keys(sv.classTeacher.reason).sort()).toEqual([...FRAME_REASONS, LESSON_IS_PLACED, DIRECT_REACH_UNANSWERED_REASON, "UNKNOWN"].sort());
     expect(Object.keys(en.classTeacher.reason).sort()).toEqual(Object.keys(sv.classTeacher.reason).sort());
   });
 
@@ -101,6 +103,13 @@ describe("every reason has a sentence in both languages", () => {
     expect(sentence).toBeTruthy();
     expect(sentenceOf(sv, LESSON_IS_PLACED)).toBe(sentence);
     expect(sentenceOf(en, LESSON_IS_PLACED)).not.toBe(sentence);
+  });
+
+  // The question before a change in Direkt (P5): the editor's 409 code, and the reason a klasslärare's publication is refused with when it comes.
+  it("says the reason the gateway adds for the question before a change in Direkt by its code", () => {
+    expect(TYPES).toContain(`export const DIRECT_REACH_UNANSWERED_REASON = '${DIRECT_REACH_UNANSWERED_REASON}'`);
+    expect(DIRECT_REACH).toContain(`export const DIRECT_REACH_UNANSWERED = '${DIRECT_REACH_UNANSWERED_REASON}'`);
+    expect(sentenceOf(en, DIRECT_REACH_UNANSWERED_REASON)).not.toBe(sentenceOf(sv, DIRECT_REACH_UNANSWERED_REASON));
   });
 
   it("says the Swedish ones as the gateway says them to a client without the web's strings", () => {

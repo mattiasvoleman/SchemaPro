@@ -153,6 +153,11 @@ vi.mock("@/lib/staffing-queries", () => ({
  * section's own behaviour is candidates-section.test.tsx's. Here the newest
  * run matters only for whether Generera waits for it.
  */
+// Optimeringsprofilen reads the school's profile through react-query and the profile context, which these tests do not provide: it is held on
+// its own (use-optimization-profile.test.tsx), and here the sliders start at the defaults.
+vi.mock("./use-optimization-profile", () => ({
+  useOptimizationProfile: () => ({ weights: { preferredFree: 10, preferredBusy: 5, disruption: 8, spread: 3, teacherGap: 2 }, setWeight: () => undefined, canSave: true, status: "idle" }),
+}));
 vi.mock("./use-schedule-candidates", () => ({
   useScheduleCandidates: () => ({ data: state.candidates, isLoading: false, isError: false, refetch: candidatesRefetch }),
   useStartCandidates: () => noMutation,

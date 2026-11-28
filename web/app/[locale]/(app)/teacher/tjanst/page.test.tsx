@@ -239,6 +239,40 @@ describe("Min tjänst: omfattning enligt förordningen (SFS 2026:1487)", () => {
     expect(screen.queryByText(/staffing\.scope\./)).not.toBeInTheDocument();
   });
 
+  it("says in one line why there is no card for a läsår that begins before the ordinance, with the day it holds from, and once (the review of #397, L-1)", async () => {
+    state.load.data = { teachers: [row()], scope: scope({ version: null, yearReason: "NOT_IN_FORCE", upcoming: { sfs: "SFS 2026:1487", validFrom: "2027-07-01" } }) };
+    render(<MyStaffingPage />);
+    await settled();
+    expect(screen.getAllByText("staffing.scopeYearNotInForce(SFS 2026:1487|1 juli 2027)")).toHaveLength(1);
+    expect(screen.queryByText(/staffing\.scope\./)).not.toBeInTheDocument();
+  });
+
+  it("says it without a day when the report names none, and says the numbering has no levels for the ten-year grundskola", async () => {
+    state.load.data = { teachers: [row()], scope: scope({ version: null, yearReason: "NOT_IN_FORCE" }) };
+    const { unmount } = render(<MyStaffingPage />);
+    await settled();
+    expect(screen.getByText("staffing.scopeYearNotInForceNoDate")).toBeInTheDocument();
+    unmount();
+    // A teacher with no teaching has no card in a year the ordinance has no levels for: the line says why.
+    const empty = scope({ yearReason: "NUMBERING_NOT_COVERED", teachers: [] });
+    state.load.data = { teachers: [row()], scope: empty };
+    render(<MyStaffingPage />);
+    await settled();
+    expect(screen.getByText("staffing.scopeYearNumbering")).toBeInTheDocument();
+  });
+
+  it("says nothing of the year where the card says it, and nothing for a year the ordinance judges", async () => {
+    state.load.data = { teachers: [row()], scope: scope() };
+    const { unmount } = render(<MyStaffingPage />);
+    expect(await screen.findByText("staffing.scope.own.verdictInside")).toBeInTheDocument();
+    expect(screen.queryByText(/scopeYear/)).not.toBeInTheDocument();
+    unmount();
+    state.load.data = { teachers: [row()], scope: scope({ yearReason: "NUMBERING_NOT_COVERED" }) };
+    render(<MyStaffingPage />);
+    expect(await screen.findByText("staffing.scope.verdictNumbering")).toBeInTheDocument();
+    expect(screen.queryByText(/scopeYear/)).not.toBeInTheDocument();
+  });
+
   it("shows an administrator who teaches their own omfattning and no colleague's, from the whole school's report", async () => {
     who.role = "SCHOOL_ADMIN";
     const both = scope();

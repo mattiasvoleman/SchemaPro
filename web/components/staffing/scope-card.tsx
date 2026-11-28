@@ -3,7 +3,7 @@
 import { useLocale, useTranslations } from "next-intl";
 import { formatFigure } from "@/lib/staffing-view";
 import { formatDay } from "@/lib/staffing-day";
-import { hoursOver, type ScopeCardData } from "@/lib/assignment-scope";
+import { hoursOver, knownInterpretationKey, type ScopeCardData } from "@/lib/assignment-scope";
 import { SectionCard } from "@/components/ui/section-card";
 
 export interface ScopeCardProps {
@@ -42,6 +42,10 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
   const judged = yearReason === null && teacher.verdict !== "NOT_JUDGED";
   const over = hoursOver(teacher);
   const overOnly = teacher.overOnlyWithUnregulated === true;
+  // The hours outside the stages, told apart (the review of #399, L-5): förskoleklass is årskurs 0, and a year no band covers (a lydelse with
+  // fewer bands than the school has years) is not förskoleklass. A gateway that does not tell them apart has only förskoleklass to say, as it did.
+  const preschool = teacher.preschoolHours ?? teacher.unregulatedHours;
+  const outsideStages = Math.round((teacher.unregulatedHours - preschool) * 10) / 10;
 
   const rows: { label: string; value: string }[] = [
     { label: own ? t("teachingOwn") : t("teaching"), value: hours(teacher.teachingHours) },
@@ -66,7 +70,8 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
   }
   // Förskoleklass, and only that: in a läsår the lydelse has no band for (a ten-year grundskola) the gateway files EVERY hour as
   // unregulated (placeSpan with no bands), so the row would say a teacher in årskurs 5 teaches 645 h in förskoleklass.
-  if (teacher.unregulatedHours > 0 && yearReason === null) rows.push({ label: t("unregulated"), value: hours(teacher.unregulatedHours) });
+  if (preschool > 0 && yearReason === null) rows.push({ label: t("unregulated"), value: hours(preschool) });
+  if (outsideStages > 0 && yearReason === null) rows.push({ label: t("outsideStages"), value: hours(outsideStages) });
   if (teacher.unknownGradeHours > 0) rows.push({ label: t("unknownGrade"), value: hours(teacher.unknownGradeHours) });
   if (judged && teacher.planningFloorHours !== null) {
     rows.push({ label: t("planningFloor"), value: hours(teacher.planningFloorHours) });
@@ -104,11 +109,13 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
   else if (teacher.notJudged === "NO_STAGE") {
     // None of the hours lies in a stage: förskoleklass, groups with no årskurs, or both. Say which, not förskoleklass for all.
     verdict =
-      teacher.unknownGradeHours === 0
-        ? t("verdictNoStage")
-        : teacher.unregulatedHours === 0
-          ? t("verdictNoStageUnknown")
-          : t("verdictNoStageBoth");
+      outsideStages > 0
+        ? t("verdictNoStageOutside")
+        : teacher.unknownGradeHours === 0
+          ? t("verdictNoStage")
+          : teacher.unregulatedHours === 0
+            ? t("verdictNoStageUnknown")
+            : t("verdictNoStageBoth");
   }
   else if (teacher.verdict === "OVER_MAX") verdict = over === null ? t("verdictOverMaxHidden") : t("verdictOverMax", { over: figure(over) });
   else if (teacher.verdict === "OVER_OWN") {
@@ -130,6 +137,9 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
   const bad = teacher.verdict === "OVER_MAX" || teacher.verdict === "OVER_OWN";
   const exceptionKind = assessment?.exceptionKind ? (own ? t(`own.exceptionKind${assessment.exceptionKind}`) : t(`exceptionKind${assessment.exceptionKind}`)) : "";
   const blended = teacher.stages.length > 1;
+  // A level above the span's upper edge for the teacher's own stage(s) at full time: it counts to the edge and no higher (min(level, edge) × the post).
+  const levelAboveEdge =
+    yearReason === null && assessment?.levelHours != null && teacher.fullTimeHighestHours !== null && assessment.levelHours > teacher.fullTimeHighestHours;
 
   return (
     <SectionCard
@@ -161,6 +171,14 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
           {t("exceptionKeepsVerdict")}
         </p>
       ) : null}
+      {levelAboveEdge ? (
+        // The rektor's level is held to the highest edge of any stage (the gateway does not know which stage a teacher will teach in), and the
+        // report reads it as no higher than the edge of the teacher's own stage(s): said here, so the row above is not read as a level that applies
+        // (the review of #411, L-3).
+        <p className="text-xs text-muted-foreground">
+          {t(own ? "own.levelAboveEdge" : "levelAboveEdge", { level: figure(assessment!.levelHours!), edge: figure(teacher.fullTimeHighestHours!) })}
+        </p>
+      ) : null}
       {assessment?.note ? <p className="text-xs text-muted-foreground">{t("assessmentNote", { note: assessment.note })}</p> : null}
       {blended && judged ? <p className="text-xs text-muted-foreground">{own ? t("own.blended") : t("blended")}</p> : null}
       {judged && teacher.planningFits !== null ? (
@@ -170,10 +188,11 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
         // Not a blank: whether the floor fits is worked out for a full ferietjänst only, and left out for a reader without HR-läs.
         <p className="text-xs text-muted-foreground">{own ? t("own.fitsNotShown") : t("fitsNotShown")}</p>
       ) : null}
-      {teacher.unregulatedHours > 0 && yearReason === null ? (
+      {preschool > 0 && yearReason === null ? (
         // "(omfattas inte)" beside a figure that is counted in the total reads as if it were not: say which it is.
         <p className="text-xs text-muted-foreground">{t("unregulatedNote")}</p>
       ) : null}
+      {outsideStages > 0 && yearReason === null ? <p className="text-xs text-muted-foreground">{t("outsideStagesNote")}</p> : null}
       {teacher.unknownGradeHours > 0 ? (
         <p className="text-xs text-muted-foreground">{t("unknownGradeNote")}</p>
       ) : null}
@@ -183,11 +202,18 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
         <p className="text-xs text-muted-foreground">{t("planningFloorOnStages")}</p>
       ) : null}
       {interpretations.length > 0 && yearReason === null
-        ? interpretations.map((one) => (
-            <p key={`${one.section}-${one.cause ?? ""}`} className="text-xs text-muted-foreground">
-              {t("interpretation", { section: one.section, note: one.note })}
-            </p>
-          ))
+        ? interpretations.map((one) => {
+            // A note is data and is Swedish; one of the two the gateway holds today is shown in English to an English reader, word for word what
+            // it says, and any other as recorded (src/staffing/scope-interpretations.contract.spec.ts holds the two to their source).
+            const known = locale === "sv" ? null : knownInterpretationKey(one.note);
+            return (
+              <p key={`${one.section}-${one.cause ?? ""}`} className="text-xs text-muted-foreground">
+                {known !== null
+                  ? t("interpretationTranslated", { section: one.section, text: t(`knownInterpretation.${known}`) })
+                  : t("interpretation", { section: one.section, note: one.note })}
+              </p>
+            );
+          })
         : null}
       <p className="text-xs text-muted-foreground">{t("notAnnual")}</p>
       <p className="text-xs text-muted-foreground">
