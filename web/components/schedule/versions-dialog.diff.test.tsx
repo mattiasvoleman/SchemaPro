@@ -20,6 +20,7 @@ const DETAILS: Record<string, { id: string; name: string; lessons: unknown[] }> 
   "v-b": { id: "v-b", name: "Efter lovet", lessons: [lesson({ dayOfWeek: 3 }), lesson({ subjectId: "no", studentGroupId: "g-8b", dayOfWeek: 2 })] },
 };
 const actions = vi.hoisted(() => ({ rename: vi.fn(), restore: vi.fn(), remove: vi.fn(), save: vi.fn() }));
+const pending = vi.hoisted(() => ({ restore: false }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/queries", () => ({
   useScheduleVersions: () => ({ data: VERSIONS }),
@@ -27,7 +28,7 @@ vi.mock("@/lib/queries", () => ({
   useScheduleVersionActions: () => ({
     save: { isPending: false, mutateAsync: actions.save },
     rename: { isPending: false, mutateAsync: actions.rename },
-    restore: { isPending: false, mutateAsync: actions.restore },
+    restore: { isPending: pending.restore, mutateAsync: actions.restore },
     remove: { isPending: false, mutateAsync: actions.remove },
   }),
 }));
@@ -233,5 +234,65 @@ describe("restoring a version", () => {
     render(wrap(<VersionsDialog {...props(DETAILS["v-a"]!.lessons)} />));
     await userEvent.click(screen.getByRole("button", { name: "Återställ ”Före lovet”" }));
     expect(screen.getByText(/Versionen är identisk med det nuvarande schemat\./)).toBeTruthy();
+  });
+});
+
+describe("what the dialog holds on to while it is open", () => {
+  beforeEach(() => {
+    pending.restore = false;
+  });
+
+  it("keeps the question's Återställ shut while the restore is on its way, so that the reader cannot send it twice", async () => {
+    actions.restore.mockReturnValue(new Promise(() => {}));
+    const { rerender } = render(wrap(<VersionsDialog {...props([])} />));
+    await userEvent.click(screen.getByRole("button", { name: "Återställ ”Före lovet”" }));
+    const asked = screen.getByRole("dialog", { name: "Återställa ”Före lovet”?" });
+    expect(within(asked).getByRole("button", { name: "Återställ" })).toBeEnabled();
+    pending.restore = true;
+    rerender(wrap(<VersionsDialog {...props([])} />));
+    expect(within(asked).getByRole("button", { name: "Återställ" })).toBeDisabled();
+    expect(within(asked).getByRole("button", { name: "Avbryt" })).toBeDisabled();
+  });
+
+  it("closes the question when the restore fails, and says why through the page's own error", async () => {
+    const showError = vi.fn();
+    const failure = new Error("nej");
+    actions.restore.mockRejectedValue(failure);
+    render(wrap(<VersionsDialog {...props([], { showError })} />));
+    await userEvent.click(screen.getByRole("button", { name: "Återställ ”Före lovet”" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Återställa ”Före lovet”?" })).getByRole("button", { name: "Återställ" }));
+    await vi.waitFor(() => expect(showError).toHaveBeenCalledWith(failure));
+    expect(screen.queryByRole("dialog", { name: "Återställa ”Före lovet”?" })).toBeNull();
+  });
+
+  it("starts from the grid again when another version is compared, and drops the comparison and the rename when the page changes year", async () => {
+    const { rerender } = render(wrap(<VersionsDialog {...props([])} />));
+    await userEvent.click(screen.getByRole("button", { name: "Jämför ”Före lovet” med nuvarande" }));
+    await userEvent.selectOptions(screen.getByLabelText("Jämför med"), "v-b");
+    expect(screen.getByRole("region", { name: "Skillnader mellan ”Före lovet” och ”Efter lovet”" })).toBeTruthy();
+    // The other version's own compare button: that version against the grid, not against the one that was chosen a moment ago (which is itself).
+    await userEvent.click(screen.getByRole("button", { name: "Jämför ”Efter lovet” med nuvarande" }));
+    expect(screen.getByRole("region", { name: "Ändringar sedan ”Efter lovet”" })).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "Döp om ”Före lovet”" }));
+    rerender(wrap(<VersionsDialog {...props([], { academicYearId: "y-2" })} />));
+    expect(screen.queryByRole("region", { name: /Skillnader|Ändringar/ })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Nytt namn på versionen" })).toBeNull();
+  });
+
+  it("drops the question when the page changes year: the version it names is another year's", async () => {
+    const { rerender } = render(wrap(<VersionsDialog {...props([])} />));
+    await userEvent.click(screen.getByRole("button", { name: "Återställ ”Före lovet”" }));
+    expect(screen.getByRole("dialog", { name: "Återställa ”Före lovet”?" })).toBeTruthy();
+    rerender(wrap(<VersionsDialog {...props([], { academicYearId: "y-2" })} />));
+    expect(screen.queryByRole("dialog", { name: "Återställa ”Före lovet”?", hidden: true })).toBeNull();
+  });
+
+  it("lists the classes in their own order: 8B before 10A, as a reader counts", async () => {
+    const live = [lesson({ studentGroupId: "g-10a", subjectId: "ma" }), lesson({ studentGroupId: "g-8b", subjectId: "ma" })];
+    const groupLabel = (l: { studentGroupId: string }) => ({ "g-7a": "7A", "g-8b": "8B", "g-10a": "10A" })[l.studentGroupId] ?? "";
+    render(wrap(<VersionsDialog {...props(live, { groupLabel })} />));
+    await userEvent.click(screen.getByRole("button", { name: "Jämför ”Före lovet” med nuvarande" }));
+    expect(within(screen.getByRole("region", { name: /Ändringar sedan/ })).getAllByRole("heading", { level: 4 }).map((heading) => heading.textContent?.split(" · ")[0])).toEqual(["7A", "8B", "10A"]);
   });
 });
