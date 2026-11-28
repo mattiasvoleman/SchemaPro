@@ -259,6 +259,11 @@ Påfyllning i gatewayen för brickorna i Att lägga: de markerade brickorna, en 
   egen skrivning (`BoardTrayService.writeBrick`, samma som en läggning för hand): domaren dömer den igen mot det som nu ligger i databasen, en sal generatorn inte tar nekas (`BOARD_ROOM_NOT_ALLOWED`), lektionen
   görs låst och handgjord, loggas och säges som en handredigering. En lektion på bricklådan som läggs tillbaka frågar P5:s fråga i läget Direkt (`409 DIRECT_REACH_UNANSWERED`, och allt rullas tillbaka, versionen med).
   Svaret har versionen och, per bricka, lektionens id och om den skapades.
+- **Webben.** Knappen *Lägg det som går* sitter i brädets verktygsrad bredvid Att lägga (`components/schedule/fill-head.tsx`, med i lektionsdialogernas bit) och dialogen hämtas först när den trycks
+  (`fill-dialog.tsx`). Dialogen frågar efter en klass, en årskurs eller hela skolan (med det som är kvar i Att lägga för var och en), föreslår, och säger "Lade 31 av 36. Ingenting annat flyttades.", varför
+  de andra inte lades och att påfyllningen inte bevisar något. Förslaget ritas som streckade rutor på brädet (`fill-layer.tsx`, en egen lat fil som grindens `behind` hämtar när ett förslag visas; dialogen
+  är inte modal och täcker inte brädet). *Ta in i schemat* skriver det och sparar en version före; i Direkt frågar sidan P5:s fråga först. *Kasta* och stängning lämnar schemat orört. Markerade brickor
+  har ingen knapp i webben än (bricklådan kan inte markera; gatewayens `BRICKS` finns).
 - **Hålls av** `src/board-fill/fill-plan.spec.ts` (ordningen avgör: ett fall där den först-lagda tar den enda starten en annan har; ingen lagd bricka krockar, ligger utanför ramen eller i en måltid; domaren frågas i kostnadsordning;
   tiden; salen; starterna), `board-fill.service.spec.ts` (vad som läses och skrivs, ordningen på lås och version, `basis`), `fill-reads.spec.ts`, `test/board-fill.e2e-spec.ts` (dörrarna och valideringen),
   `scripts/test/probe-lagg-det-som-gar.ts` (mot riktig Postgres, i CI: förslaget skriver ingenting, varje lagd lektion godkänns av domaren, Ta in skriver exakt förslaget efter en version och rör inget som låg,
