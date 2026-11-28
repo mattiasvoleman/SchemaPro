@@ -388,6 +388,40 @@ export class SwapContext {
     return way;
   }
 
+  /**
+   * Whether two lessons, each at its own landing, hold the same teacher, room or class at once: `inTheWay`'s plain overlaps asked of
+   * a PAIR instead of everything that stands (E5a, Gör plats: two units that both move must not land on each other, and the index
+   * only knows where lessons stood). The pupils' own minutes before and after count, as there; the weekly rows are about one
+   * landing and one resource, so they are not here. `swap-context.spec.ts` holds the two to the same answer for every pair.
+   */
+  landingsClash(a: Landing, b: Landing): boolean {
+    if (a.lesson.id === b.lesson.id || a.to.dayOfWeek !== b.to.dayOfWeek) return false;
+    const day = a.to.dayOfWeek;
+    const closed = this.closedWeeks;
+    if (!weeksMeet(a.lesson, b.lesson) || (closed !== null && meetOnlyInClosedWeeks(a.lesson, b.lesson, closed, day))) return false;
+    const together = overlaps(a.to.startMinutes, a.to.endMinutes, b.to.startMinutes, b.to.endMinutes);
+    const teachersOf = (lesson: SwapLesson) => [lesson.teacherId, lesson.coTeacherId].filter((id): id is string => id !== null);
+    if (together) {
+      const mine = teachersOf(a.lesson);
+      if (teachersOf(b.lesson).some((id) => mine.includes(id))) return true;
+      if (a.lesson.roomId !== null && a.lesson.roomId === b.lesson.roomId && !this.sharedRooms.has(a.lesson.roomId)) return true;
+    }
+    const own = this.buffer.get(a.lesson.id);
+    const theirs = this.buffer.get(b.lesson.id);
+    if (!overlaps(a.to.startMinutes - (own?.before ?? 0), a.to.endMinutes + (own?.after ?? 0), b.to.startMinutes - (theirs?.before ?? 0), b.to.endMinutes + (theirs?.after ?? 0))) {
+      return false;
+    }
+    const sharing = this.sharing;
+    const holdersOf = (lesson: SwapLesson) => new Set([lesson.studentGroupId, ...lesson.extraGroupIds]);
+    const others = holdersOf(b.lesson);
+    for (const groupId of holdersOf(a.lesson)) {
+      for (const sharedWith of sharing ? [groupId, ...(sharing.get(groupId) ?? [])] : [groupId]) {
+        if (others.has(sharedWith)) return true;
+      }
+    }
+    return false;
+  }
+
   // ---------------------------------------------------------------------------
   // The board's other hard kinds, as a verdict.
   // ---------------------------------------------------------------------------
