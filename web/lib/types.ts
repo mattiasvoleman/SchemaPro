@@ -363,7 +363,11 @@ export interface Person {
   role: UserRole;
   firstName: string;
   lastName: string;
-  email: string;
+  /**
+   * null for a pupil or a guardian the school added without an address (Personer utan e-postadress): in the lists, attendance and
+   * timetable, with no login until an address is added and the person is invited. A gateway older than the web sends a string.
+   */
+  email: string | null;
   phone: string | null;
   isActive: boolean;
   /**
@@ -697,6 +701,8 @@ export interface MasterLesson {
   isParked: boolean;
   /** Written by Generera from a förläggning: changed in Förlägg i veckan and never here. Absent reads as false. */
   fromPlacement?: boolean;
+  /** Laid by Generera (true) or made by hand (false): with the lock it says whether the next run keeps the lesson (lib/motor-owner.ts). Absent: not read. */
+  isGenerated?: boolean;
   /**
    * Undantag med flit: the rules of the board the lesson stands against on purpose, by name, for the time it was given for. An administrator
    * gave it by answering "Lägg ändå"; it locks the lesson and ends when the lesson's time, lock or place changes. Absent or empty is none.
@@ -1166,7 +1172,7 @@ export interface RolloverPreview {
     endDate: string;
     proposedStart: string | null;
     proposedEnd: string | null;
-    anchor: "CHRISTMAS" | "EASTER" | "ISO_WEEK" | "NONE";
+    anchor: "CHRISTMAS" | "EASTER" | "FIXED_DATE" | "ISO_WEEK" | "NONE";
     fits: boolean;
     selected: boolean;
     startDateToWrite: string | null;

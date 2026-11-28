@@ -39,6 +39,11 @@ export interface AiEngineSuggestedChange {
   cost: number;
   current?: number | null;
   needed?: number | null;
+  /**
+   * Whether the value one step below `needed` was PROVED to hold no timetable (true: `needed` is the least, with the rest of the list as it
+   * is), was tried and not decided (false), or was not tried (null, or absent: the engine omits it, and an engine from before it does too).
+   */
+  neededIsLeast?: boolean | null;
   weekdays: number[];
   requirementIds: string[];
   roomIds: string[];
@@ -57,4 +62,9 @@ export interface AiEngineSuggestChangesResponse {
   elapsedMs: number;
   /** The strict explanation, for HARD_REFUSAL only. */
   conflicts?: AiEngineConflictAnalysis | null;
+  /**
+   * Where the search's time went (M2's account), for a NOT_FOUND where the search itself ran out of its time. Read through the same
+   * whitelist as a Generera's (`timeoutReportOf`): what is stored is what that rebuilt from it, never this value.
+   */
+  report?: unknown;
 }

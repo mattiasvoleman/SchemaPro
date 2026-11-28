@@ -55,3 +55,30 @@ def test_the_budget_the_report_says_is_the_one_given(monkeypatch: pytest.MonkeyP
         ),
     )
     assert _suggest(payload, days=days, end=end).search_seconds == 20
+
+
+def test_a_not_found_carries_the_account_of_where_the_search_s_time_went_and_nothing_else_does(monkeypatch: pytest.MonkeyPatch) -> None:
+    """G6b, g384-L-4: "found nothing in 60 s" did not say whether the minute was the builds or the search. M2's report did, and was dropped."""
+    from app.schemas.schedule import TimeoutReport
+
+    payload, days, end = _cap_week()
+    report = TimeoutReport.model_validate({
+        "totalSeconds": 61.0, "budgetSeconds": 20, "configuredBudgetSeconds": 20,
+        "stages": [{"stage": "BUILD", "seconds": 41.0}, {"stage": "SEARCH_CLEAN", "seconds": 20.0}],
+        "search": {"phases": [{"phase": "CLEAN", "seconds": 20.0, "conflicts": 5, "branches": 9}]},
+    })
+    monkeypatch.setattr(
+        SchedulerSolver, "solve",
+        lambda self, request: OptimizeScheduleResponse(request_id=request.request_id, status="TIMEOUT", lessons=[], report=report),
+    )
+
+    lost = _suggest(payload, days=days, end=end)
+
+    assert lost.verdict == "NOT_FOUND" and lost.report == report
+    bytes_of = lost.model_dump(mode="json", by_alias=True, exclude_none=True)
+    assert bytes_of["report"]["stages"][0] == {"stage": "BUILD", "seconds": 41.0}
+
+    monkeypatch.undo()
+    found = _suggest(payload, days=days, end=end)
+    assert found.verdict == "CHANGES" and found.report is None
+    assert "report" not in found.model_dump(mode="json", by_alias=True)

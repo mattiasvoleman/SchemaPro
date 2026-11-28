@@ -107,6 +107,7 @@ const change = (over: Partial<SuggestionChange>): SuggestionChange => ({
   cost: 0,
   current: null,
   needed: null,
+  neededIsLeast: null,
   weekdays: [],
   requirementIds: [],
   requirementNames: [],
@@ -135,6 +136,7 @@ const done = (over: Partial<Suggestions>): Suggestions => ({
   verifySeconds: 2.4,
   changes: [],
   failure: null,
+  report: null,
   ...over,
 });
 
@@ -159,7 +161,7 @@ const ANSWER: Record<SuggestionsCase, Suggestions> = {
 
 const RUNNING: Suggestions = {
   version: 1, state: "RUNNING", startedAt: ANALYSIS_START, finishedAt: null, verdict: null, verified: false, total: 0,
-  searchSeconds: null, verifySeconds: null, changes: [], failure: null,
+  searchSeconds: null, verifySeconds: null, changes: [], failure: null, report: null,
 };
 
 /** How far each scenario's analysis has come: 0 not asked, 1 asked and counting, 2 answered. */

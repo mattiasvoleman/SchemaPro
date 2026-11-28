@@ -74,3 +74,9 @@ describe('looking for many names at once', () => {
     expect(new TermIndex([]).found('Anna-Lena Ek')).toBe(false);
   });
 });
+
+describe('termsOf: a person with no address (Personer utan e-postadress)', () => {
+  it('has the names for terms and no address, and does not throw', () => {
+    expect(termsOf([{ first: 'Åsa', last: 'Öhman Ek', email: null }])).toEqual(['åsa öhman ek', 'öhman ek åsa']);
+  });
+});

@@ -1,22 +1,33 @@
 import { randomUUID } from 'node:crypto';
 import type { AiEngineSuggestChangesResponse, AiEngineSuggestedChange } from './interfaces/suggest-changes.interface';
+import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
+import { GROUP_CONFLICTS_OVER_ENGINE_LIMIT } from './optimization-proxy.service';
+import { BLOCK_PARTLY_LOCKED_SUMMARY } from './parallel-blocks';
+import { PLACEMENTS_REFUSED_SUMMARY } from './placed-lessons';
 import {
+  ANALYSIS_LEASE_SECONDS,
   MAX_NAMED,
   MAX_NAME,
   MAX_STORED_BYTES,
   MAX_STORED_CHANGES,
+  PREFLIGHT_REFUSAL_CODES,
   STALE_AFTER_MS,
   failedSuggestions,
   isAbandoned,
+  keptOf,
   readAs,
+  refusedSuggestions,
   runningSuggestions,
+  settledAs,
   suggestionsFromEngine,
+  suggestionsMayBeAskedFor,
   suggestionsOf,
   teachersOfSuggestions,
   viewOf,
   type Realiser,
   type SuggestionsStored,
 } from './suggestions';
+import { TIMEOUT_PHASES, TIMEOUT_STAGES, timeoutReportOf } from './timeout-report';
 
 /*
  * The stored analysis (suggestions.ts): what the engine's answer becomes in OptimizationJobs."suggestions", and what comes back out.
@@ -126,19 +137,45 @@ describe('the engine answer as the column keeps it', () => {
     expect(result.changes.map((change) => change.proof)).toEqual(['MAY_HELP', 'MAY_HELP']);
   });
 
-  it('stores a part-timer\'s days hidden for every reader: the rule, the price and the proof and nothing else', () => {
+  it('stores a part-timer\'s days hidden for every reader: the rule and the proof and nothing else, and no price (g385-L-8)', () => {
     const result = stored(answer([days()]));
     expect(result.changes).toEqual([{
-      rule: 'TEACHER_WORK_DAYS', proof: 'SOLVED_TOGETHER', cost: 1200, current: null, needed: null, weekdays: [],
+      rule: 'TEACHER_WORK_DAYS', proof: 'SOLVED_TOGETHER', cost: 0, current: null, needed: null, neededIsLeast: null, weekdays: [],
       requirementIds: [], requirementNames: [], roomIds: [], roomNames: [], resourceIds: [], teacherIds: [], hidden: true,
     }]);
   });
 
-  it('merges several part-timers\' days into one change whose price is the sum, and keeps the others apart', () => {
+  it('does not let the price of a part-timer\'s days say how many days a post goes over, in the column or in what is read', () => {
+    // 1 200 a day: three days over would have been 3 600, and a reader without HR-läs could count them from it.
+    const result = stored(answer([days({ cost: 3600 })]));
+    expect(JSON.stringify(result)).not.toContain('3600');
+    expect(result.changes[0]!.cost).toBe(0);
+    // A column written before that carried the price: it is read without it (and is still shown), never refused for it.
+    const old = { ...result, changes: [{ ...result.changes[0]!, cost: 3600 }] };
+    const read = suggestionsOf(old);
+    expect(read).not.toBeNull();
+    expect(read!.changes[0]!.cost).toBe(0);
+    expect(JSON.stringify(viewOf(read!, new Map()))).not.toContain('3600');
+  });
+
+  it('places the part-timers\' days after the other changes of their proof, whatever they would have cost: the place says nothing of the days', () => {
+    // Ranked by the price it would have had, the entry stood between two changes whose prices a reader can read: [20, hidden, 2000] was
+    // one day (1 200), [20, 2000, hidden] was two or more, and the order said what the dropped price did not.
+    const order = (cost: number, others: number[]) =>
+      stored(answer([days({ cost }), ...others.map((other) => perDay({ cost: other }))])).changes.map((change) => change.rule);
+    for (const cost of [1200, 2400, 3600, 6000]) {
+      expect(order(cost, [2000, 20])).toEqual(['SUBJECT_PER_DAY', 'SUBJECT_PER_DAY', 'TEACHER_WORK_DAYS']);
+    }
+    // Those that are ranked are still ranked by their price, among themselves.
+    const result = stored(answer([days({ cost: 3600 }), perDay({ cost: 2000 }), perDay({ cost: 20 })]));
+    expect(result.changes.map((change) => change.cost)).toEqual([20, 2000, 0]);
+  });
+
+  it('merges several part-timers\' days into one change (no price, and no place that follows from one), and keeps the others apart', () => {
     const result = stored(answer([days({ cost: 1200 }), perDay(), days({ cost: 2400 })]));
     expect(result.changes.map((change) => [change.rule, change.cost])).toEqual([
       ['SUBJECT_PER_DAY', 20],
-      ['TEACHER_WORK_DAYS', 3600],
+      ['TEACHER_WORK_DAYS', 0],
     ]);
     // The engine's list had three changes, and the proof is about all three: two part-timers' days are one entry but are still two changes.
     expect(result.total).toBe(3);
@@ -394,18 +431,64 @@ describe('the page\'s view', () => {
 });
 
 describe('an analysis whose process went away', () => {
-  it('is abandoned once it has been RUNNING for longer than any analysis lasts, and not before', () => {
+  const start = Date.parse(STARTED);
+  const lease = ANALYSIS_LEASE_SECONDS * 1000;
+
+  it('holds its place for the lease from its start, and is abandoned once the lease has run out, and not before', () => {
     const running = runningSuggestions(new Date(STARTED));
-    const start = Date.parse(STARTED);
-    expect(isAbandoned(running, new Date(start + STALE_AFTER_MS))).toBe(false);
-    expect(isAbandoned(running, new Date(start + STALE_AFTER_MS + 1))).toBe(true);
-    expect(readAs(running, new Date(start + STALE_AFTER_MS + 1))).toMatchObject({ state: 'FAILED', failure: 'ABANDONED', startedAt: STARTED });
+    expect(running.leaseUntil).toBe(new Date(start + lease).toISOString());
+    expect(isAbandoned(running, new Date(start + lease))).toBe(false);
+    expect(isAbandoned(running, new Date(start + lease + 1))).toBe(true);
+    expect(readAs(running, new Date(start + lease + 1))).toMatchObject({ state: 'FAILED', failure: 'ABANDONED', startedAt: STARTED });
     expect(readAs(running, new Date(start + 1000))).toBe(running);
-    // An abandoned analysis ended once: every poll says the same time, not the time of the poll.
-    const first = readAs(running, new Date(start + STALE_AFTER_MS + 1));
-    const later = readAs(running, new Date(start + STALE_AFTER_MS + 90_000));
+    // An abandoned analysis ended once, when its lease ran out: every poll says the same time, not the time of the poll.
+    const first = readAs(running, new Date(start + lease + 1));
+    const later = readAs(running, new Date(start + lease + 90_000));
     expect(later.finishedAt).toBe(first.finishedAt);
-    expect(first.finishedAt).toBe(new Date(start + STALE_AFTER_MS).toISOString());
+    expect(first.finishedAt).toBe(new Date(start + lease).toISOString());
+  });
+
+  it('is held by a renewed lease for as long as it is renewed: the start no longer decides', () => {
+    // A heartbeat at +150 s pushed the lease to +330 s; at +7 minutes from the start it is still alive, and was never judged by its age.
+    const renewed = { ...runningSuggestions(new Date(STARTED)), leaseUntil: new Date(start + 7 * 60_000).toISOString() };
+    expect(isAbandoned(renewed, new Date(start + STALE_AFTER_MS + 1))).toBe(false);
+    expect(isAbandoned(renewed, new Date(start + 7 * 60_000 + 1))).toBe(true);
+  });
+
+  it('is judged by the old rule when it carries no lease: an analysis an API from before the lease started', () => {
+    const legacy = { ...runningSuggestions(new Date(STARTED)), leaseUntil: null };
+    expect(isAbandoned(legacy, new Date(start + STALE_AFTER_MS))).toBe(false);
+    expect(isAbandoned(legacy, new Date(start + STALE_AFTER_MS + 1))).toBe(true);
+    expect(readAs(legacy, new Date(start + STALE_AFTER_MS + 1)).finishedAt).toBe(new Date(start + STALE_AFTER_MS).toISOString());
+  });
+
+  it('keeps the lease of a RUNNING analysis through the whitelist and drops it from one that has ended', () => {
+    const running = runningSuggestions(new Date(STARTED));
+    expect(suggestionsOf(JSON.parse(JSON.stringify(running)))?.leaseUntil).toBe(running.leaseUntil);
+    const ended = { ...JSON.parse(JSON.stringify(failedSuggestions(STARTED, 'ENGINE_FAILED', NOW))), leaseUntil: running.leaseUntil };
+    expect(suggestionsOf(ended)?.leaseUntil).toBeNull();
+    // A value that is no time is no lease: the old rule judges it, and the analysis is still read.
+    expect(suggestionsOf({ ...JSON.parse(JSON.stringify(running)), leaseUntil: 'soon' })).toMatchObject({ state: 'RUNNING', leaseUntil: null });
+    // ... and so is a time the service never writes, whatever Date.parse makes of it: the sweep and the claim match the shape as text (the
+    // sweep's section g6b 1 has the same value), so a lease here that SQL does not see would judge one analysis by two rules.
+    for (const written of ['2027-03-13T09:00:00Z', '2027-03-13T09:00:00.000+01:00', '2027-03-13', '2027-03-13T09:00:00.0000Z', 1_800_000_000_000]) {
+      expect(suggestionsOf({ ...JSON.parse(JSON.stringify(running)), leaseUntil: written })).toMatchObject({ state: 'RUNNING', leaseUntil: null });
+    }
+    // An analysis written before the field has none.
+    const { leaseUntil: _gone, ...older } = JSON.parse(JSON.stringify(running));
+    expect(suggestionsOf(older)).toMatchObject({ state: 'RUNNING', leaseUntil: null });
+  });
+
+  it('is never shown with its lease: the page is told RUNNING, not for how long', () => {
+    const view = viewOf(runningSuggestions(new Date(STARTED)), new Map());
+    expect(view).not.toHaveProperty('leaseUntil');
+    expect(view).not.toHaveProperty('previous');
+  });
+
+  it('has no lease once it has ended, whichever way', () => {
+    expect(failedSuggestions(STARTED, 'ABANDONED', NOW).leaseUntil).toBeNull();
+    expect(refusedSuggestions(STARTED, NOW).leaseUntil).toBeNull();
+    expect(stored(answer([cap()])).leaseUntil).toBeNull();
   });
 
   it('is never abandoned once it has ended', () => {
@@ -413,5 +496,326 @@ describe('an analysis whose process went away', () => {
     expect(isAbandoned(done, new Date(Date.parse(STARTED) + 10 * STALE_AFTER_MS))).toBe(false);
     const failed = failedSuggestions(STARTED, 'ENGINE_FAILED', NOW);
     expect(readAs(failed, new Date(Date.parse(STARTED) + 10 * STALE_AFTER_MS))).toBe(failed);
+  });
+});
+
+describe('an analysis asked over a finished one (g385-L-5)', () => {
+  const later = new Date(Date.parse(NOW.toISOString()) + 60_000);
+  const withList = () => stored(answer([cap()]));
+  const found = () => ({ ...withList(), verdict: 'NOT_FOUND' as const, changes: [], total: 0, verified: false });
+
+  it('keeps a finished analysis with something to say, and nothing else', () => {
+    expect(keptOf(withList(), later)).toMatchObject({ state: 'DONE', verdict: 'CHANGES' });
+    expect(keptOf({ ...withList(), verdict: 'SOLVABLE_AS_IS', changes: [], total: 0 }, later)).toMatchObject({ verdict: 'SOLVABLE_AS_IS' });
+    // Not an analysis that found nothing, one that refused the week, a failed one, nor no analysis.
+    expect(keptOf(found(), later)).toBeNull();
+    expect(keptOf(refusedSuggestions(STARTED, NOW), later)).toBeNull();
+    expect(keptOf(failedSuggestions(STARTED, 'ENGINE_FAILED', NOW), later)).toBeNull();
+    expect(keptOf(null, later)).toBeNull();
+  });
+
+  it('keeps it without a previous of its own, however many presses went over it', () => {
+    const asked = runningSuggestions(later, keptOf(withList(), later));
+    const again = keptOf({ ...failedSuggestions(asked.startedAt, 'ABANDONED', later), previous: null }, later);
+    expect(again).toBeNull();
+    expect(keptOf(asked, new Date(later.getTime() + STALE_AFTER_MS + 1))?.previous).toBeNull();
+  });
+
+  it('gives the finished analysis back when the new one ends without a list, and takes the new one when it has an answer', () => {
+    const before = withList();
+    const failed = failedSuggestions(STARTED, 'ENGINE_BUSY', later);
+    expect(settledAs(failed, before)).toBe(before);
+    expect(settledAs(found(), before)).toBe(before);
+    // An answer replaces it, a refusal by a rule that never gives way included (the week is not the one the list was made for).
+    const fresh = stored(answer([perDay()]));
+    expect(settledAs(fresh, before)).toBe(fresh);
+    const refused = refusedSuggestions(STARTED, later);
+    expect(settledAs(refused, before)).toBe(refused);
+    // Over nothing a failure is a failure, as it always was.
+    expect(settledAs(failed, null)).toBe(failed);
+  });
+
+  it('is read as the finished analysis when the run that was asked over it is abandoned, not as a failure', () => {
+    const before = withList();
+    const asked = runningSuggestions(new Date(STARTED), before);
+    const read = readAs(asked, new Date(Date.parse(STARTED) + STALE_AFTER_MS + 1));
+    expect(read).toBe(before);
+    // Nothing was asked over: the failure it always was.
+    expect(readAs(runningSuggestions(new Date(STARTED)), new Date(Date.parse(STARTED) + STALE_AFTER_MS + 1))).toMatchObject({
+      state: 'FAILED', failure: 'ABANDONED',
+    });
+  });
+
+  it('passes through the whitelist as one level of one DONE analysis, in a RUNNING one only', () => {
+    const asked = runningSuggestions(later, keptOf(withList(), later));
+    expect(suggestionsOf(JSON.parse(JSON.stringify(asked)))).toEqual(asked);
+    // Whatever else it is, it is not shown (nor is the analysis): a previous that is FAILED, one with another inside it, or on a DONE one.
+    expect(suggestionsOf({ ...asked, previous: failedSuggestions(STARTED, 'ENGINE_FAILED', NOW) })).toBeNull();
+    expect(suggestionsOf({ ...asked, previous: asked })).toBeNull();
+    expect(suggestionsOf({ ...withList(), previous: withList() })).toBeNull();
+    expect(suggestionsOf({ ...asked, previous: { ...withList(), changes: 'x' } })).toBeNull();
+    // A column from before the field has none.
+    const { previous: _previous, ...old } = withList();
+    expect(suggestionsOf(old)).toEqual(withList());
+  });
+
+  it('is never in what the page reads', () => {
+    const asked = runningSuggestions(later, keptOf(withList(), later));
+    expect(Object.keys(viewOf(asked, new Map()))).not.toContain('previous');
+    expect(JSON.stringify(viewOf(asked, new Map()))).not.toContain('SUBJECT_PER_DAY');
+  });
+
+  it('holds the whole under the column\'s limit with a list of the largest size inside a RUNNING one', () => {
+    const many = Array.from({ length: 9 }, (_, index) => perDay({ cost: 10 + index, requirementIds: [REQ_1, REQ_2, randomUUID()] }));
+    const big = stored(answer(many));
+    const asked = runningSuggestions(later, keptOf(big, later));
+    // The column's CHECK counts the text jsonb prints (a space after every colon and comma): a fifth to a quarter longer than the compact text.
+    const jsonbText = JSON.stringify(asked).replace(/([:,])/g, '$1 ');
+    expect(Buffer.byteLength(jsonbText)).toBeLessThan(8192);
+    expect(suggestionsOf(asked)).not.toBeNull();
+  });
+});
+
+describe('a run the gateway refused before the engine was asked (g393-L-4)', () => {
+  const refused = (code: string) => ({ status: 'SUCCEEDED', solverStatus: 'INFEASIBLE', errorCode: null, conflictSummaryCode: code });
+
+  it('is offered no analysis: the engine would answer a refusal after a minute of its cores', () => {
+    for (const code of PREFLIGHT_REFUSAL_CODES) expect(suggestionsMayBeAskedFor(refused(code))).toBe(false);
+  });
+
+  it('is the engine\'s own refusal when the summary code is one the engine gives, and then it is offered', () => {
+    expect(suggestionsMayBeAskedFor(refused('ROOM_SHORTAGE'))).toBe(true);
+    expect(suggestionsMayBeAskedFor({ status: 'SUCCEEDED', solverStatus: 'INFEASIBLE', errorCode: null })).toBe(true);
+    expect(suggestionsMayBeAskedFor({ status: 'SUCCEEDED', solverStatus: 'TIMEOUT', errorCode: null, conflictSummaryCode: null })).toBe(true);
+  });
+
+  it('names the gateway\'s refusals by the constants they are, so that a rename there fails here', () => {
+    expect([...PREFLIGHT_REFUSAL_CODES].sort()).toEqual(
+      [STAFF_UNSTAFFED_REQUIREMENTS, BLOCK_PARTLY_LOCKED_SUMMARY, PLACEMENTS_REFUSED_SUMMARY, GROUP_CONFLICTS_OVER_ENGINE_LIMIT].sort(),
+    );
+  });
+});
+
+/*
+ * HOW FAR `needed` IS KNOWN, AND WHERE THE SEARCH'S TIME WENT (G6b, the gateway's reading of what #493 gave the engine).
+ *
+ * The engine lowers `needed` after the strict check and says `neededIsLeast` where it proved the value below holds no timetable; a NOT_FOUND
+ * carries M2's `report`. Both are read here through the whitelist and nothing else: a boolean only, and only about a `needed` that is there; a
+ * part-timer's days carry neither (g493-L-5), and an unchecked list is not lowered.
+ */
+describe('how far `needed` is known (neededIsLeast)', () => {
+  const ruleOf = (result: SuggestionsStored, rule: string) => result.changes.find((change) => change.rule === rule)!;
+
+  it('keeps what the engine says of the least: proved, tried and not decided, and nothing for a change it did not try to lower', () => {
+    const result = stored(answer([cap({ neededIsLeast: true }), perDay({ neededIsLeast: false }), lock()]));
+    expect(ruleOf(result, 'TEACHER_DAILY_CAP').neededIsLeast).toBe(true);
+    expect(ruleOf(result, 'SUBJECT_PER_DAY').neededIsLeast).toBe(false);
+    expect(ruleOf(result, 'ROOM_LOCK').neededIsLeast).toBeNull();
+    expect(suggestionsOf(result)).toEqual(result);
+  });
+
+  it('is null from an engine that does not send it, with the key there (the stored change has the same fields whatever the engine)', () => {
+    const result = stored(answer([cap(), perDay()]));
+    for (const change of result.changes) expect(change).toHaveProperty('neededIsLeast', null);
+  });
+
+  it('says nothing of the least of a number that is not there: a room lock has none, whatever the engine says', () => {
+    const result = stored(answer([lock({ neededIsLeast: true })]));
+    expect(result.changes[0]!.neededIsLeast).toBeNull();
+  });
+
+  it('says nothing of the least of a list the engine did not check: it is not lowered, and `true` there is not believed', () => {
+    const result = stored(answer([cap({ neededIsLeast: true }), perDay({ neededIsLeast: false })], { verified: false }));
+    expect(result.changes.map((change) => change.neededIsLeast)).toEqual([null, null]);
+    expect(suggestionsOf(result)).toEqual(result);
+  });
+
+  it.each([['true'], [1], [{}], ['false']])('takes a boolean and nothing else: %p is nothing said', (odd) => {
+    const result = stored(answer([cap({ neededIsLeast: odd as never })]));
+    expect(result.changes[0]!.neededIsLeast).toBeNull();
+  });
+
+  it('does not keep it for a part-timer\'s days, in the column or in what is read: "just N days and not N-1" is a figure of a post (g493-L-5)', () => {
+    // The engine lowers `needed` for a post's days too, and may say `true` for it; `needed` is hidden and so is this.
+    const result = stored(answer([days({ neededIsLeast: true }), days({ neededIsLeast: true }), cap({ neededIsLeast: true })]));
+    const hidden = result.changes.filter((change) => change.hidden);
+    expect(hidden).toHaveLength(1);
+    expect(hidden[0]!.neededIsLeast).toBeNull();
+    expect(hidden[0]!.needed).toBeNull();
+    const view = viewOf(result, new Map());
+    expect(view.changes.filter((change) => change.hidden).map((change) => change.neededIsLeast)).toEqual([null]);
+    // The cap beside it says what it says.
+    expect(ruleOf(result, 'TEACHER_DAILY_CAP').neededIsLeast).toBe(true);
+  });
+
+  describe('on the way out', () => {
+    const lowered = (): SuggestionsStored => stored(answer([cap({ neededIsLeast: true }), perDay({ neededIsLeast: false }), days()]));
+
+    it('reads a value written before the field, with no key, as nothing said, and is idempotent', () => {
+      const value = JSON.parse(JSON.stringify(lowered())) as SuggestionsStored;
+      for (const change of value.changes) delete (change as unknown as Record<string, unknown>).neededIsLeast;
+      const read = suggestionsOf(value)!;
+      expect(read.changes.map((change) => change.neededIsLeast)).toEqual(value.changes.map(() => null));
+      expect(suggestionsOf(read)).toEqual(read);
+      expect(suggestionsOf(lowered())).toEqual(lowered());
+    });
+
+    it('refuses what is not a boolean', () => {
+      for (const odd of ['true', 1, {}, []]) {
+        const value = lowered();
+        expect(suggestionsOf({ ...value, changes: [{ ...value.changes[0]!, neededIsLeast: odd }, ...value.changes.slice(1)] })).toBeNull();
+      }
+    });
+
+    it('refuses a claim over a part-timer\'s days, which hold nothing of a post', () => {
+      const value = lowered();
+      const hidden = value.changes.find((change) => change.hidden)!;
+      for (const claim of [true, false]) expect(suggestionsOf({ ...value, changes: [{ ...hidden, neededIsLeast: claim }] })).toBeNull();
+    });
+
+    it('refuses a claim over a list the engine did not check, as it refuses a proof', () => {
+      const unchecked = stored(answer([cap(), perDay()], { verified: false }));
+      for (const claim of [true, false]) {
+        expect(suggestionsOf({ ...unchecked, changes: [{ ...unchecked.changes[0]!, neededIsLeast: claim }, unchecked.changes[1]!] })).toBeNull();
+      }
+    });
+
+    it('reads a claim over a number that is not there as nothing said, not as a value that is shown in part', () => {
+      const value = stored(answer([lock()]));
+      const read = suggestionsOf({ ...value, changes: [{ ...value.changes[0]!, neededIsLeast: true }] })!;
+      expect(read.changes[0]!.neededIsLeast).toBeNull();
+    });
+
+    it('is in the page\'s view, with the rest of the change', () => {
+      const view = viewOf(lowered(), new Map());
+      expect(view.changes.map((change) => [change.rule, change.neededIsLeast]).sort()).toEqual(
+        [['SUBJECT_PER_DAY', false], ['TEACHER_DAILY_CAP', true], ['TEACHER_WORK_DAYS', null]].sort(),
+      );
+    });
+  });
+});
+
+describe('where the search\'s time went (report)', () => {
+  const REPORT = (): Record<string, unknown> => ({
+    totalSeconds: 71.2,
+    budgetSeconds: 60,
+    configuredBudgetSeconds: 60,
+    callerWaitSeconds: 195,
+    stages: [
+      { stage: 'PRECHECKS', seconds: 0.3 },
+      { stage: 'BUILD', seconds: 9.4 },
+      { stage: 'SEARCH_CLEAN', seconds: 60 },
+      { stage: 'PROBE', seconds: 1.5 },
+    ],
+    search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: 60, conflicts: 1834, branches: 20113 }] },
+    weekLoadCut: false,
+  });
+  const notFound = (over: Partial<AiEngineSuggestChangesResponse> = {}) =>
+    answer([], { verdict: 'NOT_FOUND', verified: false, report: REPORT(), ...over });
+
+  it('keeps the engine\'s report of a NOT_FOUND, as the whitelist of a Generera\'s report rebuilds it', () => {
+    const result = stored(notFound());
+    expect(result).toMatchObject({ state: 'DONE', verdict: 'NOT_FOUND', changes: [], total: 0, searchSeconds: 60 });
+    expect(result.report).toEqual(timeoutReportOf(REPORT()));
+    expect(result.report).toMatchObject({ totalSeconds: 71.2, budgetSeconds: 60, callerWaitSeconds: 195 });
+    expect(suggestionsOf(result)).toEqual(result);
+    expect(suggestionsOf(JSON.parse(JSON.stringify(result)))).toEqual(result);
+  });
+
+  it('is rebuilt and not spread: a name the report has no place for is not kept', () => {
+    const result = stored(notFound({ report: { ...REPORT(), requirementName: 'Matematik för 7B', teacherIds: [TEACHER_A] } }));
+    expect(JSON.stringify(result)).not.toMatch(/Matematik|requirementName|teacherIds/);
+  });
+
+  it('keeps the steps of a start from an earlier timetable (START) and of a search year by year (YEARS), which the page has words for since #497', () => {
+    const stages = [
+      { stage: 'PRECHECKS', seconds: 0.2 },
+      { stage: 'START', seconds: 4.1 },
+      { stage: 'BUILD', seconds: 6 },
+      { stage: 'YEARS', seconds: 40 },
+      { stage: 'SEARCH_CLEAN', seconds: 9.7 },
+    ];
+    const result = stored(notFound({ report: { ...REPORT(), stages } }));
+    expect(result.report!.stages).toEqual(stages);
+    expect(result.report!.otherSeconds).toBeUndefined();
+    expect(suggestionsOf(result)).toEqual(result);
+  });
+
+  it('skips a step the gateway has no name for and carries its seconds, as it does for a Generera', () => {
+    const report = { ...REPORT(), stages: [...(REPORT().stages as unknown[]), { stage: 'WARMUP_STEP', seconds: 3 }] };
+    const result = stored(notFound({ report }));
+    expect(result.report!.stages.map((stage) => stage.stage)).toEqual(['PRECHECKS', 'BUILD', 'SEARCH_CLEAN', 'PROBE']);
+    expect(result.report!.otherSeconds).toBe(3);
+    expect(suggestionsOf(result)).toEqual(result);
+  });
+
+  it.each([
+    ['a step that is not an object', { stages: [7] }],
+    ['a total that is not a number', { totalSeconds: 'soon' }],
+    ['a negative budget', { budgetSeconds: -1 }],
+    ['a search that is not a list', { search: { solutions: 0, phases: 'CLEAN' } }],
+  ])('keeps no report that is not wholly well formed (%s), and still says the answer', (_name, odd) => {
+    const result = stored(notFound({ report: { ...REPORT(), ...odd } }));
+    expect(result.report).toBeNull();
+    expect(result).toMatchObject({ state: 'DONE', verdict: 'NOT_FOUND', searchSeconds: 60 });
+    expect(suggestionsOf(result)).toEqual(result);
+  });
+
+  it('has none where the engine sent none: a NOT_FOUND from an engine before it, and the other answers', () => {
+    expect(stored(answer([], { verdict: 'NOT_FOUND', verified: false })).report).toBeNull();
+    expect(stored(answer([cap()])).report).toBeNull();
+    expect(stored(answer([], { verdict: 'NOT_FOUND', verified: false, report: null })).report).toBeNull();
+  });
+
+  it.each(['CHANGES', 'SOLVABLE_AS_IS', 'HARD_REFUSAL'] as const)('keeps none for a %s, whatever the engine sent beside it', (verdict) => {
+    const result = stored(answer(verdict === 'CHANGES' ? [cap()] : [], { verdict, report: REPORT() }));
+    expect(result.report).toBeNull();
+  });
+
+  it('holds no report in a running or a failed analysis, and the ones that are made hold none', () => {
+    expect(runningSuggestions(NOW).report).toBeNull();
+    expect(failedSuggestions(STARTED, 'ENGINE_FAILED', NOW).report).toBeNull();
+    expect(refusedSuggestions(STARTED, NOW).report).toBeNull();
+  });
+
+  describe('on the way out', () => {
+    const made = (): SuggestionsStored => stored(notFound());
+
+    it('shows no analysis whose report is not wholly well formed, and none whose report belongs to another answer', () => {
+      expect(suggestionsOf({ ...made(), report: { ...made().report, totalSeconds: 'soon' } })).toBeNull();
+      expect(suggestionsOf({ ...made(), report: 'slow' })).toBeNull();
+      expect(suggestionsOf({ ...made(), report: [] })).toBeNull();
+      // A report belongs to a finished NOT_FOUND and to nothing else.
+      expect(suggestionsOf({ ...made(), verdict: 'CHANGES' })).toBeNull();
+      expect(suggestionsOf({ ...made(), verdict: 'HARD_REFUSAL' })).toBeNull();
+      expect(suggestionsOf({ ...made(), state: 'RUNNING', verdict: null, finishedAt: null })).toBeNull();
+      expect(suggestionsOf({ ...made(), state: 'FAILED', verdict: null, failure: 'ENGINE_FAILED' })).toBeNull();
+    });
+
+    it('reads a value written before the field, with no key, as no report', () => {
+      const value = JSON.parse(JSON.stringify(made())) as Record<string, unknown>;
+      delete value.report;
+      expect(suggestionsOf(value)).toMatchObject({ verdict: 'NOT_FOUND', report: null });
+    });
+
+    it('fits: the largest report the whitelist lets through leaves the whole under what the column allows', () => {
+      const stages = Array.from({ length: 12 }, (_, index) => ({ stage: TIMEOUT_STAGES[index % TIMEOUT_STAGES.length], seconds: 86_400 }));
+      const phases = Array.from({ length: 6 }, (_, index) => ({
+        phase: TIMEOUT_PHASES[index % TIMEOUT_PHASES.length], seconds: 86_400, conflicts: 999_999_999_999, branches: 999_999_999_999,
+      }));
+      const report = { ...REPORT(), totalSeconds: 86_400, callerWaitSeconds: 86_400, stages, search: { solutions: 999_999_999_999, phases } };
+      const result = stored(notFound({ report }));
+      expect(result.report).not.toBeNull();
+      expect(result.report!.stages).toHaveLength(12);
+      expect(result.report!.search.phases).toHaveLength(6);
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(MAX_STORED_BYTES);
+      expect(suggestionsOf(result)).toEqual(result);
+    });
+
+    it('is in the page\'s view, and the view of a part of a RUNNING analysis does not carry a previous one\'s', () => {
+      const view = viewOf(made(), new Map());
+      expect(view.report).toEqual(made().report);
+      expect(viewOf(stored(answer([cap()])), new Map()).report).toBeNull();
+    });
   });
 });

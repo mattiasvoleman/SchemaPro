@@ -61,12 +61,12 @@ describe('ImportService', () => {
   let service: ImportService;
   let tx: TxMock;
   let prisma: PrismaMock;
-  let users: { create: jest.Mock };
+  let users: { create: jest.Mock; update: jest.Mock };
 
   beforeEach(() => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
-    users = { create: jest.fn().mockResolvedValue({ id: 'created' }) };
+    users = { create: jest.fn().mockResolvedValue({ id: 'created' }), update: jest.fn().mockResolvedValue({ id: 'updated' }) };
     service = new ImportService(
       prisma as unknown as PrismaService,
       users as unknown as UsersService,
@@ -178,6 +178,107 @@ describe('ImportService', () => {
   describe('importStudents', () => {
     beforeEach(() => {
       arrangeRows(tx.studentGroup.findMany, [{ id: GROUP_7A, name: '7A' }]);
+    });
+
+    // Personer utan e-postadress (20270310090000): a pupil the school has no address for is in the register, known by name and class.
+    describe('a pupil with no address', () => {
+      const held = (rows: Array<{ id: string; firstName: string; lastName: string; studentGroupId: string | null }>) =>
+        tx.user.findMany.mockResolvedValue(rows);
+      const upload = (rows: Array<Record<string, unknown>>) =>
+        service.importStudents({ academicYearId: YEAR_ID, rows } as never, testUser());
+
+      it('is made with no address, in their class, uninvited, and the report says so with a warning per pupil', async () => {
+        held([]);
+
+        const report = await upload([
+          { firstName: 'Alma', lastName: 'Berg', className: '7A' },
+          { firstName: 'Bo', lastName: 'Ek', email: null, className: '7a' },
+        ]);
+
+        expect(report.created).toBe(2);
+        expect(users.create).toHaveBeenNthCalledWith(1, expect.objectContaining({ role: 'STUDENT', email: null, studentGroupId: GROUP_7A, sendInvitation: false }), expect.anything());
+        expect(users.create).toHaveBeenNthCalledWith(2, expect.objectContaining({ email: null }), expect.anything());
+        expect(report.warnings).toEqual([
+          { row: 1, code: 'IMPORT_STUDENT_WITHOUT_ADDRESS', params: {}, message: expect.stringContaining('utan e-postadress') },
+          { row: 2, code: 'IMPORT_STUDENT_WITHOUT_ADDRESS', params: {}, message: expect.stringContaining('utan e-postadress') },
+        ]);
+      });
+
+      it('is skipped as known when a pupil of that name in that class has none already: a second upload makes nobody twice', async () => {
+        held([{ id: 'p1', firstName: 'ALMA', lastName: ' berg', studentGroupId: GROUP_7A }]);
+
+        const report = await upload([{ firstName: 'Alma', lastName: 'Berg', className: '7A' }]);
+
+        expect(report).toEqual({ created: 0, skipped: 1, errors: [] });
+        expect(users.create).not.toHaveBeenCalled();
+      });
+
+      it('is a new pupil in another class, and a new pupil with no class: the class is part of what they are known by', async () => {
+        held([{ id: 'p1', firstName: 'Alma', lastName: 'Berg', studentGroupId: GROUP_7A }]);
+
+        const report = await upload([
+          { firstName: 'Alma', lastName: 'Berg' },
+          { firstName: 'Alma', lastName: 'Berg', className: '7A' },
+        ]);
+
+        expect(report.created).toBe(1);
+        expect(report.skipped).toBe(1);
+        expect(users.create).toHaveBeenCalledWith(expect.objectContaining({ email: null, studentGroupId: undefined }), expect.anything());
+      });
+
+      it('says so when two rows of the file are the same name in the same class with no address: they cannot be told apart', async () => {
+        held([]);
+
+        const report = await upload([
+          { firstName: 'Alma', lastName: 'Berg', className: '7A' },
+          { firstName: 'Alma', lastName: 'Berg', className: '7A' },
+        ]);
+
+        expect(report.created).toBe(1);
+        expect(report.errors).toEqual([{ row: 2, message: expect.stringContaining('går inte att skilja åt') }]);
+      });
+
+      it('is given the address by a later upload that has it: the one pupil of that name in that class, updated and not made again', async () => {
+        held([{ id: 'p1', firstName: 'Alma', lastName: 'Berg', studentGroupId: GROUP_7A }]);
+
+        const report = await upload([{ firstName: 'Alma', lastName: 'Berg', email: 'alma@example.com', className: '7A' }]);
+
+        expect(report).toEqual({ created: 0, skipped: 0, updated: 1, errors: [] });
+        expect(users.update).toHaveBeenCalledWith('p1', { email: 'alma@example.com' }, expect.anything());
+        expect(users.create).not.toHaveBeenCalled();
+      });
+
+      it('is not given an address when two pupils of that name in that class have none: nobody is picked for them', async () => {
+        held([
+          { id: 'p1', firstName: 'Alma', lastName: 'Berg', studentGroupId: GROUP_7A },
+          { id: 'p2', firstName: 'Alma', lastName: 'Berg', studentGroupId: GROUP_7A },
+        ]);
+
+        const report = await upload([{ firstName: 'Alma', lastName: 'Berg', email: 'alma@example.com', className: '7A' }]);
+
+        expect(report.errors).toEqual([{ row: 1, message: expect.stringContaining('flera elever') }]);
+        expect(users.update).not.toHaveBeenCalled();
+        expect(users.create).not.toHaveBeenCalled();
+      });
+
+      it('is skipped, not made twice, when the address the file gives is a pupil\'s already', async () => {
+        held([{ id: 'p1', firstName: 'Alma', lastName: 'Berg', studentGroupId: GROUP_7A }]);
+        users.update.mockRejectedValueOnce(new ConflictException('taken'));
+
+        const report = await upload([{ firstName: 'Alma', lastName: 'Berg', email: 'alma@example.com', className: '7A' }]);
+
+        expect(report).toEqual({ created: 0, skipped: 1, errors: [] });
+      });
+
+      it('leaves a row with an address, and no pupil of that name without one, to the register as before', async () => {
+        held([]);
+
+        const report = await upload([{ firstName: 'Alma', lastName: 'Berg', email: ' alma@example.com ', className: '7A' }]);
+
+        expect(report).toEqual({ created: 1, skipped: 0, errors: [] });
+        expect(users.create).toHaveBeenCalledWith(expect.objectContaining({ email: 'alma@example.com' }), expect.anything());
+        expect(users.update).not.toHaveBeenCalled();
+      });
     });
 
     it('resolves the class by name (trimmed, case-insensitive) and assigns it', async () => {

@@ -422,6 +422,16 @@ describe('runs', () => {
     ]);
   });
 
+  it('carries the room a time in another room is free in, and cuts the run where the room changes (E3: Ledigt, annan sal läggs)', () => {
+    const inRoom = (roomId: string): Settled => ({ kind: 'CHANGE', rooms: [{ lessonId: 'l1', roomId }] });
+    const runs = runsOf([answer(480, inRoom('r2')), answer(485, inRoom('r2')), answer(490, inRoom('r3')), answer(495, { kind: 'FREE' })], 5);
+    expect(runs).toEqual([
+      { dayOfWeek: 1, fromMinutes: 480, toMinutes: 485, kind: 'CHANGE', rooms: [{ lessonId: 'l1', roomId: 'r2' }] },
+      { dayOfWeek: 1, fromMinutes: 490, toMinutes: 490, kind: 'CHANGE', rooms: [{ lessonId: 'l1', roomId: 'r3' }] },
+      { dayOfWeek: 1, fromMinutes: 495, toMinutes: 495, kind: 'FREE' },
+    ]);
+  });
+
   it('keeps two lessons in the way as two runs, and carries what the board needs of each kind', () => {
     const runs = runsOf(
       [

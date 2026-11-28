@@ -358,7 +358,7 @@ async function main(): Promise<void> {
       assert.equal(await owner.user.count({ where: { email: `late-${tag}@kommun.example.org` } }), 0, 'and no such person exists');
       const school = await owner.school.findUniqueOrThrow({ where: { slug: spec.slug } });
       const emails = (await owner.user.findMany({ where: { schoolId: school.id }, select: { email: true } })).map((row) => row.email);
-      assert.ok(emails.length > 50 && emails.every((email) => email.endsWith(`@${spec.domain}`)), 'the school is the demo school, made again');
+      assert.ok(emails.length > 50 && emails.every((email) => email !== null && email.endsWith(`@${spec.domain}`)), 'the school is the demo school, made again');
     });
 
     await check('(4) a person who is CHANGED to a real address after the school is judged waits for the reset: nobody turns real unseen', async () => {

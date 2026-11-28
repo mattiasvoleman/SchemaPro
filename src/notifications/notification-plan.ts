@@ -1,7 +1,7 @@
 import { SEND_CHUNK } from './expo-push.client';
 import type { Plan, PlannedMail, PlannedPush, QueuedNotice } from './notification-queue';
 import { RECIPIENT_CHUNK } from './notification-outbox';
-import { NEVER_EXTERNAL, deliveredRegardless } from './notification-types';
+import { NEVER_PUSHED, deliveredRegardless } from './notification-types';
 import type { NotificationKind } from './notifications.service';
 import { pushKindOf, pushText, type PushKind, type PushLocale } from './push-messages';
 
@@ -88,12 +88,12 @@ export async function planNotice(row: QueuedNotice, channels: Channels, sources:
 /**
  * The mail of each entry: its caller's subject and body, unchanged, to the people the entry names who have an address,
  * minus the recipients who opted out of the type (NotificationOptOuts) — except for the notices the school must deliver
- * (deliveredRegardless) — in packets of EMAIL_BCC_CHUNK addresses. TEACHER_ABSENCE_REPORTED never leaves the inbox.
+ * (deliveredRegardless) — in packets of EMAIL_BCC_CHUNK addresses. TEACHER_ABSENCE_REPORTED goes as a mail and never as a push (K6).
  */
 async function planMail(schoolId: string, entries: ReturnType<typeof entriesOf>, sources: PlanSources): Promise<PlannedMail[]> {
   const packets: PlannedMail[] = [];
   for (const [e, entry] of entries.entries()) {
-    if (!entry.email || NEVER_EXTERNAL.has(entry.type)) continue;
+    if (!entry.email) continue;
     const ids = [...new Set(entry.recipients.map((r) => r.userId))];
     const addresses = await sources.addresses(schoolId, ids);
     const withAddress = ids.filter((id) => addresses.has(id));
@@ -128,7 +128,7 @@ async function planPush(schoolId: string, entries: ReturnType<typeof entriesOf>,
   const notices = new Map<string, PushNotice>();
   for (const entry of entries) {
     const kind = pushKindOf(entry.type, entry.meta);
-    if (!kind || NEVER_EXTERNAL.has(entry.type)) continue;
+    if (!kind || NEVER_PUSHED.has(entry.type)) continue;
     const required = deliveredRegardless(entry.type, entry.meta);
     for (const recipient of entry.recipients) {
       const key = `${recipient.userId}|${kind}`;

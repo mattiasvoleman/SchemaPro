@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { boardCommands, possibleOf } from "@/lib/possible-store";
+import { optionAt, optionNumbered, roomAt, runAt } from "@/lib/possible-times";
 import {
   focusAfter,
   lengthened,
@@ -27,6 +29,7 @@ import {
  *   arrows, taken up     the marker moves a quarter of an hour, or with Shift five minutes, or a day
  *   Enter, taken up      puts it down; a square that is not free opens the page's list of the nearest that are
  *   Esc, taken up        lets go and changes nothing
+ *   1 to 9, taken up     the marker goes to the best time of that number (E3: the gateway's ranked possible times)
  *   Alt+Up, Alt+Down     the length, five minutes at a time
  *   L, P, Delete         lock or unlock, park, remove: the page's own writes, each one step of undo
  *   ?                    the list of keys
@@ -61,7 +64,7 @@ export interface BoardKeysProps extends Bounds {
   /** Where the marker is drawn: the same ghost a drag draws. */
   ghost: Cell;
   validateChange?: (id: string, change: Marker) => boolean;
-  onLessonChange?: (id: string, change: Marker) => void;
+  onLessonChange?: (id: string, change: Marker & { roomId?: string | null }) => void;
   onInvalidDrop?: (id: string, change: Marker) => void;
   onLessonCommand?: (id: string, command: LessonCommand) => void;
   /** The card in the tab order, and a way to move it: one card is, and the arrows move it. */
@@ -136,7 +139,7 @@ export function BoardKeys(props: BoardKeysProps) {
   const [said, setSaid] = useState("");
   const [help, setHelp] = useState(false);
   /** What is in hand: the lesson, and the square it would go down on. Read in an event, so a ref. */
-  const held = useRef<{ id: string; at: Marker } | null>(null);
+  const held = useRef<{ id: string; at: Marker; /** The room of a numbered time that the gateway offered in another room. */ room?: string | null } | null>(null);
   /** The latest of everything an event reads, so that the listeners below are put up once. */
   const live = useRef({ props, t, tDays });
   useEffect(() => {
@@ -188,6 +191,50 @@ export function BoardKeys(props: BoardKeysProps) {
       if (!quietly && lesson) say("letGo", { lesson: nameOf(lesson) });
     };
 
+    /**
+     * What the gateway's possible times (lib/possible-times.ts) say of a square for the lesson in hand: a sentence of the line's own,
+     * or null when it has not answered (it is asked a moment after the lesson is taken up, and may not come), when it has no answer
+     * for the square, or when the square is the one the page's own check already says (a free square with no number to give).
+     */
+    const knownAbout = (id: string, square: Marker): { key: string; values: Record<string, string | number> } | null => {
+      const times = possibleOf(id);
+      if (!times) return null;
+      const run = runAt(times, square.dayOfWeek, square.startMinutes);
+      if (!run) return null;
+      const where = squareOf(square);
+      switch (run.kind) {
+        case "FREE":
+        case "CHANGE": {
+          const option = optionAt(times, square.dayOfWeek, square.startMinutes);
+          if (option) return { key: "markerRank", values: { ...where, rank: option.rank } };
+          // A free square in the lesson's own room is the page's own check to say. One in another room is not: the page knows only the
+          // lesson's own room and would call it taken, against a board that paints it "Ledigt, annan sal". Only a numbered time carries the room.
+          // The gateway names the room (run.rooms) and Enter lays the lesson there; a gateway that does not leaves it to Justera lektion.
+          return run.kind === "CHANGE" ? { key: roomAt(times, id, square.dayOfWeek, square.startMinutes) !== undefined ? "markerChangeHere" : "markerChange", values: where } : null;
+        }
+        case "CLOSED":
+          return { key: "markerClosed", values: { ...where, code: run.code ?? "AVAILABILITY" } };
+        case "IN_THE_WAY": {
+          const blocker = run.blockerId ? times.blockers[run.blockerId] : undefined;
+          return blocker ? { key: "markerInTheWay", values: { ...where, subject: blocker.subjectName, className: blocker.className } } : null;
+        }
+        case "CROWDED":
+          return { key: "markerCrowded", values: { ...where, units: run.units ?? 0 } };
+        default:
+          return null;
+      }
+    };
+
+    /**
+     * The room the gateway judged the lesson in at a square, when it is another than its own (a numbered time, or a stretch it paints
+     * "Ledigt, annan sal"): it goes with the move, so that Enter lays the lesson there and the page's own check, which knows only the
+     * lesson's own room, is not asked about a square it would call taken. Undefined for every other square.
+     */
+    const roomOf = (id: string, square: Marker): string | null | undefined => {
+      const times = possibleOf(id);
+      return times ? roomAt(times, id, square.dayOfWeek, square.startMinutes) : undefined;
+    };
+
     /** Asks the page whether the lesson may stand on the square, and draws the marker green or red. */
     const verdict = (id: string, square: Marker): boolean => {
       const ok = live.current.props.validateChange ? live.current.props.validateChange(id, square) : true;
@@ -195,9 +242,14 @@ export function BoardKeys(props: BoardKeysProps) {
       return ok;
     };
 
-    const put = (lesson: BoardLesson, square: Marker) => {
+    const put = (lesson: BoardLesson, square: Marker, given?: string | null) => {
       const { props: p } = live.current;
-      const ok = p.validateChange ? p.validateChange(lesson.id, square) : true;
+      // The room is read again here and not only when the marker moved onto the square: the gateway is asked a moment after the lesson is
+      // taken up, and an answer that came after the marker was on the square found it with no room (granskaren g503).
+      const room = given !== undefined ? given : roomOf(lesson.id, square);
+      // A numbered time is one the gateway's judge let through, in the room it named: the page's own check knows nothing of another room,
+      // and would refuse the lesson's own taken one. Every other square is asked as before.
+      const ok = room !== undefined ? true : p.validateChange ? p.validateChange(lesson.id, square) : true;
       letGo(true);
       if (!ok) {
         say("refused", { lesson: nameOf(lesson), ...squareOf(square) });
@@ -206,7 +258,7 @@ export function BoardKeys(props: BoardKeysProps) {
       }
       p.followFocus(lesson.id);
       say("placed", { lesson: nameOf(lesson), ...squareOf(square) });
-      p.onLessonChange?.(lesson.id, square);
+      p.onLessonChange?.(lesson.id, room !== undefined ? { ...square, roomId: room } : square);
     };
 
     /**
@@ -263,14 +315,37 @@ export function BoardKeys(props: BoardKeysProps) {
           // card, and focus with it, out of the page. The marker stays in the day; the lesson's dialog changes the day.
           if (p.shownDay !== null && next.dayOfWeek !== taken.at.dayOfWeek) return;
           taken.at = next;
+          taken.room = roomOf(id, next);
           const ok = verdict(id, next);
-          say(ok ? "markerFree" : "markerTaken", squareOf(next));
+          // The gateway's word for the square when it has one (a rank, the rule that shuts it, the lesson in the way): it is the judge's.
+          // Else the page's own check, which is what there is until the gateway has answered.
+          const known = knownAbout(id, next);
+          if (known) say(known.key, known.values);
+          else say(ok ? "markerFree" : "markerTaken", squareOf(next));
+          return;
+        }
+        // 1 to 9: the marker goes to the best time of that number, where the gateway has said the lesson can stand.
+        if (/^[1-9]$/.test(key) && !event.altKey && !event.shiftKey) {
+          consume();
+          const times = possibleOf(id);
+          const option = times ? optionNumbered(times, Number(key)) : null;
+          const length = lesson.endMinutes - lesson.startMinutes;
+          // On a phone only the day the lesson is in is drawn, and the marker stays in it (as for the arrows).
+          if (!option || (p.shownDay !== null && option.dayOfWeek !== p.shownDay)) {
+            say("numberNone", { rank: Number(key) });
+            return;
+          }
+          taken.at = { dayOfWeek: option.dayOfWeek, startMinutes: option.startMinutes, endMinutes: option.startMinutes + length };
+          // The room the gateway put it in, when that is another than its own: it goes with the move.
+          taken.room = roomOf(id, taken.at);
+          verdict(id, taken.at);
+          say("markerRank", { ...squareOf(taken.at), rank: option.rank });
           return;
         }
         if (key === "Enter" || (key === " " && !event.shiftKey)) {
           consume();
           if (sameSquare(taken.at, lesson)) letGo();
-          else put(lesson, taken.at);
+          else put(lesson, taken.at, taken.room);
           return;
         }
         if (key === "Escape") {
@@ -361,6 +436,48 @@ export function BoardKeys(props: BoardKeysProps) {
       }
     };
 
+    // What the list of possible times asks of the lesson in hand (possible-layer.tsx): the same moves as the keys, for a pointer or a
+    // screen reader that does not use them. Each is the key's own path, so that what is said and what is written are what a key says and writes.
+    boardCommands.current = {
+      lay: (rank) => {
+        const { props: p } = live.current;
+        const taking = held.current;
+        const lesson = taking && p.lessons.find((candidate) => candidate.id === taking.id);
+        const times = taking ? possibleOf(taking.id) : null;
+        const option = times ? optionNumbered(times, rank) : null;
+        if (!taking || !lesson || !option) return;
+        const length = lesson.endMinutes - lesson.startMinutes;
+        const at = { dayOfWeek: option.dayOfWeek, startMinutes: option.startMinutes, endMinutes: option.startMinutes + length };
+        const room = option.roomChanged ? (option.lessons.find((entry) => entry.lessonId === taking.id)?.roomId ?? null) : undefined;
+        put(lesson, at, room);
+      },
+      goTo: (minutes) => {
+        const { props: p } = live.current;
+        const taking = held.current;
+        const lesson = taking && p.lessons.find((candidate) => candidate.id === taking.id);
+        if (!taking || !lesson) return;
+        const length = lesson.endMinutes - lesson.startMinutes;
+        // A clock the day does not hold is no square: the marker stays, and the line says so.
+        if (minutes < p.dayStartMinutes || minutes + length > p.dayEndMinutes) {
+          say("typedOutside", { from: clock(p.dayStartMinutes), to: clock(p.dayEndMinutes - length) });
+          return;
+        }
+        taking.at = { dayOfWeek: taking.at.dayOfWeek, startMinutes: minutes, endMinutes: minutes + length };
+        taking.room = roomOf(taking.id, taking.at);
+        const ok = verdict(taking.id, taking.at);
+        const known = knownAbout(taking.id, taking.at);
+        if (known) say(known.key, known.values);
+        else say(ok ? "markerFree" : "markerTaken", squareOf(taking.at));
+      },
+      layAtMarker: () => {
+        const taking = held.current;
+        const lesson = taking && live.current.props.lessons.find((candidate) => candidate.id === taking.id);
+        if (!taking || !lesson) return;
+        if (sameSquare(taking.at, lesson)) letGo();
+        else put(lesson, taking.at, taking.room);
+      },
+    };
+
     // Focus, however it got there (a key, a click, Tab), is where the arrows start from.
     const onFocusIn = (event: FocusEvent) => {
       const card = cardOf(event);
@@ -378,6 +495,7 @@ export function BoardKeys(props: BoardKeysProps) {
       body.removeEventListener("keydown", onKeyDown);
       body.removeEventListener("focusin", onFocusIn);
       body.removeEventListener("pointerdown", onPointerDown, true);
+      boardCommands.current = null;
     };
   }, [props.bodyRef]);
 
@@ -393,7 +511,7 @@ export function BoardKeys(props: BoardKeysProps) {
       </p>
       {help ? (
         <dl aria-label={t("keysTitle")} className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-md border bg-card p-3 text-xs">
-          {(["arrows", "take", "marker", "put", "letGoKey", "length", "lock", "park", "remove", "open", "select", "undo"] as const).map((row) => (
+          {(["arrows", "take", "marker", "numbers", "put", "letGoKey", "length", "lock", "park", "remove", "open", "select", "undo"] as const).map((row) => (
             <div key={row} className="contents">
               <dt className="font-mono font-semibold">{t(`keys.${row}.keys`)}</dt>
               <dd className="text-muted-foreground">{t(`keys.${row}.does`)}</dd>

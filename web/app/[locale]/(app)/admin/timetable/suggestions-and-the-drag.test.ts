@@ -1,7 +1,7 @@
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { toPlacement } from "@/lib/conflicts";
-import { cases, constraintsOf, framesOf, groupsOf, lessonsOf, sittingsOf, worlds, type World } from "@/lib/lesson-judge-world";
+import { cases, constraintsOf, framesOf, groupsOf, lessonsOf, membershipsOf, peopleOf, sittingsOf, worlds, type World } from "@/lib/lesson-judge-world";
 import { minutesOfClock } from "@/lib/requirement-placement-text";
 import { suggestPlacements } from "@/lib/placement-search";
 import { useScheduleEngine } from "./use-schedule-engine";
@@ -39,8 +39,8 @@ function engineOf(world: World) {
       groups: groupsOf(world) as never,
       shownYear: year as never,
       schoolBreaks: [] as never,
-      people: [] as never,
-      memberships: [] as never,
+      people: peopleOf(world) as never,
+      memberships: membershipsOf(world) as never,
       lunchSettings: undefined,
       rooms: [] as never,
       subjects: [] as never,
@@ -124,6 +124,9 @@ describe("the page's own drag control (validateChange of useScheduleEngine), aga
     const length = minutesOfClock(lesson.endTime) - minutesOfClock(lesson.startTime);
     const startMinutes = minutesOfClock(testCase.drag.start);
     const lets = engine.validateChange(lesson.id, { dayOfWeek: testCase.drag.day, startMinutes, endMinutes: startMinutes + length });
-    expect(lets, testCase.verdict.reasons.join(",")).toBe(testCase.verdict.ok);
+    // The page holds no other school's lessons and no loan of a room (lib/lesson-judge-mirror.contract.test.ts): what only another school
+    // refuses it lets through, and the save says it.
+    const refusedHere = testCase.verdict.reasons.some((reason) => reason !== "OTHER_SCHOOL");
+    expect(lets, testCase.verdict.reasons.join(",")).toBe(!refusedHere);
   });
 });

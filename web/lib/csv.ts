@@ -459,11 +459,16 @@ const requiredMessage = (field: string, row: number) =>
  * Student rows. The klass column must be there, but a cell may be empty: a
  * pupil not yet placed in a class is one the register holds and the people
  * page exports so, and the row then posts className null.
+ *
+ * The epost column need not be there, and a cell may be empty (Personer utan e-postadress): a pupil the school has no address for is
+ * one the register holds, in its lists, attendance and timetable, and the row posts email null, never "" (ImportStudentRowDto reads a
+ * blank as none, and a client that posted "" to a validator that wants an address would have the whole file refused). A cell that is
+ * filled in is an address, judged as before.
  */
 export function mapStudentRows(parsed: ParsedCsv): MappedRows<{
   firstName: string;
   lastName: string;
-  email: string;
+  email: string | null;
   phone: string | null;
   className: string | null;
 }> {
@@ -472,7 +477,7 @@ export function mapStudentRows(parsed: ParsedCsv): MappedRows<{
     [
       { field: "firstName", aliases: CSV_ALIASES.students.firstName, required: true, rule: NAME },
       { field: "lastName", aliases: CSV_ALIASES.students.lastName, required: true, rule: NAME },
-      { field: "email", aliases: CSV_ALIASES.students.email, required: true, rule: EMAIL },
+      { field: "email", aliases: CSV_ALIASES.students.email, required: false, rule: EMAIL },
       { field: "phone", aliases: CSV_ALIASES.students.phone, required: false, rule: PHONE },
       { field: "className", aliases: CSV_ALIASES.students.className, required: "column", rule: GROUP_NAME },
     ],
@@ -483,7 +488,7 @@ export function mapStudentRows(parsed: ParsedCsv): MappedRows<{
     rows: mapped.rows.map((row) => ({
       firstName: row.firstName!,
       lastName: row.lastName!,
-      email: row.email!,
+      email: row.email || null,
       phone: row.phone || null,
       className: row.className || null,
     })),

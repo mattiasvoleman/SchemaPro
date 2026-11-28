@@ -1061,7 +1061,7 @@ describe('StaffingLoadService', () => {
         highestHours: 480,
         planningFloorHours: 473,
       });
-      expect(report.scope!.interpretations).toEqual([{ section: '4 § p. 1 och 5 § p. 1', note: 'Tolkning' }]);
+      expect(report.scope!.interpretations).toEqual([{ section: '4 § p. 1 och 5 § p. 1', note: 'Tolkning', grades: [{ from: 7, to: 9 }] }]);
     });
 
     it('leaves the counted minutes, the saldo and the status exactly as they were (the riktmärke is the school\'s, the ordinance the law\'s)', async () => {
@@ -1145,6 +1145,14 @@ describe('StaffingLoadService', () => {
           ordinanceHighestHours: 480,
           assessment: { levelHours: 400, exceptionKind: null, ownInitiativeOn: null, note: 'skäl', decidedAt: '2026-03-05T08:00:00.000Z' },
         });
+      });
+
+      it('tells a planner without HR-läs INSIDE where the teacher is over the rektor\'s level and not over the ordinance\'s: OVER_OWN flips at the level and would give it back', async () => {
+        inForce();
+        tx.assignmentScopeAssessment.findMany.mockResolvedValue([assessmentRow()]);
+        const planner = testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, userId: COLLEAGUE });
+        const row = scopeOf(await service.load(YEAR_ID, 'planned', planner));
+        expect(row).toMatchObject({ verdict: 'INSIDE', teachingHours: 430, highestHours: null, assessment: { levelHours: null } });
       });
 
       it('carries a registered exception beside the verdict and leaves the verdict what it is', async () => {
@@ -1242,7 +1250,7 @@ describe('StaffingLoadService', () => {
         expect(scopeOf(report).overOnlyWithUnregulated).toBeUndefined();
         expect(cause(report)).toEqual([]);
         // What every card carries stays: the band's own note.
-        expect(report.scope!.interpretations).toEqual([{ section: '4 § p. 1 och 5 § p. 1', note: 'Tolkning' }]);
+        expect(report.scope!.interpretations).toEqual([{ section: '4 § p. 1 och 5 § p. 1', note: 'Tolkning', grades: [{ from: 7, to: 9 }] }]);
       });
 
       it('is in the answer of the teacher whose row has it', async () => {

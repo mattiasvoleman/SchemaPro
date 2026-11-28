@@ -256,7 +256,7 @@ export async function buildArchive(zip: StreamingZip, ctx: BuildContext, audit: 
     // neither are their names or addresses in free text. In anybody else's, the pupils and guardians among them: a note a teacher
     // wrote about a drill does not name a pupil the teacher's extract is not about.
     const everyone = await ctx.read((tx) =>
-      tx.$queryRaw<Array<{ id: string; first: string; last: string; email: string; role: string }>>`
+      tx.$queryRaw<Array<{ id: string; first: string; last: string; email: string | null; role: string }>>`
         SELECT "id"::text AS id, "firstName" AS first, "lastName" AS last, "email" AS email, "role"::text AS role
           FROM "Users" WHERE "schoolId" = ${ctx.schoolId}::uuid`,
     );

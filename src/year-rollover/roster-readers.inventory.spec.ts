@@ -500,6 +500,14 @@ describe('the roster-reader inventory', () => {
       // Förlagda block judge a block's lesson as the rows of its members in the same call (judgePlacements), so the block's
       // view (listOfBlock) and its save (replace) read the same basis and answer the same 409.
       //
+      // Att lägga (E4) lays a brick through the hand edit's own write (createIn and updateIn), so the lesson is judged as every hand edit is,
+      // by findConflicts, which reads pupils through the year's basis: the laying (BoardTrayController.lay) answers R6's 409 for a year two
+      // steps ahead as the hand edit does. The tray's own read (the bricks) counts posts and lessons and asks for no basis.
+      //
+      // Skriv in förläggningarna (E4b) judges the year's förläggningar by the week's own call (RequirementPlacementsService.judgedYear, which reads
+      // pupils through the year's basis as the hand edit's clash check does), for its preview and for its write, so a year two steps ahead
+      // answers R6's 409 on both as the week of förläggningar does.
+      //
       // Kontrollera veckan asks the engine about the week Generera would send, and builds it by Generera's own fetch
       // (prepareSchedule), so a year two steps ahead answers R6's 409 there as POST jobs does: a check that read a week no
       // Generera may be run for would answer about pupils the year does not have. Its question what the week would be
@@ -523,6 +531,7 @@ describe('the roster-reader inventory', () => {
         'AnalysisController.payrollFile',
         'BlockPlacementsController.listOfBlock',
         'BlockPlacementsController.replace',
+        'BoardTrayController.lay',
         'CalendarController.publish',
         'CalendarLessonsController.assignSubstitute',
         'CalendarLessonsController.suggestSubstitutes',
@@ -555,6 +564,8 @@ describe('the roster-reader inventory', () => {
         'OptimizationController.startCandidates',
         'OptimizationController.startJob',
         'OptimizationController.trigger',
+        'PlacementWriteInController.preview',
+        'PlacementWriteInController.write',
         'PublicationsController.preview',
         'PublicationsController.publish',
         'RequirementPlacementsController.boardOfYear',

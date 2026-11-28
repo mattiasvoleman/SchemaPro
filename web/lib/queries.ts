@@ -637,7 +637,7 @@ export function useMasterLessons(academicYearId: string | null) {
         supabase
           .from("MasterLessons")
           .select(
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, exemptFrom, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, isGenerated, exemptFrom, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
           )
           .eq("academicYearId", academicYearId!)
           .order("dayOfWeek")
@@ -919,7 +919,10 @@ export interface TimeoutReport {
   configuredBudgetSeconds: number;
   /** How long the caller said it waits; null when it did not say. */
   callerWaitSeconds: number | null;
-  stages: { stage: "PRECHECKS" | "BUILD" | "SITES" | "SEARCH_CLEAN" | "SEARCH_CLONE" | "PROBE"; seconds: number }[];
+  stages: {
+    stage: "PRECHECKS" | "START" | "BUILD" | "SITES" | "SEARCH_CLEAN" | "YEARS" | "SEARCH_CLONE" | "PROBE";
+    seconds: number;
+  }[];
   /** The seconds of steps the gateway has no name for and left out of `stages`: the list adds up to `totalSeconds` less these. Absent when there were none, and from a gateway before it. */
   otherSeconds?: number;
   search: {
@@ -1200,6 +1203,8 @@ export function useUpdateMasterLesson() {
           removedCalendarLessons: number;
           /** The staffing policy's WARN for a new teacher (staffing-warnings.ts). */
           warnings?: StaffingWarning[];
+          /** Låset vid en flytt (E4): the gateway locked the lesson this edit moved, or the next Generera lays it again. */
+          lockedByMove?: true;
         }
       >(
         `/api/v1/master-lessons/${id}`,
@@ -1965,7 +1970,32 @@ export interface InvitationResult {
 export interface BulkInvitationReport {
   sent: number;
   alreadyRegistered: number;
+  /** People with no address to send to (Personer utan e-postadress); absent from a gateway older than the web. */
+  noAddress?: number;
+  /** People skipped because they were invited already: they get no second invitation. Absent from a gateway older than the web. */
+  alreadyInvited?: number;
   errors: { userId: string; message: string }[];
+  /** The project's mail limit was spent: the rest of the people were not tried (`notTried` says how many). */
+  stopped?: "RATE_LIMITED";
+  notTried?: number;
+}
+
+/** GET /api/v1/users/invitation-channel: how an invitation reaches the person (the administrator's start page, the mass invitation). */
+export interface InvitationChannel {
+  /** False where the API has no way to make a login: no invitation can go. */
+  configured: boolean;
+  /** What the operator has said of the project's sender (AUTH_SMTP): its own SMTP, or nothing. */
+  smtp: "CUSTOM" | "NOT_STATED";
+  /** The project's mail limit an hour, as the operator said it (AUTH_EMAIL_LIMIT_PER_HOUR), or null. */
+  perHour: number | null;
+}
+
+export function useInvitationChannel() {
+  return useQuery({
+    queryKey: ["dashboard", "invitationChannel"],
+    queryFn: () => api.get<InvitationChannel>("/api/v1/users/invitation-channel"),
+    staleTime: 5 * 60_000,
+  });
 }
 
 /**
@@ -1985,11 +2015,20 @@ export function useInvitations() {
         api.post<InvitationResult>(`/api/v1/users/${userId}/invite`, {}),
       onSuccess: invalidate,
     }),
+    // One part of a mass invitation (web/lib/mass-invitation.ts sends twenty at a time). It does not invalidate the people: a run of
+    // fifteen parts would read the school's whole register fifteen times, and every read of it is recorded in the läslogg. The dialog says
+    // when the run has ended (`endRun`).
     inviteMany: useMutation({
       mutationFn: (userIds: string[]) =>
         api.post<BulkInvitationReport>("/api/v1/users/invitations", { userIds }),
-      onSuccess: invalidate,
     }),
+    /** The register as it is now, read again and put in the cache: what a run taken up again is asked of, never what the page remembers. */
+    readPeople: async (): Promise<Person[]> => {
+      const people = sortByPersonName(await api.get<Person[]>("/api/v1/users"));
+      queryClient.setQueryData(["people"], people);
+      return people;
+    },
+    endRun: invalidate,
   };
 }
 

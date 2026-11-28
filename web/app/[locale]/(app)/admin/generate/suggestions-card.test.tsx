@@ -54,6 +54,7 @@ const change = (over: Partial<SuggestionChange> = {}): SuggestionChange => ({
   cost: 168,
   current: 300,
   needed: 330,
+  neededIsLeast: null,
   weekdays: [3],
   requirementIds: [POST],
   requirementNames: ["Matematik för 7B"],
@@ -77,6 +78,7 @@ const done = (over: Partial<Suggestions> = {}): Suggestions => ({
   verifySeconds: 2.5,
   changes: [change({ proof: "SOLVED" })],
   failure: null,
+  report: null,
   ...over,
 });
 

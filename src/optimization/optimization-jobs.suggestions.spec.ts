@@ -2,7 +2,7 @@ import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock 
 import type { PrismaService } from '../database/prisma.service';
 import { OptimizationJobsService, jobView } from './optimization-jobs.service';
 import type { OptimizationProxyService } from './optimization-proxy.service';
-import { failedSuggestions, runningSuggestions, suggestionsFromEngine, type Realiser } from './suggestions';
+import { PREFLIGHT_REFUSAL_CODES, failedSuggestions, runningSuggestions, suggestionsFromEngine, type Realiser } from './suggestions';
 import type { AiEngineSuggestChangesResponse } from './interfaces/suggest-changes.interface';
 
 /*
@@ -68,6 +68,14 @@ describe('a run read with its analysis', () => {
       expect(jobView(row(over), null, new Map(), NOW).view.suggestionsOffered).toBe(offered);
     });
 
+    it.each(PREFLIGHT_REFUSAL_CODES)('does not offer it for a run the gateway refused before the engine was asked (%s): the page reads the offer here (G6b)', (code) => {
+      expect(jobView(row({ conflictSummaryCode: code }), null, new Map(), NOW).view.suggestionsOffered).toBe(false);
+    });
+
+    it('still offers it for a refusal with another summary code: the engine\'s own', () => {
+      expect(jobView(row({ conflictSummaryCode: 'TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK' }), null, new Map(), NOW).view.suggestionsOffered).toBe(true);
+    });
+
     it('does not offer it for a run whose lease has run out: it is read as the abandonment it will become', () => {
       const lost = row({ status: 'RUNNING', solverStatus: null, leaseUntil: new Date('2027-03-05T09:30:00.000Z'), heartbeatAt: new Date('2027-03-05T09:29:00.000Z') });
       expect(jobView(lost, null, new Map(), NOW).view.suggestionsOffered).toBe(false);
@@ -93,6 +101,29 @@ describe('a run read with its analysis', () => {
         expect(JSON.stringify(view.suggestions)).not.toContain('Anna');
         expect(revealed).toEqual([]);
       }
+    });
+
+    it('shows what the engine said of the least value for a cap, and not for a part-timer\'s days to any reader, a reader with HR-läs included (g493-L-5)', () => {
+      const stored = suggestionsFromEngine(answer([{ ...cap, neededIsLeast: true }, { ...days, neededIsLeast: true }]), realiser, STARTED, NOW);
+      const posts = new Map([[TEACHER, { days: 3, stretch: null, name: 'Anna Andersson' }]]);
+      for (const reader of [null, posts]) {
+        const { view } = jobView(row({ suggestions: stored }), reader, new Map([[TEACHER, 'Anna Andersson']]), NOW);
+        const byRule = new Map(view.suggestions!.changes.map((change) => [change.rule, change]));
+        expect(byRule.get('TEACHER_DAILY_CAP')).toMatchObject({ needed: 330, neededIsLeast: true });
+        expect(byRule.get('TEACHER_WORK_DAYS')).toMatchObject({ hidden: true, needed: null, neededIsLeast: null });
+      }
+    });
+
+    it('shows where a NOT_FOUND\'s time went, and nothing else about the engine\'s run', () => {
+      const report = {
+        totalSeconds: 71.2, budgetSeconds: 60, configuredBudgetSeconds: 60, callerWaitSeconds: 195,
+        stages: [{ stage: 'BUILD', seconds: 9.4 }, { stage: 'SEARCH_CLEAN', seconds: 60 }],
+        search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: 60, conflicts: 1834, branches: 20113 }] },
+        weekLoadCut: false,
+      };
+      const stored = suggestionsFromEngine({ ...answer([]), verdict: 'NOT_FOUND', verified: false, report }, realiser, STARTED, NOW);
+      const { view } = jobView(row({ solverStatus: 'TIMEOUT', suggestions: stored }), null, new Map(), NOW);
+      expect(view.suggestions).toMatchObject({ state: 'DONE', verdict: 'NOT_FOUND', changes: [], report });
     });
 
     it('reads an analysis that has been RUNNING for longer than any lasts as the failure it is', () => {
@@ -140,6 +171,19 @@ describe('a run read with its analysis', () => {
 
       expect(tx.optimizationJob.findUnique).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ suggestions: true }) }));
       expect(tx.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: [TEACHER] } } }));
+      expect(view.suggestions!.changes[0]!.teacherNames).toEqual(['Anna Andersson']);
+    });
+
+    it('names the teacher of a cap in the analysis an abandoned one was asked over, which is what the read gives back in its place (G6b)', async () => {
+      // The service reads the clock itself, so the analysis is made old by it and not by NOW.
+      const abandoned = runningSuggestions(new Date(Date.now() - 10 * 60 * 1000), done);
+      tx.optimizationJob.findUnique.mockResolvedValue(row({ suggestions: abandoned }));
+      tx.user.findMany.mockResolvedValue([{ id: TEACHER, firstName: 'Anna', lastName: 'Andersson' }]);
+
+      const view = await service.get(JOB_ID, testUser());
+
+      expect(tx.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: [TEACHER] } } }));
+      expect(view.suggestions).toMatchObject({ state: 'DONE', verdict: 'CHANGES' });
       expect(view.suggestions!.changes[0]!.teacherNames).toEqual(['Anna Andersson']);
     });
 

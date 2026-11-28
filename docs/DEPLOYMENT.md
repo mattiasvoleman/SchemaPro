@@ -373,6 +373,8 @@ Run it with (see `.env.example` for the full annotated list):
 | `JWT_AUDIENCE` | `authenticated` |
 | `SUPABASE_URL` | project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key |
+| `AUTH_SMTP` | **optional.** `custom` is the operator's word that Supabase Auth sends its mail through the project's **own SMTP** (Authentication → SMTP). It changes what the administrator's start page says (§7.3) and nothing the API does: the API cannot read the project's setting, because the token that does is yours and never the API's. Unset, the page warns that Supabase's own sender lets two mails an hour through. Blank is unset; any other value is refused at start |
+| `AUTH_EMAIL_LIMIT_PER_HOUR` | **optional.** The project's mail limit an hour as you read it under Authentication → Rate Limits (30 is what a project gets with its own SMTP). The start page and the mass invitation say how long 300 people take at it. A whole number, 1 to 100 000; blank is unset |
 | `AI_ENGINE_URL` | solver base URL, scheme included (`https://…`) — a bare hostname is not a URL and surfaces as "AI engine unavailable". **A public https address has a road limit of 300 s (§5.3); `http://<engine service>.railway.internal:<port>` has none.** |
 | `AI_ENGINE_API_KEY` | the shared secret from step 0 |
 | `AI_ENGINE_TIMEOUT_MS` | **optional, and best left unset.** Unset, the API waits as long as the engine says its route can take (`GET /api/v1/timing`) plus 10 s: 240 s at a 180 s budget and a 20 s probe, and it follows the engine when its budget is changed, so nothing is set in two places. An engine that says nothing (older, or not up yet) is waited for 120 000 ms. Set, it is the wait, and the request carries it to the engine as its deadline (`deadlineSeconds`), so the engine answers inside it; it must then be at least the engine's ceiling plus 5 s: `240000` at a 180 s budget and a 20 s probe (235 000 is the least). **A production start that finds it set and shorter is refused**, with a sentence that says which number to change, **and the API is then down**: no service in Railway has a health check (read 2026-11-18), so nothing holds the deploy before it up while the new one is refused, and a refused start is a stopped API until the variable is removed or raised, or the engine's budget is lowered and the API restarted (a change on the engine restarts only the engine). **Remove the variable, or raise it to the new ceiling plus 5 s, before raising the engine's budget** (`SOLVER_MAX_TIME_SECONDS`, `SOLVER_PROBE_SECONDS`), not after, or a deploy that follows the engine's change finds it too short; at runtime a shorter wait is answered with a shorter search, which a TIMEOUT states ("within 94 s"), and a line in the log. To get out of a refused start remove the variable. |
@@ -592,6 +594,64 @@ Only the host, port, sender and the hourly limit are read out of the answer; the
 whose SMTP server refuses the mail answers the script with HTTP 500, and the script says to look at host, port, user and the
 sender address under Authentication → SMTP. The same mail is what the first administrator signs in from, so a mail that does not
 arrive is found on day one and not when the school invites its teachers.
+
+### 7.2 Pupils and guardians with no address (20270310090000)
+
+A pupil or a guardian can be added **without an e-mail address**. Younger pupils seldom have a school address, and Skola24's pupil file has
+none, so a school should not have to invent one to get them into the register. The person is in every list, in the class lists, in
+attendance and on the timetable (they are rows of `"Users"` like any other, and no reader of those looks at the address); they have **no
+login** until an address is added and the person is invited.
+
+- **What holds it.** `"Users"."email"` is optional. `Users_a_person_with_no_address_has_no_login` (a CHECK) says no row has an
+  `"invitedAt"` without an address, so no road gives a person with no address a login, and none takes the address from a person who
+  has one. `Users_only_a_pupil_or_guardian_has_no_address` says a teacher or an administrator always has one: they are somebody the
+  school invites. The API says the same with words (`ADDRESS_REQUIRED`, `PERSON_HAS_NO_ADDRESS`, `ADDRESS_OF_AN_INVITED_PERSON`);
+  the constraints are what stays if a script or a hand-written `insert` forgets.
+- **Adding one later.** Edit the person (Admin → People) and give an address; the same dialog can send the invitation at once. An
+  address is given to a person with none, or corrected on one who was never invited: a person who was invited has a login with the
+  address it has, and the API refuses to change it from here (409).
+- **Importing.** A pupils' file may leave `epost` empty, or have no such column: the pupils are made with no address, and the report
+  says how many. A pupil with no address is known by first name, last name and class, so a second upload skips them; a later file
+  that has the address gives it to the one pupil of that name in that class (`updated`), and says so when two have the same name and
+  cannot be told apart. The files that name a pupil by address (the guardians' file, the group memberships) cannot name one with none:
+  the guardians' export says how many links it left out, and those links are made on the people page.
+- **Mail.** A notice to a person with no address is in their inbox, which they cannot open yet, and no mail goes. The mass invitation
+  counts them apart (`noAddress`) and invites the rest.
+- **Order of deploy.** Apply the migration before the API that writes an empty address; deploy the API and the web together (an older
+  web that reads a person with `email: null` where it expected text is the one thing that can break). Rolling the migration back
+  needs `ALTER COLUMN "email" SET NOT NULL`, which fails while a person with no address exists: `SELECT count(*) FROM "Users" WHERE
+  "email" IS NULL`.
+- **The Schemavisaren and the iCal feeds** are not logins, and a school shows the timetable to a family through them whether or not
+  the pupil has an address.
+
+### 7.3 Inviting a whole school: in parts, and where it stops
+
+Every invitation and every password reset is a mail from Supabase Auth. **Supabase's own sender lets 2 an hour through; a project that sets
+its own SMTP gets 30 an hour until the limit is raised under Authentication → Rate Limits** (`rate_limit_email_sent`). Past it Supabase answers
+HTTP 429 `over_email_send_rate_limit`. A school of 300 people is therefore ten hours of invitations at the default, and a day with Supabase's
+own sender.
+
+- **The start page says it.** `GET /api/v1/users/invitation-channel` (an administrator's, and nothing of any person) answers whether the API
+  can make a login at all (`SUPABASE_URL` and the service key), what `AUTH_SMTP` says, and `AUTH_EMAIL_LIMIT_PER_HOUR`. The page warns
+  where nobody has said that the project has its own SMTP, says so when somebody has, and says that no invitation can go where the API has
+  no connection. The API cannot ask the project: set both variables when you have configured the sender (the operator script of §7.1 reads
+  it for you with `SUPABASE_ACCESS_TOKEN`).
+- **The web sends the mass invitation in parts of twenty**, one at a time, and shows how far it has got (Admin → People → *Bjud in N ej
+  inbjudna*). It can be stopped, and taken up again, at any time, also after the window was closed: *Ta om* asks the register who is still not
+  invited and sends only those. The gateway skips a person who is invited already (`alreadyInvited`) unless the request says `resend`, and one
+  who another request is inviting that moment, so **nobody gets two invitations**, whether the run stopped for the limit, a network error, a
+  Stop or a closed tab. A person with no address (§7.2) is counted apart (`noAddress`).
+- **When the project's mail limit is spent**, GoTrue refuses the invitation (429 `over_email_send_rate_limit`) **and makes no user** (read
+  against GoTrue v2.195.0: the refused address has no row in `auth.users` afterwards, and the refused invitation of an address never invited
+  before leaves nothing behind to look up). Until now the API read every refusal as "already registered, no mail needed" **when a user with
+  the address existed**, which is the case for an address whose earlier invitation went out and whose row was never marked, or an address a
+  person at another school holds: the person was marked invited without a mail from this call. A first invitation was a 503 ("Could not
+  send the invitation email") and no more. It is now the refusal (`INVITATION_RATE_LIMITED`, 429) and the person is **not** marked
+  invited; the mass invitation stops at the first (`stopped`, `notTried`) and the dialog says how many are left, in place of an error for
+  each person. The next invitation of the address is a first one.
+- **Rate limit per login, not per address.** `POST /api/v1/users/invitations` is limited to 30 parts a minute per verified login, with a
+  high ceiling per address for the route (1 200): a school is one NAT address, and the web calls the API from every browser, so the earlier 5 a
+  minute per address stopped a run at its sixth part and took every other administrator of the school with it.
 
 ## 8. Mobile app
 
@@ -7317,6 +7377,7 @@ anonymous ids the request carried (`requirementIds`, `roomIds`, `resourceIds`: t
 - The check builds the STRICT model of the changed week (no priced rule), warm-starts it from the search's timetable and stops at its first solution. A hint that holds is
   accepted at once; one that does not holds the solve for what it needs to repair it, and a solution found that way proves the changed week as well.
 - **It is a timetable that exists, not one the next Generera finds.** Generera has no hint, and the changed week may still run out of time.
+- **`needed` is the least the engine found, not (unless it says so) the least there is** (G6b, §33.6): after the check the engine lowers each value while the strict model still lays the week.
 - **It is not the cheapest.** The search's first timetable is not its best one; on the högstadium week the priced search ended at 40 s with five deviations where the strict
   solver lays the week cleanly (`verification-baseline.md`). The list is what the engine found.
 - **"Found nothing in N seconds" says the N the search had.** For a `NOT_FOUND`, `searchSeconds` is the budget the search really ran on (the TIMEOUT report's own), not the one it was asked for: a caller that waits less than the engine's budget leaves it less, down to none.
@@ -7335,7 +7396,7 @@ The route is a solve and is held like one: **one at a time in a process**, answe
 **An analysis yields to a Generera, whichever school's** (review of #384). The engine is one process (`--workers 1`) shared by every school, and a Generera asks CP-SAT for every core unless its request names `workers`;
 an analysis that started beside it would take them. `optimization-engine/app/solve_load.py` counts the solves of the process by kind, from the start of the solve's thread to its end (a 503 ends the wait, not the work), and both entrances to a Generera
 (`/api/v1/optimize` and the legacy `/v1/schedule`, through `run_solver`) are counted. `/suggest-changes` answers **429 while a Generera runs** (`A timetable is being generated on this engine. Try again in a moment.`, which the gateway already reads as ENGINE_BUSY),
-and the gate above still holds analyses to one. The count never refuses or queues a Generera. A Generera that starts while an analysis is already running shares the cores with it until it ends (four workers, a minute and a half at the default search, up to the ceiling below at the largest `maxSeconds`);
+and the gate above still holds analyses to one. The count never refuses or queues a Generera. A Generera that starts while an analysis is already running shares the cores with it until it ends (four workers, up to 150 s at the default search (the search's 60 s, the check's 30 and the lowering of `needed`, which spends what the ceiling has left), up to the ceiling below at the largest `maxSeconds`);
 that case is not closed and is **logged** as `generation_beside_analysis` (a warning, with `analyses_running`, the analysis's own `analysis_request_id` and how long it had run, `analysis_seconds`: the overlap is read from those and from the analysis's `suggest_changes_completed`, whose `elapsed_ms` ends it),
 and from the analysis's side as `analysis_beside_generation` for an analysis let in a moment before a Generera's thread began; the refusal is logged as `suggest_changes_yields_to_generation`: count those lines before building anything to stop an analysis. An analysis answered 503 has no line for the end of its thread.
 The count is per process. At more than one replica each has its own, as the gates do. No contract changes: `app.openapi()` is identical to main's.
@@ -7350,6 +7411,17 @@ both entrances counted and back at zero, the analysis counted for its thread, an
 five rules, and not one step short of `needed`), the proof's shape, the four verdicts, the route (key, validation, the payload's own 400 as `/optimize` gives it, the gate, the
 ceiling) and the OpenAPI comparison. Twenty-one hand mutants of `suggestions.py` were run against it; none survives.
 
+
+### 33.6 The edges: a lower `needed`, the account of a NOT_FOUND, and the short routes (G6b)
+
+- **`needed` lowered (`app/solver/suggestions.py` `refine`).** The search's timetable needs a value, and the search is not looking for the least: on 3 of 59 random weeks the strict solver laid the week a step below it (a cap of 240 where 180 holds). After the check has accepted the list, the engine tries the values back toward the school's own, **dearest change first and a part-timer's days last, with checks of their own** (`MAX_REFINEMENTS_DAYS`, 4: what a post's days spend is not what the other changes may, or the number of `neededIsLeast` left unsaid on the cheaper ones would say how far over its days a post is, to a reader who may not read HR; g510), the value one step below `needed` first and then by halving (`needed` is the least on nearly every week, so one check is then the whole proof, and the route has time for one on a long week): a cap by five minutes, a post's days, a subject's lessons a day and its days apart by one (the spread is tightened by raising it). Each probe is a strict check of the whole list with that one value changed (the others as they then are), warm-started from the search's timetable. **ACCEPTED** lowers `needed`; **INFEASIBLE** ends that change's descent, and when it is the value next below the lowest accepted it is a proof: `neededIsLeast: true`; anything else (no time, a solve that decides nothing, a build the engine refuses) ends it with `neededIsLeast: false` (tried, not decided). A change that was never tried carries no `neededIsLeast` (omitted from the bytes). A list that holds with a change at **the school's own value** does not need the change, and it is dropped (all of them: `SOLVABLE_AS_IS`).
+- **The route's ceiling is unchanged (150 s on a production engine).** The lowering has no seconds of its own: it takes what the ceiling has left after the search and the check, each probe at most 15 s (its build is not under its clock) and none started with under 5 s, at most eight in all. On a week whose builds take ten seconds that is one probe or none, and the answer says nothing of the values it did not try. The proof of the list is the last accepted probe, which applied exactly the list that is returned.
+- **`needed` for a locked lesson over the cap in one of two weeks** (g384-L-2): the line says the week that binds. `_worst_week` chose the week by `over` (what the generated lessons add beyond what the locks leave), and a week with a lock over the cap can go over by less and need more; it is now by `needed`, then `over`. The same function writes the deviations a Generera with the five rules free stores (`deviations_of`, BEST_EFFORT), so such a school's stored `DEVIATION_TEACHER_DAILY_CAP` now says the week that binds too (`needed` 150 and `over` 30 where it said 120 and 60), and the deviations' digest moves with it. Pinned on the real solver for both routes.
+- **A `NOT_FOUND` carries `report`** (M2's account: the steps, the searches) where the search itself ran out of its time (g384-L-4), so that "found nothing in 60 s" can say whether the minute was the builds or the search. Omitted where it is None.
+- **The short routes are counted** (g391-L-5): `/api/v1/staff`, `/api/v1/plan-exams` and `/api/v1/optimize-rooms` share the cores and were counted by nothing. Their threads are counted as `OTHER` (`app/solve_load.py`) and an analysis answers 429 (`ENGINE_BUSY`) while one runs, as it does for a Generera. They are short (their own budgets, 10 to 20 s).
+- **Contract: additive.** `neededIsLeast` on a change and `report` on the response, each omitted where None; `app.openapi()` gains those two properties and no schema. An older gateway ignores them (it builds the stored value field by field); the gateway reads them since §34.6.
+- **Proven by** `tests/test_suggest_changes_refine.py` (the values back by rule, the halving against a check whose answer the test decides: the least and its proof, no claim where the check does not decide, nothing spent without time, a dropped change out of the later probes, the dearest first; `tests/test_suggest_changes_refine_days.py`: what is said of the other changes is the same whatever a part-timer's days are, and the days still get checks, after the others'; against the real strict solver a `needed` made 60 too high is brought back to 120 with `neededIsLeast` true; the week that binds), `tests/test_suggest_changes_not_found.py`, `tests/test_solve_load_other.py` and `tests/test_suggest_changes_refine_claims.py` (a `true` only where `needed` is the least, over eight budgets; `UNKNOWN`, `MODEL_INVALID` and a refused build decide nothing; the 5 s floor; an unchecked list is not lowered; every probe gets 4 workers and the search's schedule). Mutants that tell the least from the undecided, that keep a dropped change in the checks, that pick the week by `over` and that halve wrongly are each caught, and so are ones that take a clock that ran out, a model not built or a refused build for a proof, that claim the least without the value below refused, and that let an undecided probe keep an earlier proof.
+
 ## 34. Changes that would let a refused week be laid ("Åtgärdsförslag vid vägran", omgång 13, G6, part 2 of 3: the analysis in the gateway and its column)
 
 Part 1 is the engine's route `POST /api/v1/suggest-changes` (the engine section above this one, if it has merged). This part is what the gateway does with it: an administrator asks for the
@@ -7360,12 +7432,12 @@ analysis of a run that ended without a timetable, the gateway asks the engine, a
 - `POST /api/v1/optimization/jobs/:id/suggestions` (`SuggestionsController`, `SuggestionsService`): school administrators with Schemaläggning or Drift, throttled at three a minute. It answers **202 at once**
   with the analysis `RUNNING`, and the page polls the run as it polls a Generera (`GET /api/v1/optimization/jobs/:id`), which now carries `suggestions` (the stored value, read through a whitelist) and
   `suggestionsOffered` (whether the button may be shown).
-- **Asked for, never started by itself.** It costs the engine up to a minute and a half of its cores. It may be asked for a run that ended **INFEASIBLE** or **TIMEOUT**, with a 400 named by one of the five rules
+- **Asked for, never started by itself.** It costs the engine up to two and a half minutes of its cores (the route's ceiling, 150 s at the default search: the search, the check and the lowering of `needed`; the card says "cirka två minuter"). It may be asked for a run that ended **INFEASIBLE** or **TIMEOUT**, with a 400 named by one of the five rules
   (`TEACHER_LESSON_LONGER_THAN_DAILY_CAP`, `TEACHER_DAILY_CAP_*`, `TEACHER_WORK_DAYS_*`, `SUBJECT_DISTRIBUTION_*`, `DISTRIBUTION_*`, `ROOM_LOCK_*`), or with the engine's own clock run out
-  (`ENGINE_TIMED_OUT`, `ENGINE_WAIT_EXPIRED`, `ENGINE_PATH_CLOSED`: the road to the engine closed the call). Not for a run with a timetable, one still going, one the engine never answered (`ENGINE_NOT_REACHED`, `ENGINE_RUN_ABANDONED`) or one a rule that never gives way refused.
+  (`ENGINE_TIMED_OUT`, `ENGINE_WAIT_EXPIRED`, `ENGINE_PATH_CLOSED`: the road to the engine closed the call). Not for a run with a timetable, one still going, one the engine never answered (`ENGINE_NOT_REACHED`, `ENGINE_RUN_ABANDONED`), one a rule that never gives way refused, or one the **gateway** refused before the engine was asked (G6b: its summary code is one of `PREFLIGHT_REFUSAL_CODES`: `STAFF_UNSTAFFED_REQUIREMENTS`, `BLOCK_PARTLY_LOCKED_SUMMARY`, `PLACEMENTS_REFUSED_SUMMARY`, `GROUP_CONFLICTS_OVER_ENGINE_LIMIT`; they travel as INFEASIBLE runs, and an analysis would answer a refusal after a minute of the engine's cores).
   A refused start is **409** with a code the page words: `SUGGESTIONS_NOT_FOR_THIS_RUN`, `SUGGESTIONS_RUN_IS_OLD` (the year has a newer run: a Generera that is going is the year's newest, so it is this one that a press meets), `SUGGESTIONS_YEAR_BUSY` (a schemaförslag run of the year is alive, or a Generera was started in the moment between the press reading its run as the newest and taking the year's start lock; the engine's cores are shared).
 - **One solve stream per year, in both directions (D2).** The analysis claim takes the year's solve-start lock (`lockYearForSolveStart`, the one Generera's start and a schemaförslag run's start take) before it counts the year's runs, and Generera's start and a schemaförslag run's start are refused
-  **409 `SUGGESTIONS_RUNNING`** while an analysis of the year is `RUNNING` and began less than 240 s ago (`suggestions-running.ts`: it waits for the engine 200 s at most; an analysis whose process went away holds nobody off for longer than that, where a read gives it up only after six minutes).
+  **409 `SUGGESTIONS_RUNNING`** while an analysis of the year is `RUNNING` and its lease has not run out (§34.3b); one from before the lease (no `leaseUntil`) holds only while it began less than 240 s ago (`suggestions-running.ts`: it waits for the engine 200 s at most; such an analysis whose process went away holds nobody off for longer than that, where a read gives it up only after six minutes).
 - **A second request to the engine, with its own budget**, not a step inside the run that ended: the week is fetched as a Generera fetches it (`prepareSchedule`, now, with the school's saved rules), and the engine is sent
   `search {maxSeconds: 60, workers: 4}` and `deadlineSeconds: 195`, and waited for 200 s. A week the school has changed since the run is analysed as it stands.
 - It writes **only** `OptimizationJobs."suggestions"`: no timetable, no setting, no other row.
@@ -7378,15 +7450,31 @@ analysis of a run that ended without a timetable, the gateway asks the engine, a
 - What the value holds (`suggestions.ts`): `state` (`RUNNING`, `DONE`, `FAILED`), the verdict and `verified` of the engine, `total` (how many changes the list had), at most six changes each of at most three named posts and rooms (names cut to 80 characters),
   and for a failure its code (`ENGINE_LACKS_SUGGESTIONS`, `ENGINE_BUSY`, `ENGINE_FAILED`, `NOTHING_TO_PLACE`, `ABANDONED`). The value is rebuilt through a whitelist on the way in and again on the way out; one that is not wholly well formed shows nothing.
 - **No person's name and no figure of a post.** A cap's teacher rides as the teacher's Users id, which no view carries on; the page reads the name as it does for a free-day note. A change to a part-timer's days is stored in its **hidden form for every reader**
-  (the rule, the price and the proof, and no post, no teacher, no number, no weekday; several are one): nothing HR is kept, and the post stays the one place the figure lives (`work-days.ts`).
+  (the rule and the proof, and **no price** (G6b: the price is a weight times the days a post goes over, so `3 600` said three days to a reader without HR-läs), no post, no teacher, no number, no weekday; several are one, and it stands after the others of its proof, so that its place says no more than its price would): nothing HR is kept, and the post stays the one place the figure lives (`work-days.ts`).
 
 ### 34.3 What can go wrong, and what the page then says
 
-- **`RUNNING` for ever.** A process that goes away mid-analysis (a deploy of the API happens at every merge) leaves `RUNNING`. A read treats a `RUNNING` older than six minutes as `FAILED`/`ABANDONED`, and a new press takes it over (the claim is one conditional `UPDATE`, as is the final write, which only
-  overwrites the analysis the call itself started). Nothing sweeps it.
+- **`RUNNING` for ever.** A process that goes away mid-analysis (a deploy of the API happens at every merge) leaves `RUNNING`. A read treats a `RUNNING` whose lease has run out as `FAILED`/`ABANDONED` (§34.3b; before the lease: older than six minutes), and a new press takes it over (the claim is one conditional `UPDATE`, as is the final write, which only
+  overwrites the analysis the call itself started). A restart that can say so ends its analyses at once, and the sweep writes the rest (§34.3b).
 - **An engine older than the route** answers 404: `ENGINE_LACKS_SUGGESTIONS`, said as "not just now"; the run reads as it did. **429** from the engine (one analysis at a time in its process): `ENGINE_BUSY`. A **400** is the engine's hard rules refusing the week: not a failure but the answer
   (`HARD_REFUSAL`, no change of the five can help). Every other error is `ENGINE_FAILED`, with nothing of its text kept.
 - **A change that was never checked** (`verified` false) is never above `MAY_HELP`, whatever the engine's changes say; the gateway lowers it. `SOLVABLE_AS_IS` is only to be said with `verified`.
+
+### 34.3a The edges (G6b)
+
+- **A press never replaces an analysis the school can use with a failure.** A press over a DONE analysis with a list (`CHANGES`, `SOLVABLE_AS_IS`) keeps it inside the RUNNING one (`previous`, one level, DONE only, never in what the page reads), and when the new analysis ends without a list (it failed, or it searched and found `NOT_FOUND`) the column holds the old one again (`settledAs`). A list or a refusal by a rule that never gives way replaces it: the week is not the one the list was made for. A RUNNING analysis that is read as abandoned gives back what it was asked over, and not `ABANDONED`. The column's 8 KiB check holds the two (5 500 bytes each at most; the column's text a fifth to a quarter longer than the compact JSON).
+- **The page is not offered what cannot come.** `suggestionsOffered` is false for a run the gateway refused before the engine was asked (above).
+- **The candidate runs' pool.** A schemaförslag run whose save found the pool full (`DATABASE_BUSY`, Prisma's P2028 that never started, pg's own wait) is stored with that code and the sentence of the 503, and not with the driver's English (g424-L-4).
+
+### 34.3b The lease and the sweep (G6b, migration `20270313090000`)
+
+- **A lease inside the column.** A `RUNNING` analysis carries `leaseUntil` (an ISO-8601 time in UTC, to the millisecond). The claim writes it from the database's clock, the process renews it every 30 s while the engine works (`ANALYSIS_HEARTBEAT_MS`, one `UPDATE` over the analysis it started and nothing else, never started while the last one is still being written), each time to the database's now plus **180 s** (`ANALYSIS_LEASE_SECONDS`: the engine's ceiling for the route, 150 s, and thirty more). It is a key and not a column: the column's check (an object of at most 8 KiB) has room, so no table changes. Neither the page nor any view carries it. An analysis that has ended has none; one from before the lease has none and is judged by its start, as it was (six minutes for a read and a claim, four for Generera's start).
+- **Who judges it.** `holdsUntil` (a read: `readAs`), the claim (`NOT analysisHoldsSql`, one statement) and `yearHasRunningSuggestions` (Generera's and a schemaförslag run's start) all use the lease. A lapsed lease holds nobody off and is taken over by the next press, **without a sweep**. The times are compared as the text they are stored as and never cast: a value nobody wrote through the service cannot fail a start. A `leaseUntil` that is not in the shape the service writes is no lease.
+- **A restart ends it at once.** `SuggestionsService.onModuleDestroy` (Nest runs it before the server closes and before `PrismaService` disconnects: `prisma.service.ts`) writes `FAILED`/`ABANDONED` under the administrator who asked, or gives back the finished analysis the press was asked over, and stops the heartbeats. The engine's late answer finds an analysis that is no longer `RUNNING` and lands nowhere. Best effort, as the staffing search's.
+- **The sweep.** `app.optimization_jobs_sweep()` (Generera's, `20270222090000`) is replaced with its text as it was, to the last byte, and one statement more: a `RUNNING` analysis past its lease (six minutes from its start when it has none) is written as `FAILED`/`ABANDONED` (finished when its lease ran out; with no lease, now) or as the finished analysis it was asked over. The rows are locked `FOR UPDATE SKIP LOCKED` as the first part's are. **The number it returns is still the Generera runs it failed**, the owner, `SECURITY DEFINER`, the `search_path`, the guard that refuses (`GQ403`) a call carrying a login, and the grants are as they were (checked against `pg_get_functiondef`, `proowner`, `prosecdef`, `proconfig` and `proacl` before and after: a pure insertion of 54 lines). The gateway already calls it before every Generera start and every five minutes.
+- **Deploy order.** The migration is run **before** the merge (§2). It takes no table lock (`CREATE OR REPLACE FUNCTION`). The API before it writes no `leaseUntil`: its analyses are swept six minutes after they began, the rule its own reads applied. The API after it renews a lease the old function knows nothing of, and an old function leaves the analysis alone: the order does not matter, except that the sweep is the new one only after the migration.
+- **Rolling back.** Revert the PR and put the function back as `20270222090000` made it: `CREATE OR REPLACE` with that file's function text. Nothing else needs undoing.
+- **Proof.** RLS sections `gq 530`-`534` (Generera's sweep) pass unchanged; `g6b 1` plants fifteen analyses at the edges of the lease and of the six minutes (a microsecond either side, a lease that is no time, a finished analysis with an old lease, a `previous` that is not a finished analysis) and `g6b 2` the Generera run beside a lapsed analysis and ten values nobody wrote through the service; the adapter probe's `ag-h1`-`ag-h4` run the service against the real column, the door and a row another transaction holds. Seven hand mutants of the function and one of the probe (no `SKIP LOCKED`) were run; none survives.
 
 ### 34.4 Operations
 
@@ -7397,7 +7485,15 @@ analysis of a run that ended without a timetable, the gateway asks the engine, a
 ### 34.5 Tests
 
 `src/optimization/suggestions.spec.ts` (the stored value, the whitelist, the ranking, the bounds, abandonment), `suggestions.service.spec.ts` (what a start is refused for, a second press, the request, every way out writing the column), `suggestions.controller.spec.ts`,
-`suggestions-contract.spec.ts` (the engine's names, by hand, mirrored by `tests/test_suggest_changes.py`), `suggestions-running.spec.ts` (the analysis as a solve stream of the year) and `optimization-jobs.suggestions.spec.ts` (the run as a reader sees it); the adapter probe's `ag-f` is the one-stream rule against a real database. Twenty-three hand mutants of `suggestions.ts` and `suggestions.service.ts` were run against them; none survives (one, a comment removed, is equivalent).
+`suggestions-contract.spec.ts` (the engine's names, by hand, mirrored by `tests/test_suggest_changes.py`), `suggestions-running.spec.ts` (the analysis as a solve stream of the year) and `optimization-jobs.suggestions.spec.ts` (the run as a reader sees it); the adapter probe's `ag-f` is the one-stream rule against a real database, and `ag-h1`-`ag-h4` are the lease (§34.3b). Twenty-three hand mutants of `suggestions.ts` and `suggestions.service.ts` were run against them; none survives (one, a comment removed, is equivalent).
+
+### 34.6 What the gateway and the card read of `neededIsLeast` and `report` (G6b, the engine's #493)
+
+- **No migration, no change to a request.** The engine's two new fields are read, and nothing is asked for that was not. An older gateway ignores them; a value stored before this part has no `neededIsLeast` and no `report` and is read as nothing said (null). The column's 8 KiB check and the 5 500-byte bound on one analysis hold: a change gains about 24 bytes, and the largest report the whitelist lets through (12 steps, 6 searches, every figure at its maximum) is about 1.1 KB on an answer that has no changes (pinned in `suggestions.spec.ts`).
+- **`neededIsLeast`** is kept on a change as `true` (the strict model answered INFEASIBLE for the step below, with the other changes of the list as they are: `needed` is the least), `false` (it tried and did not finish) or `null`. The whitelist takes a boolean and nothing else, and keeps it only where `needed` is there and the list is `verified`: an unchecked list is not lowered, and a stored claim over one is refused as a proof over one is. **A part-timer's days carry none** (g493-L-5): "just N days and not N-1" is the figure of a post, hidden as `needed` is, so the hidden form refuses a stored value that holds one and the write makes it null whatever the engine said. It is in the page's view as the stored change has it.
+- **`report`** is the engine's account of a `NOT_FOUND` (where the search's time went), kept through `timeoutReportOf`, the whitelist a Generera's report goes through: a step the gateway has no name for is skipped and its seconds carried as `otherSeconds`, and a report that is not wholly well formed is not kept (the analysis still says `NOT_FOUND` and its seconds). It is kept for a finished `NOT_FOUND` and for nothing else, and read the same way; the whitelist refuses a stored one on any other answer. No id and no name is in it. `web/lib/suggestion-types.ts` writes its shape out (`SuggestionReport`, the gateway's typecheck cannot resolve what `queries.ts` imports), and `suggestion-types.contract.test.ts` holds it, `TimeoutReport` in `queries.ts` and the gateway's list of steps to one another: **a step added to `TIMEOUT_STAGES` goes into both web lists.**
+- **The card** says "Mindre räcker inte" under a change only where the engine proved it (with the other changes of the list as they are, said so for a list of several), "motorn hann inte avgöra" where it tried and did not finish, and nothing where it did not try, for a list it did not check or for a part-timer's days (the card does not rest on the gateway for either). A `NOT_FOUND` lists the steps with their seconds, the searches and the budget, in the run's own sentences, and names a cause only where the report carries one (a search given less than the engine is set to give it, setup that took a large part of the run). Behind the card's lazy import: nothing moves in the route's own JavaScript.
+- **Texts** (g493-L-3, L-6, L-7). The analysis takes "cirka två minuter" (the review of #493 modelled 105–125 s for a production-sized week after the lowering against about 90 s before it; neither is measured on one) in the offer, the offer after a timeout and the running text, and in the manual. A week that can be laid as it is says that this does not show that the next Generera finds it in its time, because the analysis searched with the five rules free (the card cannot tell a search that laid the week strictly from one whose changes all dropped away, and both are said so). `ENGINE_BUSY` says the engine is busy with something else (a timetable, a staffing proposal, an exam plan, a room proposal or another school's analysis): its 429 is given for the short routes since #493, and the gate that lets one analysis run at a time answers the same 429 ("Another analysis is running"), which a text that left it out (g493-L-7 as first written) told as a timetable or a proposal. The engine's own 429 text ("A timetable is being generated on this engine") is not changed here; the gateway does not show it.
 
 ## 35. The solver corpus: weeks shaped like real schools as a measuring stick ("Riktiga veckor som mätstock", omgång 13, M5)
 
@@ -7727,7 +7823,7 @@ So what the clique rows buy is a smaller model and a search that does a little m
 
 ## 36. What the school's base data holds, and what is missing ("Vad kom in", P1 Pilotkit, part 2)
 
-A page, `/admin/intake` (menu: Grunddata › Vad kom in), and one route behind it, `GET /api/v1/intake`. It counts the active läsår's base data (the year, subjects, rooms, frame times, rasts, classes, teaching groups, teachers and pupils, the lokal timplan, the posts, the staffing) against what Generera and the steps after it ask for, and names each gap at one of three levels (stops Generera, gives a worse timetable, only another step reads). The rules are `src/intake/intake.ts`; the page gives each gap its words and the page that owns it. It writes nothing and holds no migration.
+A page, `/admin/intake` (menu: Grunddata › Vad kom in), and one route behind it, `GET /api/v1/intake`. It counts the active läsår's base data (the year, subjects, rooms and room types, frame times, rasts, the year's lov and studiedagar, the lunch, the rastvakt, classes, teaching groups, teachers and pupils, the lokal timplan, the posts, the staffing, and the four switches that reach families and staff: frånvarobevakning, kvittens, Schemavisaren and the teachers' own sjukanmälan) against what Generera and the steps after it ask for, and names each gap at one of three levels (stops Generera, gives a worse timetable, only another step reads). What the school has not laid or turned on (no lov, lunch off, no rastvakt, no room types, a switch off) is always the third level and never a recommendation: a school that does not want kvittens reads "Kvittens är av" and is right (P5, part 1). The rules are `src/intake/intake.ts`; the page gives each gap its words and the page that owns it. It writes nothing and holds no migration.
 
 - **Deploy order.** Either. The route is new and nothing calls it but the page; a web that is ahead of the API shows "Det som kom in kunde inte hämtas" (a 404 is a failed read, never "nothing is missing"), and an API that is ahead is a route nobody calls. Nothing to run in production and nothing to roll back but the two deployments.
 - **What it reads.** Counts, and the names of classes, subjects and årskurser, as the person asking, under row security: every administrator profile, the läsare and the huvudman's reader included (`huvudman-gets` holds the shape). It selects no person's name, no e-mail address, no percentage of a post and no signature; a post is a row that exists. A teacher, a pupil and a guardian have no route.
@@ -7815,6 +7911,20 @@ The ordinance (SFS 2026:1487, in force 2027-07-01, grundskola only) gives a span
 - RLS sections 566 (the catalogue), 567 (what a decider writes and what the trigger and the checks do), 568 (who reads) and 569 (what a removal does), and a row in the matrix school's fixtures; 21 mutants of the table are each killed by them, and section 494 records the teacher's own arm as STAYS. The adapter probe (`scripts/test/prisma-adapter-probe.ts`) holds the statement budgets of the writes E asks about (`'give a timplanspost a teacher'` 29 statements, two more than before E) and reads the ordinance's wording on the real database, a läsår it does not reach included.
 - `src/staffing/assignment-scope.ts` is the one place the level is worked out (`scopeOfTeacher`); the write check, the import, Föreslå bemanning, the search and the report all go through it, and the figures a school sees are the same on every page. `teaching-weeks.contract.spec.ts` and the web's `teaching-hours.contract.test.ts` replay one fixture for the week arithmetic.
 
+
+### 38.5 What R1b settled, and what it added to the report (omgång 15)
+
+R1 left seven choices open in its reviews. They are taken here, each with its reason, and the reviewer's id.
+
+- **Additive fields in the load report's `scope` block, no migration.** `interpretations[].grades` (the årskurs spans of the bands whose note it is), `teachers[].preschoolHours` (present exactly when `unregulatedHours` is above 0: the part that is årskurs 0 and nothing else) and `upcoming` (`{ sfs, validFrom }`, for a year that begins before every lydelse). The web may be ahead of or behind the gateway: without the fields the card shows every note on every card and calls every unregulated hour förskoleklass, as before. (#387 L-2, #397 L-4, #399 L-5, #387 L-8)
+- **A band's interpretation is the card of a teacher with hours in that band's stage.** The Swedish note is data and stays Swedish; a card in English shows an English text only for a note that is one of the two the gateway holds today, word for word (`src/staffing/scope-interpretations.contract.spec.ts` holds the web's copy to the migration and to T7's constant).
+- **A läsår the ordinance does not judge says why, once.** The staffing page and Min tjänst say it in one line (from which day the ordinance holds), instead of a card per teacher: a card on every teacher would say "not yet" all of 2026/27, and silence left a rektor to wonder whether the ordinance had been forgotten. (#387 L-8, #397 L-1)
+- **The day of an own initiative (11 § p. 1) is not after the school's today.** It is the day the initiative was taken; the bound was the läsår's last day. The gateway reads the school's own zone (a statement only when there is a day to ask of), and the form stops at the same day. A row stored with a later day (the bound was looser) is refused on its next write until the day is corrected. (#413 U-2)
+- **A level above the edge of the teacher's own stage is kept and said.** The gateway holds a level to the highest edge of any stage because it cannot know which stage a teacher will teach in; the report counts it as no higher than the teacher's own edge. The form says so before saving and the card says so after (`levelAboveEdge`). (#411 L-3)
+- **The timplan counts whole weeks, the omfattning counts school days, and school days are Monday to Friday.** Both are decisions and both are pinned (`src/staffing/teaching-weeks.school-days.spec.ts`). Changing the timplan to school days would move every school's guaranteed-time statement and its published copies for a fraction of a week; nothing in a school's data says which weekdays it teaches, and a requirement carries no weekday. The timplan page says it. (#400 L-2, L-3)
+- **The registerutdrag of a decider has the act and not the colleague** (`AssignmentScopeAssessments`, `TeacherEmploymentLogs`), and **the yes or no of the write check is measured** (`src/staffing/scope-verdict-oracle.spec.ts`): see the data-protection description, 6.3 and 10.1. (#409 L-5, K7)
+
+Deploy order: any. The gateway and the web are each additive to the other.
 
 ## 40. Outgoing e-mail and push wait in the database ("Mejlen överlever en omstart", omgång 15, H3)
 
@@ -7916,11 +8026,92 @@ When the judge says a time breaks the stage's ramtid or the class's lunch, an ad
 - The function `app.master_lesson_exemption_ends()` has no `REVOKE ... FROM PUBLIC`, which nearly all of the schema's other trigger functions have: the next migration that touches `MasterLessons` adds it.
 - A school's students and participants read `exemptFrom` through the PostgREST door like every other column of the table; whether to revoke it by column or let it stand is a decision not taken.
 
-## 42. A family takes back a leave request ("Ledighet och anmälan", omgång 15, K6, part b)
+## 41. Leave and absence, what was missing ("Ledighet och anmälan", omgång 15, K6)
+
+K6 is made in parts, each its own release; this section grows with them.
+
+### 41.1 The mail about a teacher's absence report (`20270311090000`)
+
+A teacher who reports their own absence (`TeacherAbsencesService.tellAdmins`) has always written an inbox notice, `TEACHER_ABSENCE_REPORTED`, to the school's active administrators. It could not leave the inbox: a `CHECK` on `NotificationOptOuts` (`NotificationOptOuts_absence_report_is_never_a_type`, 20261013100000) kept an opt-out row for it from existing, and the gateway kept the type out of every list and out of the delivery (`NEVER_EXTERNAL`). It now can go as a **mail**, and never as a push:
+
+- **The mail says that a teacher has reported an absence, and nothing more**: no name, no day, no reason (`ABSENCE_REPORTED_MAIL_BODY`, bilingual like the other fixed letters). A mail is read on any screen; the notice in the inbox keeps who and when, behind the login, as before. Never why.
+- **It goes to the same administrators as the inbox notice, through the queue of §40**, and only where `RESEND_API_KEY` is set (production today: it is not, so nothing is sent and nothing is queued; §40.3).
+- **An administrator can switch it off** under their notification settings, like any other type (`TYPES_BY_ROLE.SCHOOL_ADMIN`, the label *Lärarfrånvaro* was already in both apps' lists): the opt-out is read by user when the row is planned. A teacher, a guardian and a pupil are not offered the switch (`NOTIFICATION_TYPE_NOT_OFFERED`).
+- **It is never pushed**: `NEVER_PUSHED` replaces `NEVER_EXTERNAL`, and `app.push_targets` still answers nothing for the type, so the database says the same behind the gateway.
+- **Deploy order.** Run the migration before the merge (§20.2). It drops one `CHECK` on a small table, taking `ACCESS EXCLUSIVE` on `NotificationOptOuts` with `NOWAIT` in a loop of 50 ms for 30 s (nothing is held between tries; after 30 s it stops with nothing changed and can be run again). The API before it works unchanged. The API after it, with the migration not run, cannot store an administrator's switch (a `CHECK` violation, 500) but sends nothing different; nothing else depends on it.
+- **Rolling back**: the gateway can be rolled back at any time. To put the `CHECK` back, delete any opt-out row for the type first: `DELETE FROM "NotificationOptOuts" WHERE "type" = 'TEACHER_ABSENCE_REPORTED';` and then `ALTER TABLE "NotificationOptOuts" ADD CONSTRAINT "NotificationOptOuts_absence_report_is_never_a_type" CHECK ("type" <> 'TEACHER_ABSENCE_REPORTED');`.
+
+## 42. A change in Direkt that reaches families asks first ("Förvalen en ny skola möter", omgång 15, P5, part 2)
+
+Direkt stays the default. What changes is that the school is asked once, before the first change that moves or removes published lessons, and is told who gets the notice. The answer is kept in one new nullable column, **`PublicationSettings."directReachAcknowledgedAt"`**, and read through one new function, **`app.direct_reach_facts(uuid)`** (migration `20270312090000`).
+
+### 42.1 What the migration is
+
+- **One column**, `timestamptz`, nullable, no default: null is "never answered", not null is "answered", and a switch of mode writes null again (`DraftService.switchMode`, both directions), because going to utkast and back is a new decision about who is reached. Nothing is backfilled: every school is asked at its first change that reaches families after the deploy.
+- **One `SECURITY DEFINER` function**, `app.direct_reach_facts(year_id uuid)`, one row at most: the caller's own school's latest publication of the year that has not ended (`PUBLISHED`, not a `REFILL`, `validTo` today or later in the school's own time zone) and the school's answer. Both tables are Publicering's arms (`20261110100000`), and every profile that moves a lesson writes Publicering today (`PROFILE_WRITES`), so the arms would let a guard read them. The function is there so the guard does not depend on that: a guard that read zero rows because an arm hid them would stay silent where it must ask. It answers only for `app.current_school_id()`, so a session with no login or another school's gets no row. The API's role may run it; `anon`, `authenticated` and `service_role` may not (RLS sections 600 and 600o hold it).
+- **No arm, no index, no trigger changes.** The column follows the table's existing arm: Publicering writes it.
+- **Lock.** `ADD COLUMN` takes `ACCESS EXCLUSIVE` on `PublicationSettings`, which every grundschema writer reads (`app.school_publish_mode`); the migration takes it `NOWAIT` in a 50 ms loop for 30 s with `lock_timeout` 5 s, and stops with nothing changed if it is not free in that time (run it again).
+
+### 42.2 What the gateway does
+
+- `GET /api/v1/publication-settings/direct-reach` (every administrator) answers whether the page should ask, which period is published, and, only when it asks, how many pupils and guardians can get a notice (counted, never listed). `POST …/acknowledge` (area Publicering) writes the answer at the database's own clock.
+- **The guard** (`requireDirectReachAnswered`, `src/publication/direct-reach.ts`) is called by `PATCH /master-lessons/:id`, `PATCH /master-lessons/block-card` and `DELETE /master-lessons/:id` **after** they have moved or removed the published lessons, inside their transaction, with the number reached. In Direkt, with at least one lesson reached and no answer, it answers **409 `DIRECT_REACH_UNANSWERED`** and the transaction rolls the whole edit back: nothing has moved and no notice has gone. An edit that reached no published lesson (`propagate: false`, a note, a lesson outside the period) asks nothing, and nothing asks in utkast. E4's laying calls the same function with the number it reached.
+- **Guarded the same way**: `POST /api/v1/swaps/apply`, after its moves have propagated and inside its transaction, so a refused swap rolls back its safety version with it.
+- **Not guarded**: the other writers of published lessons (vikarier, inläsning, Generera's apply) have their own explicit confirmations and are not the first drag of a school that has never been asked.
+
+### 42.3 Deploy order and rolling back
+
+- **Run the migration before the API is merged (§20.2)**, from a tree that has every migration applied. The API before it names its own columns and never reads the new one, so it is unaffected; the API after it calls the function from the first propagating edit, and one deployed before the migration would answer 500 to such an edit.
+- **After the deploy** a school in Direkt with a published period is asked at its first propagating edit; until then nothing differs. The web asks before the write and the gateway holds the line for a stale page, a second tab or a script.
+- **Rolling back** the gateway needs nothing: the previous one ignores the column and the function. To remove them: `ALTER TABLE "PublicationSettings" DROP COLUMN "directReachAcknowledgedAt"; DROP FUNCTION app.direct_reach_facts(uuid);`.
+
+### 42.4 Looking at it (read-only)
+
+- Who has answered: `SELECT "schoolId", "directReachAcknowledgedAt" FROM "PublicationSettings" WHERE "directReachAcknowledgedAt" IS NOT NULL`.
+- What the guard sees for a school: `SELECT * FROM app.direct_reach_facts('<year id>')` as that school's administrator (it answers nothing under the owner, which carries no login).
+- The refusals are 409s with `code=DIRECT_REACH_UNANSWERED` in the access log; a school that sees many has an administrator who dismisses the question (Avbryt) or a script that writes without it.
+
+### 42.5 What is not done
+
+- The page asks before a write; **the reach is not counted per change**. The dialog gives the school's totals, not the pupils of the lesson at hand.
+- Answering needs the area Publicering, which every profile that moves a lesson has today. A profile that did not would see the question's 403 and ask one who has it.
+
+## 43. The optimization profile is the school's ("Optimeringsprofilen sparas per skola", omgång 15, P5, part 3)
+
+Generera's five sliders (`preferredFree`, `preferredBusy`, `disruption`, `spread`, `teacherGap`) were kept in the browser's `localStorage`: a scheduler who changed computer, or a colleague, ran Generera with another profile than the school's and nothing said so. They are now one row a school in a new table, **`OptimizationProfiles`** (migration `20270314090000`).
+
+### 43.1 What the migration is
+
+- **One table**, `OptimizationProfiles`: `schoolId` (primary key, `ON DELETE CASCADE`), the five weights as `SMALLINT` with the defaults the page always started from (10, 5, 8, 3, 2) and a `CHECK` that each is 0..1000 (the engine's request takes no more), and `updatedAt`. No row is the defaults. No person is named by it, so the registerutdrag leaves it out (`person-tables.ts` lists tables that hold a person).
+- **Row security**: every administrator of the school reads the row (a läsare included); Schemaläggning writes it (`app.current_user_may('SCHEMALAGGNING', true)`, as Generera's runs, `OptimizationJobs`); nobody removes it (the grant has no `DELETE`); a teacher and another school reach nothing, `anon` and `authenticated` (PostgREST's roles) hold no right on it, and `service_role` keeps the SELECT it has on every table and no write. `TABLE_WRITE_GATES` names it (`src/auth/admin-areas.ts`) and RLS sections 116 (the matrix) and 601 hold it.
+- **Lock.** The foreign key takes `SHARE ROW EXCLUSIVE` on `Schools` (a read is not blocked, a write waits), taken `NOWAIT` in a 50 ms loop for 30 s with `lock_timeout` 5 s; after 30 s the migration stops with nothing changed and can be run again.
+
+### 43.2 What the gateway and the page do
+
+- `GET /api/v1/optimization/profile` (every administrator) answers the five weights, whether the school has saved them (`stored`) and when. `PUT` (Schemaläggning) replaces all five: a body with fewer is a 400, not "leave the others".
+- The Generera page reads the profile when it opens, saves the whole profile for the school half a second after the last move of a slider (it reads the school's profile again first and puts only the weights the reader moved over it, so a colleague's save in between is kept; the sliders are locked until the profile has been read, and stay locked when it cannot be), and sends it with each run as before (`weights` in the run's request is unchanged: **the gateway does not read the profile for a run**, so an API caller that sends none still gets the engine's own defaults).
+- **What the browser held** is given to a school that has no profile, once, by the first administrator who can save and opens the page; the browser forgets it when the school has it. Where the school already has a profile, the school's wins and the browser's is dropped.
+
+### 43.3 Deploy order and rolling back
+
+- **Run the migration before the API is merged (§20.2)**, from a tree that has every migration applied. It adds a table and changes nothing that exists. The page before it keeps the profile in the browser; the page after it asks for a route the API before the merge does not have (404: the page says the school's profile could not be read and locks the sliders, and a run goes with the defaults shown: say so to a school that tries in that minute).
+- **Rolling back** needs nothing: the previous page ignores the row. To remove it: `DROP TABLE "OptimizationProfiles";`.
+
+### 43.4 Looking at it (read-only)
+
+- Which schools have saved a profile: `SELECT "schoolId", "preferredFree", "preferredBusy", disruption, spread, "teacherGap", "updatedAt" FROM "OptimizationProfiles" ORDER BY "updatedAt" DESC`.
+
+### 43.5 What is not done
+
+- A run that sends no `weights` (an API caller; a candidate run of another page) does not read the profile. Reading it in the gateway would change what every such caller gets and move the hash a candidate run is priced by; it is a decision of its own.
+- One profile a school. A profile per läsår or a named profile is not built.
+- The row has no version. Two administrators who move the same weight in the same second: the last save wins. Different weights are kept, since a save puts over the school's profile only what its reader moved.
+
+## 44. A family takes back a leave request ("Ledighet och anmälan", omgång 15, K6, part b)
 
 Until now a family that had applied for leave and thought better of it had to ask the school to reject the request (§18.2). The person who filed a request can now take it back **while it waits**. Two migrations, one gateway route, a button on the web (`LeaveRowExtras`, where a family's requests are listed), the status's label in the mobile app, and a tab for the administrator.
 
-### 42.1 What the migrations are
+### 44.1 What the migrations are
 
 - **`20270315090000`**: `ALTER TYPE "LeaveRequestStatus" ADD VALUE 'WITHDRAWN'`, alone in its file (a new enum value cannot be used in the transaction that adds it, so the second file may name it).
 - **`20270315090100`**:
@@ -7930,19 +8121,19 @@ Until now a family that had applied for leave and thought better of it had to as
 - **The rules in the trigger**: a taken-back request is final (`LV409`, as a guardian's no is); only a `PENDING` request is taken back (`LV417`); only the person who filed it takes it back (`LV418`; an administrator's own `UPDATE` is refused too, and so is a write with no signed-in person: an administrator **rejects** a request, as before). When it is taken back, the notices that asked something of anybody about it are marked read: the guardians' request for consent and its reminder, and the mentors' "a new request" (`LEAVE_CONSENT_REQUESTED`, `LEAVE_CONSENT_REMINDER`, `LEAVE_REQUESTED`).
 - **No policy, no grant on the table, no new column.** The mentor's arm lets through requests that wait only, so it stops showing the request; the reminder pass and the guardians' answers already ask for `PENDING`, so a late answer is the same 409 (`LEAVE_CONSENT_REQUEST_ENDED`) as for any ended request; the statistics (`app.leave_request_facts`) count approved and waiting requests only. The school's export carries the status in `ledigheter.csv` like any other (`docs/school-export-format.md` was regenerated).
 
-### 42.2 The route
+### 44.2 The route
 
 `POST /family/leave-requests/:id/withdraw` (guardian, pupil or school administrator, 20 a minute): 404 if the request is not in the caller's school, 403 `LEAVE_WITHDRAW_NOT_YOURS` if somebody else filed it, 409 `LEAVE_REQUEST_DECIDED` if it is not waiting. A request that is already taken back answers as it did (idempotent, 201: it is a POST), so a double click and a retry over a bad line are harmless. The reply is the request in the family's own shape (`status: WITHDRAWN`). Nobody is notified: the mentor and the administrator had a notice that is now read, and the family knows.
 
-### 42.3 Deploy order
+### 44.3 Deploy order
 
 1. Run the two migrations **before** the merge (§20.2), from a tree that holds every applied migration. The first is instant. The second takes `ACCESS EXCLUSIVE` on `LeaveRequests` with `NOWAIT` in a loop of 50 ms for 30 s and `lock_timeout` 5 s (nothing is held between tries; after 30 s it stops with nothing changed and can be run again). No row has the status yet, so the `VALIDATE` reads the table once and finds nothing to refuse.
 2. The API before the migration works unchanged: it never writes the status. **The API before the release, with the migration run and a request taken back**, reads a status it does not know: Prisma reads an unknown enum value of a model read as an error (as §18.1 says of `GUARDIAN_DECLINED`). The deploy replaces every instance within the minute, and nothing writes the status until the new gateway is serving; so run the migration first and merge at once.
 3. The mobile app of an older release lists a request with a status it has no label for: it shows the catalogue key (`leave.status.WITHDRAWN`) where the label would be. Nothing else of the old app's lists changes (nothing is removed or renamed); the label is in the release of the app that carries the status (`mobile/src/i18n`).
 
-### 42.4 Rolling back
+### 44.4 Rolling back
 
-The gateway can be rolled back at any time, but the old one cannot read a taken-back request (§42.3 point 2), so if any exist **convert them first**. The closest status the old code knows is `REJECTED` (the check of `20261023091000` allows an empty `decidedAs`, and `decidedAt` keeps the moment). A bare `UPDATE` does not do it: the trigger `LeaveRequests_gate` refuses to move a taken-back request to any other status (`LV409`), the owner's `UPDATE` included. Take the gate out of the way for the one statement, in one transaction (`DISABLE TRIGGER` holds writers of the table back for the moment it takes, and nothing else changes):
+The gateway can be rolled back at any time, but the old one cannot read a taken-back request (§44.3 point 2), so if any exist **convert them first**. The closest status the old code knows is `REJECTED` (the check of `20261023091000` allows an empty `decidedAs`, and `decidedAt` keeps the moment). A bare `UPDATE` does not do it: the trigger `LeaveRequests_gate` refuses to move a taken-back request to any other status (`LV409`), the owner's `UPDATE` included. Take the gate out of the way for the one statement, in one transaction (`DISABLE TRIGGER` holds writers of the table back for the moment it takes, and nothing else changes):
 
 ```sql
 BEGIN;
@@ -7954,7 +8145,7 @@ COMMIT;
 
 The old list then says *Avslagen* for a request the family took back, which is not what happened; tell the school if it is done. The enum value cannot be dropped in Postgres without rebuilding the type: leave it. The `CHECK`, the function and the door can stay, since nothing reaches them with the old gateway.
 
-### 42.5 What is not done
+### 44.5 What is not done
 
 - **A request that is already granted is not taken back by the family** (it has written absence; the school decides, and the family asks).
 - **Nobody is told that a request was taken back.** The administrator sees it under the new tab *Tillbakadragna*; a mentor who had already opened the notice sees nothing change in the list but the request gone.

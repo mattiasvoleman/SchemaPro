@@ -10016,8 +10016,8 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- 29e: a person's choice of what leaves SchemaPro is theirs alone
 -- (NotificationOptOuts, 20261013100000). Own rows for every role, no admin
--- arm, no UPDATE; never the unreported absence or a teacher's absence report
--- (CHECKs). The refusals are asserted as both roles: authenticated
+-- arm, no UPDATE; never the unreported absence (a CHECK; the one on a teacher's
+-- absence report was dropped in 20270311090000, K6). The refusals are asserted as both roles: authenticated
 -- (PostgREST) and app_authenticated (the API, a member of authenticated).
 -- ---------------------------------------------------------------------------
 
@@ -10045,11 +10045,10 @@ BEGIN
     RAISE EXCEPTION 'optout: the unreported absence was silenced';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
-  BEGIN
-    INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (me, school, 'TEACHER_ABSENCE_REPORTED');
-    RAISE EXCEPTION 'optout: a type that never leaves the inbox was stored';
-  EXCEPTION WHEN check_violation THEN NULL;
-  END;
+  -- A teacher's absence report leaves the inbox as a mail since K6 (never as a push), so an administrator may switch it off like any other type:
+  -- the database no longer refuses the row (20270311090000). Which roles are offered the switch is the gateway's list (TYPES_BY_ROLE).
+  INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (me, school, 'TEACHER_ABSENCE_REPORTED');
+  DELETE FROM "NotificationOptOuts" WHERE "userId" = me AND type = 'TEACHER_ABSENCE_REPORTED';
 END $$;
 
 -- The refusals, as each role.
@@ -20341,6 +20340,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('MasterLessons', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
   ('Notifications', '{DRIFT}', '{}', '{}', '{}'),
   ('OptimizationJobs', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
+  ('OptimizationProfiles', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}', '{}'),
   ('PayrollPseudonyms', '{}', '{}', '{}', '{}'),
   ('PersonProtectionEvents', '{}', '{}', '{}', '{}'),
   ('PersonProtections', '{PERSONAL}', '{PERSONAL}', '{DECIDES}', '{}'),
@@ -70171,6 +70171,82 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- Personer utan e-postadress (20270310090000), section 573.
+--
+-- A pupil or a guardian may have no address, and then no login: "invitedAt" says the person has one, and a login is born of an address.
+-- What the two checks hold, asked as the school's administrator, who is the only one who writes people:
+--   * the catalogue: the column is optional, the key is the same, and the two checks read as the migration wrote them;
+--   * a pupil and a guardian are made without an address, and many of them (NULL in a unique key is no pair);
+--   * a teacher and an administrator are not;
+--   * no row has an invitedAt without an address: not made so, not given one, and a person who has one is not given none;
+--   * a role change takes the address with it: a person with no address does not become a teacher;
+--   * an address given later makes the person an ordinary uninvited one, and the key still holds it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+DECLARE
+  pupil uuid;
+  pupil2 uuid;
+  guardian uuid;
+BEGIN
+  PERFORM pg_temp.ut_expect('573 the address is optional', (SELECT is_nullable FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'Users' AND column_name = 'email'), 'YES');
+  PERFORM pg_temp.ut_expect('573 the key is the same: school and address', (SELECT pg_get_indexdef(indexrelid) FROM pg_index
+    WHERE indexrelid = 'public."Users_schoolId_email_key"'::regclass), 'CREATE UNIQUE INDEX "Users_schoolId_email_key" ON public."Users" USING btree ("schoolId", email)');
+  PERFORM pg_temp.ut_expect('573 the check that holds the login to an address', (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+    WHERE conname = 'Users_a_person_with_no_address_has_no_login' AND conrelid = '"Users"'::regclass), 'CHECK (((email IS NOT NULL) OR ("invitedAt" IS NULL)))');
+  PERFORM pg_temp.ut_expect('573 the check that holds the address to pupils and guardians', (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+    WHERE conname = 'Users_only_a_pupil_or_guardian_has_no_address' AND conrelid = '"Users"'::regclass),
+    $c$CHECK (((email IS NOT NULL) OR (role = ANY (ARRAY['STUDENT'::"UserRole", 'GUARDIAN'::"UserRole"]))))$c$);
+
+  -- Made without an address: a pupil, another pupil with the same name, and a guardian.
+  INSERT INTO "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
+    VALUES (app.current_school_id(), gen_random_uuid(), 'STUDENT', 'Ut', 'Utanadress', NULL, now()) RETURNING id INTO pupil;
+  PERFORM pg_temp.ut_expect('573 a pupil with no address and no login is made', (SELECT concat_ws('|', (email IS NULL)::text, ("invitedAt" IS NULL)::text) FROM "Users" WHERE id = pupil), 'true|true');
+  PERFORM pg_temp.ut_expect('573 ... and a second one, as the key allows many (NULL is no pair)',
+    pg_temp.ut_try($q$INSERT INTO "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
+      VALUES (app.current_school_id(), gen_random_uuid(), 'STUDENT', 'Ut', 'Utanadress', NULL, now())$q$), 'ok');
+  INSERT INTO "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
+    VALUES (app.current_school_id(), gen_random_uuid(), 'STUDENT', 'Ut', 'Utanadress2', NULL, now()) RETURNING id INTO pupil2;
+  INSERT INTO "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
+    VALUES (app.current_school_id(), gen_random_uuid(), 'GUARDIAN', 'Ut', 'Vårdnadshavare', NULL, now()) RETURNING id INTO guardian;
+  PERFORM pg_temp.ut_expect('573 the school sees them (row security is the same)', (SELECT count(*) FROM "Users" WHERE email IS NULL)::text, '4');
+
+  -- Not a teacher, and not an administrator.
+  PERFORM pg_temp.ut_expect('573 a teacher with no address is refused', pg_temp.ut_try($q$INSERT INTO "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
+    VALUES (app.current_school_id(), gen_random_uuid(), 'TEACHER', 'Ut', 'Larare', NULL, now())$q$), '23514');
+  PERFORM pg_temp.ut_expect('573 an administrator with no address is refused', pg_temp.ut_try($q$INSERT INTO "Users" ("schoolId", "authId", role, "adminProfile", "firstName", "lastName", email, "updatedAt")
+    VALUES (app.current_school_id(), gen_random_uuid(), 'SCHOOL_ADMIN', 'FULL', 'Ut', 'Admin', NULL, now())$q$), '23514');
+
+  -- No login without an address.
+  PERFORM pg_temp.ut_expect('573 a pupil with no address is not made with a login', pg_temp.ut_try($q$INSERT INTO "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "invitedAt", "updatedAt")
+    VALUES (app.current_school_id(), gen_random_uuid(), 'STUDENT', 'Ut', 'Inloggad', NULL, now(), now())$q$), '23514');
+  PERFORM pg_temp.ut_expect('573 ... and is not given one afterwards', pg_temp.ut_try(format($q$UPDATE "Users" SET "invitedAt" = now(), "authId" = gen_random_uuid() WHERE id = %L$q$, pupil)), '23514');
+  PERFORM pg_temp.ut_expect('573 ... nor a guardian', pg_temp.ut_try(format($q$UPDATE "Users" SET "invitedAt" = now() WHERE id = %L$q$, guardian)), '23514');
+  PERFORM pg_temp.ut_expect('573 ... and the row is as it was', (SELECT "invitedAt" IS NULL FROM "Users" WHERE id = pupil)::text, 'true');
+
+  -- No becoming a teacher with no address: the role is changed with the address, or not at all.
+  PERFORM pg_temp.ut_expect('573 a person with no address does not become a teacher', pg_temp.ut_try(format($q$UPDATE "Users" SET role = 'TEACHER', "studentGroupId" = NULL WHERE id = %L$q$, guardian)), '23514');
+
+  -- An address given later: an ordinary uninvited person, and the key holds it.
+  PERFORM pg_temp.ut_expect('573 an address is given later', pg_temp.ut_try(format($q$UPDATE "Users" SET email = 'ut-573-pupil@example.invalid' WHERE id = %L$q$, pupil)), 'ok');
+  PERFORM pg_temp.ut_expect('573 ... the person is uninvited, with the address', (SELECT concat_ws('|', email, ("invitedAt" IS NULL)::text) FROM "Users" WHERE id = pupil), 'ut-573-pupil@example.invalid|true');
+  PERFORM pg_temp.ut_expect('573 ... the address is held by the key', pg_temp.ut_try(format($q$UPDATE "Users" SET email = 'ut-573-pupil@example.invalid' WHERE id = %L$q$, pupil2)), '23505');
+  PERFORM pg_temp.ut_expect('573 ... and is invited when the school says so', pg_temp.ut_try(format($q$UPDATE "Users" SET "invitedAt" = now(), "authId" = gen_random_uuid() WHERE id = %L$q$, pupil)), 'ok');
+
+  -- A person who has a login does not lose the address.
+  PERFORM pg_temp.ut_expect('573 an invited person is not given no address', pg_temp.ut_try(format($q$UPDATE "Users" SET email = NULL WHERE id = %L$q$, pupil)), '23514');
+  PERFORM pg_temp.ut_expect('573 ... the address is the one it was', (SELECT email FROM "Users" WHERE id = pupil), 'ut-573-pupil@example.invalid');
+
+  -- The removal of a person with no address is a removal like any other.
+  PERFORM pg_temp.ut_expect('573 a person with no address is removed', pg_temp.ut_try(format($q$DELETE FROM "Users" WHERE id = %L$q$, pupil2)), 'ok');
+  RAISE NOTICE 'ut 573: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Den utgående kön (H3, 20270309090000), sektion 590–592. Ägarens sida är 590o–594o i rls-owner-checks.sql: ingen API-roll läser
 -- tabellerna, så vad som ligger i dem (rader, räknare, vad en färdig rad bär) kan bara ägaren fråga.
 --
@@ -70299,12 +70375,323 @@ BEGIN
 END $$;
 ROLLBACK;
 
+-- ===========================================================================
+-- Frågan före en ändring i Direkt som når familjer (20270312090000, avsnitt 600; ägarsidan 600o i rls-owner-checks.sql).
+--
+-- app.direct_reach_facts(year_id) är en SECURITY DEFINER-läsare som vakten i skrivvägen inte ska behöva områdesarmarna för (inställningen och
+-- publiceringarna är Publicerings): en arm som döljer raderna ger noll rader, och en vakt som läser noll rader tiger där den ska fråga. Den
+-- svarar för den inloggades egen skola, högst en rad. API-rollen får köra den; PostgREST-rollerna gör det inte.
+--
+--   600  som API-rollen och administratör: funktionen kan köras och ger ingen rad för ett läsår som ingen publicering gäller; PostgREST-rollen
+--        får 42501
+-- ===========================================================================
+
+BEGIN;
+SELECT pg_temp.ut_become('SCHOOL_ADMIN');
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('600 the API role may run the reader', pg_temp.ut_try($q$SELECT * FROM app.direct_reach_facts(gen_random_uuid())$q$), 'ok');
+  PERFORM pg_temp.ut_expect('600 ... a year no publication holds gives no row',
+    (SELECT count(*)::text FROM app.direct_reach_facts(gen_random_uuid())), '0');
+  RAISE NOTICE 'ut 600: % checks', current_setting('ut.checks');
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('600 expected to act as authenticated', current_user::text, 'authenticated');
+  PERFORM pg_temp.ut_expect('600 PostgREST''s role may not run the reader', pg_temp.ut_try($q$SELECT * FROM app.direct_reach_facts(gen_random_uuid())$q$), '42501');
+  RAISE NOTICE 'ut 600 (authenticated): % checks', current_setting('ut.checks');
+END $$;
+RESET ROLE;
+ROLLBACK;
+
 -- ---------------------------------------------------------------------------
--- Ledighetsansökan som familjen drar tillbaka (K6, 20270315090000 och 20270315090100), avsnitt 600 och 601. Ägarens sida är 600o i
+-- g6b 1: städningen av analysen (20270313090000), med klockan stilla.
+--
+-- app.optimization_jobs_sweep() städar nu också en analys av en vägrad körning ("suggestions"): RUNNING och förbi sin lease (leaseUntil),
+-- eller, utan lease, mer än sex minuter från sin start, skrivs som FAILED ABANDONED, avslutad när leasen tog slut (utan lease: nu), eller
+-- som den färdiga analys den frågades över när den hade en (g385-L-5). Städningen av Generera är som den var (section 533) och räknar
+-- som förut: den returnerade siffran är Generera-körningarnas ensam.
+--
+-- now() är transaktionens, så en lease planterad som "nu plus en sekund" möter samma klocka som städningen. Tiderna jämförs som den text
+-- de lagras som och kastas aldrig: ett värde som ingen skrev genom tjänsten stoppar inte funktionen, som också är Genereras städning.
+-- Varje scenario planteras som schemaläggaren (hennes arm skriver raden), städas utan inloggning och läses tillbaka som hon.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  sc record;
+  rid uuid;
+  planted jsonb;
+  after jsonb;
+  want jsonb;
+  swept integer;
+  fmt constant text := 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"';
+  admin_claims constant text := json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text;
+  now_text text := to_char(now() AT TIME ZONE 'UTC', fmt);
+  asked_over jsonb := jsonb_build_object('version', 1, 'state', 'DONE', 'startedAt', '2027-03-01T08:00:00.000Z', 'finishedAt', '2027-03-01T08:01:30.000Z',
+                        'verdict', 'SOLVABLE_AS_IS', 'verified', true, 'total', 0, 'searchSeconds', 60, 'verifySeconds', 2.5,
+                        'changes', '[]'::jsonb, 'failure', NULL, 'leaseUntil', NULL, 'previous', NULL);
+  tested integer := 0;
+BEGIN
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  SELECT count(*) INTO swept FROM "OptimizationJobs" WHERE "suggestions"->>'state' = 'RUNNING';
+  IF swept <> 0 THEN RAISE EXCEPTION 'g6b 1: % RUNNING analysis(es) are left from the fixtures', swept; END IF;
+
+  FOR sc IN SELECT * FROM (VALUES
+      -- label, state, started_ago, lease text (a time offset from now, 'none', or the text itself after '=' ), previous?, what the sweep does
+      ('a lease that ran out a second ago',               'RUNNING', interval '3 minutes',  '-1 second',   'none', 'failed'),
+      ('a lease that ran out a millisecond ago',          'RUNNING', interval '3 minutes',  '-1 millisecond', 'none', 'failed'),
+      ('a lease that ends this very instant',             'RUNNING', interval '3 minutes',  '0 seconds',   'none', 'untouched'),
+      ('a lease that ends in a second',                   'RUNNING', interval '3 minutes',  '1 second',    'none', 'untouched'),
+      ('a renewed lease on an analysis older than six minutes', 'RUNNING', interval '20 minutes', '2 minutes', 'none', 'untouched'),
+      ('a lease past, asked over a finished analysis',    'RUNNING', interval '3 minutes',  '-1 second',   'DONE', 'previous'),
+      -- (The service never writes a previous that is not DONE; one that was is no list to give back: the analysis is written as what it is.)
+      ('a lease past, asked over what is not a finished analysis', 'RUNNING', interval '3 minutes', '-1 second', 'FAILED', 'failed'),
+      ('no lease, six minutes and a second old',          'RUNNING', interval '6 minutes 1 second', 'none', 'none', 'failed-now'),
+      ('no lease, one second short of six minutes',       'RUNNING', interval '5 minutes 59 seconds', 'none', 'none', 'untouched'),
+      ('no lease, old, asked over a finished analysis',   'RUNNING', interval '20 minutes', 'none',        'DONE', 'previous'),
+      ('a lease that is no time, the analysis old',       'RUNNING', interval '7 minutes',  '=soon',       'none', 'failed-now'),
+      ('a lease that is no time, the analysis young',     'RUNNING', interval '1 minute',   '=soon',       'none', 'untouched'),
+      ('a lease with no millisecond, the analysis old',   'RUNNING', interval '7 minutes',  '=2027-03-13T09:00:00Z', 'none', 'failed-now'),
+      ('an analysis that ended, its old lease left over', 'FAILED',  interval '2 hours',    '-1 hour',     'none', 'untouched'),
+      ('a finished analysis',                             'DONE',    interval '2 hours',    'none',        'none', 'untouched')
+    ) AS t(label, state, started_ago, lease, has_previous, outcome) LOOP
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    planted := jsonb_build_object(
+      'version', 1, 'state', sc.state,
+      'startedAt', to_char((now() - sc.started_ago) AT TIME ZONE 'UTC', fmt),
+      'finishedAt', CASE WHEN sc.state = 'RUNNING' THEN NULL ELSE now_text END,
+      'verdict', NULL, 'verified', false, 'total', 0, 'searchSeconds', NULL, 'verifySeconds', NULL,
+      'changes', '[]'::jsonb,
+      'failure', CASE WHEN sc.state = 'FAILED' THEN 'ENGINE_FAILED' END,
+      'leaseUntil', CASE WHEN sc.lease = 'none' THEN NULL
+                         WHEN left(sc.lease, 1) = '=' THEN substr(sc.lease, 2)
+                         ELSE to_char((now() + sc.lease::interval) AT TIME ZONE 'UTC', fmt) END,
+      'previous', CASE WHEN sc.has_previous <> 'none' THEN jsonb_set(asked_over, '{state}', to_jsonb(sc.has_previous)) END);
+    -- (A key that is not there is a lease that was never written: an API from before the lease.)
+    IF sc.lease = 'none' THEN planted := planted - 'leaseUntil'; END IF;
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt", "suggestions")
+    VALUES (school, yr, app.current_user_id(), 'SUCCEEDED', 'INFEASIBLE', now(), planted)
+    RETURNING id INTO rid;
+
+    PERFORM set_config('request.jwt.claims', '', true);
+    swept := app.optimization_jobs_sweep();
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    IF swept <> 0 THEN RAISE EXCEPTION 'g6b 1: %: the sweep reported % run(s): an analysis is not a run it counts', sc.label, swept; END IF;
+    SELECT "suggestions" INTO after FROM "OptimizationJobs" WHERE id = rid;
+
+    want := CASE sc.outcome
+      WHEN 'untouched' THEN planted
+      WHEN 'previous' THEN asked_over
+      ELSE jsonb_build_object(
+             'version', 1, 'state', 'FAILED', 'startedAt', planted->'startedAt',
+             'finishedAt', CASE sc.outcome WHEN 'failed' THEN planted->'leaseUntil' ELSE to_jsonb(now_text) END,
+             'verdict', NULL, 'verified', false, 'total', 0, 'searchSeconds', NULL, 'verifySeconds', NULL,
+             'changes', '[]'::jsonb, 'failure', 'ABANDONED', 'leaseUntil', NULL, 'previous', NULL)
+    END;
+    IF after IS DISTINCT FROM want THEN
+      RAISE EXCEPTION 'g6b 1: %: swept to %, expected %', sc.label, after, want;
+    END IF;
+    -- The row is the run's own otherwise: nothing but the column was touched.
+    IF NOT EXISTS (SELECT 1 FROM "OptimizationJobs" WHERE id = rid AND status = 'SUCCEEDED' AND "solverStatus" = 'INFEASIBLE' AND "errorCode" IS NULL) THEN
+      RAISE EXCEPTION 'g6b 1: %: the run itself was touched', sc.label;
+    END IF;
+    -- En andra gång städar ingenting till.
+    PERFORM set_config('request.jwt.claims', '', true);
+    PERFORM app.optimization_jobs_sweep();
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    IF (SELECT "suggestions" FROM "OptimizationJobs" WHERE id = rid) IS DISTINCT FROM want THEN
+      RAISE EXCEPTION 'g6b 1: %: a second sweep changed the column', sc.label;
+    END IF;
+    DELETE FROM "OptimizationJobs" WHERE id = rid;
+    tested := tested + 1;
+  END LOOP;
+  IF tested <> 15 THEN RAISE EXCEPTION 'g6b 1: % scenarios ran, expected 15', tested; END IF;
+  RAISE NOTICE 'g6b 1: an analysis past its lease (or, with none, six minutes) is written as abandoned or as the analysis it was asked over, at the edges, and none else is touched';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- g6b 2: Genereras städning är som den var, och en analys i samma anrop ändrar inte vad den räknar.
+--
+-- Ett anrop som städar en Generera-körning och en analys räknar körningen ensam (1), och körningen blir som section 533 säger. Värden
+-- som ingen skrev genom tjänsten (en startedAt som inte är en tid, en tom sträng, ett tal) kastar inget: funktionen är också Genereras.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  gen uuid;
+  other_yr uuid;
+  ana uuid;
+  swept integer;
+  got record;
+  admin_claims constant text := json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text;
+  fmt constant text := 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"';
+  bad text;
+  bads text[] := ARRAY['{"state":"RUNNING"}', '{"state":"RUNNING","startedAt":"yesterday"}', '{"state":"RUNNING","startedAt":""}',
+                       '{"state":"RUNNING","startedAt":7}', '{"state":"RUNNING","startedAt":null,"leaseUntil":null}',
+                       '{"state":"RUNNING","startedAt":"2027-02-31T25:61:61.000Z"}', '{"state":"RUNNING","leaseUntil":"2027-02-31T25:61:61.000Z"}',
+                       '{"state":"RUNNING","leaseUntil":{"a":1}}', '{"state":["RUNNING"]}', '{"state":"RUNNING","previous":"x"}'];
+BEGIN
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "createdAt", "heartbeatAt", "leaseUntil")
+  VALUES (school, yr, 'RUNNING', now() - interval '6 minutes', now() - interval '5 minutes', now() - interval '1 second') RETURNING id INTO gen;
+  -- An analysis of an earlier run of the same year, lapsed, in the same sweep.
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt", "createdAt", "suggestions")
+  VALUES (school, yr, app.current_user_id(), 'SUCCEEDED', 'INFEASIBLE', now() - interval '1 hour', now() - interval '2 hours',
+          jsonb_build_object('version', 1, 'state', 'RUNNING', 'startedAt', to_char((now() - interval '10 minutes') AT TIME ZONE 'UTC', fmt),
+                             'finishedAt', NULL, 'verdict', NULL, 'verified', false, 'total', 0, 'searchSeconds', NULL, 'verifySeconds', NULL,
+                             'changes', '[]'::jsonb, 'failure', NULL,
+                             'leaseUntil', to_char((now() - interval '1 minute') AT TIME ZONE 'UTC', fmt), 'previous', NULL))
+  RETURNING id INTO ana;
+
+  PERFORM set_config('request.jwt.claims', '', true);
+  swept := app.optimization_jobs_sweep();
+  PERFORM set_config('request.jwt.claims', admin_claims, true);
+  IF swept <> 1 THEN RAISE EXCEPTION 'g6b 2: the sweep reported % run(s), expected the Generera run alone', swept; END IF;
+  SELECT status::text AS status, "errorCode", "errorParams", "finishedAt", "leaseUntil" INTO got FROM "OptimizationJobs" WHERE id = gen;
+  IF got.status <> 'FAILED' OR got."errorCode" <> 'ENGINE_RUN_ABANDONED' OR got."errorParams" IS NOT NULL
+     OR got."finishedAt" IS DISTINCT FROM got."leaseUntil" THEN
+    RAISE EXCEPTION 'g6b 2: the Generera run was swept to %', row_to_json(got);
+  END IF;
+  IF (SELECT "suggestions"->>'state' || ' ' || ("suggestions"->>'failure') FROM "OptimizationJobs" WHERE id = ana) IS DISTINCT FROM 'FAILED ABANDONED' THEN
+    RAISE EXCEPTION 'g6b 2: the analysis of the same sweep was not written as abandoned';
+  END IF;
+  DELETE FROM "OptimizationJobs" WHERE id IN (gen, ana);
+
+  -- Values nobody wrote through the service: the sweep neither stops nor changes what it does to Generera.
+  FOREACH bad IN ARRAY bads LOOP
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt", "suggestions")
+    VALUES (school, yr, app.current_user_id(), 'SUCCEEDED', 'INFEASIBLE', now(), bad::jsonb) RETURNING id INTO ana;
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "createdAt", "heartbeatAt", "leaseUntil")
+    VALUES (school, yr, 'RUNNING', now() - interval '6 minutes', now() - interval '5 minutes', now() - interval '1 second') RETURNING id INTO gen;
+    PERFORM set_config('request.jwt.claims', '', true);
+    BEGIN
+      swept := app.optimization_jobs_sweep();
+    EXCEPTION WHEN OTHERS THEN
+      RAISE EXCEPTION 'g6b 2: the sweep stopped on the value % with %', bad, SQLERRM;
+    END;
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    IF swept <> 1 OR (SELECT status::text FROM "OptimizationJobs" WHERE id = gen) <> 'FAILED' THEN
+      RAISE EXCEPTION 'g6b 2: with the value % the sweep reported % and Generera''s run is %', bad, swept, (SELECT status FROM "OptimizationJobs" WHERE id = gen);
+    END IF;
+    DELETE FROM "OptimizationJobs" WHERE id IN (gen, ana);
+  END LOOP;
+  RAISE NOTICE 'g6b 2: Generera''s sweep counts and writes what it did, an analysis beside it changes neither, and no value in the column stops it';
+END $$;
+ROLLBACK;
+
+-- ===========================================================================
+-- Optimeringsprofilen (20270314090000, avsnitt 601).
+--
+-- OptimizationProfiles: en rad per skola med de fem vikterna Generera-sidans reglage sätter. Varje administratör läser den (också en
+-- läsare); Schemaläggning skriver den (full, rektor och schemaläggare, inte expeditionen och inte läsaren); ingen lärare, ingen annan skola
+-- och ingen PostgREST-roll ser eller rör den; ingen raderar den; en vikt utanför 0–1000 vägras av databasen.
+--
+--   601  rollerskolans administratörer av varje profil, en lärare, en annan skola och PostgREST-rollen mot tabellen
+-- ===========================================================================
+
+BEGIN;
+SELECT set_config('ut.school_b', :'school_b', true);
+DO $$
+DECLARE
+  roller uuid;
+  school_a uuid;
+  other uuid := current_setting('ut.school_b')::uuid;
+  col text;
+BEGIN
+  -- School A (the runner's administrator): no row yet. The first administrator who saves makes it, with the defaults a school starts from.
+  PERFORM pg_temp.ut_as(current_setting('ut.admin'));
+  school_a := app.current_school_id();
+  PERFORM pg_temp.ut_expect('601 a school with no row reads none', (SELECT count(*)::text FROM "OptimizationProfiles"), '0');
+  INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (school_a);
+  PERFORM pg_temp.ut_expect('601 the defaults are 10, 5, 8, 3, 2',
+    (SELECT concat_ws(',', "preferredFree", "preferredBusy", disruption, spread, "teacherGap") FROM "OptimizationProfiles"), '10,5,8,3,2');
+  PERFORM pg_temp.ut_expect('601 one row a school', split_part(pg_temp.ut_try(format($q$INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (%L)$q$, school_a)), ' ', 1), '23505');
+  PERFORM pg_temp.ut_expect('601 not even a full administrator removes it', pg_temp.ut_try('DELETE FROM "OptimizationProfiles"'), '42501');
+  -- The row goes with its school: the key to Schools cascades (a school deleted, the demo school reset, leaves no row of it behind).
+  PERFORM pg_temp.ut_expect('601 the key to Schools cascades on delete',
+    (SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = '"OptimizationProfiles"'::regclass AND c.contype = 'f'),
+    'FOREIGN KEY ("schoolId") REFERENCES "Schools"(id) ON UPDATE CASCADE ON DELETE CASCADE');
+  -- Each of the five weights has its own bounds in the CHECK: 0 and 1000 are weights, -1 and 1001 are not, for every one of them.
+  FOREACH col IN ARRAY ARRAY['preferredFree', 'preferredBusy', 'disruption', 'spread', 'teacherGap'] LOOP
+    PERFORM pg_temp.ut_expect('601 ' || col || ' over 1000 is refused', pg_temp.ut_try(format('UPDATE "OptimizationProfiles" SET %I = 1001', col)), '23514');
+    PERFORM pg_temp.ut_expect('601 ' || col || ' under 0 is refused', pg_temp.ut_try(format('UPDATE "OptimizationProfiles" SET %I = -1', col)), '23514');
+    PERFORM pg_temp.ut_expect('601 ' || col || ' of 1000 is a weight', pg_temp.ut_try(format('UPDATE "OptimizationProfiles" SET %I = 1000', col)), 'ok');
+    PERFORM pg_temp.ut_expect('601 ' || col || ' of 0 is a weight', pg_temp.ut_try(format('UPDATE "OptimizationProfiles" SET %I = 0', col)), 'ok');
+  END LOOP;
+
+  -- The roller school's administrators, as the fixtures make them (section 107's list), and the row the fixtures plant for the matrix.
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000105');
+  roller := app.current_school_id();
+  PERFORM pg_temp.ut_expect('601 the fixtures hold the roller school', (SELECT slug FROM "Schools" WHERE id = roller), 'rls-roller-school');
+  PERFORM pg_temp.ut_expect('601 ... and its row, which is school A''s no more than school A''s is its', (SELECT count(*)::text FROM "OptimizationProfiles"), '1');
+
+  -- Every administrator reads it; rektor and the schemaläggare change it; the expedition and the läsare cannot, and cannot make one.
+  FOR i IN 1..6 LOOP
+    PERFORM pg_temp.ut_as((ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000106', '00000000-0000-4000-8000-000000000107',
+                                  '00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000110', '00000000-0000-4000-8000-000000000115'])[i]);
+    PERFORM pg_temp.ut_expect('601 an administrator reads the row (' || i || ')', (SELECT count(*)::text FROM "OptimizationProfiles"), '1');
+  END LOOP;
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000106');
+  UPDATE "OptimizationProfiles" SET spread = 20;
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000107');
+  UPDATE "OptimizationProfiles" SET spread = 30;
+  PERFORM pg_temp.ut_expect('601 rektor and the schemaläggare changed it', (SELECT spread::text FROM "OptimizationProfiles"), '30');
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000108');
+  PERFORM pg_temp.ut_expect('601 the expedition may not change it', pg_temp.ut_try('UPDATE "OptimizationProfiles" SET spread = 1'), '42501');
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000115');
+  PERFORM pg_temp.ut_expect('601 nor the läsare', pg_temp.ut_try('UPDATE "OptimizationProfiles" SET spread = 1'), '42501');
+  PERFORM pg_temp.ut_expect('601 ... and the row is as it was', (SELECT spread::text FROM "OptimizationProfiles"), '30');
+
+  -- A teacher reads nothing and writes nothing.
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000111');
+  PERFORM pg_temp.ut_expect('601 a teacher sees no row', (SELECT count(*)::text FROM "OptimizationProfiles"), '0');
+  PERFORM pg_temp.ut_expect('601 and makes none', pg_temp.ut_try(format($q$INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (%L)$q$, roller)), '42501');
+
+  -- Another school's administrator sees none of the roller school's row, and cannot make or change one for it.
+  PERFORM pg_temp.ut_as(current_setting('ut.admin'));
+  PERFORM pg_temp.ut_expect('601 another school sees none of the roller school''s row', (SELECT count(*)::text FROM "OptimizationProfiles" WHERE "schoolId" = roller), '0');
+  PERFORM pg_temp.ut_expect('601 and writes none for it', pg_temp.ut_try(format($q$INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (%L)$q$, roller)), '42501');
+  PERFORM pg_temp.ut_expect('601 nor changes its', pg_temp.ut_try(format($q$UPDATE "OptimizationProfiles" SET spread = 1 WHERE "schoolId" = %L$q$, roller)), 'ok');
+  -- The row's own key is not a thing to change: moving school A's row to a school that has none (school B) would plant a profile there, and
+  -- onto one that has a row would be refused by the key only after the policy's check passed. The WITH CHECK of the update arm holds the school.
+  PERFORM pg_temp.ut_expect('601 school A''s row cannot be moved to a school that has none', pg_temp.ut_try(format($q$UPDATE "OptimizationProfiles" SET "schoolId" = %L WHERE "schoolId" = %L$q$, other, school_a)), '42501');
+  PERFORM pg_temp.ut_expect('601 ... nor onto the roller school''s', pg_temp.ut_try(format($q$UPDATE "OptimizationProfiles" SET "schoolId" = %L WHERE "schoolId" = %L$q$, roller, school_a)), '42501');
+  PERFORM pg_temp.ut_as('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.ut_expect('601 ... and nothing of the roller school''s changed', (SELECT spread::text FROM "OptimizationProfiles"), '30');
+  RAISE NOTICE 'ut 601: % checks', current_setting('ut.checks');
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.ut_expect('601 expected to act as authenticated', current_user::text, 'authenticated');
+  PERFORM pg_temp.ut_expect('601 PostgREST''s role reads nothing', pg_temp.ut_try('SELECT count(*) FROM "OptimizationProfiles"'), '42501');
+  PERFORM pg_temp.ut_expect('601 and writes nothing', pg_temp.ut_try('INSERT INTO "OptimizationProfiles" ("schoolId") VALUES (gen_random_uuid())'), '42501');
+  -- Not by an arm alone: neither of PostgREST's roles holds a privilege on the table, so that an arm added to it later admits nothing it was never meant to.
+  PERFORM pg_temp.ut_expect('601 anon and authenticated hold no privilege on it',
+    (SELECT coalesce(string_agg(r || ' ' || p, ', '), 'none') FROM unnest(ARRAY['anon', 'authenticated']) r, unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+      WHERE has_table_privilege(r, '"OptimizationProfiles"', p)), 'none');
+  RAISE NOTICE 'ut 601 (authenticated): % checks', current_setting('ut.checks');
+END $$;
+RESET ROLE;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Ledighetsansökan som familjen drar tillbaka (K6, 20270315090000 och 20270315090100), avsnitt 602 och 603. Ägarens sida är 602o i
 -- rls-owner-checks.sql: vad som läses av notiser och vad CHECK:en och triggern nekar när ingen inloggad person finns.
 --
---   600  den som ansökte drar tillbaka en ansökan som väntar, och ingen annan: inte en lärare, inte en administratör, inte efter ett beslut
---   601  en tillbakadragen ansökan är slutgiltig och sätts bara av den som ansökte, och ingen roll utanför API:t når funktionen
+--   602  den som ansökte drar tillbaka en ansökan som väntar, och ingen annan: inte en lärare, inte en administratör, inte efter ett beslut
+--   603  en tillbakadragen ansökan är slutgiltig och sätts bara av den som ansökte, och ingen roll utanför API:t når funktionen
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -70316,55 +70703,55 @@ DECLARE
   child uuid;
   a uuid; b uuid; c uuid;
 BEGIN
-  PERFORM pg_temp.ut_expect('600 the guardian acts as app_authenticated', current_user::text, 'app_authenticated');
+  PERFORM pg_temp.ut_expect('602 the guardian acts as app_authenticated', current_user::text, 'app_authenticated');
   SELECT gs."studentId" INTO child FROM "GuardianStudents" gs WHERE gs."guardianId" = me ORDER BY gs."studentId" LIMIT 1;
-  IF child IS NULL THEN RAISE EXCEPTION 'ut 600: the fixture guardian has no child'; END IF;
+  IF child IS NULL THEN RAISE EXCEPTION 'ut 602: the fixture guardian has no child'; END IF;
   INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
-  VALUES (school, child, me, DATE '2096-05-04', DATE '2096-05-05', 'ut600 a') RETURNING id INTO a;
+  VALUES (school, child, me, DATE '2096-05-04', DATE '2096-05-05', 'ut602 a') RETURNING id INTO a;
   INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
-  VALUES (school, child, me, DATE '2096-05-11', DATE '2096-05-12', 'ut600 b') RETURNING id INTO b;
+  VALUES (school, child, me, DATE '2096-05-11', DATE '2096-05-12', 'ut602 b') RETURNING id INTO b;
   INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
-  VALUES (school, child, me, DATE '2096-05-18', DATE '2096-05-19', 'ut600 c') RETURNING id INTO c;
-  PERFORM set_config('ut.t600a', a::text, true);
-  PERFORM set_config('ut.t600b', b::text, true);
-  PERFORM set_config('ut.t600c', c::text, true);
+  VALUES (school, child, me, DATE '2096-05-18', DATE '2096-05-19', 'ut602 c') RETURNING id INTO c;
+  PERFORM set_config('ut.t602a', a::text, true);
+  PERFORM set_config('ut.t602b', b::text, true);
+  PERFORM set_config('ut.t602c', c::text, true);
 
   -- The one who filed it takes it back, once: the status, the moment, and nobody who decided.
-  PERFORM pg_temp.ut_expect('600 a request that waits is taken back', app.leave_request_withdraw(a)::text, 'true');
-  PERFORM pg_temp.ut_expect('600 ... as the family reads it', (SELECT concat_ws('|', status, decidedat_set, "decidedById" IS NULL, "decidedAs" IS NULL)
+  PERFORM pg_temp.ut_expect('602 a request that waits is taken back', app.leave_request_withdraw(a)::text, 'true');
+  PERFORM pg_temp.ut_expect('602 ... as the family reads it', (SELECT concat_ws('|', status, decidedat_set, "decidedById" IS NULL, "decidedAs" IS NULL)
     FROM (SELECT status, "decidedAt" IS NOT NULL AS decidedat_set, "decidedById", "decidedAs" FROM "LeaveRequests" WHERE id = a) r), 'WITHDRAWN|t|t|t');
-  PERFORM pg_temp.ut_expect('600 ... and once only: the second time is no news and writes nothing', app.leave_request_withdraw(a)::text, 'false');
-  PERFORM pg_temp.ut_expect('600 the guardian cannot take back another family''s request, which they do not read either',
+  PERFORM pg_temp.ut_expect('602 ... and once only: the second time is no news and writes nothing', app.leave_request_withdraw(a)::text, 'false');
+  PERFORM pg_temp.ut_expect('602 the guardian cannot take back another family''s request, which they do not read either',
     app.leave_request_withdraw(gen_random_uuid())::text, 'false');
 END $$;
 
 -- Nobody else takes it back: not the school's administrator, not a teacher, not a pupil.
 SELECT pg_temp.ut_become('SCHOOL_ADMIN');
 DO $$
-DECLARE b uuid := current_setting('ut.t600b')::uuid; c uuid := current_setting('ut.t600c')::uuid; me uuid := app.current_user_id();
+DECLARE b uuid := current_setting('ut.t602b')::uuid; c uuid := current_setting('ut.t602c')::uuid; me uuid := app.current_user_id();
 BEGIN
-  PERFORM pg_temp.ut_expect('600 the administrator who did not file it cannot take it back', app.leave_request_withdraw(b)::text, 'false');
-  PERFORM pg_temp.ut_expect('600 ... nor writes the status by hand (LV418)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now() WHERE id = %L$q$, b)), 'LV418');
+  PERFORM pg_temp.ut_expect('602 the administrator who did not file it cannot take it back', app.leave_request_withdraw(b)::text, 'false');
+  PERFORM pg_temp.ut_expect('602 ... nor writes the status by hand (LV418)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now() WHERE id = %L$q$, b)), 'LV418');
   -- A decision, and then it is too late.
-  PERFORM pg_temp.ut_expect('600 the administrator decides request c', pg_temp.ut_rows(format(
+  PERFORM pg_temp.ut_expect('602 the administrator decides request c', pg_temp.ut_rows(format(
     $q$UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedById" = %L, "decidedAs" = 'ADMIN', "decidedAt" = now() WHERE id = %L AND status = 'PENDING'$q$, me, c))::text, '1');
 END $$;
 
 SELECT pg_temp.ut_become('TEACHER');
 DO $$
 BEGIN
-  PERFORM pg_temp.ut_expect('600 a teacher cannot take a request back', app.leave_request_withdraw(current_setting('ut.t600b')::uuid)::text, 'false');
+  PERFORM pg_temp.ut_expect('602 a teacher cannot take a request back', app.leave_request_withdraw(current_setting('ut.t602b')::uuid)::text, 'false');
 END $$;
 
 SELECT pg_temp.ut_as('00000000-0000-4000-8000-000000000004');
 DO $$
-DECLARE a uuid := current_setting('ut.t600a')::uuid; b uuid := current_setting('ut.t600b')::uuid; c uuid := current_setting('ut.t600c')::uuid;
+DECLARE a uuid := current_setting('ut.t602a')::uuid; b uuid := current_setting('ut.t602b')::uuid; c uuid := current_setting('ut.t602c')::uuid;
 BEGIN
-  PERFORM pg_temp.ut_expect('600 a decided request is not taken back: the family asks the school', app.leave_request_withdraw(c)::text, 'false');
-  PERFORM pg_temp.ut_expect('600 ... and it stays decided', (SELECT status::text FROM "LeaveRequests" WHERE id = c), 'APPROVED');
-  PERFORM pg_temp.ut_expect('600 request b still waits, untouched by the others'' tries', (SELECT status::text FROM "LeaveRequests" WHERE id = b), 'PENDING');
-  PERFORM pg_temp.ut_expect('600 the taken-back request is still read by the one who filed it', (SELECT count(*)::text FROM "LeaveRequests" WHERE id = a AND status = 'WITHDRAWN'), '1');
-  RAISE NOTICE 'ut 600: % checks', current_setting('ut.checks');
+  PERFORM pg_temp.ut_expect('602 a decided request is not taken back: the family asks the school', app.leave_request_withdraw(c)::text, 'false');
+  PERFORM pg_temp.ut_expect('602 ... and it stays decided', (SELECT status::text FROM "LeaveRequests" WHERE id = c), 'APPROVED');
+  PERFORM pg_temp.ut_expect('602 request b still waits, untouched by the others'' tries', (SELECT status::text FROM "LeaveRequests" WHERE id = b), 'PENDING');
+  PERFORM pg_temp.ut_expect('602 the taken-back request is still read by the one who filed it', (SELECT count(*)::text FROM "LeaveRequests" WHERE id = a AND status = 'WITHDRAWN'), '1');
+  RAISE NOTICE 'ut 602: % checks', current_setting('ut.checks');
 END $$;
 ROLLBACK;
 
@@ -70379,22 +70766,22 @@ DECLARE
 BEGIN
   SELECT gs."studentId" INTO child FROM "GuardianStudents" gs WHERE gs."guardianId" = me ORDER BY gs."studentId" LIMIT 1;
   INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
-  VALUES (school, child, me, DATE '2096-06-04', DATE '2096-06-05', 'ut601 a') RETURNING id INTO a;
-  PERFORM set_config('ut.t601a', a::text, true);
-  PERFORM pg_temp.ut_expect('601 withdrawn', app.leave_request_withdraw(a)::text, 'true');
+  VALUES (school, child, me, DATE '2096-06-04', DATE '2096-06-05', 'ut603 a') RETURNING id INTO a;
+  PERFORM set_config('ut.t603a', a::text, true);
+  PERFORM pg_temp.ut_expect('603 withdrawn', app.leave_request_withdraw(a)::text, 'true');
   -- Final: nobody sets it back, not the one who filed it, and not by a write of the school's.
   -- The family has no write on the table at all: a write that tries to put it back changes no row.
-  PERFORM pg_temp.ut_expect('601 a taken-back request is not made pending again by the family', pg_temp.ut_rows(format($q$UPDATE "LeaveRequests" SET status = 'PENDING' WHERE id = %L$q$, a))::text, '0');
+  PERFORM pg_temp.ut_expect('603 a taken-back request is not made pending again by the family', pg_temp.ut_rows(format($q$UPDATE "LeaveRequests" SET status = 'PENDING' WHERE id = %L$q$, a))::text, '0');
 END $$;
 SELECT pg_temp.ut_become('SCHOOL_ADMIN');
 DO $$
-DECLARE a uuid := current_setting('ut.t601a')::uuid; me uuid := app.current_user_id();
+DECLARE a uuid := current_setting('ut.t603a')::uuid; me uuid := app.current_user_id();
 BEGIN
-  PERFORM pg_temp.ut_expect('601 ... nor decided by the administrator (LV409)', pg_temp.ut_try(format(
+  PERFORM pg_temp.ut_expect('603 ... nor decided by the administrator (LV409)', pg_temp.ut_try(format(
     $q$UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedById" = %L, "decidedAs" = 'ADMIN', "decidedAt" = now() WHERE id = %L$q$, me, a)), 'LV409');
-  PERFORM pg_temp.ut_expect('601 ... nor rejected (LV409)', pg_temp.ut_try(format(
+  PERFORM pg_temp.ut_expect('603 ... nor rejected (LV409)', pg_temp.ut_try(format(
     $q$UPDATE "LeaveRequests" SET status = 'REJECTED', "decidedById" = %L, "decidedAs" = 'ADMIN', "decidedAt" = now() WHERE id = %L$q$, me, a)), 'LV409');
-  PERFORM pg_temp.ut_expect('601 the administrator reads it as taken back', (SELECT status::text FROM "LeaveRequests" WHERE id = a), 'WITHDRAWN');
+  PERFORM pg_temp.ut_expect('603 the administrator reads it as taken back', (SELECT status::text FROM "LeaveRequests" WHERE id = a), 'WITHDRAWN');
 END $$;
 
 -- PostgREST's role reaches no function that takes a request back, and a session with no person is refused.
@@ -70402,15 +70789,15 @@ SELECT pg_temp.ut_as('00000000-0000-4000-8000-000000000004');
 SET LOCAL ROLE authenticated;
 DO $$
 BEGIN
-  PERFORM pg_temp.ut_expect('601 expected to act as authenticated', current_user::text, 'authenticated');
-  PERFORM pg_temp.ut_expect('601 PostgREST''s role may not take a request back', pg_temp.ut_try(format($q$SELECT app.leave_request_withdraw(%L)$q$, current_setting('ut.t601a'))), '42501');
+  PERFORM pg_temp.ut_expect('603 expected to act as authenticated', current_user::text, 'authenticated');
+  PERFORM pg_temp.ut_expect('603 PostgREST''s role may not take a request back', pg_temp.ut_try(format($q$SELECT app.leave_request_withdraw(%L)$q$, current_setting('ut.t603a'))), '42501');
 END $$;
 RESET ROLE;
 DO $$
 BEGIN
   PERFORM set_config('request.jwt.claims', '', true);
   PERFORM set_config('request.jwt.claim.sub', '', true);
-  PERFORM pg_temp.ut_expect('601 a session with no person is refused (LV403)', pg_temp.ut_try(format($q$SELECT app.leave_request_withdraw(%L)$q$, current_setting('ut.t601a'))), 'LV403');
-  RAISE NOTICE 'ut 601: % checks', current_setting('ut.checks');
+  PERFORM pg_temp.ut_expect('603 a session with no person is refused (LV403)', pg_temp.ut_try(format($q$SELECT app.leave_request_withdraw(%L)$q$, current_setting('ut.t603a'))), 'LV403');
+  RAISE NOTICE 'ut 603: % checks', current_setting('ut.checks');
 END $$;
 ROLLBACK;

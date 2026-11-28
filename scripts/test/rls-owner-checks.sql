@@ -8689,8 +8689,98 @@ BEGIN
 END $$;
 ROLLBACK;
 
+-- 600o ----------------------------------------------------------------------
+-- Frågan före en ändring i Direkt som når familjer (20270312090000): app.direct_reach_facts(year_id), som den inloggade skolans
+-- administratör kör den. Publiceringar planteras som ägaren (som de skrivs av en publicering); funktionen läser dem förbi områdesarmen.
+BEGIN;
+DO $$
+DECLARE
+  a uuid := (SELECT id FROM "Schools" ORDER BY id LIMIT 1);
+  b uuid := (SELECT id FROM "Schools" ORDER BY id OFFSET 1 LIMIT 1);
+  ya uuid; yb uuid; admin_a uuid; admin_b uuid;
+  tz text; today date;
+  p1 uuid; p2 uuid;
+  rec record;
+BEGIN
+  SELECT timezone INTO tz FROM "Schools" WHERE id = a;
+  today := (now() AT TIME ZONE tz)::date;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+    VALUES (a, '600o a', today - 100, today + 200, false, 'NIOARIG', now()) RETURNING id INTO ya;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
+    VALUES (b, '600o b', today - 100, today + 200, false, 'NIOARIG', now()) RETURNING id INTO yb;
+  SELECT "authId" INTO admin_a FROM "Users" WHERE "schoolId" = a AND role = 'SCHOOL_ADMIN' ORDER BY id LIMIT 1;
+  SELECT "authId" INTO admin_b FROM "Users" WHERE "schoolId" = b AND role = 'SCHOOL_ADMIN' ORDER BY id LIMIT 1;
+  PERFORM pg_temp.ut_expect('600o both schools have an administrator to act as', (admin_a IS NOT NULL AND admin_b IS NOT NULL)::text, 'true');
+
+  -- The catalogue: a definer function with its search_path fixed, run by the API's role and by neither PUBLIC nor PostgREST's roles.
+  PERFORM pg_temp.ut_expect('600o the reader is SECURITY DEFINER with a fixed search_path',
+    (SELECT (p.prosecdef AND p.proconfig::text LIKE '%search_path=%')::text FROM pg_proc p WHERE p.oid = 'app.direct_reach_facts(uuid)'::regprocedure), 'true');
+  PERFORM pg_temp.ut_expect('600o ... the API''s role may run it', has_function_privilege('app_authenticated', 'app.direct_reach_facts(uuid)', 'EXECUTE')::text, 'true');
+  PERFORM pg_temp.ut_expect('600o ... PUBLIC may not', has_function_privilege('public', 'app.direct_reach_facts(uuid)', 'EXECUTE')::text, 'false');
+  FOR rec IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role') LOOP
+    PERFORM pg_temp.ut_expect('600o ... nor ' || rec.rolname, has_function_privilege(rec.rolname, 'app.direct_reach_facts(uuid)', 'EXECUTE')::text, 'false');
+  END LOOP;
+  PERFORM pg_temp.ut_expect('600o the column is nullable with no default: a school never asked has null',
+    (SELECT (is_nullable = 'YES' AND column_default IS NULL)::text FROM information_schema.columns
+      WHERE table_name = 'PublicationSettings' AND column_name = 'directReachAcknowledgedAt'), 'true');
+
+  -- Logged in as school A's administrator.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', admin_a)::text, true);
+  PERFORM pg_temp.ut_expect('600o a year with no publication gives no row', (SELECT count(*)::text FROM app.direct_reach_facts(ya)), '0');
+
+  -- What does not hold: ended yesterday, a refused attempt, a refill of an older publication.
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo")
+    VALUES (a, ya, 'PUBLISH', 'PUBLISHED', 'DIRECT', today - 90, today - 1);
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo")
+    VALUES (a, ya, 'PUBLISH', 'REFUSED', 'DIRECT', today, today + 100);
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo")
+    VALUES (a, ya, 'REFILL', 'PUBLISHED', 'DIRECT', today, today + 100);
+  PERFORM pg_temp.ut_expect('600o a publication that ended yesterday, a refusal and a refill hold nothing', (SELECT count(*)::text FROM app.direct_reach_facts(ya)), '0');
+
+  -- One that holds: it ends today, in the school''s own day, which is still a period that has not ended.
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", "publishedAt")
+    VALUES (a, ya, 'LEGACY_PUBLISH', 'PUBLISHED', 'DIRECT', today - 30, today, now() - interval '2 hours') RETURNING id INTO p1;
+  PERFORM pg_temp.ut_expect('600o one that ends today holds, and has not been answered',
+    (SELECT "validTo"::text || '|' || coalesce("acknowledgedAt"::text, '-') || '|' || answered::text FROM app.direct_reach_facts(ya)), today::text || '|-|false');
+
+  -- The later of two that hold is the one named.
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", "publishedAt")
+    VALUES (a, ya, 'PUBLISH', 'PUBLISHED', 'DIRECT', today + 1, today + 120, now() - interval '1 hour') RETURNING id INTO p2;
+  PERFORM pg_temp.ut_expect('600o the later publication is the one named', (SELECT "validTo"::text FROM app.direct_reach_facts(ya)), (today + 120)::text);
+  PERFORM pg_temp.ut_expect('600o ... and it is one row', (SELECT count(*)::text FROM app.direct_reach_facts(ya)), '1');
+
+  -- The answer: written once, it answers; a switch of mode writes null and the question is new.
+  INSERT INTO "PublicationSettings" ("schoolId", "directReachAcknowledgedAt") VALUES (a, now())
+    ON CONFLICT ("schoolId") DO UPDATE SET "directReachAcknowledgedAt" = now();
+  PERFORM pg_temp.ut_expect('600o an answered school is answered', (SELECT answered::text FROM app.direct_reach_facts(ya)), 'true');
+  PERFORM pg_temp.ut_expect('600o ... and the time is the answer''s', (SELECT ("acknowledgedAt" IS NOT NULL)::text FROM app.direct_reach_facts(ya)), 'true');
+  UPDATE "PublicationSettings" SET "directReachAcknowledgedAt" = NULL WHERE "schoolId" = a;
+  PERFORM pg_temp.ut_expect('600o a switch of mode takes it back', (SELECT answered::text FROM app.direct_reach_facts(ya)), 'false');
+
+  -- Another school's year is another school's, whoever asks.
+  PERFORM pg_temp.ut_expect('600o school A''s administrator asking for school B''s year gets no row', (SELECT count(*)::text FROM app.direct_reach_facts(yb)), '0');
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo")
+    VALUES (b, yb, 'PUBLISH', 'PUBLISHED', 'DIRECT', today, today + 100);
+  PERFORM pg_temp.ut_expect('600o ... also when B has a publication that holds', (SELECT count(*)::text FROM app.direct_reach_facts(yb)), '0');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', admin_b)::text, true);
+  PERFORM pg_temp.ut_expect('600o ... which B''s own administrator is told of', (SELECT count(*)::text FROM app.direct_reach_facts(yb)), '1');
+  PERFORM pg_temp.ut_expect('600o ... and B''s administrator asking for school A''s year gets no row', (SELECT count(*)::text FROM app.direct_reach_facts(ya)), '0');
+  -- B's answer is not A's.
+  INSERT INTO "PublicationSettings" ("schoolId", "directReachAcknowledgedAt") VALUES (b, now())
+    ON CONFLICT ("schoolId") DO UPDATE SET "directReachAcknowledgedAt" = now();
+  PERFORM pg_temp.ut_expect('600o B has answered', (SELECT answered::text FROM app.direct_reach_facts(yb)), 'true');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', admin_a)::text, true);
+  PERFORM pg_temp.ut_expect('600o ... and A has not', (SELECT answered::text FROM app.direct_reach_facts(ya)), 'false');
+
+  -- No login, and an empty claim a pooled connection reads: no school, no row.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM pg_temp.ut_expect('600o with no login there is no school and no row', (SELECT count(*)::text FROM app.direct_reach_facts(ya)), '0');
+  RAISE NOTICE 'ut 600o: % checks', current_setting('ut.checks');
+END $$;
+ROLLBACK;
+
 -- ---------------------------------------------------------------------------
--- Ledighetsansökan som familjen drar tillbaka (K6, 20270315090100), avsnitt 600o: det bara ägaren kan fråga. Raderna skrivs som ägaren
+-- Ledighetsansökan som familjen drar tillbaka (K6, 20270315090100), avsnitt 602o: det bara ägaren kan fråga. Raderna skrivs som ägaren
 -- (utan en inloggad person, så att triggern inte släpper in något annat än funktionen), funktionen körs med den ansökandes claims, och
 -- notiserna läses som ägaren, eftersom ingen API-roll läser en annan persons notiser.
 -- ---------------------------------------------------------------------------
@@ -8705,13 +8795,13 @@ BEGIN
   SELECT gs."studentId" INTO child FROM "GuardianStudents" gs WHERE gs."guardianId" = guardian ORDER BY gs."studentId" LIMIT 1;
   SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
   SELECT id INTO other_guardian FROM "Users" WHERE "schoolId" = school AND role = 'GUARDIAN' AND "isActive" AND id <> guardian ORDER BY id LIMIT 1;
-  IF child IS NULL OR teacher IS NULL OR other_guardian IS NULL THEN RAISE EXCEPTION 'ut 600o: the fixtures lack a child, a teacher or a second guardian'; END IF;
+  IF child IS NULL OR teacher IS NULL OR other_guardian IS NULL THEN RAISE EXCEPTION 'ut 602o: the fixtures lack a child, a teacher or a second guardian'; END IF;
 
   -- Two requests of one family, written as the owner (no person: the owner's own writes are not the family's).
   INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
-  VALUES (school, child, guardian, DATE '2096-07-06', DATE '2096-07-07', 'ut600o 1') RETURNING id INTO r1;
+  VALUES (school, child, guardian, DATE '2096-07-06', DATE '2096-07-07', 'ut602o 1') RETURNING id INTO r1;
   INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
-  VALUES (school, child, guardian, DATE '2096-07-13', DATE '2096-07-14', 'ut600o 2') RETURNING id INTO r2;
+  VALUES (school, child, guardian, DATE '2096-07-13', DATE '2096-07-14', 'ut602o 2') RETURNING id INTO r2;
   -- What each asked of somebody: a mentor's "new request", a guardian's request for consent and its reminder, and an unrelated notice; one of the second's.
   INSERT INTO "Notifications" ("schoolId", "userId", type, meta) VALUES
     (school, teacher, 'LEAVE_REQUESTED', jsonb_build_object('leaveRequestId', r1)),
@@ -8721,63 +8811,63 @@ BEGIN
     (school, teacher, 'LEAVE_REQUESTED', jsonb_build_object('leaveRequestId', r2));
   INSERT INTO "Notifications" ("schoolId", "userId", type, meta, "readAt") VALUES
     (school, teacher, 'LEAVE_REQUESTED', jsonb_build_object('leaveRequestId', r1, 'old', true), TIMESTAMPTZ '2096-01-01 00:00:00+00');
-  PERFORM set_config('ut.t600o_school', school::text, true);
-  PERFORM set_config('ut.t600o_r1', r1::text, true);
-  PERFORM set_config('ut.t600o_r2', r2::text, true);
-  PERFORM set_config('ut.t600o_auth', guardian_auth::text, true);
-  PERFORM set_config('ut.t600o_other_auth', (SELECT "authId"::text FROM "Users" WHERE id = other_guardian), true);
+  PERFORM set_config('ut.t602o_school', school::text, true);
+  PERFORM set_config('ut.t602o_r1', r1::text, true);
+  PERFORM set_config('ut.t602o_r2', r2::text, true);
+  PERFORM set_config('ut.t602o_auth', guardian_auth::text, true);
+  PERFORM set_config('ut.t602o_other_auth', (SELECT "authId"::text FROM "Users" WHERE id = other_guardian), true);
 
   -- Without a person the function refuses; with the filer's claims it takes the request back.
-  PERFORM pg_temp.ut_expect('600o no person, no taking back (LV403)', pg_temp.ut_try(format($q$SELECT app.leave_request_withdraw(%L)$q$, r1)), 'LV403');
+  PERFORM pg_temp.ut_expect('602o no person, no taking back (LV403)', pg_temp.ut_try(format($q$SELECT app.leave_request_withdraw(%L)$q$, r1)), 'LV403');
   PERFORM set_config('request.jwt.claims', json_build_object('sub', guardian_auth)::text, true);
-  PERFORM pg_temp.ut_expect('600o the filer takes request 1 back', app.leave_request_withdraw(r1)::text, 'true');
+  PERFORM pg_temp.ut_expect('602o the filer takes request 1 back', app.leave_request_withdraw(r1)::text, 'true');
   PERFORM set_config('request.jwt.claims', '', true);
 
-  PERFORM pg_temp.ut_expect('600o the request is withdrawn, with a moment, and no decider', (SELECT concat_ws('|', status, "decidedAt" IS NOT NULL, "decidedById" IS NULL, "decidedAs" IS NULL) FROM "LeaveRequests" WHERE id = r1), 'WITHDRAWN|t|t|t');
-  PERFORM pg_temp.ut_expect('600o what it asked of anybody is read: the mentor''s and the guardians'' notices of THIS request',
+  PERFORM pg_temp.ut_expect('602o the request is withdrawn, with a moment, and no decider', (SELECT concat_ws('|', status, "decidedAt" IS NOT NULL, "decidedById" IS NULL, "decidedAs" IS NULL) FROM "LeaveRequests" WHERE id = r1), 'WITHDRAWN|t|t|t');
+  PERFORM pg_temp.ut_expect('602o what it asked of anybody is read: the mentor''s and the guardians'' notices of THIS request',
     (SELECT count(*)::text FROM "Notifications" WHERE meta ->> 'leaveRequestId' = r1::text AND type IN ('LEAVE_REQUESTED', 'LEAVE_CONSENT_REQUESTED', 'LEAVE_CONSENT_REMINDER') AND "readAt" IS NOT NULL), '4');
-  PERFORM pg_temp.ut_expect('600o ... the notice that is not a question is left unread (the decision to the family)',
+  PERFORM pg_temp.ut_expect('602o ... the notice that is not a question is left unread (the decision to the family)',
     (SELECT count(*)::text FROM "Notifications" WHERE meta ->> 'leaveRequestId' = r1::text AND type = 'LEAVE_DECIDED' AND "readAt" IS NULL), '1');
-  PERFORM pg_temp.ut_expect('600o ... another request''s notice is left unread', (SELECT count(*)::text FROM "Notifications" WHERE meta ->> 'leaveRequestId' = r2::text AND "readAt" IS NULL), '1');
-  PERFORM pg_temp.ut_expect('600o ... and one read before keeps the moment it was read', (SELECT "readAt"::text FROM "Notifications" WHERE meta ->> 'old' = 'true'), '2096-01-01 00:00:00+00');
+  PERFORM pg_temp.ut_expect('602o ... another request''s notice is left unread', (SELECT count(*)::text FROM "Notifications" WHERE meta ->> 'leaveRequestId' = r2::text AND "readAt" IS NULL), '1');
+  PERFORM pg_temp.ut_expect('602o ... and one read before keeps the moment it was read', (SELECT "readAt"::text FROM "Notifications" WHERE meta ->> 'old' = 'true'), '2096-01-01 00:00:00+00');
 
   -- The CHECK, with the trigger out of the way: a withdrawn request has a moment and no decider.
   ALTER TABLE "LeaveRequests" DISABLE TRIGGER "LeaveRequests_gate";
-  PERFORM pg_temp.ut_expect('600o a withdrawn request with a decider is refused', split_part(pg_temp.ut_try(format(
+  PERFORM pg_temp.ut_expect('602o a withdrawn request with a decider is refused', split_part(pg_temp.ut_try(format(
     $q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now(), "decidedById" = %L WHERE id = %L$q$, guardian, r2)), ' ', 1), '23514');
-  PERFORM pg_temp.ut_expect('600o ... one without a moment', split_part(pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN' WHERE id = %L$q$, r2)), ' ', 1), '23514');
-  PERFORM pg_temp.ut_expect('600o ... one with a role that decided', split_part(pg_temp.ut_try(format(
+  PERFORM pg_temp.ut_expect('602o ... one without a moment', split_part(pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN' WHERE id = %L$q$, r2)), ' ', 1), '23514');
+  PERFORM pg_temp.ut_expect('602o ... one with a role that decided', split_part(pg_temp.ut_try(format(
     $q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now(), "decidedAs" = 'ADMIN' WHERE id = %L$q$, r2)), ' ', 1), '23514');
   ALTER TABLE "LeaveRequests" ENABLE TRIGGER "LeaveRequests_gate";
 
   -- The trigger, as the owner with no person: not the filer's, so not withdrawn by a write (LV418), and only a request that waits (LV417).
-  PERFORM pg_temp.ut_expect('600o a write with no person does not withdraw (LV418)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now() WHERE id = %L$q$, r2)), 'LV418');
+  PERFORM pg_temp.ut_expect('602o a write with no person does not withdraw (LV418)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now() WHERE id = %L$q$, r2)), 'LV418');
   UPDATE "LeaveRequests" SET status = 'REJECTED', "decidedAt" = now() WHERE id = r2;
   PERFORM set_config('request.jwt.claims', json_build_object('sub', guardian_auth)::text, true);
-  PERFORM pg_temp.ut_expect('600o a request that is rejected is not withdrawn by a write either (LV417)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now() WHERE id = %L$q$, r2)), 'LV417');
-  PERFORM pg_temp.ut_expect('600o ... and the function says no', app.leave_request_withdraw(r2)::text, 'false');
+  PERFORM pg_temp.ut_expect('602o a request that is rejected is not withdrawn by a write either (LV417)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'WITHDRAWN', "decidedAt" = now() WHERE id = %L$q$, r2)), 'LV417');
+  PERFORM pg_temp.ut_expect('602o ... and the function says no', app.leave_request_withdraw(r2)::text, 'false');
   PERFORM set_config('request.jwt.claims', '', true);
-  PERFORM pg_temp.ut_expect('600o a withdrawn request is decided by nobody (LV409)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'APPROVED' WHERE id = %L$q$, r1)), 'LV409');
+  PERFORM pg_temp.ut_expect('602o a withdrawn request is decided by nobody (LV409)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET status = 'APPROVED' WHERE id = %L$q$, r1)), 'LV409');
   -- DEPLOYMENT "A family takes back a leave request", Rolling back: the owner's bare UPDATE to the old code's REJECTED is refused too (LV409),
   -- and with the gate out of the way for the statement the request becomes a REJECTED one with no decider and the moment it was taken back.
-  PERFORM pg_temp.ut_expect('600o the rollback''s conversion to REJECTED is refused by the gate (LV409)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET "status" = 'REJECTED' WHERE "status" = 'WITHDRAWN' AND id = %L$q$, r1)), 'LV409');
+  PERFORM pg_temp.ut_expect('602o the rollback''s conversion to REJECTED is refused by the gate (LV409)', pg_temp.ut_try(format($q$UPDATE "LeaveRequests" SET "status" = 'REJECTED' WHERE "status" = 'WITHDRAWN' AND id = %L$q$, r1)), 'LV409');
   ALTER TABLE "LeaveRequests" DISABLE TRIGGER "LeaveRequests_gate";
   UPDATE "LeaveRequests" SET "status" = 'REJECTED' WHERE "status" = 'WITHDRAWN' AND id = r1;
   ALTER TABLE "LeaveRequests" ENABLE TRIGGER "LeaveRequests_gate";
-  PERFORM pg_temp.ut_expect('600o ... and with the gate out of the way it is converted, with no decider and its moment kept',
+  PERFORM pg_temp.ut_expect('602o ... and with the gate out of the way it is converted, with no decider and its moment kept',
     (SELECT concat_ws('|', status, "decidedById" IS NULL, "decidedAs" IS NULL, "decidedAt" IS NOT NULL) FROM "LeaveRequests" WHERE id = r1), 'REJECTED|t|t|t');
-  PERFORM pg_temp.ut_expect('600o ... and the gate is on again', (SELECT tgenabled::text FROM pg_trigger WHERE tgrelid = '"LeaveRequests"'::regclass AND tgname = 'LeaveRequests_gate'), 'O');
+  PERFORM pg_temp.ut_expect('602o ... and the gate is on again', (SELECT tgenabled::text FROM pg_trigger WHERE tgrelid = '"LeaveRequests"'::regclass AND tgname = 'LeaveRequests_gate'), 'O');
 
   -- Rights: the API's role alone.
-  PERFORM pg_temp.ut_expect('600o the function is the API role''s alone',
+  PERFORM pg_temp.ut_expect('602o the function is the API role''s alone',
     concat_ws('/', has_function_privilege('app_authenticated', 'app.leave_request_withdraw(uuid)', 'EXECUTE')::text,
       (SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN has_function_privilege('authenticated', 'app.leave_request_withdraw(uuid)', 'EXECUTE')::text ELSE 'false' END),
       (SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN has_function_privilege('anon', 'app.leave_request_withdraw(uuid)', 'EXECUTE')::text ELSE 'false' END),
       (SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN has_function_privilege('service_role', 'app.leave_request_withdraw(uuid)', 'EXECUTE')::text ELSE 'false' END),
       (SELECT count(*)::text FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE p.oid = 'app.leave_request_withdraw(uuid)'::regprocedure AND a.grantee = 0)),
     'true/false/false/false/0');
-  PERFORM pg_temp.ut_expect('600o the function is a definer with a pinned search path',
+  PERFORM pg_temp.ut_expect('602o the function is a definer with a pinned search path',
     (SELECT concat_ws('|', p.prosecdef, array_to_string(p.proconfig, ',')) FROM pg_proc p WHERE p.oid = 'app.leave_request_withdraw(uuid)'::regprocedure), 't|search_path=public, pg_temp');
-  RAISE NOTICE 'ut 600o: % checks', current_setting('ut.checks');
+  RAISE NOTICE 'ut 602o: % checks', current_setting('ut.checks');
 END $$;
 ROLLBACK;

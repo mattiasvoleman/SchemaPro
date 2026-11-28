@@ -26,7 +26,7 @@ vi.mock("next-intl", () => ({
 const NS = "generate.suggestions";
 const answer = (over: Partial<Suggestions> = {}): Suggestions => ({
   version: 1, state: "DONE", startedAt: "2027-03-05T10:00:00.000Z", finishedAt: "2027-03-05T10:01:30.000Z", verdict: "SOLVABLE_AS_IS", verified: true,
-  total: 0, searchSeconds: 60, verifySeconds: 2.5, changes: [], failure: null, ...over,
+  total: 0, searchSeconds: 60, verifySeconds: 2.5, changes: [], failure: null, report: null, ...over,
 });
 const render = (over: Partial<OptimizationJob>) => {
   const job = {

@@ -34,11 +34,14 @@ import { cn } from "@/lib/utils";
 import { EXEMPT_RULES, exemptableReasons, type ExemptRule } from "@/lib/exemptions";
 import { type MoveRefusal, moveOf, useLessonJudgement } from "@/lib/lesson-judgement";
 import { problemSentence } from "@/lib/problem-codes";
+import { LessonPossibleTimes } from "@/components/schedule/lesson-possible-times";
+import { LessonRoomChoices } from "@/components/schedule/lesson-room-choices";
 import { RecurrenceFields } from "@/components/schedule/recurrence-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { keptByMotor, motorOwner } from "@/lib/motor-owner";
 import {
   Dialog,
   DialogContent,
@@ -191,6 +194,8 @@ export function LessonEditDialog({
   const has = exempt.length > 0 && judged.status !== "checking";
   const holdsLock = exempt.length > 0 && (judged.status !== "done" || giving.length > 0);
   const takeBack = () => onDraftChange({ ...draft, exempt: [], isLocked: lesson?.isLocked ?? false });
+  // Låst eller fri för motorn (E4): the lesson with the lock as the switch shows it (a held lock is on), asked of the gateway's own rule.
+  const owner = lesson ? motorOwner({ ...lesson, isLocked: draft.isLocked || holdsLock }) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -211,6 +216,8 @@ export function LessonEditDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-4 [&>*]:min-w-0">
+          {/* Where the lesson can stand (E3): the best times, each a button that fills the fields below. Closed until opened. */}
+          {lesson ? <LessonPossibleTimes lesson={lesson} draft={draft} onDraftChange={onDraftChange} /> : null}
           {/* Every Label points at its control, as in Lägg till: a Label
               beside a Radix trigger is not tied to it otherwise. */}
           <div className="col-span-2 space-y-2">
@@ -291,6 +298,8 @@ export function LessonEditDialog({
               </SelectContent>
             </Select>
           </div>
+          {/* Which room, at this time (E3): ranked, with what stands in the busy ones. Closed until opened. */}
+          {lesson ? <LessonRoomChoices lesson={lesson} draft={draft} onDraftChange={onDraftChange} none={none} /> : null}
           <RecurrenceFields
             idPrefix="edit"
             value={{
@@ -381,6 +390,8 @@ export function LessonEditDialog({
                 </label>
                 <div id="edit-lock-hint" className="text-xs text-muted-foreground">
                   {holdsLock ? t("lockHintExempt") : t("lockHint")}
+                  {/* Låst eller fri för motorn (E4): what the next Generera does with the lesson as the switch beside it leaves it. */}
+                  {owner !== null ? <span className="mt-0.5 block">{t(`motor.${keptByMotor(owner) ? "kept" : "free"}.${owner}`)}</span> : null}
                 </div>
               </div>
             </div>

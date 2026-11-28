@@ -187,9 +187,11 @@ describe("Elever, Klass – Elev", () => {
     expect(readFormat(table("elever-klass.tsv"), pupils, { header: "absent" })).toBeNull();
   });
 
-  it("cannot be imported as it stands: Skola24's file has no e-mail and Rastra's importer wants one", () => {
+  it("can be imported as it stands: Skola24's file has no e-mail, and the importer takes a pupil with none (Personer utan e-postadress)", () => {
     const reading = readFormat(table("elever-klass.tsv"), pupils)!;
-    expect(applyMapping(reading.block, "students", reading.assignment).problems).toEqual([{ code: "MISSING_REQUIRED", field: "email" }]);
+    const applied = applyMapping(reading.block, "students", reading.assignment);
+    expect(applied.problems).toEqual([]);
+    expect(applied.rows.length).toBeGreaterThan(0);
   });
 
   it("is not exact when it has a column of its own, and names that column: a single name column is no column the page lists", () => {

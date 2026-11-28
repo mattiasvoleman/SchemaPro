@@ -148,18 +148,32 @@ describe("where a seam is NOT bridged", () => {
     expect(result.files[0]!.text).toBe("Schema\r\nDatum PNR-0001\r\n Matematik i sal 4\r\nDatum PNR-0002\r\n Svenska i sal 5\r\n");
   });
 
-  it("is the other price, which the manual now says too (the review of #403): a time written without a colon at the end of a line and digits at the start of the next are a telephone number, and the marker takes the start of the second line with it", () => {
+  it("is no longer a price: a time written without a colon at the end of a line and digits at the start of the next are eight digits and left as they are (X1b, the review of #403, M-1); the manual says so", () => {
     const text = ["Schema", "Tid 0815", "0810 Matematik i sal 4", "Tid 0900", "1000 Svenska i sal 5", ""].join("\r\n");
     const result = run(text);
-    expect(result.report.totals.tel.occurrences).toBe(2);
-    expect(result.files[0]!.text).toBe("Schema\r\nTid TEL-0001\r\n Matematik i sal 4\r\nTid TEL-0002\r\n Svenska i sal 5\r\n");
+    expect(result.report.totals.tel.occurrences).toBe(0);
+    expect(result.files[0]!.text).toBe(text);
   });
 
-  it("is said in the manual, next to the price of a date and four digits: a time without a colon, the marker that takes the start of the next line, and what 46 costs in the telephone row (the review of #403)", () => {
+  it("does not end a number in the middle of a word on the second line: a list of lessons with no delimiter keeps the row numbers and the classes (X1b, the review of #403, M-1)", () => {
+    const text = ["Lektioner", "0001 7A MAT 0815 0900", "0002 7A ENG 0910 0955", "0003 7B SVE 1010 1055", ""].join("\r\n");
+    expect(run(text).files[0]!.text).toBe(text);
+  });
+
+  it("still puts a telephone number of nine or ten digits together that a line break cut, and one cut right after its plus", () => {
+    expect(run(["Brev till vårdnadshavare", "Ring mig på 070 123 45", "67 om det brådskar", ""].join("\r\n")).files[0]!.text).toBe(
+      ["Brev till vårdnadshavare", "Ring mig på TEL-0001", " om det brådskar", ""].join("\r\n"),
+    );
+    expect(run(["Brev till vårdnadshavare", "Ring mig på +", "46 70 910 72 78 om det brådskar", ""].join("\r\n")).report.totals.tel.occurrences).toBe(1);
+  });
+
+  it("is said in the manual, next to the price of a date and four digits: a time without a colon that is left, the Stockholm number that is not found, and what 46 costs in the telephone row (the review of #403)", () => {
     const manual = readFileSync(resolve(process.cwd(), "../docs/manual/anvandarmanual.html"), "utf8").replace(/\s+/g, " ");
     expect(manual).toContain("<em>Tid 0815</em> och <em>0810 Matematik</em>");
     expect(manual).toContain("<em>Vecka 46 20261116</em>");
-    expect(manual).toContain("märket tar början av den andra raden med sig");
+    expect(manual).toContain("har nio siffror eller fler");
+    expect(manual).toContain("lämnas som det är");
+    expect(manual).not.toContain("märket tar början av den andra raden med sig");
   });
 
   it("wants two letters in a row beside the number, and one letter is not text: 'Å 20261121' and '0810' are left", () => {

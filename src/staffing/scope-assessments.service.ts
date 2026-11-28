@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
+import { todayInZone } from '../common/utils/time';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { SCOPE_SCHOOL_FORM } from './assignment-scope';
 import { readScopeVersions } from './assignment-scope-reader';
@@ -39,6 +40,13 @@ export const SCOPE_NUMBERING_NOT_COVERED = 'Förordningen har ännu inga nivåer
 /** The day a teacher took their own initiative (11 § p. 1) lies in the läsår or at most a year before it: a typo (2072 for 2027) is not a day. */
 export const scopeDayOutsideYear = (from: string, to: string): string =>
   `Dagen då läraren tog initiativet ska ligga i läsåret eller högst ett år före det: från ${from} till och med ${to}.`;
+/**
+ * An exception on the teacher's own initiative (11 § p. 1) is registered AFTER the initiative was taken: the day is the day it was, and a day
+ * after the school's today is one that has not come (the review of #413, U-2). Until then the bound was the läsår's last day, so a day
+ * that was a month away was kept, and read on the card as something that had happened. `today` is the school's own day.
+ */
+export const scopeDayInFuture = (today: string): string =>
+  `Dagen då läraren tog initiativet kan inte ligga efter i dag (${today}): undantaget registreras när initiativet har tagits.`;
 export const scopeAboveEdge = (edge: number): string =>
   `Nivån kan inte vara över förordningens högsta nivå, ${edge} timmar vid heltid (SFS 2026:1487 3 §). Rektorn väljer en nivå inom spannet eller under det.`;
 
@@ -98,6 +106,9 @@ export function hideScopeAssessment(row: ScopeAssessmentResponse): ScopeAssessme
  * the reference data) moves the bound without a migration. The edge is the highest upper edge of any band of the lydelse in the year's
  * numbering: a teacher's stage decides which edge is theirs, and a teacher with no teaching yet has none, so the service cannot hold a
  * level to a stage it does not know. The report reads a level above the teacher's own edge as the edge (assignment-scope.ts).
+ *
+ * THE DAY OF AN OWN INITIATIVE lies in the läsår or at most a year before it, and not after the school's today: it is the day the teacher took
+ * the initiative, and nothing is registered before it was taken.
  *
  * A YEAR THE ORDINANCE DOES NOT REACH has nothing to assess. It is refused, so that no level is written that would one day be read
  * against a lydelse it was never judged against: every läsår that begins before 2027-07-01, and the ten-year numbering until the
@@ -163,6 +174,11 @@ export class ScopeAssessmentsService {
           const from = yearBefore(year.startDate);
           const to = day(year.endDate);
           if (ownInitiativeOn < from || ownInitiativeOn > to) throw new BadRequestException(scopeDayOutsideYear(from, to));
+          // The school's own day, from its own zone (a rektor who registers at half past midnight on the 2nd is on the 2nd in Sweden and on the
+          // 1st in UTC). Asked only when there is a day to ask of, so a level alone costs no read.
+          const school = await tx.school.findUnique({ where: { id: schoolId }, select: { timezone: true } });
+          const today = day(todayInZone(school?.timezone ?? 'Europe/Stockholm'));
+          if (ownInitiativeOn > today) throw new BadRequestException(scopeDayInFuture(today));
         }
         const saved = await tx.assignmentScopeAssessment.upsert({
           where: { schoolId_userId_academicYearId: { schoolId, userId, academicYearId } },

@@ -94,6 +94,20 @@ export default defineConfig({
       testMatch: /(a11y|a11y-app|aria)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
+    // The public page Pseudonymisera en fil in the two engines the other projects do not use (X1b, the review of #398: "not tried in Firefox or Safari"). CI installs Chromium only and
+    // runs the projects above by name, so these two are never run there; a person who has the browsers runs one by name: `npx playwright install firefox webkit`, then
+    // `npx playwright test --project=pseudonym-firefox` or `--project=pseudonym-webkit` against a production build (E2E_STUB_PORT, and `npm run build && npm run start`: the strict policy is only on
+    // there). What differs between the engines is what the page leans on: `DecompressionStream`, regular expressions with lookbehind and \p{…}, a download by a Blob, and the policy's own refusal.
+    {
+      name: "pseudonym-firefox",
+      testMatch: /pseudonymiserare\.smoke\.spec\.ts/,
+      use: { ...devices["Desktop Firefox"] },
+    },
+    {
+      name: "pseudonym-webkit",
+      testMatch: /pseudonymiserare\.smoke\.spec\.ts/,
+      use: { ...devices["Desktop Safari"] },
+    },
     {
       name: "document-size",
       testMatch: /document-size\.spec\.ts/,

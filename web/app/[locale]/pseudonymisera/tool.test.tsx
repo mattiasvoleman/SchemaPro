@@ -204,6 +204,26 @@ describe("the tool, a file at a time", () => {
     expect(screen.queryByRole("button", { name: sv["tool.run"] })).not.toBeInTheDocument();
   });
 
+  // The review of #429, L-4: the instance is dropped and the focus with it, and nobody said it was done.
+  it("puts the focus on the first control after Rensa allt, and says everything is gone until something is put in again", async () => {
+    const user = setup();
+    await runFile(user);
+    expect(document.getElementById("cleared-status")).toBeEmptyDOMElement();
+    await user.click(screen.getByRole("button", { name: sv["tool.clearAll"] }));
+    expect(screen.getByLabelText(sv["tool.chooseFiles"])).toHaveFocus();
+    expect(document.getElementById("cleared-status")).toHaveTextContent(sv["tool.cleared"]);
+    // Something is put in, and the sentence has done its work.
+    await user.click(screen.getByLabelText(sv["tool.pasteLabel"]));
+    await user.paste("Anna Svensson");
+    expect(document.getElementById("cleared-status")).toBeEmptyDOMElement();
+  });
+
+  it("does not take the focus when the page is first drawn", () => {
+    setup();
+    expect(screen.getByLabelText(sv["tool.chooseFiles"])).not.toHaveFocus();
+    expect(document.getElementById("cleared-status")).toBeEmptyDOMElement();
+  });
+
   // "Rensa allt" drops what the page holds. Text pasted and not yet added is held too, and before a file is added the button used to be missing.
   describe("clears what the page holds even when no file is added", () => {
     const clearAll = () => screen.queryAllByRole("button", { name: sv["tool.clearAll"] });
@@ -389,6 +409,23 @@ describe("the tool asks where it cannot tell", () => {
     expect(within(columns).getByText(/datum över \d+ dagar: kan vara födelsedatum/)).toBeInTheDocument();
     expect(within(columns).getByText(sv["proposal.none"])).toBeInTheDocument();
     expect(screen.getByRole("button", { name: sv["tool.run"] })).toBeDisabled();
+  });
+
+  it("asks about a column of birth dates that all lie in one year, and says it is for how old they are (X1b: a class is born in one year, and it was kept as numbers)", async () => {
+    const user = setup();
+    await addFile(user, csv("elever.csv", "Klass;F-datum\n7A;2013-02-14\n7A;2013-05-03\n7B;2013-09-30\n7B;2013-11-11\n"));
+    const columns = await screen.findByRole("table", { name: sv["col.caption"].replace("{n}", "1") });
+    expect(within(columns).getByText(new RegExp(sv["col.dateOld"]))).toBeInTheDocument();
+    expect(within(columns).getByText(sv["proposal.none"])).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: sv["tool.run"] })).toBeDisabled();
+  });
+
+  it("asks about a column of dates written as six digits, which a spreadsheet keeps as numbers, and says how many (X1b)", async () => {
+    const user = setup();
+    await addFile(user, csv("elever.csv", "Klass;F\n7A;130214\n7A;130503\n7B;130930\n7B;131111\n"));
+    const columns = await screen.findByRole("table", { name: sv["col.caption"].replace("{n}", "1") });
+    expect(within(columns).getByText(/4 värden skrivna som datum utan tecken emellan \(ÅÅMMDD\): kan vara födelsedatum/)).toBeInTheDocument();
+    expect(within(columns).getByText(sv["proposal.none"])).toBeInTheDocument();
   });
 
   it("says in the result that the check searches as the tool does, and lists the short names it does not look for", async () => {

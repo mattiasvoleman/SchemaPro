@@ -45,7 +45,9 @@ from __future__ import annotations
 
 import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Literal
 from uuid import UUID, uuid4
 
 from ortools.sat.python import cp_model
@@ -105,6 +107,19 @@ DEFAULT_WORKERS = 4
 #: Under this a check is not started: a build and a solve cannot answer in less, and a
 #: check that stops at the clock says nothing.
 MIN_VERIFY_SECONDS = 5
+#: LOWERING `needed` (G6b, g384-L-1; `refine`): how many strict checks it may spend and the seconds each may take. It has NO SECONDS OF ITS
+#: OWN: it spends what the route's ceiling has left after the search and the check (the 150 s the handbook says stay 150), so on a week
+#: whose builds are long it gets one check or none and says nothing of the values it did not try. The checks warm-start from the search's
+#: timetable and stop at the first solution, and a lower value that holds no timetable is proved INFEASIBLE or is not decided: both end
+#: the descent of that change.
+MAX_REFINEMENTS = 8
+REFINE_CHECK_SECONDS = 15
+#: A part-timer's days have checks of their own, after every other change's (g510). The gateway shows no figure of a post's days to anyone:
+#: not how many it is over and not whether one fewer would do. Checks they shared with the others would show: the dearest change goes first
+#: (a day weighs 1 200, a cap's five minutes 14), so a post that is not at its least spent three of the eight and the cheaper changes
+#: ended with `neededIsLeast` None where a post at its least left them proved, and a post that fell away left one more proved than one that
+#: stayed. Beside the others they cannot move what is said of them.
+MAX_REFINEMENTS_DAYS = 4
 
 #: The cap's price is per five minutes (relaxation._CAP_BASE_MINUTES, pinned by a test).
 _CAP_UNIT_MINUTES = 5
@@ -114,7 +129,7 @@ _RULE_ORDER: dict[str, int] = {rule.name: index for index, rule in enumerate(REL
 
 
 def route_limits(settings: Settings, search: SearchOptions | None = None) -> RouteLimits:
-    """What this route may take: the search, the check, and the builds before each.
+    """What this route may take: the search, the check, and the builds before each. The lowering of `needed` (`refine`) spends what is left of it.
 
     The headroom counts two builds' worth (the search's models and the check's),
     as the generator's counts the builds before its search. No probe: nothing runs
@@ -396,6 +411,9 @@ def _room_additions(
 # ---------------------------------------------------------------------------
 
 
+StrictVerdict = Literal["ACCEPTED", "INFEASIBLE", "UNDECIDED"]
+
+
 def strict_accepts(
     request: OptimizeScheduleRequest,
     lessons: list[ScheduledLesson],
@@ -404,7 +422,19 @@ def strict_accepts(
     seconds: float,
     workers: int | None = None,
 ) -> bool:
-    """Whether the strict model of `request` finds a timetable within `seconds`, warm-started from `lessons`.
+    """Whether the strict model of `request` finds a timetable within `seconds`, warm-started from `lessons` (`strict_check` says more)."""
+    return strict_check(request, lessons, settings, seconds=seconds, workers=workers) == "ACCEPTED"
+
+
+def strict_check(
+    request: OptimizeScheduleRequest,
+    lessons: list[ScheduledLesson],
+    settings: Settings,
+    *,
+    seconds: float,
+    workers: int | None = None,
+) -> StrictVerdict:
+    """What the strict model of `request` says within `seconds`, warm-started from `lessons`: ACCEPTED, INFEASIBLE (proved), or UNDECIDED.
 
     THE STRICT BUILD, NO RELAXATION: the rules of the changed week are rows again
     and a timetable that breaks one is not a solution. The lessons are a hint, in
@@ -415,14 +445,16 @@ def strict_accepts(
 
     A build the engine refuses, a solve that decides nothing in time and a model
     that is infeasible are all "not accepted": the caller says "may help" and
-    logs. None of them is an error for the school.
+    logs. None of them is an error for the school. The two that lower a value
+    (`refine`) tell them apart: an INFEASIBLE is a proof that no timetable holds the
+    rule at that value, anything else only that none was found.
     """
     solver = SchedulerSolver(settings)
     try:
         model, _, decisions, *_ = solver._build_model(request, use_assumptions=False, include_objective=False)  # noqa: SLF001
     except (InvalidScheduleInputError, SolverBuildError) as refusal:
         logger.warning("suggestion_check_refused_build", reason=str(refusal))
-        return False
+        return "UNDECIDED"
     previous = [
         PreviousLesson(
             requirement_id=lesson.requirement_id,
@@ -438,7 +470,119 @@ def strict_accepts(
     if workers is not None:
         cp.parameters.num_workers = workers
     status = _solve_guarded(cp, model, what="the suggestion check", request_id=request.request_id)
-    return status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return "ACCEPTED"
+    return "INFEASIBLE" if status == cp_model.INFEASIBLE else "UNDECIDED"
+
+
+# ---------------------------------------------------------------------------
+# Lowering `needed`
+# ---------------------------------------------------------------------------
+
+
+def _step(change: SuggestedChange) -> int:
+    """One step of the value a change names: five minutes for a cap (the grid the price is read in), one for every other rule."""
+    return _CAP_UNIT_MINUTES if change.rule == "TEACHER_DAILY_CAP" else 1
+
+
+def _values_back(change: SuggestedChange) -> list[int]:
+    """The values from `needed` back toward the one the school has now, one step at a time, the school's own last. Empty for a rule with none.
+
+    A cap, a post's days and a subject's cap a day are tightened by LOWERING the number and a spread of days by RAISING it: the school's
+    own value is the strict end of the way either way. The school's own value is on the list, because a list that holds with it is a
+    change the school need not make, and the check is what says so."""
+    if change.current is None or change.needed is None or change.rule == "ROOM_LOCK":
+        return []
+    step = _step(change)
+    values: list[int] = []
+    direction = 1 if change.current > change.needed else -1
+    value = change.needed
+    while True:
+        value += direction * step
+        if (direction > 0 and value >= change.current) or (direction < 0 and value <= change.current):
+            values.append(change.current)
+            return values
+        values.append(value)
+
+
+def refine(
+    request: OptimizeScheduleRequest,
+    lessons: list[ScheduledLesson],
+    changes: list[SuggestedChange],
+    settings: Settings,
+    *,
+    left: Callable[[], float],
+    workers: int | None = None,
+) -> tuple[list[SuggestedChange], int]:
+    """Lower each change's `needed` while the strict model still lays the week, dearest change first and a part-timer's days last: the list and the checks spent.
+
+    `needed` IS WHAT THE SEARCH'S TIMETABLE NEEDED, and the search is not looking for the least (docs/DEPLOYMENT.md §33.2: on 3 of 59 weeks
+    the strict solver laid the week a step below it, a cap of 240 where 180 holds). For each change the values back toward the school's own
+    are tried (the value one step below `needed` first, then by halving), each a strict check of the whole list with that one change at the value (the others as they then are), warm
+    started from the search's timetable: a value that is ACCEPTED is the new `needed`; one that is INFEASIBLE ends the way (and proves the
+    value above it the least, for a list with the others as they then are: `needed_is_least`); one that is not decided ends it without a
+    claim. A list that holds with a change at the school's own value does not need the change, and it is dropped.
+
+    NOTHING IS SPENT THAT THE ROUTE DOES NOT HAVE: `left()` is the seconds before the answer is due, every check is given at most
+    REFINE_CHECK_SECONDS of it (the build before it is not under its clock) and none is started with under MIN_VERIFY_SECONDS. A change that
+    was not tried keeps the `needed` it had and says nothing (`needed_is_least` None).
+    """
+    current = list(changes)
+    spent = 0
+    spent_days = 0
+    # Dearest first, and a part-timer's days after all the others, with checks of their own (MAX_REFINEMENTS_DAYS): what they spend is not
+    # what the others may. The others are checked with the days as the search had them, which is the looser value, so a value proved not to
+    # hold there holds nowhere under the days once they are lowered; the days last, with the others as they ended.
+    order = sorted(range(len(current)), key=lambda index: (current[index].rule == "TEACHER_WORK_DAYS", -current[index].cost))
+    dropped: set[int] = set()
+    for index in order:
+        change = current[index]
+        values = _values_back(change)
+        if not values:
+            continue
+        days = change.rule == "TEACHER_WORK_DAYS"
+        good = -1  # the index in `values` of the lowest value accepted; -1 is `needed` itself
+        bad: int | None = None
+        proved = False  # whether the lowest value known not to hold (`bad`) was PROVED not to
+        while (spent_days < MAX_REFINEMENTS_DAYS if days else spent < MAX_REFINEMENTS):
+            top = len(values) - 1 if bad is None else bad - 1
+            if good >= top:
+                break
+            # THE VALUE ONE STEP BELOW `needed` IS ASKED FIRST, then the halving (g493). `needed` is already the least on nearly every week
+            # (56 of 59 in the review of #384), and one check of the value below it is then the whole proof: INFEASIBLE says `needed_is_least`.
+            # Halving from the middle needs five or six checks to say the same, and on a week whose builds take ten seconds the route has
+            # time for one, so the lowering would prove nothing and the checks would all go to the dearest change.
+            probe = 0 if good < 0 and bad is None else (good + top + 2) // 2
+            available = min(float(REFINE_CHECK_SECONDS), left() - BUILD_HEADROOM_SECONDS)
+            if available < MIN_VERIFY_SECONDS:
+                break
+            candidate = [
+                other.model_copy(update={"needed": values[probe]}) if position == index else other
+                for position, other in enumerate(current)
+                if position not in dropped
+            ]
+            if days:
+                spent_days += 1
+            else:
+                spent += 1
+            verdict = strict_check(apply_changes(request, candidate), lessons, settings, seconds=available, workers=workers)
+            if verdict == "ACCEPTED":
+                good = probe
+            elif verdict == "INFEASIBLE":
+                bad, proved = probe, True
+            else:
+                bad, proved = probe, False
+                break
+        if good >= 0 and values[good] == change.current:
+            dropped.add(index)
+            continue
+        lowest = change.needed if good < 0 else values[good]
+        current[index] = change.model_copy(update={
+            "needed": lowest,
+            # None is "not tried": a change that was lowered and then ran out of checks was tried (g493), and says so.
+            "needed_is_least": (True if proved and bad == good + 1 else False if bad is not None or good >= 0 else None),
+        })
+    return [change for position, change in enumerate(current) if position not in dropped], spent + spent_days
 
 
 # ---------------------------------------------------------------------------
@@ -485,7 +629,7 @@ def suggest_changes(
         had = seconds if response.report is None else min(seconds, response.report.budget_seconds)
         return SuggestChangesResponse(
             request_id=request.request_id, verdict="NOT_FOUND", search_seconds=had,
-            elapsed_ms=elapsed(),
+            elapsed_ms=elapsed(), report=response.report,
         )
 
     deviations = response.deviations or []
@@ -494,8 +638,13 @@ def suggest_changes(
     already_strict = not prices_anything(request)
     verified = already_strict
     verify_seconds: float | None = None
+
+    def seconds_left() -> float:
+        """The seconds before the answer is due: the route's ceiling less what has passed, the answer's slack and the overrun a solve may make."""
+        return ceiling_seconds - (time.monotonic() - entered) - ANSWER_SLACK_SECONDS - SOLVE_OVERRUN_SECONDS
+
     if not already_strict:
-        left = ceiling_seconds - (time.monotonic() - entered) - ANSWER_SLACK_SECONDS - SOLVE_OVERRUN_SECONDS
+        left = seconds_left()
         # The check's own build comes first and is not under its clock.
         available = min(float(VERIFY_SECONDS), left - BUILD_HEADROOM_SECONDS)
         if available >= MIN_VERIFY_SECONDS:
@@ -513,6 +662,14 @@ def suggest_changes(
                 )
         else:
             logger.warning("suggestion_check_skipped", request_id=str(request.request_id), left=round(left, 1))
+        if verified and changes:
+            # WHAT THE SEARCH'S TIMETABLE NEEDED IS NOT THE LEAST (g384-L-1): lower each value while the strict model still lays the week.
+            before = len(changes)
+            changes, spent = refine(request, response.lessons, changes, settings, left=seconds_left, workers=workers)
+            logger.info(
+                "suggestion_refined", request_id=str(request.request_id), checks=spent,
+                dropped=before - len(changes), least=sum(1 for change in changes if change.needed_is_least),
+            )
 
     if not changes and not verified:
         # NOTHING GAVE WAY IN THE TIMETABLE THE SEARCH FOUND, AND THE STRICT MODEL DID NOT SAY SO (no time for the

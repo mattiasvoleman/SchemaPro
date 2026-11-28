@@ -71,6 +71,12 @@ export const miscRoutes: GatewayRoute[] = [
   route("GET", "/api/v1/lunch-settings", () => LUNCH_SETTINGS),
   // The year's runs, newest first. A suggestions scenario lists the run it holds before the year's own (the run a reload leaves behind,
   // which the page takes up again, D9 of Åtgärdsförslag vid vägran).
+  // Optimeringsprofilen (P5): the school's Generera sliders. The stub school has saved none, so it reads the defaults the page always started from.
+  route("GET", "/api/v1/optimization/profile", () => ({
+    weights: { preferredFree: 10, preferredBusy: 5, disruption: 8, spread: 3, teacherGap: 2 },
+    stored: false,
+    updatedAt: null,
+  })),
   route("GET", "/api/v1/optimization/jobs", ({ query, scenario }) => [
     ...(query.get("academicYearId") === YEAR.id ? suggestionsHistoryFor(scenario) : []),
     ...optimizationJobsFor(query.get("academicYearId"), scenario),
@@ -113,6 +119,15 @@ export const miscRoutes: GatewayRoute[] = [
 
   // --- Publicering ----------------------------------------------------------------------
   route("GET", "/api/v1/publication-settings", () => PUBLICATION_SETTINGS),
+  // The question before a change in Direkt that reaches families (P5): the stub school is in utkast, where nothing reaches anybody.
+  route("GET", "/api/v1/publication-settings/direct-reach", ({ query }) => ({
+    academicYearId: query.get("academicYearId"),
+    mode: PUBLICATION_SETTINGS.publishMode,
+    period: null,
+    acknowledgedAt: null,
+    ask: false,
+    audience: null,
+  })),
   route("GET", "/api/v1/publications", ({ query }) => {
     const year = yearOf(query.get("academicYearId"));
     return year ? publicationTimeline(year) : notFound(NO_YEAR);

@@ -155,6 +155,13 @@ export interface TeacherScope {
   stages: ScopeStageHours[];
   /** Hours outside every band: förskoleklass, or a year the version does not cover. */
   unregulatedHours: number;
+  /**
+   * Of `unregulatedHours`, the part that is förskoleklass (a group of årskurs 0 and nothing else); the rest lies in years no band covers
+   * (a lydelse with fewer bands than the school has years: R2). Present exactly when unregulatedHours is above 0, so that a card can say
+   * "förskoleklass" of the first and "årskurser utanför stadierna" of the second and not förskoleklass of everything with no band
+   * (the review of #399, L-5). Absent from a gateway older than the field: every unregulated hour is then förskoleklass, as it was said.
+   */
+  preschoolHours?: number;
   /** Hours in groups with no derivable årskurs. */
   unknownGradeHours: number;
   /**
@@ -210,6 +217,13 @@ export interface ScopeInterpretation {
   section: string;
   note: string;
   cause?: 'UNREGULATED_HOURS';
+  /**
+   * The årskurs spans of the bands whose note this is (a note a band's row carries: 5 § for årskurs 7-9). A card shows the note only of a
+   * teacher with hours in one of them: an interpretation of the planning floor of årskurs 7-9 is noise on the card of a teacher who
+   * teaches årskurs 1-3 (the review of #387, L-2, and of #397, L-4). Absent on a row with a `cause`, which is explained by the row and not
+   * by a stage, and from a gateway older than the field, where every card shows the note as it did.
+   */
+  grades?: Array<{ from: number; to: number }>;
 }
 
 /**
@@ -232,6 +246,12 @@ export interface ScopeReport {
   version: Pick<ScopeVersion, 'code' | 'sfs' | 'title' | 'validFrom' | 'validTo' | 'source'> | null;
   /** Set when no teacher is judged because of the year itself. */
   yearReason: ScopeYearReason | null;
+  /**
+   * For a year that begins before every lydelse (NOT_IN_FORCE): the first lydelse that holds after the year's first day, so that the page
+   * can say from when the ordinance applies and why this year is not judged (the review of #387, L-8, and of #397, L-1). Absent otherwise,
+   * and when the table holds no later lydelse.
+   */
+  upcoming?: { sfs: string; validFrom: string };
   /** What the bands rest on beyond the ordinance's own words, by paragraph. */
   interpretations: ScopeInterpretation[];
   teachers: TeacherScope[];
@@ -276,6 +296,8 @@ export function placeSpan(span: GradeSpan | null, bands: readonly ScopeBand[]): 
 interface Hours {
   byBand: Map<ScopeBand, number>;
   unregulated: number;
+  /** The part of `unregulated` in årskurs 0 alone. */
+  preschool: number;
   unknown: number;
 }
 
@@ -331,7 +353,7 @@ function hoursPerTeacher(input: LoadInput, bands: readonly ScopeBand[]): Map<str
   const slot = (userId: string): Hours => {
     let h = hours.get(userId);
     if (!h) {
-      h = { byBand: new Map(), unregulated: 0, unknown: 0 };
+      h = { byBand: new Map(), unregulated: 0, preschool: 0, unknown: 0 };
       hours.set(userId, h);
     }
     return h;
@@ -348,8 +370,11 @@ function hoursPerTeacher(input: LoadInput, bands: readonly ScopeBand[]): Map<str
       const own = (part.minutes * weeks) / 60;
       const h = slot(part.userId);
       if (placed.kind === 'BAND') h.byBand.set(placed.band, (h.byBand.get(placed.band) ?? 0) + own);
-      else if (placed.kind === 'UNREGULATED') h.unregulated += own;
-      else h.unknown += own;
+      else if (placed.kind === 'UNREGULATED') {
+        h.unregulated += own;
+        // Förskoleklass is a span of årskurs 0 and nothing else: any other span that no band touches is a year the lydelse has no band for.
+        if (requirement.gradeSpan !== null && requirement.gradeSpan.max === 0) h.preschool += own;
+      } else h.unknown += own;
     }
   }
   return hours;
@@ -379,7 +404,7 @@ export function buildScopeReport(
   const teachers: TeacherScope[] = [];
   const userIds = new Set<string>([...employmentByUser.keys(), ...hours.keys()]);
   for (const userId of [...userIds].sort()) {
-    const h = hours.get(userId) ?? { byBand: new Map<ScopeBand, number>(), unregulated: 0, unknown: 0 };
+    const h = hours.get(userId) ?? { byBand: new Map<ScopeBand, number>(), unregulated: 0, preschool: 0, unknown: 0 };
     const employment = employmentByUser.get(userId) ?? null;
     const inBands = [...h.byBand.values()].reduce((sum, value) => sum + value, 0);
     const total = inBands + h.unregulated + h.unknown;
@@ -402,6 +427,7 @@ export function buildScopeReport(
       teachingHours: round1(total),
       stages,
       unregulatedHours: round1(h.unregulated),
+      ...(h.unregulated > 0 ? { preschoolHours: round1(h.preschool) } : {}),
       unknownGradeHours: round1(h.unknown),
       fullTimeHighestHours: null,
       fullTimeLowestHours: null,
@@ -484,20 +510,24 @@ export function buildScopeReport(
     });
   }
 
-  const seen = new Set<string>();
-  const interpretations: ScopeReport['interpretations'] = [];
+  // A note a band's row carries, once, with the stages it belongs to: bands that share a note share its entry.
+  const byNote = new Map<string, ScopeInterpretation>();
   for (const band of bands) {
-    if (band.note !== null && !seen.has(band.note)) {
-      seen.add(band.note);
-      interpretations.push({ section: band.planningSection, note: band.note });
-    }
+    if (band.note === null) continue;
+    const entry = byNote.get(band.note) ?? { section: band.planningSection, note: band.note, grades: [] };
+    entry.grades!.push({ from: band.gradeFrom, to: band.gradeTo });
+    byNote.set(band.note, entry);
   }
+  const interpretations: ScopeReport['interpretations'] = [...byNote.values()];
   if (teachers.some((teacher) => teacher.overOnlyWithUnregulated)) interpretations.push(UNREGULATED_HOURS_INTERPRETATION);
+  // A year that begins before every lydelse: from when the ordinance applies, for the page that says why nothing is judged.
+  const later = versions.filter((candidate) => candidate.validFrom > input.year.startDate).sort((a, b) => (a.validFrom < b.validFrom ? -1 : 1))[0];
   return {
     version: version
       ? { code: version.code, sfs: version.sfs, title: version.title, validFrom: version.validFrom, validTo: version.validTo, source: version.source }
       : null,
     yearReason,
+    ...(version === null && later ? { upcoming: { sfs: later.sfs, validFrom: later.validFrom } } : {}),
     interpretations,
     teachers,
   };
@@ -529,9 +559,22 @@ export function scopeOfTeacher(
  * The same teacher's figures for a reader who may not read the post's percentages (hr-visibility.ts): the verdict
  * stays, and every figure that is the span × the post, or the working time less the teaching, goes, because with the
  * ordinance's span known either gives the percentage back.
+ *
+ * OVER_OWN is the one verdict that does not stay: it is "over the level the rektor set", so the hours at which it flips
+ * are the rektor's level times the active share, and the hours at which OVER_MAX flips are the ordinance's edge times the
+ * same share. A reader who places lessons and reads this row finds both edges, and their ratio is the level the reader
+ * may not read (the level is null in `assessment` just below). The reader is told INSIDE, which is what they are told
+ * about a teacher the rektor has not assessed: at or under the ordinance's edge.
  */
 export function hideScopeHr(teacher: TeacherScope): TeacherScope {
-  const hidden: TeacherScope = { ...teacher, highestHours: null, ordinanceHighestHours: null, remainingHours: null, planningFits: null };
+  const hidden: TeacherScope = {
+    ...teacher,
+    verdict: teacher.verdict === 'OVER_OWN' ? 'INSIDE' : teacher.verdict,
+    highestHours: null,
+    ordinanceHighestHours: null,
+    remainingHours: null,
+    planningFits: null,
+  };
   if (teacher.assessment) {
     hidden.assessment = { levelHours: null, exceptionKind: teacher.assessment.exceptionKind, ownInitiativeOn: null, note: null, decidedAt: null };
   }

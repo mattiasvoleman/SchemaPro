@@ -217,6 +217,9 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   MasterLessonStudents: only('SCHEMALAGGNING'),
   MasterLessons: only('SCHEMALAGGNING'),
   OptimizationJobs: only('SCHEMALAGGNING'),
+  // Optimeringsprofilen (20270314090000): the weights Generera's sliders set are Schemaläggning's, as the runs they steer. One row a school, made
+  // by the first save and changed after it; never removed by an administrator (it goes with the school).
+  OptimizationProfiles: just('SCHEMALAGGNING', 'insert', 'update'),
   // Schemaförslag (20261125090000): a candidate is stored once and removed
   // with its run, never changed (no UPDATE grant).
   ScheduleCandidateRuns: only('SCHEMALAGGNING'),

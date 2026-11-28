@@ -362,67 +362,8 @@ export class RequirementPlacementsService {
    */
   async boardOfYear(academicYearId: string, user: AuthenticatedUser): Promise<PlacementBoardWithBlocks> {
     return this.prisma.withRls(user, async (tx) => {
-      const year = await tx.academicYear.findUnique({
-        where: { id: academicYearId },
-        select: { isActive: true, predecessorId: true, gradeNumbering: true, startDate: true, endDate: true },
-      });
-      if (!year) throw new NotFoundException('Läsåret finns inte.');
-      const [posts, rows, keptRows, mealRows, blocks, written, held] = await Promise.all([
-        tx.teachingRequirement.findMany({ where: { academicYearId }, select: BOARD_POST_SELECT, orderBy: { id: 'asc' } }),
-        tx.teachingRequirementPlacement.findMany({
-          where: { requirement: { academicYearId } },
-          select: { ...VIEW_SELECT, updatedAt: true },
-          orderBy: [{ requirementId: 'asc' }, ...VIEW_ORDER],
-        }),
-        // What Generera keeps (and the rows are held against): the same read, the same filter.
-        tx.masterLesson.findMany({
-          where: keptMastersWhere(academicYearId),
-          select: BOARD_KEPT_SELECT,
-          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
-        }),
-        // The meals the school placed by hand: the only ones a row is held to (placement-judge.ts).
-        tx.lunchSitting.findMany({
-          where: { academicYearId, isGenerated: false },
-          select: { id: true, studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
-          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
-        }),
-        // Förlagda block: every block of the year with its members and lessons (block-placement-judge.ts).
-        loadBlocksOfYear(tx, academicYearId),
-        // What Generera last wrote from them (BoardTimetableView): the grundschema's own count and newest createdAt.
-        tx.masterLesson.aggregate({
-          where: { academicYearId, fromPlacement: true },
-          _count: { _all: true },
-          _max: { createdAt: true },
-        }),
-        // Other schools' hold on this school's teachers and rooms, which the judge holds a row to (OTHER_SCHOOL): bands in the week.
-        readOtherSchoolHolds(tx, academicYearId, requireSchoolId(user)),
-      ]);
-
-      const kept = keptRows.map(keptForCountOf);
-      const postById = new Map(posts.map((post) => [post.id, post]));
-      const { slotsOf, keyedOfPost, locksByPost } = countedPostsOf(posts, rows, kept, blocks);
-      const ofBlocks = blocks.map((block) => ({ block, ...judgedRowsOfBlock(block, block.rows) }));
-
-      // The posts' rows first, then each block's, one row per lesson and member (judgedRowsOfBlock).
-      const judgedRows = [...rows.map((row) => judgedRowOf(postById.get(row.requirementId)!, slotOf(row), row.id)), ...ofBlocks.flatMap((entry) => entry.judged)];
-      // Every row of the year at once, as Generera's pre-flight judges them, against the lessons it keeps and each other.
-      const verdicts: PlacementVerdict[] =
-        judgedRows.length === 0
-          ? []
-          : await judgePlacements(tx, this.masters, {
-              academicYearId,
-              schoolId: requireSchoolId(user),
-              gradeNumbering: year.gradeNumbering as GradeNumbering,
-              basis: await rostersOfYear(tx, user, academicYearId, { isActive: year.isActive, predecessorId: year.predecessorId }),
-              rows: judgedRows,
-              beside: [],
-              demand: new Map(
-                [...slotsOf].map(([postId, slots]) => {
-                  const post = postById.get(postId)!;
-                  return [postId, judgeDemandOf(post, locksByPost.get(postId) ?? [], placedByRowsOf(post, slots))] as const;
-                }),
-              ),
-            });
+      const { year, posts, rows, kept, mealRows, written, held, slotsOf, keyedOfPost, locksByPost, ofBlocks, judgedRows, verdicts } =
+        await this.judgedYear(tx, user, academicYearId);
 
       const boardPosts = posts.map((post) =>
         boardPostOf(boardPostShape(post), locksByPost.get(post.id) ?? [], slotsOf.get(post.id) ?? [], rowsKeyOf(keyedOfPost.get(post.id) ?? [])),
@@ -487,6 +428,78 @@ export class RequirementPlacementsService {
         }),
       };
     });
+  }
+
+  /**
+   * The year's förläggningar as the week judges them (boardOfYear's reads and its one call of the judge), in the caller's transaction: every row with
+   * its verdict, as Generera's pre-flight judges them, against the lessons Generera keeps and each other. Read by the week and by Skriv in
+   * förläggningarna (placement-write-in.service.ts), which judges what it writes by the same call.
+   */
+  async judgedYear(tx: PrismaClient, user: AuthenticatedUser, academicYearId: string) {
+    const year = await tx.academicYear.findUnique({
+      where: { id: academicYearId },
+      select: { isActive: true, predecessorId: true, gradeNumbering: true, startDate: true, endDate: true },
+    });
+    if (!year) throw new NotFoundException('Läsåret finns inte.');
+    const [posts, rows, keptRows, mealRows, blocks, written, held] = await Promise.all([
+      tx.teachingRequirement.findMany({ where: { academicYearId }, select: BOARD_POST_SELECT, orderBy: { id: 'asc' } }),
+      tx.teachingRequirementPlacement.findMany({
+        where: { requirement: { academicYearId } },
+        select: { ...VIEW_SELECT, updatedAt: true },
+        orderBy: [{ requirementId: 'asc' }, ...VIEW_ORDER],
+      }),
+      // What Generera keeps (and the rows are held against): the same read, the same filter.
+      tx.masterLesson.findMany({
+        where: keptMastersWhere(academicYearId),
+        select: BOARD_KEPT_SELECT,
+        orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
+      }),
+      // The meals the school placed by hand: the only ones a row is held to (placement-judge.ts).
+      tx.lunchSitting.findMany({
+        where: { academicYearId, isGenerated: false },
+        select: { id: true, studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
+        orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
+      }),
+      // Förlagda block: every block of the year with its members and lessons (block-placement-judge.ts).
+      loadBlocksOfYear(tx, academicYearId),
+      // What Generera last wrote from them (BoardTimetableView): the grundschema's own count and newest createdAt.
+      tx.masterLesson.aggregate({
+        where: { academicYearId, fromPlacement: true },
+        _count: { _all: true },
+        _max: { createdAt: true },
+      }),
+      // Other schools' hold on this school's teachers and rooms, which the judge holds a row to (OTHER_SCHOOL): bands in the week.
+      readOtherSchoolHolds(tx, academicYearId, requireSchoolId(user)),
+    ]);
+
+    const kept = keptRows.map(keptForCountOf);
+    const postById = new Map(posts.map((post) => [post.id, post]));
+    const { slotsOf, keyedOfPost, locksByPost } = countedPostsOf(posts, rows, kept, blocks);
+    const ofBlocks = blocks.map((block) => ({ block, ...judgedRowsOfBlock(block, block.rows) }));
+
+    // The posts' rows first, then each block's, one row per lesson and member (judgedRowsOfBlock).
+    const judgedRows = [...rows.map((row) => judgedRowOf(postById.get(row.requirementId)!, slotOf(row), row.id)), ...ofBlocks.flatMap((entry) => entry.judged)];
+    // The year's pupils as every judge of a row reads them (also what Skriv in förläggningarna asks the rows' rooms by); none to read for a year with no row.
+    const basis = judgedRows.length === 0 ? null : await rostersOfYear(tx, user, academicYearId, { isActive: year.isActive, predecessorId: year.predecessorId });
+    // Every row of the year at once, as Generera's pre-flight judges them, against the lessons it keeps and each other.
+    const verdicts: PlacementVerdict[] =
+      basis === null
+        ? []
+        : await judgePlacements(tx, this.masters, {
+            academicYearId,
+            schoolId: requireSchoolId(user),
+            gradeNumbering: year.gradeNumbering as GradeNumbering,
+            basis,
+            rows: judgedRows,
+            beside: [],
+            demand: new Map(
+              [...slotsOf].map(([postId, slots]) => {
+                const post = postById.get(postId)!;
+                return [postId, judgeDemandOf(post, locksByPost.get(postId) ?? [], placedByRowsOf(post, slots))] as const;
+              }),
+            ),
+          });
+    return { year, basis, posts, rows, kept, mealRows, written, held, blocks, postById, slotsOf, keyedOfPost, locksByPost, ofBlocks, judgedRows, verdicts };
   }
 
   /**

@@ -221,7 +221,8 @@ export class DraftService {
           await tx.publicationSettings.upsert({
             where: { schoolId },
             create: { schoolId, publishMode: 'DRAFT' },
-            update: { publishMode: 'DRAFT' },
+            // A switch of mode is a new decision about who is reached: the answer to the question asked in Direkt (P5) is taken back.
+            update: { publishMode: 'DRAFT', directReachAcknowledgedAt: null },
           });
           return { publishMode: 'DRAFT', baselines };
         }
@@ -253,7 +254,7 @@ export class DraftService {
           }
         }
         if (pending > 0) throw draftPending(null);
-        await tx.publicationSettings.update({ where: { schoolId }, data: { publishMode: 'DIRECT' } });
+        await tx.publicationSettings.update({ where: { schoolId }, data: { publishMode: 'DIRECT', directReachAcknowledgedAt: null } });
         return { publishMode: 'DIRECT', baselines: [] };
       },
       { timeoutMs: 60_000 },

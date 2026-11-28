@@ -40,6 +40,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
+import type { LockedNote } from "@/lib/staffing-warnings";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type { MessageLookup } from "@/lib/engine-message";
@@ -48,6 +49,7 @@ import type { MasterLesson, StaffingWarning, TeachingBlock, TeachingRequirement 
 import type { HistoryEntry } from "@/lib/use-schedule-history";
 import { createClient } from "@/utils/supabase/client";
 import type { LessonChange, TimetableLesson } from "@/components/schedule/timetable-grid";
+import { PossibleTimesChoices } from "@/components/schedule/possible-times-choices";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -81,6 +83,9 @@ export interface SavedWrite {
   joined?: { id: string; isGenerated: boolean }[];
   /** PATCH block-card: the lessons of a block on the same times that moved with the card. */
   followed?: string[];
+  /** Låset vid en flytt (E4): the card's move locked its block whole; these are the lessons it locked, which its undo unlocks. */
+  lockedByMove?: true;
+  lockedLessonIds?: string[];
 }
 
 /**
@@ -124,8 +129,10 @@ export interface BlockActions {
   validate: (id: string, change: LessonChange, without?: ReadonlySet<string>) => boolean;
   history: { push: (entry: HistoryEntry) => void };
   showError: (error: unknown) => void;
-  /** The page's saved toast. */
-  announce: (result: SavedWrite) => void;
+  /** The question before a change in Direkt that reaches families: asked around a card's first move (lib/use-direct-reach-ask.tsx). */
+  guard: <T>(run: () => Promise<T>) => Promise<T>;
+  /** The page's saved toast, with the sentence that says the move locked the block and the button that takes the lock off, when it did. */
+  announce: (result: SavedWrite, lock?: LockedNote) => void;
   /** The page's saved sentence ("Sparat. 3 lektioner i kalendern flyttades."). */
   title: (result: SavedWrite) => string;
   /** "Tyska · Ty7 · K. Ek · A12": a lesson as the page names it. */
@@ -338,6 +345,9 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
     };
     const patchCard = (body: Record<string, unknown>) =>
       api.patch<SavedWrite>("/api/v1/master-lessons/block-card", body).finally(invalidate);
+    /** The lock a card's move put on its block, taken off again for exactly the lessons it locked (lockBlock). */
+    const unlockMoved = (blockId: string, lessonIds: string[]) =>
+      api.patch("/api/v1/master-lessons/block-lock", { blockId, isLocked: false, lessonIds }).finally(invalidate);
 
     const moveCard = async (card: BlockCard, change: LessonChange) => {
       const lessonIds = card.lessons.map((lesson) => lesson.id);
@@ -352,18 +362,39 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       try {
         // What the card took in where it landed, and the other term's card
         // it took along: its undo leaves the one and takes back the other.
-        let result = await patchCard(to);
+        let result = await acts.current.guard(() => patchCard(to));
         acts.current.history.push({
           label: "block-move",
-          undo: async () => void (await patchCard(moveBackOf(from, result))),
+          undo: async () => {
+            // Låset vid en flytt (E4): the gateway locks the block the card was moved in, and the way back moves nothing it did not move, so the lock is
+            // taken off here, by the lessons the move locked, once the card is back where it stood.
+            const locked = result.lockedLessonIds ?? [];
+            await patchCard(moveBackOf(from, result));
+            if (locked.length > 0) await unlockMoved(card.blockId, locked);
+          },
           redo: async () => {
             result = await patchCard(to);
           },
         });
-        acts.current.announce(result);
+        acts.current.announce(result, lockNoteOf(card.blockId, result));
       } catch (error) {
         acts.current.showError(error);
       }
+    };
+
+    /** Låset vid en flytt (E4): the card's move locked the block, said in sight, and the button takes exactly those lessons' lock off (lockBlock). */
+    const lockNoteOf = (blockId: string, result: SavedWrite): LockedNote | undefined => {
+      const lessonIds = result.lockedLessonIds;
+      if (!result.lockedByMove || !lessonIds || lessonIds.length === 0) return undefined;
+      return {
+        text: say.current.t("lockedByMoveNote", { count: lessonIds.length }),
+        unlock: say.current.t("lockedByMoveUnlock"),
+        onUnlock: () =>
+          void api
+            .patch("/api/v1/master-lessons/block-lock", { blockId, isLocked: false, lessonIds })
+            .then(() => toast.success(say.current.t("lockedByMoveUnlocked", { count: lessonIds.length })), acts.current.showError)
+            .finally(() => void queryClient.invalidateQueries({ queryKey: ["masterLessons"] })),
+      };
     };
 
     /** A save that split a block: its sentence, and the way back with the block. */
@@ -615,6 +646,17 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
                   </li>
                 ))}
               </ul>
+              {/* Where the block can stand (E3): a block cannot be dragged on a phone, and this is the way to move it without. A time here is
+                  one the gateway's judge has let through for the whole block, so it is moved as the card is, and asked no more. */}
+              <PossibleTimesChoices
+                lessonId={opened.lessons[0]!.id}
+                writes="SCHEMALAGGNING DRIFT"
+                onChoose={(option) => {
+                  const change = { dayOfWeek: option.dayOfWeek, startMinutes: option.startMinutes, endMinutes: option.endMinutes };
+                  handOff.current = { focus: opened.id, run: () => void kit.move(opened.id, change) };
+                  setOpened(null);
+                }}
+              />
               {opened.complete ? null : <p className="text-sm text-foreground">{t("splitNote")}</p>}
               <p className="text-sm text-foreground">{t("lockHint")}</p>
             </div>

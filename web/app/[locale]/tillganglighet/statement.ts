@@ -197,6 +197,8 @@ export function statement(contact: Contact): { intro: Block[]; sections: Section
           ["Ett manus för testet med skärmläsare, med vad som ska höras i varje steg för de fyra rollerna. Själva testet återstår (se ovan)."],
         ),
         p(`Senaste bedömningen gjordes den ${ASSESSED}.`),
+        // The review of #430, L-1: the page was added on 2026-11-22 and the date above is of 2026-10-14, so a reader would take it to be in the assessment.
+        p("Sidan Pseudonymisera en fil lades till efter det datumet och ingår inte i den bedömningen: för den finns bara den automatiska granskningen ovan, och inget test med skärmläsare."),
         p(`Redogörelsen uppdaterades senast den ${UPDATED}.`),
       ],
     },

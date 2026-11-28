@@ -34,7 +34,7 @@ describe("what this test reads of the gateway", () => {
     // Every definition line, not only the ones the strict shape above reads: a gap written with another key, or on two lines, is a gap this file
     // would otherwise never compare (the texts, the stub's levels and its order all hang on this list).
     expect(gatewayGaps, "a GAP_DEFINITIONS entry that the parse above does not read").toHaveLength([...GATEWAY.matchAll(/\{ code: '[A-Z_]+', area: /g)].length);
-    expect(gatewayAreas).toHaveLength(11);
+    expect(gatewayAreas).toHaveLength(15);
     expect(Object.keys(gatewayFound)).toEqual(gatewayAreas);
     expect(gatewayYearBound.length).toBeGreaterThan(3);
     expect(gatewayYearBound.every((area) => gatewayAreas.includes(area))).toBe(true);

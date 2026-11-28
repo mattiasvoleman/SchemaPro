@@ -17,10 +17,30 @@ export interface World {
   teachers: string[];
   rooms: string[];
   subjects: string[];
-  lessons: { key: string; class: string; subject: string; teacher: string; coTeacher?: string; room?: string; day: number; start: string; minutes: number; recurrence?: string }[];
+  /** `class` is a class or a teaching group; `extra`, `participants` and the window are only in the richer worlds (probe-domaren.ts). */
+  lessons: {
+    key: string;
+    class: string;
+    subject: string;
+    teacher: string;
+    coTeacher?: string;
+    room?: string;
+    day: number;
+    start: string;
+    minutes: number;
+    recurrence?: string;
+    extra?: string[];
+    participants?: string[];
+    startDate?: string;
+    endDate?: string;
+  }[];
   unavailable: { kind: "teacher" | "room" | "class" | "grade"; key?: string; grades?: [number, number]; day: number; start: string; end: string }[];
   frames: { grades: [number, number]; start: string; end: string }[];
-  meals: { class: string; day: number; start: string; end: string }[];
+  meals: { class: string; day: number; start: string; end: string; startDate?: string; endDate?: string }[];
+  /** The pupils, each in the class they name; the teaching groups of pupils; the rooms another school of the huvudman has borrowed. */
+  pupils?: { key: string; class: string }[];
+  groups?: { key: string; members: string[] }[];
+  loans?: { room: string; day: number; start: string; end: string }[];
 }
 export interface Case {
   name: string;
@@ -47,10 +67,10 @@ export const lessonsOf = (world: World): MasterLesson[] =>
     isLocked: false,
     isParked: false,
     recurrence: (lesson.recurrence ?? "ALL_WEEKS") as MasterLesson["recurrence"],
-    startDate: null,
-    endDate: null,
-    extraGroupIds: [],
-    studentIds: [],
+    startDate: lesson.startDate ?? null,
+    endDate: lesson.endDate ?? null,
+    extraGroupIds: lesson.extra ?? [],
+    studentIds: lesson.participants ?? [],
   }));
 
 export const constraintsOf = (world: World): AvailabilityConstraint[] =>
@@ -70,8 +90,21 @@ export const constraintsOf = (world: World): AvailabilityConstraint[] =>
     reason: null,
   }));
 
-export const groupsOf = (world: World): StudentGroup[] =>
-  world.classes.map((entry) => ({ id: entry.key, academicYearId: "y1", name: entry.key, kind: "CLASS" as const, gradeLevel: entry.grade }));
+export const groupsOf = (world: World): StudentGroup[] => [
+  ...world.classes.map((entry) => ({ id: entry.key, academicYearId: "y1", name: entry.key, kind: "CLASS" as const, gradeLevel: entry.grade })),
+  ...(world.groups ?? []).map((group) => ({ id: group.key, academicYearId: "y1", name: group.key, kind: "TEACHING_GROUP" as const, gradeLevel: null })),
+];
+
+/** Each pupil's home class, as the page holds it (use-schedule-engine.ts: studentId → class). Empty in the worlds that have no pupils. */
+export const homeClassOf = (world: World): Map<string, string | null> => new Map((world.pupils ?? []).map((pupil) => [pupil.key, pupil.class]));
+
+/** The pupils as the page's people list holds them: active, in the home class they name. */
+export const peopleOf = (world: World) =>
+  (world.pupils ?? []).map((pupil) => ({ id: pupil.key, role: "STUDENT" as const, isActive: true, studentGroupId: pupil.class, firstName: pupil.key, lastName: "Elev" }));
+
+/** The teaching groups' memberships, as the page reads them for the relation of groups that share pupils. */
+export const membershipsOf = (world: World): Array<{ studentId: string; studentGroupId: string }> =>
+  (world.groups ?? []).flatMap((group) => group.members.map((studentId) => ({ studentId, studentGroupId: group.key })));
 
 export const framesOf = (world: World): FrameTime[] =>
   world.frames.map((frame, index) => ({
@@ -92,6 +125,6 @@ export const sittingsOf = (world: World): LunchSitting[] =>
     endTime: `${meal.end}:00`,
     headcount: 25,
     isGenerated: false,
-    startDate: null,
-    endDate: null,
+    startDate: meal.startDate ?? null,
+    endDate: meal.endDate ?? null,
   }));

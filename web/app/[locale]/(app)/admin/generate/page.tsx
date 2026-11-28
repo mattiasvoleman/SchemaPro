@@ -63,6 +63,7 @@ import { CandidatesSection, candidatesHref } from "./candidates-section";
 import { RefusalLink } from "./refusal-link";
 import { placementLinkOfRefusal } from "@/lib/placement-link";
 import { useScheduleCandidates } from "./use-schedule-candidates";
+import { useOptimizationProfile } from "./use-optimization-profile";
 import { apiErrorText } from "@/lib/api-error-text";
 import type { StartFrom } from "@/lib/start-from";
 
@@ -132,6 +133,20 @@ function historyStatusKey(run: OptimizationJob): string {
   // A run whose process went away (a restart, a crash) is not one that failed on its own account.
   if (run.status === "FAILED") return run.errorCode === "ENGINE_RUN_ABANDONED" ? "ABANDONED" : "FAILED";
   return run.solverStatus ?? run.status;
+}
+
+/**
+ * When the last run was made, beside the card's title (G6b, g393-L-2): since
+ * D9 the card shows the year's newest refusal whatever its age, so it can be
+ * weeks old, and nothing else on it said so. The same moment, in the same
+ * format, as the run's row in the history list under the card.
+ */
+function RunStamp({ at, format }: { at: string; format: Intl.DateTimeFormat }) {
+  return (
+    <time dateTime={at} className="text-sm font-normal text-muted-foreground">
+      {format.format(new Date(at))}
+    </time>
+  );
 }
 
 /** Placeringsregler: the LunchSettings field names of each rule, and the limits Salar och byggnader per dag holds to. */
@@ -317,32 +332,9 @@ export default function GeneratePage() {
   const candidatesQuery = useScheduleCandidates(year?.id ?? null);
   const candidateRunActive = isActiveRun(candidatesQuery.data?.latest?.run.status);
 
-  // Optimization profile — persisted locally per browser.
-  const [weights, setWeights] = useState<Required<ObjectiveWeights>>({
-    preferredFree: 10,
-    preferredBusy: 5,
-    disruption: 8,
-    spread: 3,
-    teacherGap: 2,
-  });
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem("schemapro.optimizationWeights");
-      if (stored) setWeights((prev) => ({ ...prev, ...JSON.parse(stored) }));
-    } catch {
-      // ignore malformed local storage
-    }
-  }, []);
-  const setWeight = (key: keyof ObjectiveWeights, value: number) => {
-    setWeights((prev) => {
-      const next = { ...prev, [key]: value };
-      window.localStorage.setItem(
-        "schemapro.optimizationWeights",
-        JSON.stringify(next),
-      );
-      return next;
-    });
-  };
+  // Optimeringsprofilen (P5): the school's, saved for the school half a second after the last move of a slider. What this browser held
+  // before is given to the school once, when it has no profile yet (use-optimization-profile.ts).
+  const { weights, setWeight, canSave: canSaveProfile, status: profileStatus } = useOptimizationProfile();
 
   /*
    * Scheduling rules are no longer edited here.
@@ -756,7 +748,7 @@ export default function GeneratePage() {
   const errorNames = job?.errorNames ?? [];
   const summaryNames = job?.conflictSummaryNames ?? [];
 
-  /** When a run was started, in the app's language — not the browser's. */
+  /** When a run was started, in the app's language — not the browser's: the history list's rows and the last run's card. */
   const runDate = useMemo(
     () =>
       new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", {
@@ -1031,12 +1023,17 @@ export default function GeneratePage() {
                   min={0}
                   max={50}
                   value={weights[key]}
+                  disabled={!canSaveProfile}
                   onChange={(e) => setWeight(key, Number(e.target.value))}
                   className="w-full accent-primary"
                 />
               </div>
             ))}
           </div>
+          {/* What became of the last move: saved for the school, or why not. A polite live region without the status role, which the run's own notice holds on this page. */}
+          <p className="mt-3 text-xs text-muted-foreground" aria-live="polite" data-testid="profile-status">
+            {profileStatus === "unreadable" ? t("profileUnreadable") : profileStatus === "loading" ? "" : !canSaveProfile ? t("profileReadOnly") : profileStatus === "saving" ? t("profileSaving") : profileStatus === "saved" ? t("profileSaved") : profileStatus === "failed" ? t("profileSaveFailed") : ""}
+          </p>
         </SectionCard>
 
         <SectionCard
@@ -1160,6 +1157,7 @@ export default function GeneratePage() {
                 <CheckCircle2 className="size-4 shrink-0 text-success-strong" />
               )}
               {t("lastRun")}
+              <RunStamp at={job.createdAt} format={runDate} />
             </span>
           }
           description={
@@ -1387,6 +1385,7 @@ export default function GeneratePage() {
             <span className="flex items-center gap-2">
               <AlertTriangle className="size-4 shrink-0 text-warning-strong" />
               {t("lastRun")}
+              {newestInHistory ? <RunStamp at={newestInHistory.createdAt} format={runDate} /> : null}
             </span>
           }
           description={endingText("ENGINE_RUN_ABANDONED", newestInHistory?.errorParams ?? null)}

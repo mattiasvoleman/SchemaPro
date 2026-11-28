@@ -107,6 +107,16 @@ describe('PRODUCT.md says what the schema, the gateway, the web and the app hold
   });
 });
 
+describe('the user manual says what leaves the system about a teacher’s own absence report (K6)', () => {
+  const manual = flat(read('docs/manual/anvandarmanual.html'));
+
+  it('does not say the notice is never mailed, since an administrator is offered the mail', () => {
+    expect(read('src/notifications/notification-types.ts')).toMatch(/SCHOOL_ADMIN: \[[^\]]*'TEACHER_ABSENCE_REPORTED'/);
+    expect(manual).not.toContain('den mejlas inte');
+    expect(manual).toContain('En lärare har anmält frånvaro</em> skickas aldrig som push. Den kan mejlas till skolans administratörer');
+  });
+});
+
 describe('the baseline counts its own scorecard, and PRODUCT.md quotes the count', () => {
   const scorecard = baseline.slice(baseline.indexOf('## Scorecard'), baseline.indexOf('## Where the harness stands'));
   const rows = scorecard.split('\n').filter((line) => /^\| (?!Gate\b|:?-)/.test(line));
@@ -240,6 +250,34 @@ describe('DEPLOYMENT.md', () => {
     expect(Number(found[1])).toBe(Number(found[2]) - limit);
   });
 
+  it('36: Vad kom in names every area the gateway counts, and the off-states as the lowest level', () => {
+    const start = deployment.indexOf('## 36. ');
+    expect(start).toBeGreaterThan(0);
+    const section = flat(deployment.slice(start, deployment.indexOf('\n## 37. ', start)));
+    // The areas as the gateway lists them, and the words this section uses for each: a new area is added here and in the section together.
+    const areas = [...(/export const INTAKE_AREAS = \[([^\]]*)\]/.exec(read('src/intake/intake.ts'))?.[1] ?? '').matchAll(/'([A-Z_]+)'/g)].map((found) => found[1]!);
+    const WORDS: Record<string, string> = {
+      YEAR: 'the year',
+      SUBJECTS: 'subjects',
+      ROOMS: 'room types',
+      FRAME_TIMES: 'frame times',
+      RASTS: 'rasts',
+      BREAKS: 'lov',
+      LUNCH: 'the lunch',
+      SUPERVISION: 'the rastvakt',
+      CLASSES: 'classes',
+      TEACHING_GROUPS: 'teaching groups',
+      PEOPLE: 'pupils',
+      TIMPLAN: 'lokal timplan',
+      REQUIREMENTS: 'the posts',
+      STAFFING: 'the staffing',
+      SWITCHES: 'kvittens',
+    };
+    expect(areas.filter((area) => WORDS[area] === undefined)).toEqual([]);
+    expect(areas.filter((area) => !section.includes(WORDS[area]!))).toEqual([]);
+    expect(section).toContain('is always the third level');
+  });
+
   it('38: every part of R1 has the number of its pull request', () => {
     const start = deployment.indexOf('| Part | What it adds | Migration |');
     const table = deployment.slice(start, deployment.indexOf('\n\n', start)).split('\n').slice(2);
@@ -319,6 +357,25 @@ describe("the user manual's 5.2 says what a 'tiden tar slut' row of its table is
     expect(text).toContain('Det är inte en gräns för vad motorn kan lägga');
     expect(text).toContain('kan sakna schema inom sin ram');
     expect(text).toContain('inte skiljer en svår vecka från en omöjlig');
+  });
+});
+
+describe("the user manual's 5.1 and the feature list say where the optimization profile is kept: with the school (omgång 15, P5 del 3)", () => {
+  const manual = read('docs/manual/anvandarmanual.html');
+  const section = flat(manual.slice(manual.indexOf('id="s51"'), manual.indexOf('<h3 id="s52">')).replace(/<[^>]+>/g, ''));
+
+  it("says the profile is the school's, which every scheduler sees whatever computer they sit at", () => {
+    expect(section).toContain('Profilen är skolans, inte webbläsarens');
+  });
+
+  it("does not also say, in a note below, that it is kept in the browser and a colleague's computer has its own", () => {
+    expect(section).not.toContain('Profilen sparas lokalt');
+    expect(section).not.toContain('sparas i den webbläsare du använder');
+    expect(section).not.toContain('har den datorn sina egna inställningar');
+  });
+
+  it('and docs/schedule-editing.md does not list the sliders as persisted per browser', () => {
+    expect(flat(read('docs/schedule-editing.md'))).not.toContain('persisted per browser');
   });
 });
 
