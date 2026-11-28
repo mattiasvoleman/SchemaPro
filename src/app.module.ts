@@ -33,6 +33,7 @@ import { AttendanceModule } from './attendance/attendance.module';
 import { LessonMovesModule } from './lesson-moves/lesson-moves.module';
 import { ResourcesModule } from './resources/resources.module';
 import { BoardTrayModule } from './board-tray/board-tray.module';
+import { BoardFillModule } from './board-fill/board-fill.module';
 import { RequirementPlacementsModule } from './requirement-placements/requirement-placements.module';
 import { UsersModule } from './users/users.module';
 import { CalendarModule } from './calendar/calendar.module';
@@ -155,6 +156,7 @@ import type { ThrottleConfig } from './config/configuration';
     ResourcesModule,
     RequirementPlacementsModule,
     BoardTrayModule,
+    BoardFillModule,
     UsersModule,
     CalendarModule,
     SwapsModule,

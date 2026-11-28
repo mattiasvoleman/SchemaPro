@@ -38,6 +38,7 @@ import { MemoryOutbound } from './outbound-memory';
 import { AttendanceModule } from '../../src/attendance/attendance.module';
 import { ResourcesModule } from '../../src/resources/resources.module';
 import { BoardTrayModule } from '../../src/board-tray/board-tray.module';
+import { BoardFillModule } from '../../src/board-fill/board-fill.module';
 import { RequirementPlacementsModule } from '../../src/requirement-placements/requirement-placements.module';
 import { CalendarModule } from '../../src/calendar/calendar.module';
 import { SwapsModule } from '../../src/swaps/swaps.module';
@@ -187,6 +188,7 @@ export const FEATURE_MODULES = [
   ResourcesModule,
   RequirementPlacementsModule,
   BoardTrayModule,
+  BoardFillModule,
   UsersModule,
   CalendarModule,
   SwapsModule,
