@@ -327,6 +327,14 @@ export class PossibleTimesService {
    * in such a room is no obstacle to the prune).
    */
   async contextOf(tx: PrismaClient, data: SwapData, unplaced: readonly SwapLesson[]): Promise<SwapContext> {
+    return new SwapContext(data, { unplaced, ...(await this.worldFactsOf(tx, data)) });
+  }
+
+  /**
+   * The facts beside the snapshot that a SwapContext is built with: the läsår's closed weeks and the rooms that may be shared. The fill (board-fill)
+   * builds a new context after every brick it lays, and reads these once.
+   */
+  async worldFactsOf(tx: PrismaClient, data: SwapData): Promise<{ closedWeeks: Awaited<ReturnType<typeof readClosedWeeks>>; sharedRooms: ReadonlySet<string> }> {
     const sharedMode = await readSharedMode(tx, { academicYearId: data.academicYearId });
     const sharedRooms =
       sharedMode === 'OFF'
@@ -337,7 +345,7 @@ export class PossibleTimesService {
               await tx.room.findMany({ where: { schoolId: data.schoolId, canBeShared: true, capacity: { not: null } }, select: { id: true, canBeShared: true, capacity: true } }),
             ).keys(),
           );
-    return new SwapContext(data, { unplaced, closedWeeks: await readClosedWeeks(tx, data.academicYearId), sharedRooms });
+    return { closedWeeks: await readClosedWeeks(tx, data.academicYearId), sharedRooms };
   }
 
   // ---------------------------------------------------------------------------
