@@ -314,7 +314,10 @@ export async function searchMakeRoom(input: MakeRoomInput): Promise<MakeRoomResu
     }
   };
 
-  for (const start of viable) {
+  // The way with fewest in the way first: the picked lesson in another room has no one to move for its room, so its sets are the few and the best, and a cap that
+  // the other way fills must not be used up before they are made. The sort is stable: on a tie the own room goes first, as it did. (`said` above is the
+  // school as it stands, not this order.)
+  for (const start of [...viable].sort((a, b) => a.blockers.length - b.blockers.length)) {
     const firstLevels = new Map<string, number>([[picked.id, 0]]);
     for (const unit of start.blockers) firstLevels.set(unit.id, 1);
     lay(start.blockers.length > 0 ? 1 : 0, start.blockers, [{ unit: picked, to: pickedAt, ...(start.way.rooms ? { rooms: start.way.rooms } : {}) }], firstLevels, new Map());
