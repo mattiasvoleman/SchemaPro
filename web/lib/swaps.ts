@@ -168,6 +168,11 @@ export interface SwapApplyResult {
    * for. `rules` are the names, comma-joined. Ångra moves the lesson back and does not bring the exemption back.
    */
   exemptionsEnded?: Array<{ lessonId: string; rules: string }>;
+  /**
+   * Att lägga in the same transaction (E5a, g514 L-7): the lesson a `lay` of the request made, or the parked lesson it moved back. The gateway's
+   * `apply` answers it only for a request that carried a `lay`, which the web does not send yet (a brick is laid by `POST /board-tray/lay`).
+   */
+  laid?: unknown;
 }
 
 /** The gateway's codes for a proposal it will not apply. */
