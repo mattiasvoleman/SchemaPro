@@ -78,7 +78,7 @@ describe("the list of the session's steps", () => {
     const { hook, rerender } = setup(entries);
     await open();
     // Back to the first step: c and then b are undone, and a stands.
-    await userEvent.click(screen.getAllByRole("button", { name: /Gå tillbaka till: Tog bort 1 lektion/ })[1]!);
+    await userEvent.click(screen.getAllByRole("button", { name: /Gå tillbaka hit: Tog bort 1 lektion/ })[1]!);
     await waitFor(() => expect(order).toEqual(["undo c", "undo b"]));
     rerender();
     expect(hook.result.current.steps().done.map((entry) => entry.label)).toEqual(["a"]);
@@ -99,7 +99,7 @@ describe("the list of the session's steps", () => {
     order.length = 0;
     await open();
     // Everything is undone: the list shows the three as undone, and "redo to here" on the second brings back a and b.
-    const forward = screen.getAllByRole("button", { name: /Gör om till och med/ });
+    const forward = screen.getAllByRole("button", { name: /Gör om hit/ });
     expect(forward).toHaveLength(3);
     await userEvent.click(forward[1]!);
     await waitFor(() => expect(order).toEqual(["redo a", "redo b"]));
@@ -110,7 +110,7 @@ describe("the list of the session's steps", () => {
     const entries = ["a", "b"].map((label) => step(label, { what: "bulk-delete", count: 1 }, { undo: vi.fn(async () => void order.push(`undo ${label}`)) }));
     setup(entries);
     await open();
-    await userEvent.click(screen.getByRole("button", { name: "Gå tillbaka till: Så här såg schemat ut när du började" }));
+    await userEvent.click(screen.getByRole("button", { name: "Gå tillbaka hit: Så här såg schemat ut när du började" }));
     await waitFor(() => expect(order).toEqual(["undo b", "undo a"]));
   });
 
@@ -123,7 +123,7 @@ describe("the list of the session's steps", () => {
     ];
     const { hook, showError, rerender } = setup(entries);
     await open();
-    await userEvent.click(screen.getByRole("button", { name: "Gå tillbaka till: Så här såg schemat ut när du började" }));
+    await userEvent.click(screen.getByRole("button", { name: "Gå tillbaka hit: Så här såg schemat ut när du började" }));
     await waitFor(() => expect(showError).toHaveBeenCalledWith(refusal));
     rerender();
     // c was undone; b could not be, and a was never reached.
@@ -137,6 +137,6 @@ describe("the list of the session's steps", () => {
     const buttons = within(document.querySelector("ol")!).getAllByRole("button");
     expect(buttons).toHaveLength(2);
     for (const button of buttons) expect(button).toHaveAttribute("data-writes", "SCHEMALAGGNING");
-    expect(screen.getByRole("button", { name: "Gå tillbaka till: Tog bort 2 lektioner" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Gå tillbaka hit: Tog bort 2 lektioner" })).toBeTruthy();
   });
 });

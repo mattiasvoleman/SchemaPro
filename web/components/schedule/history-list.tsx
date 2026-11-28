@@ -10,8 +10,9 @@
  * not in the page, which pushes them as data (HistoryEntry.meta).
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { toast } from "sonner";
 import { History, Loader2 } from "lucide-react";
 import type { MasterLesson, Person, Room, Subject } from "@/lib/types";
 import type { HistoryEntry, HistoryLesson, ScheduleHistory } from "@/lib/use-schedule-history";
@@ -35,6 +36,7 @@ interface Line {
 }
 
 export function HistoryList({ history, subjectById, teacherById, roomById, groupLabel, showError }: HistoryListProps) {
+  const summary = useRef<HTMLElement>(null);
   const t = useTranslations("timetable");
   const tDays = useTranslations("days");
   const locale = useLocale();
@@ -117,14 +119,20 @@ export function HistoryList({ history, subjectById, teacherById, roomById, group
   /**
    * Walks to `target`: the number of steps that are to be done. One undo or redo at a time, each through the gateway; the first that cannot be taken
    * stops the walk and is said (showError), and the steps already taken stand. A walk that is asked for while one is on its way is not started.
+   * A walk that gets there is said as the toolbar's Ångra says it (a toast, which a screen reader reads), and the focus, which the button that was pressed
+   * has lost by turning into "Nu", goes to the heading of the list.
    */
   const walkTo = async (target: number) => {
     if (walking) return;
     setWalking(true);
+    let reached = false;
     try {
       for (;;) {
         const now = history.steps().done.length;
-        if (now === target) break;
+        if (now === target) {
+          reached = true;
+          break;
+        }
         const moved = await (now > target ? history.undo() : history.redo());
         // The history is busy or has nothing more to give: there is nowhere further to walk.
         if (moved === null) break;
@@ -134,13 +142,16 @@ export function HistoryList({ history, subjectById, teacherById, roomById, group
     } finally {
       setWalking(false);
     }
+    if (!reached) return;
+    toast.info(target === 0 ? t("historyWalkedStart") : t(lines[target - 1]!.undone ? "historyWalkedForward" : "historyWalkedBack", { step: describe(lines[target - 1]!.entry) }));
+    summary.current?.focus();
   };
 
   const newest = lines.filter((line) => !line.undone).length;
   return (
     /* Closed until it is wanted: the dialog is for saving and restoring versions, and the session's steps are a second thing it keeps. */
     <details className="rounded-md border p-3 [&[open]>summary]:mb-2">
-      <summary className="flex cursor-pointer items-center gap-1.5 text-sm font-semibold">
+      <summary ref={summary} className="flex cursor-pointer items-center gap-1.5 text-sm font-semibold">
         <History className="size-4" aria-hidden="true" />
         {t("historyTitle", { count: lines.length })}
       </summary>
