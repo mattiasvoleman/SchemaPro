@@ -75,6 +75,28 @@ const EXPECTED_STATEMENTS: Record<string, number> = {
   'Ta in 1 lesson': 69,
   'Ta in 3 lessons': 148,
 };
+/**
+ * Holds every COMMIT the API role sends back by `ms` while `body` runs. A staff-room telling made from inside the transaction (before its COMMIT) would then stand
+ * a clear `ms` ahead of the commit, whatever the order two connections' statements happen to reach Postgres in: a read of the owner's, made when the telling is made,
+ * finds none of the lessons (g523: without the hold the check below let a telling before the COMMIT through in one run of five).
+ */
+async function withCommitHeldBack<T>(ms: number, body: () => Promise<T>): Promise<T> {
+  const prototype = Client.prototype as unknown as { query: (...args: unknown[]) => unknown };
+  const query = prototype.query;
+  prototype.query = function (this: { user?: string }, ...args: unknown[]) {
+    const text = typeof args[0] === 'string' ? args[0] : (args[0] as { text?: string } | undefined)?.text;
+    if (this.user === 'app_authenticated' && typeof text === 'string' && /^\s*COMMIT\s*$/i.test(text)) {
+      return new Promise((resolve, reject) => setTimeout(() => (query as (...a: unknown[]) => Promise<unknown>).apply(this, args).then(resolve, reject), ms));
+    }
+    return query.apply(this, args);
+  };
+  try {
+    return await body();
+  } finally {
+    prototype.query = query;
+  }
+}
+
 /** Every statement pg sends while `body` runs, counted at Client.query: what reaches Postgres (the adapter probe's helper of the same name). */
 async function statementsDuring(body: () => Promise<unknown>): Promise<string[]> {
   const sent: string[] = [];
@@ -459,7 +481,7 @@ async function main(): Promise<void> {
       const proposal_ = await fill.propose({ academicYearId: seeded_.year, scope: 'SCHOOL' }, admin_);
       assert.ok(proposal_.placed.length >= 3, `a few lessons to take in: ${proposal_.placed.length}`);
       assert.deepEqual(told.filter((entry) => entry.schoolId === seeded_.school), [], 'a proposal tells nobody: it writes nothing');
-      const applied_ = await fill.apply({ academicYearId: seeded_.year, basis: proposal_.basis, items: itemsOf(proposal_) }, admin_);
+      const applied_ = await withCommitHeldBack(300, () => fill.apply({ academicYearId: seeded_.year, basis: proposal_.basis, items: itemsOf(proposal_) }, admin_));
       await new Promise((resolve) => setTimeout(resolve, 200)); // the telling is on a later turn than the answer, as production's after-commit hooks are
       const heard = told.filter((entry) => entry.schoolId === seeded_.school);
       console.log(`        (fp-n) ${applied_.laid.length} lessons taken in, the staff room was told ${heard.length} time(s)${heard.map((entry) => ` naming ${entry.options?.lessonIds?.length ?? 0}`).join(',')}`);
@@ -473,6 +495,22 @@ async function main(): Promise<void> {
       assert.equal(stale_.status, 409);
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.deepEqual(told.filter((entry) => entry.schoolId === seeded_.school), [], 'a write that was refused changed nothing to tell');
+      // Refused at the basis, nothing was written and nothing told, which a staff room told of a rolled-back transaction would not show. One refused by the judge
+      // AFTER it has written its first lessons (each of them told of to the transaction's collection) must tell nobody as well, and leave nothing standing.
+      await takeOutOf(seeded_.year, classes_, 8);
+      const second_ = await fill.propose({ academicYearId: seeded_.year, scope: 'SCHOOL' }, admin_);
+      assert.ok(second_.placed.length >= 3, `a few lessons to take in again: ${second_.placed.length}`);
+      const last_ = second_.placed[second_.placed.length - 1]!;
+      assert.ok(last_.teacherId, 'the last brick has a teacher');
+      // The last lesson's teacher is shut that day after the proposal: the basis does not see a closed hour, the judge at the write does.
+      await owner.query(`INSERT INTO "AvailabilityConstraints" ("schoolId","resourceType","userId","dayOfWeek","startTime","endTime",type,"updatedAt") VALUES ($1,'TEACHER',$2,$3,'07:00','18:00','UNAVAILABLE',now())`, [seeded_.school, last_.teacherId, last_.dayOfWeek]);
+      const standingBefore_ = Number((await q<{ n: string }>(`SELECT count(*) AS n FROM "MasterLessons" WHERE "academicYearId" = $1`, [seeded_.year]))[0]!.n);
+      told.length = 0;
+      const judged_ = await refusal(fill.apply({ academicYearId: seeded_.year, basis: second_.basis, items: itemsOf(second_) }, admin_));
+      assert.deepEqual([judged_.status, judged_.code], [409, 'MASTER_LESSON_REFUSED'], 'the judge refused the last lesson, after the first ones were written');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(Number((await q<{ n: string }>(`SELECT count(*) AS n FROM "MasterLessons" WHERE "academicYearId" = $1`, [seeded_.year]))[0]!.n), standingBefore_, 'nothing of the rolled-back Ta in stands');
+      assert.deepEqual(told.filter((entry) => entry.schoolId === seeded_.school), [], 'a transaction that was rolled back after it wrote tells nobody');
     });
 
     await check('(fp-o) the new roads send Postgres exactly these statements: a proposal of one and of three bricks, a Ta in of one and of three lessons', async () => {
