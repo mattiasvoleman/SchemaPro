@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TIMES } from "./possible-times.fixture";
-import { askPossibleTimes, NUMBERED, optionAt, optionNumbered, roomAt, runAt, type PossibleTimes } from "./possible-times";
+import { askPossibleTimes, askRoomChoices, NUMBERED, optionAt, optionNumbered, roomAt, runAt, type PossibleTimes } from "./possible-times";
 import { possibleOf, possibleStore } from "./possible-store";
 
 const post = vi.hoisted(() => vi.fn());
@@ -22,6 +22,29 @@ describe("asking where a lesson can stand", () => {
       controller.signal,
     );
     expect(NUMBERED).toBe(9);
+  });
+});
+
+describe("asking about a brick of Att lägga, which is no lesson yet", () => {
+  const brick = { academicYearId: "y", studentGroupId: "g", subjectId: "s", minutes: 60, teacherId: "t", recurrence: "ALL_WEEKS" as const };
+
+  it("names the brick and no lesson: the gateway takes exactly one of them", async () => {
+    post.mockResolvedValue(TIMES);
+    await askPossibleTimes(brick);
+    expect(post).toHaveBeenCalledWith(
+      "/api/v1/master-lessons/possible-times",
+      { brick, from: "07:00", to: "18:00", stepMinutes: 5, limit: NUMBERED },
+      undefined,
+    );
+    expect(post.mock.calls[0]![1]).not.toHaveProperty("lessonId");
+  });
+
+  it("asks which rooms the brick can have at a day and a clock in the same way, and a lesson as before", async () => {
+    post.mockResolvedValue({ rooms: [] });
+    await askRoomChoices(brick, 2, "09:00");
+    expect(post).toHaveBeenLastCalledWith("/api/v1/master-lessons/room-choices", { brick, dayOfWeek: 2, startTime: "09:00" }, undefined);
+    await askRoomChoices("a", 2, "09:00");
+    expect(post).toHaveBeenLastCalledWith("/api/v1/master-lessons/room-choices", { lessonId: "a", dayOfWeek: 2, startTime: "09:00" }, undefined);
   });
 });
 

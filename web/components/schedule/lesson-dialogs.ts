@@ -39,3 +39,6 @@ export { startsTheGatewayLets } from "@/lib/possible-times";
 export { SelectionBar } from "@/components/schedule/selection-bar";
 // The krocklista (E1) shares the dialog the others carry, and is drawn only once "Visa vilka" is pressed.
 export { ConflictList } from "@/components/schedule/conflict-list";
+// Att lägga (E4): the head in the board's toolbar and the panel under it. The head is drawn as the page mounts, which is when this chunk is
+// fetched anyway, and sharing it keeps their form fields, notices and the possible-times client in the one copy.
+export { TrayHead, TrayPanel } from "@/components/schedule/tray";

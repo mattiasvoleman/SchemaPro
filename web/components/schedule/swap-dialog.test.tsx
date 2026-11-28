@@ -283,6 +283,22 @@ describe("SwapDialog: apply", () => {
     expect(toast.success).toHaveBeenCalledWith("applied(3)", expect.objectContaining({ description: "calendarUpdated(4) calendarRemoved(2)" }));
   });
 
+  it("says the lessons it locked, as a move by hand does: the next Generera leaves them, and Ångra takes the lock off (Låset vid en flytt, E4)", async () => {
+    swaps.apply.mutateAsync.mockResolvedValue({
+      propagatedLessons: 0,
+      removedCalendarLessons: 0,
+      versionId: "v-1",
+      undo: [],
+      lockedByMove: true,
+      lockedLessonIds: ["l-a", "l-b"],
+    });
+    await opened();
+    const [swap] = screen.getAllByRole("listitem").filter((li) => within(li).queryByRole("heading", { name: /^swap/ }));
+    await userEvent.click(within(swap!).getByRole("button", { name: "apply" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(toast.success).toHaveBeenCalledWith("applied(3)", expect.objectContaining({ description: "lockedByMove(2)" }));
+  });
+
   it("says it even when nothing followed: only removals", async () => {
     swaps.apply.mutateAsync.mockResolvedValue({ propagatedLessons: 0, removedCalendarLessons: 1, versionId: "v-1", undo: [] });
     await opened();

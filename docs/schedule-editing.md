@@ -179,14 +179,55 @@ whatever the request names (decision 5: no forced clash).
   begäran själv satte eller tog bort (en låst lektion som flyttas med `isLocked: false` låses upp), inte en lektion som redan är låst, inte en ny sal eller lärare
   (det flyttar ingenting av var lektionen står) och inte en lektion i ett parallellt block, vars lås är blockets (Lås blocket). Sidan säger "Flyttad och låst" och
   ger Lås upp; ett ångrat flyttande tar låset med sig, eftersom ögonblicksbilden bär lektionens lås.
+- **Ett byte låser det det flyttar** (granskaren g486, M-2). `POST /api/v1/swaps/apply` låser varje lektion den flyttar som inte var låst, i samma skrivning, och svaret säger det
+  som ett PATCH gör: `lockedByMove: true` och `lockedLessonIds`, de lektioner byten låste (inte en som redan var låst, som den valda lektionen kan vara). Annars lägger nästa
+  Generera om bägge där de stod. En låst lektion är en låst partner: Byt och Föreslå hoppar över den, så ett par som bytt plats byts inte igen av en slump.
+  **Utom en lektion i ett parallellt block vars andra lektioner byten lämnar olåsta** (granskaren g505, M-1): Generera vägrar ett block där bara några av lektionerna är
+  låsta (`BLOCK_PARTLY_LOCKED`), så ett byte som flyttar ett kort av ett block med flera kort låser inte kortets lektioner, och nästa Generera lägger om blocket som förr.
+  Ett block läggs för hand med sitt kort (`block-card`), som låser blocket helt. Flyttar byten blockets alla lektioner, eller är de andra redan låsta, låses de som andra.
+  **Ångra** är samma flyttar omvända till samma väg, och den tar låset av igen utan något nytt fält i begäran (den äldre webbens Ångra går som förut): en låst lektion
+  som inte är den valda flyttas bara om dess senast loggade ändring var den som låste den (olåst före, låst efter) och begäran för den tillbaka dit den ändringen fann den;
+  då låses den upp. Ett lås handen satt efteråt, eller en lektion som flyttats sedan, nekas som förut (`SWAP_LOCKED`).
+- **Ett blockkort som flyttas låser sitt block** (g486, M-2). `PATCH /api/v1/master-lessons/block-card` skriver bara dag och klockslag till kortets lektioner, men låser sedan
+  blocket helt, med `lockBlock`s egen skrivning: varje placerad lektion i varje medlem, och i ett block på samma tider (en lektion på parkeringen låses inte). Det är blockets
+  lås och inte kortets, eftersom Generera vägrar ett block där bara några av lektionerna är låsta (`BLOCK_PARTLY_LOCKED`), så kortets lås ensamt hade flyttat vägran till
+  nästa Generera. Svaret har `lockedByMove: true` och `lockedLessonIds`; ett kort som släpps där det stod är ingen flytt och låser inget. Att ta tillbaka låset är
+  `lockBlock` med `isLocked: false` och de id svaret nämnde: ett ångrat korts flytt tar inte låset med sig.
 - **Att låsa eller låsa upp frågar inte klashregeln** (granskaren g461, L-5). Ett PATCH som inte ändrar något domaren läser (dag, klockslag, veckor, lärare, sal,
   klasser, elever) och inte namnger `exempt` flyttar ingenting och krockar inte med något nytt, så en lektion som redan är dubbelbokad kan låsas och låsas upp.
   En ny sal, en flytt och en ny lärare frågas som förut.
 - **Ett undantag ges inte åt en lektion på parkeringen** (granskaren g467, L-3): `exempt` på en lektion som redan ligger på parkeringen är 400, och den läsande
   frågan svarar inget undantag för en sådan. Det PATCH som parkerar lektionen får bära `exempt` (webbens Gör om skickar lektionens ögonblicksbild, undantaget med):
   parkeringen frågas inget och tar undantaget, så inget sparas och inget nekas.
-- **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, och en dubbelbokad
-  lektion kan låsas) och `src/calendar/master-lessons.lock-at-move.spec.ts`.
+- **Hålls av** `scripts/test/probe-brickor.ts` (mot riktig Postgres: en Generera-lektion är inte kvarhållen förrän den flyttats, då är den det, en dubbelbokad
+  lektion kan låsas, ett byte låser sina två lektioner och Ångra tar låset av, och ett blockkort låser hela sitt block), `src/calendar/master-lessons.lock-at-move.spec.ts`,
+  `src/swaps/swaps.apply.spec.ts` och blockkortets prov i `master-lessons.service.spec.ts`.
+
+## Skriv in förläggningarna (E4b)
+
+En skola som har förlagt lektioner och inte får Generera att gå klart behöver ett schema att arbeta i. `POST /api/v1/placement-write-in` (`{ academicYearId }`) skriver årets förläggningar
+till grundschemat som de lektioner Generera hade skrivit ur dem, och frågar inte motorn. `GET /api/v1/placement-write-in?academicYearId=…` svarar vad en skrivning skulle göra utan att
+skriva något (varje administratör får läsa det, skrivningen är schemaläggarens som en handredigering). Svaret har `lessonsWritten`, `lessonsReplaced`, `postsWritten`,
+`calendarLessonsRemoved`, `safetyVersionId` och `notWritten`.
+
+- **Vad som skrivs.** En förläggning som veckan håller (samma dom som brädet och Generera ger, `RequirementPlacementsService.judgedYear`, mot de lektioner Generera behåller och mot varandra) och som
+  anger en sal. Lektionen är postens vid radens dag, klockslag, sal och veckor, **låst, Genereras egen och märkt från en förläggning** (`placedLessonWritesOf`, den enda platsen utanför hämtningen som gör en
+  förläggning till en lektion), så nästa Generera skriver om den ur raderna som de då står och en handredigering kan inte flytta den (`LESSON_IS_PLACED`).
+- **Vad som lämnas, med skäl i `notWritten`.** `REFUSED`: veckan håller inte raden (domen följer med; en krock nekar båda raderna, som Generera nekar hela körningen), eller generatorn skulle inte ta salen (`verdict.reason` är då `BOARD_ROOM_NOT_ALLOWED`, med salen och `reason` `SEATS`, `TYPE` eller `YEARS`: färre platser än elever, en annan sorts sal än ämnet kräver, eller årskurser salen är avstängd från). Det är samma regel som en läggning i den salen nekas med (`roomAllowed`, `placement-room-refusal.ts`): ett lås med sal frågar motorn inget om salen, men en lektion bron skriver för hand hålls till läggningens regel. Salarna frågas för alla raderna på en gång. `NO_ROOM`: raden lämnar salen åt motorn,
+  och bara motorn väljer sal. `BLOCK`: ett blocks förläggningar är motorns (ett lås i ett block är ett delvis låst block). De ligger kvar som förläggningar och Generera lägger dem.
+- **Vad den ersätter.** De lektioner en tidigare körning skrev ur förläggningar för en post bron skriver för, som Generera raderar dem före sin skrivning: en rad som flyttats skrivs inte bredvid sin gamla lektion.
+  Det som svarar en rad bron inte skriver (motorns sal, eller en rad som slutat hålla) står kvar, tid för tid, annars tar bron bort det bara motorn kan lägga tillbaka. En post bron inte skriver för rörs inte.
+  En lektion som redan är precis det raden skulle skriva (samma lärare, sal, klockslag och veckor) lämnas, och raden skriver ingen kopia: en andra skrivning över samma rader ändrar ingenting
+  (inga nya id, ingen version, ingen loggrad, inget i kalendern).
+- **Hur.** Som varje omskrivning av året: läget, sedan årets regenereringslås (exklusivt, högst 5 s, annars `409 SCHEDULE_BUSY`), sedan läsningarna den bestämmer av, en återställningspunkt (en version, som ett byte tar en),
+  kalenderns daterade lektioner för de ersatta från skolans idag (i läget Direkt, som en regenerering), ersättningen, skrivningen och en loggrad per lektion som gick (`DELETE`) och per lektion som kom (`CREATE`).
+  Säges efter commit som en ändring av mastertidtabellen.
+- **Direkt frågar först** (P5, beslut 8; granskaren g505, M-2). De daterade lektioner skrivningen tar bort från kalendern är publicerade lektioner som når elever och vårdnadshavare, så en skrivning som
+  tar bort några i en publicerad period ställer samma fråga som en handredigering, en gång (`requireDirectReachAnswered`, med antalet borttagna): `409 DIRECT_REACH_UNANSWERED`, och inget skrivs.
+  En skrivning som inte når någon publicerad lektion frågar aldrig.
+- **Hålls av** `src/requirement-placements/placement-write-in.spec.ts` (vad som skrivs, lämnas och ersätts), `placement-write-in.service.spec.ts` (ordningen, förhandsvisning, utkast, 409),
+  `test/placement-write-in.e2e-spec.ts` (vägarna och vem som får), `scripts/test/probe-skriv-in.ts` och `probe-skriv-in-direkt.ts` (mot riktig Postgres, i CI) och, för hand mot en riktig motor, `scripts/test/probe-skriv-in-motor.ts`:
+  Generera, körd efter bron, skriver samma lektioner ur samma rader, och bron efter Generera ändrar ingenting.
 
 ## Tier 3
 

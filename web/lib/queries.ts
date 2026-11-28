@@ -637,7 +637,7 @@ export function useMasterLessons(academicYearId: string | null) {
         supabase
           .from("MasterLessons")
           .select(
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, exemptFrom, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, fromPlacement, isGenerated, exemptFrom, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
           )
           .eq("academicYearId", academicYearId!)
           .order("dayOfWeek")
@@ -1203,6 +1203,8 @@ export function useUpdateMasterLesson() {
           removedCalendarLessons: number;
           /** The staffing policy's WARN for a new teacher (staffing-warnings.ts). */
           warnings?: StaffingWarning[];
+          /** Låset vid en flytt (E4): the gateway locked the lesson this edit moved, or the next Generera lays it again. */
+          lockedByMove?: true;
         }
       >(
         `/api/v1/master-lessons/${id}`,

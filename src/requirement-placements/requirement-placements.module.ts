@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { CalendarModule } from '../calendar/calendar.module';
 import { BlockPlacementsController } from './block-placements.controller';
 import { BlockPlacementsService } from './block-placements.service';
+import { PlacementWriteInController } from './placement-write-in.controller';
+import { PlacementWriteInService } from './placement-write-in.service';
 import { RequirementPlacementsController } from './requirement-placements.controller';
 import { RequirementPlacementsService } from './requirement-placements.service';
 
@@ -14,8 +16,8 @@ import { RequirementPlacementsService } from './requirement-placements.service';
  */
 @Module({
   imports: [CalendarModule],
-  controllers: [RequirementPlacementsController, BlockPlacementsController],
-  providers: [RequirementPlacementsService, BlockPlacementsService],
+  controllers: [RequirementPlacementsController, BlockPlacementsController, PlacementWriteInController],
+  providers: [RequirementPlacementsService, BlockPlacementsService, PlacementWriteInService],
   exports: [RequirementPlacementsService],
 })
 export class RequirementPlacementsModule {}

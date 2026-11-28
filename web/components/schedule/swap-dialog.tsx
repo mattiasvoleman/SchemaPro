@@ -163,6 +163,8 @@ export function SwapDialog({
       const description = [
         result.propagatedLessons > 0 ? t("calendarUpdated", { count: result.propagatedLessons }) : null,
         result.removedCalendarLessons > 0 ? t("calendarRemoved", { count: result.removedCalendarLessons }) : null,
+        // Låset vid en flytt (E4): the swap locked what it moved, and Ångra takes the lock off with it.
+        result.lockedByMove && result.lockedLessonIds?.length ? t("lockedByMove", { count: result.lockedLessonIds.length }) : null,
       ]
         .filter((part) => part !== null)
         .join(" ");

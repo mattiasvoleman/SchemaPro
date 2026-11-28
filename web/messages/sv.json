@@ -2529,6 +2529,74 @@
       }
     }
   },
+  "boardTray": {
+    "button": "Att lägga",
+    "head": "{laid} av {of} lektioner lagda",
+    "headPlaced": "{laid} av {of} lektioner lagda, {placed} förlagda",
+    "title": "Att lägga",
+    "hint": "En bricka för varje lektion som saknas i grundschemat, räknad som Generera räknar, de längsta först. En bricka du lägger blir en låst lektion direkt: den finns i schemat och Generera låter den stå.",
+    "loading": "Hämtar brickorna …",
+    "failed": "Det gick inte att hämta brickorna.",
+    "retry": "Försök igen",
+    "empty": "Allt är lagt: ingen lektion saknas i grundschemat.",
+    "emptyClass": "Klassen har inga brickor kvar.",
+    "classLabel": "Klass",
+    "allClasses": "Alla klasser ({count})",
+    "classOption": "{name} ({count})",
+    "close": "Stäng Att lägga",
+    "listLabel": "{count, plural, one {# bricka} other {# brickor}}",
+    "brick": "{subject} {className}",
+    "detail": "{teacher}, {minutes} min",
+    "noTeacher": "ingen lärare",
+    "weeks": {
+      "ALL_WEEKS": "varje vecka",
+      "ODD_WEEKS": "udda veckor",
+      "EVEN_WEEKS": "jämna veckor"
+    },
+    "parked": "På parkeringen",
+    "block": "Läggs med blocket",
+    "noTeacherBadge": "Saknar lärare",
+    "possible": "{count, plural, =0 {ingen ledig tid} one {# ledig tid} other {# lediga tider}}",
+    "lay": "Lägg …",
+    "layLabel": "Lägg {lesson}",
+    "formLabel": "Lägg {lesson}",
+    "timesTitle": "Möjliga tider",
+    "timesNone": "Det finns ingen tid i veckan att lägga {lesson} på.",
+    "day": "Dag",
+    "start": "Start",
+    "startHint": "HH:MM",
+    "room": "Sal",
+    "roomsLoading": "Hämtar salarna …",
+    "roomsFailed": "Salarna gick inte att hämta, så lektionen läggs utan sal. Ändra tiden för att försöka igen.",
+    "noRoom": "Utan sal",
+    "laid": "Lagd och låst: {lesson} {day} {from}–{to}",
+    "laidNoRoom": "Lagd och låst, utan sal: {lesson} {day} {from}–{to}",
+    "layWithoutRoom": "Lägg utan sal",
+    "layAnyway": "Lägg ändå",
+    "submit": "Lägg",
+    "cancel": "Avbryt",
+    "errors": {
+      "stale": "Någon annan har lagt eller ändrat lektioner av den här brickans slag. Listan har lästs om: välj brickan igen.",
+      "ROOM": {
+        "title": "Salen passar inte",
+        "SEATS": "Salen har för få platser för lektionen. Välj en annan sal, eller lägg lektionen utan sal.",
+        "TYPE": "Salen är inte den typ ämnet kräver. Välj en annan sal, eller lägg lektionen utan sal.",
+        "YEARS": "Salen är inte för gruppens årskurser. Välj en annan sal, eller lägg lektionen utan sal."
+      },
+      "CANNOT": {
+        "title": "Brickan kan inte läggas ensam",
+        "text": "En lektion i ett parallellt block läggs med blocket, och en lektion utan lärare behöver en lärare först."
+      },
+      "REFUSED": {
+        "title": "Den tiden går inte",
+        "text": "Veckan håller inte den tiden."
+      },
+      "OTHER": {
+        "title": "Brickan lades inte",
+        "text": "Det gick inte att lägga brickan."
+      }
+    }
+  },
   "boardKeys": {
     "clash": "Krock",
     "blockDialog": "{lesson} är ett block: blockets egen ruta öppnas, där lås, parkera och ta bort gäller hela blocket.",
@@ -2845,7 +2913,26 @@
       "unnamed": "Parallellt block",
       "refusedSlot": "{name} kan inte flyttas dit: någon av kortets lektioner krockar på den tiden. Öppna kortet för att flytta en lektion i taget.",
       "refusedTray": "{name} parkeras inte som ett kort. Öppna kortet och parkera en lektion i taget från dess dialog.",
-      "lockedParked": "{parked, plural, one {# av blockets lektioner är parkerad och låstes inte. Nästa generering vägrar blocket som delvis låst tills den är lagd.} other {# av blockets lektioner är parkerade och låstes inte. Nästa generering vägrar blocket som delvis låst tills de är lagda.}}"
+      "lockedParked": "{parked, plural, one {# av blockets lektioner är parkerad och låstes inte. Nästa generering vägrar blocket som delvis låst tills den är lagd.} other {# av blockets lektioner är parkerade och låstes inte. Nästa generering vägrar blocket som delvis låst tills de är lagda.}}",
+      "lockedByMoveNote": "Flyttad och låst: hela blocket är låst ({count, plural, one {# lektion} other {# lektioner}}), så nästa Generera lägger inte om det.",
+      "lockedByMoveUnlock": "Lås upp",
+      "lockedByMoveUnlocked": "Upplåst: Generera kan lägga om blocket ({count, plural, one {# lektion} other {# lektioner}})."
+    },
+    "lockedByMove": {
+      "note": "Flyttad och låst: nästa Generera lägger inte om {count, plural, one {lektionen} other {lektionerna}}.",
+      "unlock": "Lås upp",
+      "unlocked": "Upplåst: Generera kan lägga om {count, plural, one {lektionen} other {lektionerna}}."
+    },
+    "motor": {
+      "kept": {
+        "LOCKED": "Låst för motorn: Generera låter lektionen stå där den är.",
+        "HANDMADE": "Låst för motorn: lektionen är handgjord, och Generera låter den stå.",
+        "PUPILS": "Låst för motorn: lektionen har en extra klass eller utvalda elever, och Generera låter den stå."
+      },
+      "free": {
+        "FREE": "Fri för motorn: nästa Generera lägger om lektionen.",
+        "PLACED": "Fri för motorn: nästa Generera skriver om lektionen ur sin förläggning."
+      }
     }
   },
   "placementWeek": {
@@ -3156,7 +3243,8 @@
     "splitsParallel": "Bytet skulle dela upp lektioner som ligger parallellt, så inget ändrades. Förslagen hämtas på nytt.",
     "lockedPartner": "Bytet skulle flytta en låst lektion, så inget ändrades. Förslagen hämtas på nytt.",
     "undoStale": "Schemat har ändrats sedan bytet, så det går inte att ångra härifrån. Återställ versionen ”Före byte” under Versioner.",
-    "openButton": "Föreslå byten"
+    "openButton": "Föreslå byten",
+    "lockedByMove": "{count, plural, one {Lektionen är låst} other {# lektioner är låsta}}, så nästa Generera lägger inte om {count, plural, one {den} other {dem}}. Ångra tar låset av."
   },
   "dayPlanner": {
     "title": "Dagsplanering",
