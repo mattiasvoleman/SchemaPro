@@ -43,11 +43,16 @@ export interface FillDialogProps {
   guard?: <T>(run: () => Promise<T>) => Promise<T>;
   /** Whether an error of `guard` is the reader's no to its question (Avbryt): not a failure, and nothing is said. */
   declined?: (error: unknown) => boolean;
+  /**
+   * Called when Ta in has written. The page lets go of the undo steps it holds (as after a swap or a room optimisation): lessons laid back from the parking are
+   * lessons a step holds a snapshot of, and replaying the step would put one back where it stood before the fill, with no word of it.
+   */
+  onApplied?: () => void;
 }
 
 const REASONS = [...FILL_LEFT_REASONS, "OTHER"] as const;
 
-export function FillDialog({ open, onClose, yearId, revision, groupById, subjectById, guard, declined }: FillDialogProps) {
+export function FillDialog({ open, onClose, yearId, revision, groupById, subjectById, guard, declined, onApplied }: FillDialogProps) {
   const t = useTranslations("fillDialog");
   const tDays = useTranslations("days");
   const tCommon = useTranslations("common");
@@ -146,6 +151,7 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
       toast.success(t("taken", { count: answer.laid.length }));
       for (const key of [TRAY_KEY, "masterLessons", "calendarLessons", "teacherLessons", "scheduleVersions"]) void queryClient.invalidateQueries({ queryKey: [key] });
       show(null);
+      onApplied?.();
       onClose();
     } catch (failure) {
       // The reader said no to the question before a change in Direkt: the proposal stands as it was, and nothing is said.

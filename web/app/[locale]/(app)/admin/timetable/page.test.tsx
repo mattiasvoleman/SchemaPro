@@ -5001,3 +5001,40 @@ describe("the proposal of Lägg det som går on the boards of a view (E7a)", () 
     expect(boardOf("t-2").textContent).toContain("Svenska 4.2");
   });
 });
+
+describe("Ta in of Lägg det som går and the page's own undo history (E7a)", () => {
+  it("forgets the history once the lessons are written, as after a swap or the room optimisation: a step that holds a laid lesson as it stood would put it back with no word of it", async () => {
+    blockApi.tray.mockResolvedValue({ academicYearId: "y-1", bricks: [], tally: { lessons: 10, laid: 8, placedByRow: 0, left: 2 }, groups: [{ studentGroupId: "g-51", left: 2 }] });
+    blockApi.post.mockImplementation(async (path: string) =>
+      path.endsWith("/board-fill/propose")
+        ? {
+            academicYearId: "y-1",
+            answeredBy: "FILL",
+            basis: "a".repeat(32),
+            asked: 2,
+            placed: [{ key: "k1", postId: "p-1", studentGroupId: "g-51", subjectId: "s-sl", teacherId: "t-1", minutes: 60, lessonId: null, dayOfWeek: 3, startMinutes: 540, endMinutes: 600, roomId: null, noRoom: true }],
+            left: [],
+            moved: [],
+            truncated: false,
+          }
+        : { academicYearId: "y-1", versionId: "v-1", laid: [{ key: "k1", lessonId: "l-new", created: true, noRoom: true }] },
+    );
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <TimetablePage />
+      </QueryClientProvider>,
+    );
+
+    dragToTuesday("Slöjd");
+    const undo = screen.getByRole("button", { name: "timetable.undo" });
+    await waitFor(() => expect(undo).toBeEnabled());
+
+    await user.click(await screen.findByRole("button", { name: "fillDialog.button" }, { timeout: 10_000 }));
+    await user.click(await screen.findByRole("button", { name: "fillDialog.propose" }));
+    await user.click(await screen.findByRole("button", { name: "fillDialog.take" }));
+
+    expect(blockApi.post).toHaveBeenCalledWith("/api/v1/board-fill/apply", expect.objectContaining({ basis: "a".repeat(32) }));
+    await waitFor(() => expect(undo).toBeDisabled());
+  });
+});

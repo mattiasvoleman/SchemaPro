@@ -769,6 +769,8 @@ export default function TimetablePage() {
    * replay over it, so it goes, as after the room optimisation.
    */
   const afterSwap = useCallback(() => history.clear(), [history]);
+  /** Ta in of Lägg det som går wrote lessons under the stack, laid back from the parking among them: the stack of earlier steps goes, as after a swap. */
+  const afterFill = afterSwap;
   const { placeLunch, moveLunch, removeLunch } = useLunchEdits({
     ...reads,
     t,
@@ -1234,7 +1236,7 @@ export default function TimetablePage() {
           <DialogLoadBoundary onError={() => setTrayFailed(true)}>
             <Suspense fallback={null}>
               <TrayHead yearId={shownYear.id} revision={lessonsReadAt} open={trayOpen} onToggle={() => setTrayOpen((open) => !open)} />
-              <FillHead yearId={shownYear.id} revision={lessonsReadAt} groupById={groupById} subjectById={subjectById} writable={!readOnly} guard={directReach.ask} declined={(error) => error instanceof DirectReachDeclined} />
+              <FillHead yearId={shownYear.id} revision={lessonsReadAt} groupById={groupById} subjectById={subjectById} writable={!readOnly} guard={directReach.ask} declined={(error) => error instanceof DirectReachDeclined} onApplied={afterFill} />
             </Suspense>
           </DialogLoadBoundary>
         ) : null}
