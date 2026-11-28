@@ -32,7 +32,9 @@ export interface FillPlaced extends FillBrickView {
   noRoom: boolean;
 }
 
-export type FillLeftReason = "NO_FREE_START" | "JUDGE" | "TIME" | "BLOCK" | "NO_TEACHER";
+/** The reasons the gateway leaves a brick for that the page has a sentence for: held to the gateway's own lists by board-fill.contract.test.ts. */
+export const FILL_LEFT_REASONS = ["NO_FREE_START", "JUDGE", "TIME", "BLOCK", "NO_TEACHER"] as const;
+export type FillLeftReason = (typeof FILL_LEFT_REASONS)[number];
 
 export interface FillLeft extends FillBrickView {
   reason: FillLeftReason;
@@ -121,8 +123,12 @@ export function fillFailureOf(error: unknown): FillFailure {
  * What the answer says in numbers, for the sentence "Lade 31 av 36. Ingenting annat flyttades.": how many were laid of how many were asked
  * about, and how many were left for each reason.
  */
-export function fillFigures(proposal: FillProposal): { laid: number; asked: number; left: number; byReason: Partial<Record<FillLeftReason, number>> } {
-  const byReason: Partial<Record<FillLeftReason, number>> = {};
-  for (const entry of proposal.left) byReason[entry.reason] = (byReason[entry.reason] ?? 0) + 1;
+export function fillFigures(proposal: FillProposal): { laid: number; asked: number; left: number; byReason: Partial<Record<FillLeftReason | "OTHER", number>> } {
+  const byReason: Partial<Record<FillLeftReason | "OTHER", number>> = {};
+  for (const entry of proposal.left) {
+    // A reason a newer gateway gave that this page has no sentence for is counted as "OTHER", so that every brick left is counted somewhere.
+    const reason = (FILL_LEFT_REASONS as readonly string[]).includes(entry.reason) ? entry.reason : "OTHER";
+    byReason[reason] = (byReason[reason] ?? 0) + 1;
+  }
   return { laid: proposal.placed.length, asked: proposal.asked, left: proposal.left.length, byReason };
 }

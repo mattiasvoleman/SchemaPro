@@ -2637,7 +2637,8 @@
       "TIME": "{count, plural, one {# hann} other {# hann}} inte prövas: tiden tog slut. Föreslå igen för resten.",
       "TIME_TAKE_FIRST": "{count, plural, one {# hann} other {# hann}} inte prövas: tiden tog slut. Ta in det som lades och föreslå igen för resten.",
       "BLOCK": "{count, plural, one {# ligger} other {# ligger}} i ett parallellt block och läggs med blocket.",
-      "NO_TEACHER": "{count, plural, one {# saknar} other {# saknar}} lärare."
+      "NO_TEACHER": "{count, plural, one {# saknar} other {# saknar}} lärare.",
+      "OTHER": "{count, plural, one {# blev} other {# blev}} över av en orsak som sidan inte har ord för än. Ladda om sidan."
     },
     "showPlaced": "Visa de {count} lagda",
     "placedLine": "{lesson}: {day} {from}–{to}",

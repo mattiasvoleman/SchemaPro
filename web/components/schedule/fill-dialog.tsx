@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { NativeSelect } from "@/components/ui/native-select";
 import { Notice } from "@/components/ui/notice";
 import { apiErrorText } from "@/lib/api-error-text";
-import { applyFill, clockOf, fillFailureOf, fillFigures, proposeFill, type FillLeftReason, type FillProposal, type FillRequest, type FillScope } from "@/lib/board-fill";
+import { applyFill, clockOf, FILL_LEFT_REASONS, fillFailureOf, fillFigures, proposeFill, type FillProposal, type FillRequest, type FillScope } from "@/lib/board-fill";
 import { fetchTray } from "@/lib/board-tray";
 import { fillPreview } from "@/lib/fill-store";
 
@@ -45,7 +45,7 @@ export interface FillDialogProps {
   declined?: (error: unknown) => boolean;
 }
 
-const REASONS: readonly FillLeftReason[] = ["NO_FREE_START", "JUDGE", "TIME", "BLOCK", "NO_TEACHER"];
+const REASONS = [...FILL_LEFT_REASONS, "OTHER"] as const;
 
 export function FillDialog({ open, onClose, yearId, revision, groupById, subjectById, guard, declined }: FillDialogProps) {
   const t = useTranslations("fillDialog");
