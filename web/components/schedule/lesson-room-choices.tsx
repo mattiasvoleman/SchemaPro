@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { askRoomChoices, clockOf, type RoomChoice, type RoomChoices } from "@/lib/possible-times";
+import { askRoomChoices, type RoomChoice, type RoomChoices } from "@/lib/possible-times";
+import { roomWords } from "@/lib/room-words";
 import type { LessonEditDraft } from "@/components/schedule/lesson-edit-dialog";
 import type { MasterLesson } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -64,30 +65,7 @@ export function LessonRoomChoices({
   const answered = state?.key === key ? state : null;
   const rooms = answered?.answer?.rooms ?? null;
 
-  const words = (room: RoomChoice): string => {
-    const parts: string[] = [];
-    if (room.current) parts.push(t("rooms.current"));
-    if (room.state === "FREE") parts.push(room.rank !== null ? t("rooms.free", { rank: room.rank }) : t("rooms.freeNotRanked"));
-    if (room.state === "BUSY" && room.occupant) {
-      parts.push(
-        t("rooms.busy", {
-          subject: room.occupant.subjectName,
-          className: room.occupant.className,
-          day: tDays(String(room.occupant.dayOfWeek)),
-          from: clockOf(room.occupant.startMinutes),
-          to: clockOf(room.occupant.endMinutes),
-          more: room.occupants - 1,
-        }),
-      );
-    }
-    if (room.state === "BUSY" && !room.occupant) parts.push(t("rooms.busyUnnamed"));
-    if (room.state === "CLOSED") parts.push(t("rooms.closed", { rule: t(`closed.${room.closedBy ?? "AVAILABILITY"}`) }));
-    if (room.tooSmall) parts.push(t("rooms.tooSmall"));
-    if (!room.typeOk) parts.push(t("rooms.wrongType"));
-    if (room.typeOk && !room.tooSmall && !room.allowed) parts.push(t("rooms.outsideYears"));
-    if (room.shared) parts.push(t("rooms.shared"));
-    return parts.join(", ");
-  };
+  const words = (room: RoomChoice): string => roomWords(room, t, tDays);
 
   return (
     <details className="col-span-2 rounded-md border" onToggle={(event) => setOpened((event.currentTarget as HTMLDetailsElement).open)}>

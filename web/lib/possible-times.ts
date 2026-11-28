@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import type { BrickSubject } from "@/lib/board-tray";
 
 /*
  * MÖJLIGA TIDER, AS THE BOARD READS THEM (E3).
@@ -81,11 +82,18 @@ export interface PossibleTimes {
 /** How many of the best times are numbered: one key each, 1 to 9. */
 export const NUMBERED = 9;
 
-/** Asks where a lesson can stand, the whole of the board's day, in five-minute steps. */
-export function askPossibleTimes(lessonId: string, signal?: AbortSignal): Promise<PossibleTimes> {
+/**
+ * What the question is about: a lesson that exists (its id), or a brick of Att lägga that is no lesson yet (what is known of it,
+ * lib/board-tray.ts brickSubject). The gateway takes exactly one of them.
+ */
+export type PossibleSubject = string | BrickSubject;
+const subjectBody = (subject: PossibleSubject) => (typeof subject === "string" ? { lessonId: subject } : { brick: subject });
+
+/** Asks where a lesson (or a brick) can stand, the whole of the board's day, in five-minute steps. */
+export function askPossibleTimes(subject: PossibleSubject, signal?: AbortSignal): Promise<PossibleTimes> {
   return api.post<PossibleTimes>(
     "/api/v1/master-lessons/possible-times",
-    { lessonId, from: "07:00", to: "18:00", stepMinutes: 5, limit: NUMBERED },
+    { ...subjectBody(subject), from: "07:00", to: "18:00", stepMinutes: 5, limit: NUMBERED },
     signal,
   );
 }
@@ -186,8 +194,8 @@ export interface RoomChoices {
   rooms: RoomChoice[];
 }
 
-/** Asks which rooms the lesson can have at a day and clock (POST /master-lessons/room-choices). */
-export function askRoomChoices(lessonId: string, dayOfWeek: number, startTime: string, signal?: AbortSignal): Promise<RoomChoices> {
-  return api.post<RoomChoices>("/api/v1/master-lessons/room-choices", { lessonId, dayOfWeek, startTime }, signal);
+/** Asks which rooms the lesson (or the brick) can have at a day and clock (POST /master-lessons/room-choices). */
+export function askRoomChoices(subject: PossibleSubject, dayOfWeek: number, startTime: string, signal?: AbortSignal): Promise<RoomChoices> {
+  return api.post<RoomChoices>("/api/v1/master-lessons/room-choices", { ...subjectBody(subject), dayOfWeek, startTime }, signal);
 }
 

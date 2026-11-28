@@ -1,0 +1,519 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Inbox, X } from "lucide-react";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { FormField } from "@/components/ui/form-field";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { Notice } from "@/components/ui/notice";
+import { apiErrorText } from "@/lib/api-error-text";
+import {
+  bricksOf,
+  brickKey,
+  brickSubject,
+  fetchTray,
+  headFigures,
+  layBodyOf,
+  layBrick,
+  layFailureOf,
+  type LayFailure,
+  type TrayBrick,
+} from "@/lib/board-tray";
+import { askPossibleTimes, askRoomChoices, clockOf, costWords, type PossibleOption, type PossibleSubject, type PossibleTimes, type RoomChoice } from "@/lib/possible-times";
+import { roomWords } from "@/lib/room-words";
+import { cn } from "@/lib/utils";
+
+/*
+ * ATT LÄGGA (E4): the grundschema's tray on the board's page.
+ *
+ * One BRICK for each lesson a timplanspost has left, counted as Generera counts it (GET /api/v1/board-tray), the hardest first as the gateway
+ * orders them. A brick is laid where the schemaläggare puts it, in a room the gateway's own chooser ranks first by default, and becomes a LOCKED
+ * lesson at once: it stands in the schedule, in the versions and in what is published, and Generera keeps it. The head says how many of the
+ * lessons the year's posts ask for are laid.
+ *
+ * Nothing here decides anything: the gateway counts the bricks, ranks the times and the rooms, and judges the lay as it judges a hand edit.
+ * This says what it answered, and offers the way on when the answer is a no that has one (another room, no room, "Lägg ändå").
+ *
+ * Two pieces of one module, fetched as one chunk when the page has mounted for a writer: TrayHead (the button and the figure, in the board's
+ * own toolbar) and TrayPanel (the region under it, open when the button says so).
+ */
+
+const TRAY_KEY = "boardTray";
+
+/** The year's tray, read again when the lessons of the grundschema are (`revision`: when the page last read them). */
+function useTray(yearId: string, revision: number) {
+  return useQuery({ queryKey: [TRAY_KEY, yearId, revision], queryFn: () => fetchTray(yearId), staleTime: 30_000 });
+}
+
+export function TrayHead({
+  yearId,
+  revision,
+  open,
+  onToggle,
+}: {
+  yearId: string;
+  revision: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const t = useTranslations("boardTray");
+  const { data: tray } = useTray(yearId, revision);
+  const figures = tray ? headFigures(tray.tally) : null;
+  return (
+    <>
+      <Button size="sm" variant={open ? "default" : "outline"} aria-expanded={open} aria-controls="board-tray" onClick={onToggle}>
+        <Inbox />
+        {t("button")}
+        {tray ? (
+          <Badge variant="secondary" className="ml-1 tabular-nums">
+            {tray.tally.left}
+          </Badge>
+        ) : null}
+      </Button>
+      {figures ? (
+        <span className="text-sm tabular-nums text-muted-foreground">
+          {figures.placedByRow > 0
+            ? t("headPlaced", { laid: figures.laid, of: figures.of, placed: figures.placedByRow })
+            : t("head", { laid: figures.laid, of: figures.of })}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+/** What the page knows by id, so that the tray names a class, a subject and a teacher: no person's name ever leaves the gateway for it. */
+interface TrayNames {
+  group: (id: string) => string;
+  subject: (id: string) => string;
+  teacher: (id: string) => string | null;
+}
+
+export function TrayPanel({
+  yearId,
+  revision,
+  groupById,
+  subjectById,
+  teacherById,
+  writable,
+  guard,
+  declined,
+  onClose,
+}: {
+  yearId: string;
+  revision: number;
+  groupById: ReadonlyMap<string, { name: string }>;
+  subjectById: ReadonlyMap<string, { name: string }>;
+  teacherById: ReadonlyMap<string, { firstName: string; lastName: string }>;
+  /** Whether this reader may lay a brick: a reader of the grundschema sees the tray and no button. */
+  writable: boolean;
+  /**
+   * The question before a change in Direkt that reaches families (P5, beslut 8; lib/use-direct-reach-ask.tsx `ask`): a lay of a lesson from the
+   * parking moves published lessons in the calendar, and the gateway refuses it (409 DIRECT_REACH_UNANSWERED) until the school has answered. The
+   * page hands in the function that asks first and runs the lay; left out, the lay is run as it is.
+   */
+  guard?: <T>(run: () => Promise<T>) => Promise<T>;
+  /** Whether an error of `guard` is the reader's no to its question (Avbryt): not a failure, and nothing is said. */
+  declined?: (error: unknown) => boolean;
+  onClose: () => void;
+}) {
+  const names: TrayNames = {
+    group: (id) => groupById.get(id)?.name ?? "",
+    subject: (id) => subjectById.get(id)?.name ?? "",
+    teacher: (id) => {
+      const person = teacherById.get(id);
+      return person ? `${person.firstName} ${person.lastName}` : null;
+    },
+  };
+  const t = useTranslations("boardTray");
+  const { data: tray, isLoading, isError, refetch } = useTray(yearId, revision);
+  const [groupId, setGroupId] = useState<string | null>(null);
+  const [laying, setLaying] = useState<string | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  // The button that opened each form: a form that is cancelled gives the focus back to it, and a form that laid its brick (whose row is gone) to the heading.
+  const layButtons = useRef(new Map<string, HTMLButtonElement | null>());
+
+  // The class a reader picked that has no brick left any more (the last one was laid) is the whole year again.
+  const chosen = tray && groupId !== null && tray.groups.some((group) => group.studentGroupId === groupId && group.left > 0) ? groupId : null;
+  const bricks = tray ? bricksOf(tray, chosen) : [];
+
+  return (
+    <section id="board-tray" aria-labelledby="board-tray-title" className="mb-3 rounded-md border bg-card p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 id="board-tray-title" ref={heading} tabIndex={-1} className="text-base font-semibold focus-visible:outline-2 focus-visible:outline-ring">
+          {t("title")}
+        </h2>
+        {tray ? (
+          <label className="ml-2 inline-flex items-center gap-2">
+            <span className="text-muted-foreground">{t("classLabel")}</span>
+            <NativeSelect className="h-8 w-auto" value={chosen ?? ""} onChange={(event) => setGroupId(event.target.value === "" ? null : event.target.value)}>
+              <option value="">{t("allClasses", { count: tray.tally.left })}</option>
+              {tray.groups
+                .filter((group) => group.left > 0)
+                .map((group) => ({ group, name: names.group(group.studentGroupId) }))
+                .sort((a, b) => a.name.localeCompare(b.name, "sv"))
+                .map(({ group, name }) => (
+                  <option key={group.studentGroupId} value={group.studentGroupId}>
+                    {t("classOption", { name, count: group.left })}
+                  </option>
+                ))}
+            </NativeSelect>
+          </label>
+        ) : null}
+        <Button size="icon" variant="ghost" className="ml-auto size-9" aria-label={t("close")} onClick={onClose}>
+          <X />
+        </Button>
+      </div>
+      <p className="mt-1 text-muted-foreground">{t("hint")}</p>
+
+      {isLoading ? <p className="mt-2 text-muted-foreground">{t("loading")}</p> : null}
+      {isError || (!isLoading && !tray) ? (
+        <Notice tone="warning" action={<Button size="sm" variant="outline" onClick={() => void refetch()}>{t("retry")}</Button>}>
+          {t("failed")}
+        </Notice>
+      ) : null}
+      {tray && bricks.length === 0 ? <p className="mt-2 font-medium">{chosen === null ? t("empty") : t("emptyClass")}</p> : null}
+      {tray && bricks.length > 0 ? (
+        <ul className="mt-2 grid max-h-96 gap-1 overflow-y-auto" aria-label={t("listLabel", { count: bricks.length })}>
+          {bricks.map((brick) => {
+            const key = brickKey(brick);
+            const open = laying === key;
+            return (
+              <li key={key} className="rounded-md border">
+                <BrickRow
+                  brick={brick}
+                  names={names}
+                  writable={writable}
+                  open={open}
+                  onLay={() => setLaying(open ? null : key)}
+                  buttonRef={(element) => void layButtons.current.set(key, element)}
+                />
+                {open ? (
+                  <BrickForm
+                    brick={brick}
+                    yearId={yearId}
+                    names={names}
+                    guard={guard}
+                    declined={declined}
+                    onCancel={() => {
+                      setLaying(null);
+                      layButtons.current.get(key)?.focus();
+                    }}
+                    onDone={() => {
+                      setLaying(null);
+                      heading.current?.focus();
+                    }}
+                  />
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function BrickRow({
+  brick,
+  names,
+  writable,
+  open,
+  onLay,
+  buttonRef,
+}: {
+  brick: TrayBrick;
+  names: TrayNames;
+  writable: boolean;
+  open: boolean;
+  onLay: () => void;
+  buttonRef: (element: HTMLButtonElement | null) => void;
+}) {
+  const t = useTranslations("boardTray");
+  const lesson = t("brick", { subject: names.subject(brick.subjectId), className: names.group(brick.studentGroupId) });
+  const teacher = brick.teacherId === null ? t("noTeacher") : (names.teacher(brick.teacherId) ?? t("noTeacher"));
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5">
+      <div className="min-w-0 flex-1">
+        <span className="font-medium">{lesson}</span>
+        <span className="ml-2 text-xs text-muted-foreground">
+          {t("detail", { teacher, minutes: brick.minutes })}, {t(`weeks.${brick.recurrence}`)}
+        </span>
+        {brick.lessonId !== null ? <Badge variant="outline" className="ml-2">{t("parked")}</Badge> : null}
+        {brick.cannotPlace === "BLOCK" ? <Badge variant="outline" className="ml-2">{t("block")}</Badge> : null}
+        {brick.cannotPlace === "NO_TEACHER" ? <Badge variant="outline" className="ml-2">{t("noTeacherBadge")}</Badge> : null}
+        {brick.possibleTimes !== null ? (
+          <span className="ml-2 text-xs tabular-nums text-muted-foreground">{t("possible", { count: brick.possibleTimes })}</span>
+        ) : null}
+      </div>
+      {writable && brick.cannotPlace === null ? (
+        <Button ref={buttonRef} size="sm" variant="outline" className="min-h-11" aria-expanded={open} aria-label={t("layLabel", { lesson })} data-writes="SCHEMALAGGNING DRIFT" onClick={onLay}>
+          {t("lay")}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
+const ROOM_DELAY_MS = 300;
+
+/** The form under a brick: the gateway's best times, the day and the start, the room, and the answer when it says no. */
+function BrickForm({
+  brick,
+  yearId,
+  names,
+  guard,
+  declined,
+  onCancel,
+  onDone,
+}: {
+  brick: TrayBrick;
+  yearId: string;
+  names: TrayNames;
+  guard?: <T>(run: () => Promise<T>) => Promise<T>;
+  declined?: (error: unknown) => boolean;
+  onCancel: () => void;
+  onDone: () => void;
+}) {
+  const t = useTranslations("boardTray");
+  const tPossible = useTranslations("boardPossible");
+  const tDays = useTranslations("days");
+  const tCommon = useTranslations("common");
+  const queryClient = useQueryClient();
+  // A lesson on the parking is asked about as the lesson it is (the gateway knows its extra classes and its pupils); a brick that is none, by what the
+  // post says of it.
+  const subject: PossibleSubject = brick.lessonId ?? brickSubject(brick, yearId);
+  const [day, setDay] = useState("1");
+  const [start, setStart] = useState("");
+  const [roomId, setRoomId] = useState("");
+  const [roomTouched, setRoomTouched] = useState(false);
+  const [times, setTimes] = useState<PossibleTimes | null | undefined>(undefined);
+  const [rooms, setRooms] = useState<{ key: string; rooms: RoomChoice[] | null } | null>(null);
+  const [failure, setFailure] = useState<{ failure: LayFailure; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const lesson = t("brick", { subject: names.subject(brick.subjectId), className: names.group(brick.studentGroupId) });
+  const clockOk = CLOCK.test(start);
+  const roomKey = `${day}|${start}`;
+
+  // The gateway's best times for the brick, asked once when the form opens.
+  useEffect(() => {
+    const asking = new AbortController();
+    askPossibleTimes(subject, asking.signal).then(
+      (answer) => {
+        if (!asking.signal.aborted) setTimes(answer && Array.isArray(answer.options) && Array.isArray(answer.days) ? answer : null);
+      },
+      () => {
+        if (!asking.signal.aborted) setTimes(null);
+      },
+    );
+    return () => asking.abort();
+    // The brick is the form's: a part read again is another form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brick.partKey, brick.lessonId]);
+
+  // The rooms for the day and the start the fields say, in the order the gateway ranks them, after a moment.
+  useEffect(() => {
+    if (!clockOk) return;
+    const asking = new AbortController();
+    const timer = setTimeout(() => {
+      askRoomChoices(subject, Number(day), start, asking.signal).then(
+        (answer) => {
+          if (asking.signal.aborted) return;
+          const list = answer && Array.isArray(answer.rooms) ? answer.rooms : null;
+          setRooms({ key: roomKey, rooms: list });
+        },
+        () => {
+          if (!asking.signal.aborted) setRooms({ key: roomKey, rooms: null });
+        },
+      );
+    }, ROOM_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+      asking.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomKey, clockOk, brick.partKey, brick.lessonId]);
+
+  const roomList = rooms?.key === roomKey ? rooms.rooms : null;
+  // The rooms of the time in the fields are on their way: until they have come the field holds no room of this time, and a lay then would be made without the
+  // one the generator ranks first (or with a room that belongs to the time before). The reader who chooses Utan sal is not waited for, and an answer that
+  // failed is no answer to wait for.
+  const roomsPending = clockOk && rooms?.key !== roomKey && !(roomTouched && roomId === "");
+  const roomsFailed = clockOk && rooms?.key === roomKey && rooms.rooms === null;
+  // The room the generator would put the lesson in is the default, until the reader has chosen one themselves.
+  const best = roomList?.find((room) => room.state === "FREE" && room.rank === 1)?.roomId ?? "";
+  const shownRoom = roomTouched ? roomId : best;
+
+  const choose = (option: PossibleOption) => {
+    setDay(String(option.dayOfWeek));
+    setStart(clockOf(option.startMinutes));
+    setRoomTouched(false);
+    setFailure(null);
+  };
+
+  const submit = async (override?: { roomId?: string | null; exempt?: ("FRAME" | "LUNCH")[] }) => {
+    if (!clockOk || busy || roomsPending) return;
+    setBusy(true);
+    const room = override && "roomId" in override ? (override.roomId ?? null) : shownRoom === "" ? null : shownRoom;
+    try {
+      const body = layBodyOf(brick, yearId, { dayOfWeek: Number(day), startTime: start, roomId: room, exempt: override?.exempt });
+      const answer = await (guard ? guard(() => layBrick(body)) : layBrick(body));
+      const where = { lesson, day: tDays(day), from: start, to: answer.lesson.endTime ?? "" };
+      toast.success(answer.noRoom ? t("laidNoRoom", where) : t("laid", where));
+      for (const key of [TRAY_KEY, "masterLessons", "calendarLessons", "teacherLessons"]) void queryClient.invalidateQueries({ queryKey: [key] });
+      onDone();
+    } catch (error) {
+      // The reader said no to the question before a change in Direkt: the form stays as it was, and nothing is said.
+      if (declined?.(error)) return;
+      const found = layFailureOf(error);
+      if (found.kind === "STALE") {
+        toast.error(t("errors.stale"));
+        void queryClient.invalidateQueries({ queryKey: [TRAY_KEY] });
+        onDone();
+      } else {
+        setFailure({ failure: found, text: found.kind === "OTHER" || found.kind === "REFUSED" ? apiErrorText(error, tCommon) : "" });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const id = `tray-${brickKey(brick)}`;
+  return (
+    <form
+      className="grid gap-3 border-t px-3 py-3"
+      aria-label={t("formLabel", { lesson })}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <div>
+        <p className="font-medium">{t("timesTitle")}</p>
+        {times === undefined ? <p className="text-muted-foreground">{tPossible("list.loading")}</p> : null}
+        {times === null ? <p className="text-muted-foreground">{tPossible("dialog.failed")}</p> : null}
+        {times && times.options.length === 0 ? <p className="text-muted-foreground">{t("timesNone", { lesson })}</p> : null}
+        {times && times.options.length > 0 ? (
+          <ol className="mt-1 grid gap-1 sm:grid-cols-2">
+            {times.options.map((option) => {
+              const words = costWords(option);
+              const pressed = day === String(option.dayOfWeek) && start === clockOf(option.startMinutes);
+              return (
+                <li key={option.rank}>
+                  <button
+                    type="button"
+                    aria-pressed={pressed}
+                    onClick={() => choose(option)}
+                    className={cn(
+                      "grid min-h-11 w-full gap-0.5 rounded-md border px-3 py-1.5 text-left hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+                      pressed && "border-primary bg-accent",
+                    )}
+                  >
+                    <span className="font-medium tabular-nums">
+                      {tPossible("list.option", { rank: option.rank, day: tDays(String(option.dayOfWeek)), from: clockOf(option.startMinutes), to: clockOf(option.endMinutes) })}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {words.length > 0 ? words.map((word) => tPossible(`list.words.${word}`)).join(", ") : tPossible("list.plain")}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        ) : null}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <FormField id={`${id}-day`} label={t("day")}>
+          <NativeSelect
+            value={day}
+            onChange={(event) => {
+              setFailure(null);
+              setDay(event.target.value);
+            }}
+          >
+            {[1, 2, 3, 4, 5].map((value) => (
+              <option key={value} value={String(value)}>
+                {tDays(String(value))}
+              </option>
+            ))}
+          </NativeSelect>
+        </FormField>
+        <FormField id={`${id}-start`} label={t("start")} hint={t("startHint")}>
+          <Input
+            value={start}
+            inputMode="numeric"
+            placeholder="08:00"
+            autoComplete="off"
+            onChange={(event) => {
+              setFailure(null);
+              setStart(event.target.value);
+            }}
+          />
+        </FormField>
+        <FormField id={`${id}-room`} label={t("room")} hint={roomsPending ? t("roomsLoading") : roomsFailed ? t("roomsFailed") : undefined}>
+          <NativeSelect
+            value={shownRoom}
+            onChange={(event) => {
+              setFailure(null);
+              setRoomTouched(true);
+              setRoomId(event.target.value);
+            }}
+          >
+            <option value="">{t("noRoom")}</option>
+            {(roomList ?? []).map((room) => (
+              <option key={room.roomId} value={room.roomId}>
+                {room.name}: {roomWords(room, tPossible, tDays)}
+              </option>
+            ))}
+          </NativeSelect>
+        </FormField>
+      </div>
+
+      {failure ? (
+        <Notice tone="destructive" title={t(`errors.${failure.failure.kind}.title`)}>
+          <p>{failure.failure.kind === "ROOM" ? t(`errors.ROOM.${failure.failure.reason}`) : failure.text || t(`errors.${failure.failure.kind}.text`)}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {failure.failure.kind === "ROOM" ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="min-h-11"
+                disabled={busy}
+                onClick={() => {
+                  // The field says what is laid: none, so that the answers that may follow (Lägg ändå) are given for the lay that is made.
+                  setRoomTouched(true);
+                  setRoomId("");
+                  void submit({ roomId: null });
+                }}
+              >
+                {t("layWithoutRoom")}
+              </Button>
+            ) : null}
+            {failure.failure.kind === "REFUSED" && failure.failure.exemptable ? (
+              <Button type="button" size="sm" variant="outline" className="min-h-11" disabled={busy} onClick={() => void submit({ exempt: failure.failure.kind === "REFUSED" ? (failure.failure.exemptable ?? []) : [] })}>
+                {t("layAnyway")}
+              </Button>
+            ) : null}
+          </div>
+        </Notice>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" className="min-h-11" disabled={!clockOk || busy || roomsPending} data-writes="SCHEMALAGGNING DRIFT">
+          {t("submit")}
+        </Button>
+        <Button type="button" variant="outline" className="min-h-11" onClick={onCancel}>
+          {t("cancel")}
+        </Button>
+      </div>
+    </form>
+  );
+}
+

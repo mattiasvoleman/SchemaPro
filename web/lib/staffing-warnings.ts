@@ -80,13 +80,25 @@ export function savedToast(
   t: MessageLookup,
   title: string,
   warnings: StaffingWarning[] | undefined,
+  /** Låset vid en flytt (E4): the sentence that says the move locked the lesson, and the button that takes the lock off again. */
+  lock?: LockedNote,
 ): void {
+  const action = lock ? { label: lock.unlock, onClick: lock.onUnlock } : undefined;
   if (!warnings || warnings.length === 0) {
-    toast.success(title);
+    if (lock) toast.success(title, { description: lock.text, action, duration: 8_000 });
+    else toast.success(title);
     return;
   }
   toast.warning(title, {
-    description: warnings.map((warning) => warningText(t, warning)).join(" "),
+    description: [...warnings.map((warning) => warningText(t, warning)), ...(lock ? [lock.text] : [])].join(" "),
+    ...(action ? { action } : {}),
     duration: 12_000,
   });
+}
+
+/** What a save that locked the lesson says, and how it is taken back (the page's, since the page knows the lesson). */
+export interface LockedNote {
+  text: string;
+  unlock: string;
+  onUnlock: () => void;
 }
