@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate, type ValidationError } from 'class-validator';
-import { ApplySwapDto } from './swaps.dto';
+import { ApplySwapDto, MakeRoomDto, PairSwapDto, SuggestSwapsDto } from './swaps.dto';
 
 const A = '55555555-5555-4555-8555-555555555555';
 const B = '66666666-6666-4666-8666-666666666666';
@@ -39,4 +39,56 @@ describe('ApplySwapDto clocks', () => {
       expect(await failing(body([move(A, slot('08:00', clock), slot('10:00', '11:00')), move(B)]))).toEqual(['moves.0.from.endTime']);
     },
   );
+});
+
+describe('E5a: what the doors take', () => {
+  const check = async (type: new () => object, value: object) => paths(await validate(plainToInstance(type, value), { whitelist: true, forbidNonWhitelisted: true }));
+
+  it('takes Gör plats as a school day, a clock of it and a depth of one to three', async () => {
+    expect(await check(SuggestSwapsDto, { lessonId: A, makeRoom: { dayOfWeek: 5, startTime: '23:59', depth: 3 } })).toEqual([]);
+    expect(await check(SuggestSwapsDto, { lessonId: A, makeRoom: { dayOfWeek: 1, startTime: '00:00' } })).toEqual([]);
+    for (const [bad, field] of [
+      [{ dayOfWeek: 6, startTime: '08:00' }, 'dayOfWeek'],
+      [{ dayOfWeek: 0, startTime: '08:00' }, 'dayOfWeek'],
+      [{ dayOfWeek: 1, startTime: '24:00' }, 'startTime'],
+      [{ dayOfWeek: 1, startTime: '8:00' }, 'startTime'],
+      [{ dayOfWeek: 1, startTime: '08:00', depth: 4 }, 'depth'],
+      [{ dayOfWeek: 1, startTime: '08:00', depth: 0 }, 'depth'],
+      [{ dayOfWeek: 1, startTime: '08:00', depth: 1.5 }, 'depth'],
+    ] as const) {
+      expect(await check(SuggestSwapsDto, { lessonId: A, makeRoom: bad })).toEqual([`makeRoom.${field}`]);
+    }
+    expect(await check(MakeRoomDto, { dayOfWeek: 1, startTime: '08:00', depth: 2 })).toEqual([]);
+  });
+
+  it('still takes a swap search of one lesson, as it was asked before Gör plats', async () => {
+    expect(await check(SuggestSwapsDto, { lessonId: A })).toEqual([]);
+    expect(await check(SuggestSwapsDto, { lessonId: A, limit: 30 })).toEqual([]);
+    expect(await check(SuggestSwapsDto, { lessonId: 'nope' })).toEqual(['lessonId']);
+  });
+
+  it('takes a brick as the possible times take one, and leaves "a lesson or a brick" to the service', async () => {
+    const brick = { academicYearId: A, studentGroupId: A, subjectId: B, minutes: 60 };
+    expect(await check(SuggestSwapsDto, { brick, makeRoom: { dayOfWeek: 1, startTime: '08:00' } })).toEqual([]);
+    expect(await check(SuggestSwapsDto, { brick: { ...brick, minutes: 3 }, makeRoom: { dayOfWeek: 1, startTime: '08:00' } })).toEqual(['brick.minutes']);
+  });
+
+  it('takes two lesson ids for Byt plats', async () => {
+    expect(await check(PairSwapDto, { lessonId: A, otherLessonId: B })).toEqual([]);
+    expect(await check(PairSwapDto, { lessonId: A })).toEqual(['otherLessonId']);
+    expect(await check(PairSwapDto, { lessonId: 'nope', otherLessonId: 'nope' })).toEqual(['lessonId', 'otherLessonId']);
+  });
+
+  it('takes alsoPicked as ids, forBrick as a boolean, and a lessonId only when it is not for a brick', async () => {
+    const moves = [move(A), move(B)];
+    expect(await check(ApplySwapDto, { lessonId: A, alsoPicked: [B], moves })).toEqual([]);
+    expect(await check(ApplySwapDto, { lessonId: A, alsoPicked: ['nope'], moves })).toEqual(['alsoPicked']);
+    expect(await check(ApplySwapDto, { lessonId: A, alsoPicked: 'x', moves })).toEqual(['alsoPicked']);
+    expect(await check(ApplySwapDto, { lessonId: A, forBrick: 'yes', moves })).toEqual(['forBrick']);
+    expect(await check(ApplySwapDto, { forBrick: true, moves: [move(A)] })).toEqual([]);
+    expect(await check(ApplySwapDto, { moves })).toEqual(['lessonId']);
+    // One move is the service's to judge: it is a proposal only for a brick, and the service says so before it reads anything.
+    expect(await check(ApplySwapDto, { lessonId: A, moves: [move(A)] })).toEqual([]);
+    expect(await check(ApplySwapDto, { lessonId: A, moves: [] })).toEqual(['moves']);
+  });
 });

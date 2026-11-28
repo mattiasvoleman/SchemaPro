@@ -5,6 +5,7 @@ import type { PrismaService } from '../database/prisma.service';
 import type { RealtimeService } from '../realtime/realtime.service';
 import { ScheduleVersionsController } from './schedule-versions.controller';
 import { ScheduleVersionAnnouncer } from './schedule-version-announcer';
+import type { ScheduleVersionNamesService } from './schedule-version-names.service';
 import type { ScheduleVersionsService } from './schedule-versions.service';
 
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
@@ -59,7 +60,7 @@ describe('ScheduleVersionAnnouncer', () => {
 describe('POST /api/v1/schedule-versions/:id/restore tells the staff room once it has committed', () => {
   const build = (restore: jest.Mock) => {
     const announcer = { restored: jest.fn().mockResolvedValue(undefined) };
-    const controller = new ScheduleVersionsController({ restore } as unknown as ScheduleVersionsService, announcer as unknown as ScheduleVersionAnnouncer);
+    const controller = new ScheduleVersionsController({ restore } as unknown as ScheduleVersionsService, {} as unknown as ScheduleVersionNamesService, announcer as unknown as ScheduleVersionAnnouncer);
     return { controller, announcer };
   };
 

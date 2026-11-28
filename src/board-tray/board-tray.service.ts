@@ -126,6 +126,13 @@ export class BoardTrayService {
    *
    * The lesson is the school's (handgjord) and locked, so Generera keeps it and counts it for the post. It is laid through the hand edit's own
    * write (createIn and updateIn), so it is judged as every other hand edit is (the one judge), logged, announced and warned about as one.
+   *
+   * DIREKT (P5, beslut 8; g490 M-5). A parked lesson laid back moves its calendar rows as any drag does (parking leaves them standing), and it asks the school's
+   * question through the write it is made with: updateIn is MasterLessonsService.update, which calls requireDirectReachAnswered after propagateTemplateChange,
+   * in this transaction, with propagatedLessons + removedCalendarLessons, so 409 DIRECT_REACH_UNANSWERED rolls the whole lay back. A brick that is no lesson yet
+   * (createIn) reaches nobody: its calendar rows come with the next generation of the calendar. A second call here, with the same number in the same
+   * transaction, could never answer differently, so there is none; probe-direkt-fragan.ts (i) holds it against a real database, and a lay that left the
+   * hand edit's write would have to ask the question itself.
    */
   async lay(dto: LayBrickDto, user: AuthenticatedUser): Promise<LayBrickResult> {
     return this.prisma.withRls(user, async (tx) => {
@@ -156,53 +163,92 @@ export class BoardTrayService {
           params: { requirementId: dto.postId, reason: brick.cannotPlace },
         });
       }
-      const roomId = dto.roomId ?? null;
-      // A room the generator would not put the lesson in is refused as such, and "Utan sal" (no room) is the way to lay the brick all the same.
-      const refusedRoom = roomId === null ? null : await layRoomRefusal(tx, user, { academicYearId: dto.academicYearId, studentGroupId: brick.studentGroupId, subjectId: brick.subjectId, roomId });
-      if (refusedRoom !== null) {
-        throw new ConflictException({
-          message: 'Salen passar inte lektionen (platser, typ eller årskurser): välj en annan sal eller lägg den utan sal.',
-          code: BOARD_ROOM_NOT_ALLOWED,
-          params: { roomId: roomId!, reason: refusedRoom },
-        });
-      }
-      const endTime = clockOf(Number(dto.startTime.slice(0, 2)) * 60 + Number(dto.startTime.slice(3, 5)) + dto.minutes);
-      if (dto.lessonId !== undefined) {
-        // The brick that is a lesson on the tray: only one of the part's own (the tray names them, and no other), moved back where it was put.
-        if (!bricks.some((entry) => entry.lessonId === dto.lessonId)) throw staleConflict(dto.postId);
-        const lesson = await this.masters.updateIn(
-          tx,
-          dto.lessonId,
-          { isParked: false, dayOfWeek: dto.dayOfWeek, startTime: dto.startTime, endTime, roomId, isLocked: true, exempt: dto.exempt },
-          user,
-        );
-        return { lesson, noRoom: roomId === null };
-      }
-      const lesson = await this.masters.createIn(
+      return this.writeBrick(
         tx,
+        brick,
         {
           academicYearId: dto.academicYearId,
-          subjectId: brick.subjectId,
-          studentGroupId: brick.studentGroupId,
-          teacherId: brick.teacherId,
-          coTeacherId: brick.coTeacherId,
-          roomId,
+          postId: dto.postId,
           dayOfWeek: dto.dayOfWeek,
           startTime: dto.startTime,
-          endTime,
-          isLocked: true,
-          recurrence: brick.recurrence,
-          startDate: brick.startDate,
-          endDate: brick.endDate,
+          roomId: dto.roomId ?? null,
+          lessonId: dto.lessonId,
           exempt: dto.exempt,
+          ownLessonIds: new Set(bricks.flatMap((entry) => (entry.lessonId === null ? [] : [entry.lessonId]))),
         },
         user,
       );
-      return { lesson, noRoom: roomId === null };
     });
   }
 
-  private async trayIn(tx: PrismaClient, academicYearId: string, groupId: string | undefined): Promise<BoardTrayResponse> {
+  /**
+   * THE WRITE OF A LAID BRICK, which lay and the fill's Ta in (board-fill) share: the room the generator would not take is refused, and the brick becomes a
+   * locked lesson through the hand edit's own write (updateIn for the lesson on the tray, createIn for a brick that is no lesson yet), so it is judged,
+   * logged, announced and asked about in Direkt as every other hand edit is. The caller has taken the locks and read the brick under them.
+   */
+  async writeBrick(
+    tx: PrismaClient,
+    brick: TrayBrick,
+    at: {
+      academicYearId: string;
+      postId: string;
+      dayOfWeek: number;
+      startTime: string;
+      roomId: string | null;
+      lessonId?: string;
+      exempt?: LayBrickDto['exempt'];
+      /** The lessons on the tray that are bricks of this part: the lesson named must be one of them. */
+      ownLessonIds: ReadonlySet<string>;
+    },
+    user: AuthenticatedUser,
+  ): Promise<LayBrickResult> {
+    const roomId = at.roomId;
+    // A room the generator would not put the lesson in is refused as such, and "Utan sal" (no room) is the way to lay the brick all the same.
+    const refusedRoom = roomId === null ? null : await layRoomRefusal(tx, user, { academicYearId: at.academicYearId, studentGroupId: brick.studentGroupId, subjectId: brick.subjectId, roomId });
+    if (refusedRoom !== null) {
+      throw new ConflictException({
+        message: 'Salen passar inte lektionen (platser, typ eller årskurser): välj en annan sal eller lägg den utan sal.',
+        code: BOARD_ROOM_NOT_ALLOWED,
+        params: { roomId: roomId!, reason: refusedRoom },
+      });
+    }
+    const endTime = clockOf(Number(at.startTime.slice(0, 2)) * 60 + Number(at.startTime.slice(3, 5)) + brick.minutes);
+    if (at.lessonId !== undefined) {
+      // The brick that is a lesson on the tray: only one of the part's own (the tray names them, and no other), moved back where it was put.
+      if (!at.ownLessonIds.has(at.lessonId)) throw staleConflict(at.postId);
+      const lesson = await this.masters.updateIn(
+        tx,
+        at.lessonId,
+        { isParked: false, dayOfWeek: at.dayOfWeek, startTime: at.startTime, endTime, roomId, isLocked: true, exempt: at.exempt },
+        user,
+      );
+      return { lesson, noRoom: roomId === null };
+    }
+    const lesson = await this.masters.createIn(
+      tx,
+      {
+        academicYearId: at.academicYearId,
+        subjectId: brick.subjectId,
+        studentGroupId: brick.studentGroupId,
+        teacherId: brick.teacherId,
+        coTeacherId: brick.coTeacherId,
+        roomId,
+        dayOfWeek: at.dayOfWeek,
+        startTime: at.startTime,
+        endTime,
+        isLocked: true,
+        recurrence: brick.recurrence,
+        startDate: brick.startDate,
+        endDate: brick.endDate,
+        exempt: at.exempt,
+      },
+      user,
+    );
+    return { lesson, noRoom: roomId === null };
+  }
+
+  /** The year's tray read inside a transaction the caller holds (the fill's propose and apply read it under their own locks). */
+  async trayIn(tx: PrismaClient, academicYearId: string, groupId: string | undefined): Promise<BoardTrayResponse> {
     const year = await tx.academicYear.findUnique({ where: { id: academicYearId }, select: { id: true } });
     if (!year) throw new NotFoundException('Läsåret finns inte.');
     const [posts, rows, lessons, aside, blocks] = await Promise.all([

@@ -22,6 +22,7 @@ import { HttpException } from '@nestjs/common';
 import { Client } from 'pg';
 import { CalendarService } from '../../src/calendar/calendar.service';
 import { ScheduleVersionAnnouncer } from '../../src/calendar/schedule-version-announcer';
+import { ScheduleVersionNamesService } from '../../src/calendar/schedule-version-names.service';
 import { ScheduleVersionsController } from '../../src/calendar/schedule-versions.controller';
 import { ScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { PrismaService } from '../../src/database/prisma.service';
@@ -129,7 +130,7 @@ export async function publiceringVersionChecks(owner: Client, api: PrismaService
     });
 
     await check('(pv-d) a restore tells the staff room once it has committed, everyone in the direct mode and the administrators in the draft mode, and a restore that fails tells nobody', async () => {
-      const controller = new ScheduleVersionsController(versions, new ScheduleVersionAnnouncer(api, realtime as never));
+      const controller = new ScheduleVersionsController(versions, new ScheduleVersionNamesService(api), new ScheduleVersionAnnouncer(api, realtime as never));
       const [version] = await versionsOf();
       told.length = 0;
       const restored = await controller.restore(version!.id, a.caller);
