@@ -88,6 +88,8 @@ export interface MakeRoomInput {
   maxCandidates?: number;
   /** How many sets the judge is asked about in one call. */
   chunk?: number;
+  /** How many sets are costed before the event loop is given back (and the budget looked at). */
+  costSlice?: number;
   now?: () => number;
 }
 
@@ -273,11 +275,23 @@ export async function searchMakeRoom(input: MakeRoomInput): Promise<MakeRoomResu
     soft: SoftCost[];
     score: number;
   }
-  const costed: Costed[] = candidates.map((candidate) => {
+  // Costing is the heavy half of the search (soft.evaluate of every set, 0.2 to 0.9 ms a set on a school of some six hundred lessons, so over
+  // a second for the 1 200 the cap allows) and it is one stretch of the event loop, which every other request of the process waits for.
+  // So it gives the loop back every `costSlice` sets, and stops at the budget like the judging after it (g514).
+  const costSlice = Math.max(1, input.costSlice ?? 64);
+  const costed: Costed[] = [];
+  for (const candidate of candidates) {
+    if (costed.length > 0 && costed.length % costSlice === 0) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (now() - started > input.budgetMs) {
+        truncated = true;
+        break;
+      }
+    }
     const moves = candidate.placements.flatMap((placement) => movesOfUnit(placement.unit, placement.to));
     const { costs, score } = input.soft(moves);
-    return { ...candidate, moves, soft: costs, score };
-  });
+    costed.push({ ...candidate, moves, soft: costs, score });
+  }
   const keyOf = (candidate: Costed): string =>
     [...candidate.moves].map((move) => `${move.lessonId}>${slotKey(move.to)}`).sort().join(';');
   costed.sort((a, b) => a.score - b.score || a.placements.length - b.placements.length || (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
