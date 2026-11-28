@@ -151,7 +151,12 @@ export const sweptRows = (replaced: readonly string[], today: Date): Prisma.Cale
 export interface SweepCount {
   /** Rows that go. */
   removed: number;
-  /** Of them, rows the school has worked on since the publication: a vikarie, another room than the template's, a note, a lesson log or a note to the substitute. */
+  /**
+   * Of them, rows the school has worked on since the publication: a vikarie, another room than the template's, a note, a lesson log, a note to the
+   * substitute, a pupil moved to or from the lesson for the day (Elevens lektion för dagen), or a decision on a teacher's absence (a co-teacher
+   * who takes the lesson leaves no vikarie and no note behind). Each of them goes with the row (the keys are ON DELETE CASCADE), and a family
+   * or a colleague has been told of most of them.
+   */
   handChanged: number;
 }
 
@@ -168,7 +173,9 @@ export async function countSweep(tx: PrismaClient, replaced: readonly string[], 
              (   EXISTS (SELECT 1 FROM "CalendarLessonTeachers" t WHERE t."calendarLessonId" = c."id" AND t."role" = 'SUBSTITUTE')
               OR COALESCE(c."note", '') <> ''
               OR c."roomId" IS DISTINCT FROM m."roomId"
-              OR EXISTS (SELECT 1 FROM "LessonLogs" l WHERE l."calendarLessonId" = c."id")) AS "operated"
+              OR EXISTS (SELECT 1 FROM "LessonLogs" l WHERE l."calendarLessonId" = c."id")
+              OR EXISTS (SELECT 1 FROM "LessonPupilMoves" mv WHERE mv."fromLessonId" = c."id" OR mv."toLessonId" = c."id")
+              OR EXISTS (SELECT 1 FROM "TeacherAbsenceCovers" ac WHERE ac."calendarLessonId" = c."id")) AS "operated"
         FROM "CalendarLessons" c
         JOIN "MasterLessons" m ON m."id" = c."masterLessonId" AND m."schoolId" = c."schoolId"
        WHERE c."masterLessonId" = ANY(${[...replaced]}::uuid[])

@@ -19,6 +19,8 @@
  *        vikarie, and the next publication adds nothing;
  *   (rd) a version of an earlier grundschema (another lesson on another day, saved by hand): the lessons it changes lose their future rows, the
  *        count says how many and how many somebody had worked on by hand, and the next publication gives the calendar the grundschema has;
+ *   (ri) every kind of hand work on a published lesson that goes with it is counted in what the restore says it took: a vikarie, a note on the
+ *        row, another room, a lesson log, a note to the substitute, a pupil moved to the lesson for the day, a decision on a teacher's absence;
  *   (re) the school has not answered the question of Direkt: the restore is refused 409 DIRECT_REACH_UNANSWERED with what it would take, and
  *        the lessons, the calendar and the versions are as they were; once the school has answered it goes through;
  *   (rf) a lesson that has already happened is not touched: a past row of a lesson the restore replaces stays and is an orphan, as when a hand
@@ -321,6 +323,39 @@ async function main(): Promise<void> {
         const restored = await svc.versions.restore(version.id, s.admin);
         assert.equal(restored.calendar?.removed, mondays.length);
         assert.equal((await standing()).versions, before.versions + 1, 'now the safety version is there');
+      });
+    });
+
+    await check('(ri) the restore counts each kind of hand work on a row it takes: vikarie, note, room, lesson log, note to the substitute, a pupil moved, a decision on an absence', async () => {
+      await inSchool('i', async (s, svc) => {
+        // A lesson of another class at the same time, and a pupil of the first class: the pupil can be moved to it for a day.
+        const other = await owner.studentGroup.create({ data: { schoolId: s.schoolId, academicYearId: s.yearId, name: `${MARKER}-i 7B`, kind: 'CLASS', gradeLevel: 7 } });
+        const parallel = await owner.masterLesson.create({
+          data: { schoolId: s.schoolId, academicYearId: s.yearId, subjectId: s.subjectId, studentGroupId: other.id, teacherId: s.secondTeacherId, roomId: null, dayOfWeek: 1, startTime: time('08:00'), endTime: time('09:00') },
+        });
+        const pupil = await owner.user.create({ data: { schoolId: s.schoolId, authId: randomUUID(), role: 'STUDENT', firstName: 'Elev', lastName: 'Aterstall', email: `elev-${MARKER}-i@probe.example.com`, studentGroupId: s.groupId } });
+        await publish(s, svc);
+        const version = await svc.versions.create(s.yearId, 'före', s.admin);
+        // The grundschema moves on without the calendar following: the Monday lesson has another teacher, so the restore changes it and takes its rows.
+        await owner.masterLesson.update({ where: { id: s.monday }, data: { teacherId: s.secondTeacherId } });
+        const rows = (await calendarOf(s)).rows.filter((row) => row.masterLessonId === s.monday);
+        const parallelRows = (await calendarOf(s)).rows.filter((row) => row.masterLessonId === parallel.id);
+        assert.ok(rows.length >= 8);
+        const sameDay = (row: { date: Date }) => parallelRows.find((other) => other.date.getTime() === row.date.getTime())!;
+        const otherRoom = await owner.room.create({ data: { schoolId: s.schoolId, name: 'sal 3', capacity: 20 } });
+        await substitute(rows[0]!.id, s);
+        await owner.calendarLesson.update({ where: { id: rows[1]!.id }, data: { note: 'Prov' } });
+        await owner.calendarLesson.update({ where: { id: rows[2]!.id }, data: { roomId: otherRoom.id } });
+        await owner.lessonLog.create({ data: { schoolId: s.schoolId, calendarLessonId: rows[3]!.id, topic: 'Bråk' } });
+        await owner.lessonSubstituteNote.create({ data: { schoolId: s.schoolId, calendarLessonId: rows[4]!.id, body: 'Nyckeln ligger i lådan' } });
+        await owner.lessonPupilMove.create({ data: { schoolId: s.schoolId, studentId: pupil.id, fromLessonId: rows[5]!.id, toLessonId: sameDay(rows[5]!).id } });
+        const absence = await owner.teacherAbsence.create({ data: { schoolId: s.schoolId, userId: s.teacherId, startsAt: new Date(rows[6]!.date.getTime() + 7 * 3_600_000), endsAt: new Date(rows[6]!.date.getTime() + 8 * 3_600_000), wholeDays: false } });
+        await owner.teacherAbsenceCover.create({ data: { schoolId: s.schoolId, absenceId: absence.id, calendarLessonId: rows[6]!.id, absentTeacherId: s.teacherId, removedTeachers: [{ teacherId: s.teacherId, role: 'LEAD' }], decision: 'CO_TEACHER' } });
+        await svc.reach.acknowledge(s.admin);
+
+        const restored = await svc.versions.restore(version.id, s.admin);
+        assert.equal(restored.calendar?.removed, rows.length, 'every row of the Monday lesson went');
+        assert.equal(restored.calendar?.handChanged, 7, 'and the seven somebody had worked on are said to be that');
       });
     });
 
