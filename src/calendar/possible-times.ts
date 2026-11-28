@@ -345,6 +345,8 @@ export interface Run {
   /**
    * CHANGE: the room each lesson of the unit that has to stand in another than its own is free in, as the judge let it through. A run is cut
    * where the rooms change, so the board can lay a lesson on any square of it with the room that square was judged in.
+   * `lessonId` is '' for a brick (a lesson that does not exist yet: the answer's `subject.lessonId` is null), as it is in `options[].lessons`:
+   * a reader of a brick's answer asks for "" (web/lib/possible-times.ts, roomAt, does).
    */
   rooms?: Array<{ lessonId: string; roomId: string | null }>;
   /** IN_THE_WAY: the lesson that holds it. */

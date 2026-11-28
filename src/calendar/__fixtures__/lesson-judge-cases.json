@@ -4,7 +4,7 @@
   "WRITTEN BY scripts/test/probe-domaren.ts (DOMAREN_WRITE=1 npx ts-node --transpile-only scripts/test/probe-domaren.ts), which asks the läsande frågan, a swap's judge and the förläggning's judge of every case over real Postgres and requires them to agree before it writes. Do not edit by hand.",
   "verdict.reasons: every reason the hand edit finds, the heaviest first (TEACHER, ROOM, GROUP, PUPILS, AVAILABILITY, then FRAME, LUNCH, GRADE_RULE). web/lib/lesson-judge-mirror.contract.test.ts holds the web's mirror of the clash rule to them: never milder, for the rules it has.",
   "Every lesson of a world stands where it was laid, whether or not it stands against a frame, a meal or a closure (låt stå), and every meal is the school's own. Lessons are laid clear of one another (by the clash rule's measure, pupils and windows of dates included).",
-  "The first eighteen worlds have a class and no pupil in it, one class to a lesson, no window of dates and no other school. The worlds from the nineteenth on (generateRichWorlds) carry pupils (`pupils`, each in the class they name), teaching groups (`groups`), lessons with an extra class (`extra`) or pupils named on them (`participants`), lessons and meals in a window of dates (`startDate`, `endDate`) and rooms a second school has borrowed (`loans`: OTHER_SCHOOL). A shared teacher's lessons at another school need a huvudman and are not here."
+  "The first eighteen worlds have a class and no pupil in it, one class to a lesson, no window of dates and no other school. The worlds from the nineteenth on (generateRichWorlds) carry pupils (`pupils`, each in the class they name), teaching groups (`groups`), lessons with an extra class (`extra`) or pupils named on them (`participants`), lessons and meals in a window of dates (`startDate`, `endDate`) and rooms a second school has borrowed (`loans`: OTHER_SCHOOL). A pupil who has left (`inactive`) keeps her rows and is not counted by the judge. A shared teacher's lessons at another school need a huvudman and are not here."
  ],
  "worlds": [
   {
@@ -12488,6 +12488,134 @@
      "room": "R1"
     }
    ]
+  },
+  {
+   "classes": [
+    {
+     "key": "7A",
+     "grade": 7
+    },
+    {
+     "key": "8B",
+     "grade": 8
+    },
+    {
+     "key": "9C",
+     "grade": 9
+    }
+   ],
+   "teachers": [
+    "T1",
+    "T2",
+    "T3",
+    "T4"
+   ],
+   "rooms": [
+    "R1",
+    "R2",
+    "R3",
+    "R4"
+   ],
+   "subjects": [
+    "Ma",
+    "Sv"
+   ],
+   "unavailable": [],
+   "frames": [
+    {
+     "grades": [
+      7,
+      7
+     ],
+     "start": "08:00",
+     "end": "14:30"
+    }
+   ],
+   "meals": [],
+   "pupils": [
+    {
+     "key": "7A:1",
+     "class": "7A",
+     "inactive": true
+    },
+    {
+     "key": "7A:2",
+     "class": "7A"
+    },
+    {
+     "key": "8B:1",
+     "class": "8B"
+    },
+    {
+     "key": "8B:2",
+     "class": "8B"
+    }
+   ],
+   "groups": [
+    {
+     "key": "G1",
+     "members": [
+      "7A:1",
+      "8B:1"
+     ]
+    },
+    {
+     "key": "G2",
+     "members": [
+      "7A:1",
+      "8B:2"
+     ]
+    },
+    {
+     "key": "G3",
+     "members": [
+      "7A:2",
+      "8B:2"
+     ]
+    }
+   ],
+   "lessons": [
+    {
+     "key": "P1",
+     "class": "G1",
+     "subject": "Ma",
+     "teacher": "T1",
+     "day": 1,
+     "start": "09:00",
+     "minutes": 60,
+     "room": "R1"
+    },
+    {
+     "key": "P2",
+     "class": "G2",
+     "subject": "Sv",
+     "teacher": "T2",
+     "day": 2,
+     "start": "09:00",
+     "minutes": 60,
+     "room": "R2"
+    },
+    {
+     "key": "P3",
+     "class": "G3",
+     "subject": "Ma",
+     "teacher": "T3",
+     "day": 3,
+     "start": "09:00",
+     "minutes": 60,
+     "room": "R3"
+    },
+    {
+     "key": "P4",
+     "class": "7A",
+     "subject": "Sv",
+     "teacher": "T4",
+     "day": 4,
+     "start": "09:00",
+     "minutes": 60,
+     "room": "R4"
+    }
+   ]
   }
  ],
  "cases": [
@@ -22670,6 +22798,103 @@
    "verdict": {
     "ok": true,
     "reasons": []
+   }
+  },
+  {
+   "name": "e6-d0: P2 to day 1 at 09:00",
+   "world": 42,
+   "drag": {
+    "lesson": "P2",
+    "day": 1,
+    "start": "09:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "e6-d1: P4 to day 1 at 09:00",
+   "world": 42,
+   "drag": {
+    "lesson": "P4",
+    "day": 1,
+    "start": "09:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "e6-d2: P3 to day 2 at 09:00",
+   "world": 42,
+   "drag": {
+    "lesson": "P3",
+    "day": 2,
+    "start": "09:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "PUPILS"
+    ]
+   }
+  },
+  {
+   "name": "e6-d3: P4 to day 3 at 09:00",
+   "world": 42,
+   "drag": {
+    "lesson": "P4",
+    "day": 3,
+    "start": "09:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "PUPILS"
+    ]
+   }
+  },
+  {
+   "name": "e6-d4: P2 to day 1 at 14:00",
+   "world": 42,
+   "drag": {
+    "lesson": "P2",
+    "day": 1,
+    "start": "14:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "e6-d5: P1 to day 1 at 14:00",
+   "world": 42,
+   "drag": {
+    "lesson": "P1",
+    "day": 1,
+    "start": "14:00"
+   },
+   "verdict": {
+    "ok": true,
+    "reasons": []
+   }
+  },
+  {
+   "name": "e6-d6: P4 to day 4 at 14:00",
+   "world": 42,
+   "drag": {
+    "lesson": "P4",
+    "day": 4,
+    "start": "14:00"
+   },
+   "verdict": {
+    "ok": false,
+    "reasons": [
+     "FRAME"
+    ]
    }
   }
  ]

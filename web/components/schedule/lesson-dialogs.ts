@@ -33,6 +33,7 @@ export {
   SuggestPlacementsDialog,
 } from "@/components/schedule/placement-dialogs";
 export { openSlotsFor, suggestPlacements } from "@/lib/placement-search";
+export { startsTheGatewayLets } from "@/lib/possible-times";
 // The selection's bar rides along too: the page draws it, empty, once its
 // lessons are read, so it is in hand before the first selection.
 export { SelectionBar } from "@/components/schedule/selection-bar";

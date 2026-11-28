@@ -186,6 +186,21 @@ describe('possible times: what the service reads, asks and says', () => {
     expect(figure.before).toBeGreaterThanOrEqual(0);
   });
 
+  it('names a brick, which is no lesson yet, under the empty id: in the runs of another room and in every numbered time (the contract web/lib/possible-times.ts roomAt reads, E3 #512)', async () => {
+    // A brick that would like the room the seeded week holds at other starts: wherever it is taken another is offered, and the brick has no id to be named by.
+    const svc = service(txFor());
+    const answer = await ask(svc, { brick: { ...brickDto, roomId: mover.roomId }, limit: 40, stepMinutes: 5 });
+    expect(answer.subject).toMatchObject({ lessonId: null, unplaced: true });
+    const changes = answer.days.flatMap((day) => day.runs).filter((run) => run.kind === 'CHANGE');
+    // Without runs of another room there is nothing below to hold.
+    expect(changes.length).toBeGreaterThan(0);
+    for (const run of changes) expect(run.rooms).toEqual([{ lessonId: '', roomId: expect.any(String) }]);
+    for (const option of answer.options) expect(option.lessons.map((entry) => entry.lessonId)).toEqual(['']);
+    // A lesson is named by its own id as before: the empty one is the brick's.
+    const lesson = await ask(service(txFor()), { lessonId: mover.id, limit: 40, stepMinutes: 5 });
+    for (const run of lesson.days.flatMap((day) => day.runs).filter((entry) => entry.kind === 'CHANGE')) expect(run.rooms!.map((entry) => entry.lessonId)).toEqual([mover.id]);
+  });
+
   it('treats a lesson on the tray as a brick of its own, with its own id', async () => {
     const svc = service(txFor({ lesson: { isParked: true } }));
     const answer = await ask(svc, { lessonId: mover.id, limit: 3 });

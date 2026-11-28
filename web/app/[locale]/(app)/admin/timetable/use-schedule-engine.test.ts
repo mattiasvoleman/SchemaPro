@@ -199,3 +199,26 @@ describe("the weeks of a lov", () => {
     expect(result.current.validateChange("b", ontoIt)).toBe(false);
   });
 });
+
+describe("the teaching groups that share a pupil (E3, granskaren g503 #503 L-1; g512 #512)", () => {
+  /*
+   * The gateway answers the memberships of every pupil, one who has left included, and the judge reads the pupils who are there. The hook keeps
+   * the rows of the pupils in the people list (active ones), and a pupil in it who has no home class yet (studentGroupId null) is one of them.
+   */
+  const teaching = (id: string) => ({ id, name: id, kind: "TEACHING_GROUP", gradeLevel: null, academicYearId: "y-1" });
+  const pupil = (id: string, over: Record<string, unknown> = {}) => ({ id, role: "STUDENT", isActive: true, studentGroupId: null, ...over });
+  const inBoth = (studentId: string) => ["tg-1", "tg-2"].map((studentGroupId) => ({ studentId, studentGroupId }));
+  const related = (people: unknown[], memberships: unknown[]) =>
+    renderHook(() =>
+      useScheduleEngine(inputs({ groups: [teaching("tg-1"), teaching("tg-2")] as never, people: [{ id: "t-1", role: "TEACHER", isActive: true }, ...people] as never, memberships: memberships as never })),
+    ).result.current.groupConflictMap.get("tg-1")?.has("tg-2") ?? false;
+
+  it("relates two groups that share a pupil who is there, also one who has no home class yet", () => {
+    expect(related([pupil("p-1", { studentGroupId: "g-1" })], inBoth("p-1"))).toBe(true);
+    expect(related([pupil("p-1")], inBoth("p-1"))).toBe(true);
+  });
+
+  it("relates none that share only a pupil who has left: her rows stay in the groups, and the judge does not count her", () => {
+    expect(related([pupil("p-1", { isActive: false })], inBoth("p-1"))).toBe(false);
+  });
+});

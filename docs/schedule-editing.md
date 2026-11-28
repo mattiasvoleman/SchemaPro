@@ -5,7 +5,8 @@ Implemented feature set (Tiers 1–3 of the flexibility roadmap).
 ## Editing (admin → Master timetable)
 
 - **Drag & drop** — drag a lesson to move it (5-min snap), drag its bottom edge to resize. The ghost turns green/red live based on the client conflict engine; invalid drops are never saved.
-- **Smart suggestions** — dropping on an occupied slot opens the nearest conflict-free slots, ranked by distance; click one to apply.
+- **Smart suggestions** — dropping on an occupied slot opens the nearest conflict-free slots, ranked by distance; click one to apply. A time is offered only if the page's own check lets it through **and** the gateway's possible-times answer calls it free (`startsTheGatewayLets`, `web/lib/possible-times.ts`): the page holds no room lent to another school, nor a teacher's lessons there (OTHER_SCHOOL), and the answer the board holds for a dragged lesson is read, else asked, and where it does not come in time (2.5 s) or comes in another shape the page's check alone decides, as before.
+- **A stretch painted "Ledigt, annan sal" is laid with the mouse too** — while a lesson is dragged the board paints where it can stand; over a square of a stretch that is free only in another room the ghost turns valid and carries that room (`PossibleHold` follows the ghost and the answer, `web/components/schedule/possible-layer.tsx`), and the drop moves the lesson there with `roomId`, as Enter does. Only a move of the lesson's own length: a resize is not a start the gateway judged.
 - **Click empty slot / "Add lesson"** — manually create lessons (`POST /api/v1/master-lessons`); delete and duplicate from the lesson editor (`DELETE /api/v1/master-lessons/:id`).
 - **Locking** — lock toggle per lesson (manual creates default to locked). Locked lessons survive regeneration: the gateway subtracts them from the requirement demand and sends them to the solver as `fixedLessons` (hard blockers by teacher/group/room). Regeneration now deletes **unlocked lessons only**.
 - **Undo/redo** — Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z (or Ctrl+Y) plus toolbar buttons; every step replays through the gateway so validation and audit still apply.
@@ -53,7 +54,9 @@ a Sunday (`SCHOOL_DAY`, the förläggning's own first question, in its words).
   (the possible-times probe holds its prune exact only where none is, since it cannot see one) and six edge worlds
   (`generateEdgeWorlds`), written by hand, that ask each turn of a comparison on both sides: a pupil named on two lessons, two windows
   of dates that meet on one day, a window that touches a meal's first or last day, an extra class of the younger stage's ramtid, a
-  teaching group no pupil of which the ramtid reaches, and an hour lent to another school that a lesson touches without covering.
+  teaching group no pupil of which the ramtid reaches, and an hour lent to another school that a lesson touches without covering; a seventh asks for pupils who have left (`Users.isActive` false, `inactive` in the world): the
+  judge reads active pupils only, so two groups, or a group and a class, that share only such a pupil share none, and a ramtid is read from the pupils who are there. The page reads the
+  gateway's memberships the same way (`activeMemberships`, `use-schedule-engine.ts`).
 
 ## Att lägga: grundschemats bricklåda (E4)
 
@@ -98,7 +101,8 @@ Optional: `days` (Monday to Friday), `from` and `to` (the board's visible day, 0
   is there: `FRAME`, `LUNCH`, `GRADE_RULE`, `OTHER_SCHOOL` with the schools' names, or `AVAILABILITY` with the resource it closes),
   `FREE` and `CHANGE` (the judge lets it through, `CHANGE` when the room had to be another: the run carries `rooms`, the room each
   lesson of the unit that moves to another stands in as the judge let it through, and a run is cut where those rooms change, so the board can lay
-  the lesson on any square of it with the room that square was judged in), `IN_THE_WAY` (exactly one lesson that is free
+  the lesson on any square of it with the room that square was judged in; for a `brick` the `lessonId` of `rooms` and of `options[].lessons` is `''`,
+  as `subject.lessonId` is null, and `roomAt` of the web asks for it so), `IN_THE_WAY` (exactly one lesson that is free
   to move holds the stretch, named by class, subject, day and clock in `blockers`) and `CROWDED` (several, or a locked one, hold it; the run
   says how many). Starts are returned as runs of one answer per day.
 - **The order is the written cost.** Each time the judge accepts is costed with the swap search's own soft measure (the pupils' and the
