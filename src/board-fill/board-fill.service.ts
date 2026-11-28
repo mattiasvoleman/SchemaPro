@@ -141,6 +141,33 @@ export function lessonOfBrick(brick: TrayBrick): SwapLesson {
   };
 }
 
+/** What a lesson on the tray has that its post does not say: the lesson's own co-teacher, weeks, other classes and named pupils. */
+interface OwnOfLesson {
+  id: string;
+  coTeacherId: string | null;
+  recurrence: string;
+  startDate: Date | null;
+  endDate: Date | null;
+  extraGroups: Array<{ studentGroupId: string }>;
+  participants: Array<{ studentId: string }>;
+}
+
+const dayOf = (value: Date | null): string | null => (value ? value.toISOString().slice(0, 10) : null);
+
+/** The brick as the lesson it is when it is one: updateIn keeps these of the lesson, so the proposal judges them too. */
+export function withOwn(lesson: SwapLesson, own: OwnOfLesson | undefined): SwapLesson {
+  if (!own) return lesson;
+  return {
+    ...lesson,
+    coTeacherId: own.coTeacherId,
+    recurrence: own.recurrence as LessonRecurrence,
+    startDate: dayOf(own.startDate),
+    endDate: dayOf(own.endDate),
+    extraGroupIds: own.extraGroups.map((entry) => entry.studentGroupId).filter((id) => id !== lesson.studentGroupId).sort(),
+    studentIds: own.participants.map((entry) => entry.studentId).sort(),
+  };
+}
+
 function stale(): ConflictException {
   return new ConflictException({
     message: 'Grundschemat har ändrats sedan förslaget gjordes. Läs om det och försök igen. Inget ändrades.',
@@ -180,7 +207,10 @@ export class BoardFillService {
 
         if (bricks.length === 0) return this.answer(dto.academicYearId, basis, asked.length, [], left, false, { elapsedMs: 0, worldMs: 0, probeMs: 0, costMs: 0, judgeMs: 0, worlds: 0 });
 
-        const fillBricks: FillBrick[] = bricks.map((brick) => ({ key: keyOf(brick), lesson: lessonOfBrick(brick) }));
+        // A brick that is a lesson on the tray is that lesson, and the write that takes it in (updateIn) judges it with what it has: its other classes, the pupils
+        // named on it and the weeks it runs. The proposal must ask the judge the same, or Ta in refuses (409) what the proposal said fitted.
+        const own = await this.ownOfLessons(tx, bricks);
+        const fillBricks: FillBrick[] = bricks.map((brick) => ({ key: keyOf(brick), lesson: withOwn(lessonOfBrick(brick), own.get(brick.lessonId ?? '')) }));
         const facts = await this.possible.worldFactsOf(tx, data);
         const initial = new SwapContext(data, { unplaced: fillBricks.map((brick) => brick.lesson), ...facts });
         const possible = await this.possible.worldOf(tx, data, initial, fillBricks.map((brick) => brick.lesson));
@@ -219,6 +249,17 @@ export class BoardFillService {
       },
       { timeoutMs: this.budgetMs + 30_000 },
     );
+  }
+
+  /** The lessons on the tray that the bricks asked for are, with what each has of its own. One read, and none when no brick is a lesson. */
+  private async ownOfLessons(tx: PrismaClient, bricks: readonly TrayBrick[]): Promise<Map<string, OwnOfLesson>> {
+    const ids = bricks.flatMap((brick) => (brick.lessonId === null ? [] : [brick.lessonId]));
+    if (ids.length === 0) return new Map();
+    const rows = await tx.masterLesson.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, coTeacherId: true, recurrence: true, startDate: true, endDate: true, extraGroups: { select: { studentGroupId: true } }, participants: { select: { studentId: true } } },
+    });
+    return new Map(rows.map((row) => [row.id, row]));
   }
 
   /** The judge's item for a candidate: a lesson that does not exist yet, standing nowhere, with no exemption asked. */
