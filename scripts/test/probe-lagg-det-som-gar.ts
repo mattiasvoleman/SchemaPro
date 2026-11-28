@@ -23,7 +23,13 @@
  *   (fp-j) a school with a group that replaces a subject (a språkval): a proposal over a year whose class and group lessons are all bricks answers, and does not
  *          die on the id of a lesson the fill itself laid;
  *   (fp-k) parked lessons that stand for two classes are judged with the other class, so that Ta in takes in what the proposal said fitted;
- *   (fp-l) a teacher with a limit on the post: the proposal records the read of the post (EMPLOYMENT), as Möjliga tider does.
+ *   (fp-l) a teacher with a limit on the post: the proposal records the read of the post (EMPLOYMENT), as Möjliga tider does;
+ *   (fp-m) a brick whose every room is shut all week while the teacher and the class are free is left for want of a room (NO_ROOM), one whose teacher is shut is left
+ *          for want of a time (NO_FREE_START), and a room that opens takes it (g517 L-1);
+ *   (fp-n) Ta in tells the staff room once, naming every lesson it wrote, after they have committed, and a refused Ta in tells nobody (g520's note);
+ *   (fp-o) the SQL statements of a proposal of one and of three bricks and of a Ta in of one and of three lessons, pinned (g517 L-5).
+ *
+ * PROBE_ONLY=(fp-n) runs the checks whose label has the text: the ones from (fp-i) on each have a school of their own, and so a quicker turn.
  *
  * A school of its own (slug probe-lagg-det-som-gar), dropped at the start and at the end.
  */
@@ -48,9 +54,67 @@ import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
 import { TimplanCoverageService } from '../../src/timplan/timplan-coverage.service';
 import { seedHogstadium } from '../fixtures/hogstadium-week';
 
-const EXTRA_SLUGS = [`${'probe-lagg-det-som-gar'}-i`, `${'probe-lagg-det-som-gar'}-j`, `${'probe-lagg-det-som-gar'}-k`, `${'probe-lagg-det-som-gar'}-l`];
+const EXTRA_SLUGS = ['i', 'j', 'k', 'l', 'm', 'n', 'o', 'p'].map((letter) => `probe-lagg-det-som-gar-${letter}`);
 
 const SLUG = 'probe-lagg-det-som-gar';
+
+/**
+ * (fp-o): the SQL statements the new roads send, counted at pg's Client.query (BEGIN, set_config and COMMIT included), in the school of the fixture with two
+ * classes. Like the adapter probe's (z) for the hand edit's roads, a read added to a road moves its number, and the number is written here with the reason.
+ * A proposal costs its reads (the tray, the world, the other school's holds, the rosters) once and then a judge's read-set for each brick laid, and a Ta in its
+ * locks, the tray, the version and then what a hand edit of a lesson costs (createIn), for each lesson.
+ */
+const EXPECTED_STATEMENTS: Record<string, number> = {
+  // The proposal's reads once (the tray, the year, the rosters, the board's facts, the other schools' holds, the basis) and 10 for each brick the judge is asked about:
+  // 84 - 64 is two bricks more. Counted on the first start tried, so that a start the judge refuses (+10) does not move the pin.
+  'propose 1 brick': 64,
+  'propose 3 bricks': 84,
+  // Ta in: the mode, the year's lock, the post's lock, the tray read under them, the basis, the version, and then the write of each lesson through the tray (writeBrick, which
+  // is createIn): 39 or 40 for a lesson in a room (79 for the two more), against 27 for the hand edit's POST of one in (z) of the adapter probe. A read added to a lesson's
+  // write or to the tray moves both numbers.
+  'Ta in 1 lesson': 69,
+  'Ta in 3 lessons': 148,
+};
+/**
+ * Holds every COMMIT the API role sends back by `ms` while `body` runs. A staff-room telling made from inside the transaction (before its COMMIT) would then stand
+ * a clear `ms` ahead of the commit, whatever the order two connections' statements happen to reach Postgres in: a read of the owner's, made when the telling is made,
+ * finds none of the lessons (g523: without the hold the check below let a telling before the COMMIT through in one run of five).
+ */
+async function withCommitHeldBack<T>(ms: number, body: () => Promise<T>): Promise<T> {
+  const prototype = Client.prototype as unknown as { query: (...args: unknown[]) => unknown };
+  const query = prototype.query;
+  prototype.query = function (this: { user?: string }, ...args: unknown[]) {
+    const text = typeof args[0] === 'string' ? args[0] : (args[0] as { text?: string } | undefined)?.text;
+    if (this.user === 'app_authenticated' && typeof text === 'string' && /^\s*COMMIT\s*$/i.test(text)) {
+      return new Promise((resolve, reject) => setTimeout(() => (query as (...a: unknown[]) => Promise<unknown>).apply(this, args).then(resolve, reject), ms));
+    }
+    return query.apply(this, args);
+  };
+  try {
+    return await body();
+  } finally {
+    prototype.query = query;
+  }
+}
+
+/** Every statement pg sends while `body` runs, counted at Client.query: what reaches Postgres (the adapter probe's helper of the same name). */
+async function statementsDuring(body: () => Promise<unknown>): Promise<string[]> {
+  const sent: string[] = [];
+  const prototype = Client.prototype as unknown as { query: (...args: unknown[]) => unknown };
+  const query = prototype.query;
+  prototype.query = function (this: Client, ...args: unknown[]) {
+    const text = typeof args[0] === 'string' ? args[0] : (args[0] as { text?: string } | undefined)?.text;
+    sent.push(String(text).replace(/\s+/g, ' ').trim().slice(0, 120));
+    return query.apply(this, args);
+  };
+  try {
+    await body();
+  } finally {
+    prototype.query = query;
+  }
+  return sent;
+}
+
 const uptime = (): string => execSync('uptime').toString().trim().replace(/^.*load averages?: /, 'load ');
 
 async function main(): Promise<void> {
@@ -59,7 +123,16 @@ async function main(): Promise<void> {
   const api = new PrismaService();
   await api.onModuleInit();
   const sent: string[] = [];
-  const realtime = { notifyMasterTimetableChanged: () => undefined } as never;
+  // What the staff room is told, in order, and how many of the lessons it names stood committed at the moment it was told (a read by the owner, on a connection
+  // of its own, sees only what has committed).
+  const told: Array<{ schoolId: string; options: { draft?: boolean; lessonIds?: readonly string[] } | undefined; committed: Promise<number> }> = [];
+  const realtime = {
+    notifyMasterTimetableChanged: (schoolId: string, options?: { draft?: boolean; lessonIds?: readonly string[] }) => {
+      const ids = options?.lessonIds ?? [];
+      const committed = ids.length === 0 ? Promise.resolve(0) : owner.query<{ n: string }>(`SELECT count(*) AS n FROM "MasterLessons" WHERE id = ANY($1::uuid[])`, [ids]).then((result) => Number(result.rows[0]!.n));
+      told.push({ schoolId, options, committed });
+    },
+  } as never;
   const notifications = { recipientsForLessons: async () => [randomUUID()], notifyUsers: async (_tx: unknown, input: { type: string }) => (sent.push(input.type), 1) } as never;
   const masters = new MasterLessonsService(api, realtime, notifications);
   const tray = new BoardTrayService(api, masters);
@@ -72,7 +145,10 @@ async function main(): Promise<void> {
   const reach = new DirectReachService(api);
 
   let failures = 0;
+  // PROBE_ONLY=fp-n runs the checks whose label has it (the ones in a school of their own: the first ones lean on each other's rows), for a quicker turn.
+  const only = process.env['PROBE_ONLY'];
   const check = async (label: string, body: () => Promise<void>) => {
+    if (only && !label.includes(only)) return;
     try {
       await body();
       console.log(`  ok  ${label}`);
@@ -130,7 +206,7 @@ async function main(): Promise<void> {
       assert.ok(proposal.placed.length >= 10, `the greedy puts back most of twelve: ${proposal.placed.length}`);
       assert.match(proposal.basis, /^[0-9a-f]{32}$/);
       assert.deepEqual(proposal.moved, []);
-      for (const entry of proposal.left) assert.ok(['NO_FREE_START', 'JUDGE', 'TIME', 'BLOCK', 'NO_TEACHER'].includes(entry.reason), `a reason that says "not laid": ${entry.reason}`);
+      for (const entry of proposal.left) assert.ok(['NO_FREE_START', 'NO_ROOM', 'JUDGE', 'TIME', 'BLOCK', 'NO_TEACHER'].includes(entry.reason), `a reason that says "not laid": ${entry.reason}`);
       assert.doesNotMatch(JSON.stringify(proposal), /firstName|lastName|email|går inte|cannot be laid|impossible/i);
     });
 
@@ -149,6 +225,15 @@ async function main(): Promise<void> {
       for (const row of stood) assert.deepEqual(now.get(row.id), row, 'a lesson that stood is as it was');
       const written = applied.laid.map((entry) => now.get(entry.lessonId)!);
       assert.ok(written.every((row) => row.isLocked && row.exemptFrom.length === 0), 'locked, and no exemption given');
+      // Where each lesson stands is where the proposal put it: the day, the clock and the room. The judge letting a lesson through (below) says nothing of where it was
+      // put, so a Ta in that wrote every lesson without its room, or an hour off, passed every check here but the number of statements it sent (g523).
+      const proposed = new Map(itemsOf(proposal).map((item) => [item.key, item]));
+      assert.ok(proposal.placed.some((entry) => entry.roomId !== null), 'the proposal puts lessons in rooms, which is what this compares');
+      for (const entry of applied.laid) {
+        const item = proposed.get(entry.key)!;
+        const row = now.get(entry.lessonId)!;
+        assert.deepEqual([row.dayOfWeek, row.startTime.slice(0, 5), row.roomId], [item.dayOfWeek, item.startTime, item.roomId], `the lesson of ${entry.key} stands where the proposal put it`);
+      }
       // The judge's word on each lesson written, as a fresh hand edit, with every other lesson (the fill's too) in the database.
       const rows = await q<{ id: string; studentGroupId: string; subjectId: string; teacherId: string | null; coTeacherId: string | null; roomId: string | null; dayOfWeek: number; start: number; end: number; recurrence: 'ALL_WEEKS' }>(
         `SELECT id, "studentGroupId", "subjectId", "teacherId", "coTeacherId", "roomId", "dayOfWeek", extract(hour from "startTime")*60 + extract(minute from "startTime") AS start, extract(hour from "endTime")*60 + extract(minute from "endTime") AS "end", recurrence FROM "MasterLessons" WHERE id = ANY($1::uuid[])`,
@@ -358,6 +443,115 @@ async function main(): Promise<void> {
       const proposal_ = await fill.propose({ academicYearId: seeded_.year, scope: 'SCHOOL' }, admin_);
       assert.ok(proposal_.placed.length > 0);
       assert.ok((await reads()) > before_, 'the proposal recorded an EMPLOYMENT read');
+    });
+
+    // ---- the follow-ups of the review (g517 L-1, g520's note, L-5): each in a school of its own. ----
+    await check('(fp-m) a brick whose every room is shut all week, with the teacher and the class free, is left for want of a room (NO_ROOM) and not of a time', async () => {
+      const seeded_ = await seedHogstadium(owner, { slug: EXTRA_SLUGS[4]!, letters: 'AB', pupils: 8 });
+      const admin_ = adminOf(seeded_);
+      const idh = seeded_.subjectIds.get('IDH')!;
+      // Idrott needs the school's gymnastics rooms (a room type of their own), and they are shut all week.
+      const [type] = await q<{ id: string }>(`INSERT INTO "RoomTypes" ("schoolId", name, "updatedAt") VALUES ($1, 'Gymnastiksal', now()) RETURNING id`, [seeded_.school]);
+      const rooms = await q<{ id: string }>(`SELECT id FROM "Rooms" WHERE "schoolId" = $1 AND name LIKE 'Sal IDH%' ORDER BY name`, [seeded_.school]);
+      assert.ok(rooms.length >= 2, 'the fixture has two idrott rooms');
+      await owner.query(`UPDATE "Rooms" SET "roomTypeId" = $2 WHERE id = ANY($1::uuid[])`, [rooms.map((room) => room.id), type!.id]);
+      await owner.query(`UPDATE "Subjects" SET "requiredRoomTypeId" = $2 WHERE id = $1`, [idh, type!.id]);
+      const shut = async (roomId: string) => {
+        for (const day of [1, 2, 3, 4, 5]) {
+          await owner.query(`INSERT INTO "AvailabilityConstraints" ("schoolId","resourceType","roomId","dayOfWeek","startTime","endTime",type,"updatedAt") VALUES ($1,'ROOM',$2,$3,'07:00','18:00','UNAVAILABLE',now())`, [seeded_.school, roomId, day]);
+        }
+      };
+      for (const room of rooms) await shut(room.id);
+      const lesson = seeded_.lessons.find((entry) => entry.groupId === seeded_.classes[0]!.id && entry.subjectId === idh)!;
+      await owner.query(`DELETE FROM "MasterLessons" WHERE id = $1`, [lesson.id]);
+      const brick = (await tray.trayOfYear(seeded_.year, undefined, admin_)).bricks.find((entry) => entry.studentGroupId === seeded_.classes[0]!.id && entry.subjectId === idh)!;
+      const asked = { academicYearId: seeded_.year, scope: 'BRICKS' as const, bricks: [{ postId: brick.postId, teacherId: brick.teacherId, minutes: brick.minutes, nth: brick.nth }] };
+      const noRoom = await fill.propose(asked, admin_);
+      assert.deepEqual([noRoom.asked, noRoom.placed.length, noRoom.left.map((entry) => entry.reason)], [1, 0, ['NO_ROOM']], 'the room is what ran out');
+      assert.doesNotMatch(JSON.stringify(noRoom), /går inte|cannot be laid|impossible/i);
+      // The time as well: with the teacher shut all week there is no start to give a room to, and that is the time's.
+      for (const day of [1, 2, 3, 4, 5]) {
+        await owner.query(`INSERT INTO "AvailabilityConstraints" ("schoolId","resourceType","userId","dayOfWeek","startTime","endTime",type,"updatedAt") VALUES ($1,'TEACHER',$2,$3,'07:00','18:00','UNAVAILABLE',now())`, [seeded_.school, brick.teacherId, day]);
+      }
+      const noTime = await fill.propose(asked, admin_);
+      assert.deepEqual(noTime.left.map((entry) => entry.reason), ['NO_FREE_START'], 'the time is what ran out');
+      // And a room that is open again takes it.
+      await owner.query(`DELETE FROM "AvailabilityConstraints" WHERE "schoolId" = $1 AND "resourceType" = 'TEACHER' AND "userId" = $2`, [seeded_.school, brick.teacherId]);
+      await owner.query(`DELETE FROM "AvailabilityConstraints" WHERE "schoolId" = $1 AND "roomId" = $2`, [seeded_.school, rooms[0]!.id]);
+      const laid = await fill.propose(asked, admin_);
+      assert.deepEqual([laid.placed.length, laid.left.length, laid.placed[0]!.roomId], [1, 0, rooms[0]!.id]);
+    });
+
+    await check('(fp-n) Ta in tells the staff room once, naming the lessons it wrote, and not before they have committed', async () => {
+      const seeded_ = await seedHogstadium(owner, { slug: EXTRA_SLUGS[5]!, letters: 'AB', pupils: 8 });
+      const admin_ = adminOf(seeded_);
+      const classes_ = seeded_.classes.map((entry) => entry.id);
+      await takeOutOf(seeded_.year, classes_, 8);
+      const proposal_ = await fill.propose({ academicYearId: seeded_.year, scope: 'SCHOOL' }, admin_);
+      assert.ok(proposal_.placed.length >= 3, `a few lessons to take in: ${proposal_.placed.length}`);
+      assert.deepEqual(told.filter((entry) => entry.schoolId === seeded_.school), [], 'a proposal tells nobody: it writes nothing');
+      const applied_ = await withCommitHeldBack(300, () => fill.apply({ academicYearId: seeded_.year, basis: proposal_.basis, items: itemsOf(proposal_) }, admin_));
+      await new Promise((resolve) => setTimeout(resolve, 200)); // the telling is on a later turn than the answer, as production's after-commit hooks are
+      const heard = told.filter((entry) => entry.schoolId === seeded_.school);
+      console.log(`        (fp-n) ${applied_.laid.length} lessons taken in, the staff room was told ${heard.length} time(s)${heard.map((entry) => ` naming ${entry.options?.lessonIds?.length ?? 0}`).join(',')}`);
+      assert.equal(heard.length, 1, 'once for the whole Ta in, and not once for each lesson');
+      assert.deepEqual([...(heard[0]!.options?.lessonIds ?? [])].sort(), applied_.laid.map((entry) => entry.lessonId).sort(), 'naming every lesson it wrote');
+      assert.equal(heard[0]!.options?.draft, undefined, 'the school publishes directly: everyone who reads the grundschema is told');
+      assert.equal(await heard[0]!.committed, applied_.laid.length, 'every lesson it names was committed when it was told');
+      // A Ta in that is refused tells nobody.
+      told.length = 0;
+      const stale_ = await refusal(fill.apply({ academicYearId: seeded_.year, basis: proposal_.basis, items: itemsOf(proposal_) }, admin_));
+      assert.equal(stale_.status, 409);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.deepEqual(told.filter((entry) => entry.schoolId === seeded_.school), [], 'a write that was refused changed nothing to tell');
+      // Refused at the basis, nothing was written and nothing told, which a staff room told of a rolled-back transaction would not show. One refused by the judge
+      // AFTER it has written its first lessons (each of them told of to the transaction's collection) must tell nobody as well, and leave nothing standing.
+      await takeOutOf(seeded_.year, classes_, 8);
+      const second_ = await fill.propose({ academicYearId: seeded_.year, scope: 'SCHOOL' }, admin_);
+      assert.ok(second_.placed.length >= 3, `a few lessons to take in again: ${second_.placed.length}`);
+      const last_ = second_.placed[second_.placed.length - 1]!;
+      assert.ok(last_.teacherId, 'the last brick has a teacher');
+      // The last lesson's teacher is shut that day after the proposal: the basis does not see a closed hour, the judge at the write does.
+      await owner.query(`INSERT INTO "AvailabilityConstraints" ("schoolId","resourceType","userId","dayOfWeek","startTime","endTime",type,"updatedAt") VALUES ($1,'TEACHER',$2,$3,'07:00','18:00','UNAVAILABLE',now())`, [seeded_.school, last_.teacherId, last_.dayOfWeek]);
+      const standingBefore_ = Number((await q<{ n: string }>(`SELECT count(*) AS n FROM "MasterLessons" WHERE "academicYearId" = $1`, [seeded_.year]))[0]!.n);
+      told.length = 0;
+      const judged_ = await refusal(fill.apply({ academicYearId: seeded_.year, basis: second_.basis, items: itemsOf(second_) }, admin_));
+      assert.deepEqual([judged_.status, judged_.code], [409, 'MASTER_LESSON_REFUSED'], 'the judge refused the last lesson, after the first ones were written');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(Number((await q<{ n: string }>(`SELECT count(*) AS n FROM "MasterLessons" WHERE "academicYearId" = $1`, [seeded_.year]))[0]!.n), standingBefore_, 'nothing of the rolled-back Ta in stands');
+      assert.deepEqual(told.filter((entry) => entry.schoolId === seeded_.school), [], 'a transaction that was rolled back after it wrote tells nobody');
+    });
+
+    await check('(fp-o) the new roads send Postgres exactly these statements: a proposal of one and of three bricks, a Ta in of one and of three lessons', async () => {
+      const seeded_ = await seedHogstadium(owner, { slug: EXTRA_SLUGS[6]!, letters: 'AB', pupils: 8 });
+      const admin_ = adminOf(seeded_);
+      // The Matematik of both classes (three lessons a week each), in the order the fixture laid them: each a brick with a teacher, which the proposal puts back in the class's own room.
+      const ma = seeded_.subjectIds.get('MA')!;
+      const own = seeded_.lessons.filter((entry) => seeded_.classes.some((cls) => cls.id === entry.groupId) && entry.subjectId === ma);
+      assert.ok(own.length >= 4, 'the classes have four lessons of mathematics between them');
+      await owner.query(`DELETE FROM "MasterLessons" WHERE id = ANY($1::uuid[])`, [own.map((entry) => entry.id)]);
+      const bricksOf = async () => (await tray.trayOfYear(seeded_.year, undefined, admin_)).bricks.filter((brick) => brick.subjectId === ma && brick.lessonId === null);
+      const ref = (brick: Awaited<ReturnType<typeof bricksOf>>[number]) => ({ postId: brick.postId, teacherId: brick.teacherId, minutes: brick.minutes, nth: brick.nth });
+      const bricks_ = await bricksOf();
+      assert.equal(bricks_.length, own.length, 'the lessons taken out are the bricks');
+      const ask = (bricks: typeof bricks_, count: number) => ({ academicYearId: seeded_.year, scope: 'BRICKS' as const, bricks: bricks.slice(0, count).map(ref) });
+      const sent: Record<string, number> = {};
+      const counted = async <T>(name: string, body: () => Promise<T>): Promise<T> => {
+        let result!: T;
+        sent[name] = (await statementsDuring(async () => void (result = await body()))).length;
+        return result;
+      };
+      const one = await counted('propose 1 brick', () => fill.propose(ask(bricks_, 1), admin_));
+      const three = await counted('propose 3 bricks', () => fill.propose(ask(bricks_, 3), admin_));
+      // The same pin means the same thing only while each brick is laid on its first try and in a room: a world in which the judge refused a start would count more.
+      for (const proposal of [one, three]) assert.ok(proposal.placed.length === proposal.asked && proposal.placed.every((entry) => entry.rank === 1 && entry.roomId !== null), 'every brick was laid on the first start tried, in a room');
+      await counted('Ta in 1 lesson', () => fill.apply({ academicYearId: seeded_.year, basis: one.basis, items: itemsOf(one) }, admin_));
+      // What is left on the tray is numbered anew (a brick's nth counts the ones still to lay), so the next three are asked for as the tray now has them.
+      const rest = await fill.propose(ask(await bricksOf(), 3), admin_);
+      assert.ok(rest.placed.length === 3 && rest.placed.every((entry) => entry.roomId !== null));
+      await counted('Ta in 3 lessons', () => fill.apply({ academicYearId: seeded_.year, basis: rest.basis, items: itemsOf(rest) }, admin_));
+      console.log(`        (fp-o) statements: ${JSON.stringify(sent)}`);
+      assert.deepEqual(sent, EXPECTED_STATEMENTS);
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = ANY($1::text[])`, [EXTRA_SLUGS]).catch((error) => console.error('sweep:', error));

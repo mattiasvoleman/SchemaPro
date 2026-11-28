@@ -595,6 +595,36 @@ describe('MasterLessonsService', () => {
       expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { lessonIds: [LESSON_ID] });
     });
 
+    // Lägg det som går's Ta in writes up to 600 lessons in one transaction through createIn, and each used to be told of for itself: 130 lessons taken in were 130
+    // events, and every open timetable answered each with a read and a refresh of its lists. A transaction is told of once.
+    it('tells of the lessons one transaction wrote once, naming them all, when it has committed', async () => {
+      arrangeCreate();
+      tx.masterLesson.create.mockResolvedValueOnce(lessonRecord({ id: LESSON_ID })).mockResolvedValueOnce(lessonRecord({ id: OTHER_LESSON_ID }));
+      const user = testUser();
+
+      await prisma.withRls(user, async (client: unknown) => {
+        await service.createIn(client as never, createDto(), user);
+        await service.createIn(client as never, createDto({ dayOfWeek: 2 }), user);
+        expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
+      });
+
+      await afterCommit();
+      expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+      expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { lessonIds: [LESSON_ID, OTHER_LESSON_ID] });
+    });
+
+    it('names a lesson once when a transaction writes it twice', async () => {
+      arrangeCreate();
+      const user = testUser();
+      await prisma.withRls(user, async (client: unknown) => {
+        await service.createIn(client as never, createDto(), user);
+        await service.createIn(client as never, createDto(), user);
+      });
+      await afterCommit();
+      expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+      expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL_ID, { lessonIds: [LESSON_ID] });
+    });
+
     it('says nothing of a write that did not commit', async () => {
       arrangeCreate();
       tx.masterLesson.create.mockRejectedValue(new Error('deadlock detected'));

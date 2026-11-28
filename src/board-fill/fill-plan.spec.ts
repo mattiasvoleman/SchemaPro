@@ -298,6 +298,36 @@ describe('the room', () => {
     const plan = await planFill(worldWith({ lessons: both }, rooms), [brickOf('a', 'c1', 'T')], { days: [1], fromMinutes: 480, toMinutes: 600 }, options());
     expect(plan.placed[0]!.startMinutes).toBe(540);
   });
+
+  // g517 L-1: the answer told the school the time had run out when it was the room. A brick left for want of a room is NO_ROOM, and one left for want of a time stays
+  // NO_FREE_START, so that the page can say which of the two the school has to mend.
+  const WINDOW_ONE_HOUR = { days: [1], fromMinutes: 480, toMinutes: 540 };
+  const bothHeld = (): SwapLesson[] => [lessonOf('s1', 'c2', 1, 480, { roomId: 'big', teacherId: 'O1' }), lessonOf('s2', 'c3', 1, 480, { roomId: 'small', teacherId: 'O2' })];
+
+  it('is left as NO_ROOM when the teacher and the class are free and every room the rule allows is taken at every such start', async () => {
+    const plan = await planFill(worldWith({ lessons: bothHeld() }, rooms), [brickOf('a', 'c1', 'T')], WINDOW_ONE_HOUR, options());
+    expect(plan.placed).toEqual([]);
+    expect(plan.left).toEqual([{ brick: expect.objectContaining({ key: 'a' }), reason: 'NO_ROOM', freeStarts: 0 }]);
+  });
+
+  it('is NO_ROOM when some starts are the teacher\'s and the rest are the room\'s: one start that only the room holds is enough', async () => {
+    // T is closed 08:00–09:00 (the first start) and the rooms are taken 09:00–10:00 (the second): nothing is laid, and the second start is the room's.
+    const held = [lessonOf('s1', 'c2', 1, 540, { roomId: 'big', teacherId: 'O1' }), lessonOf('s2', 'c3', 1, 540, { roomId: 'small', teacherId: 'O2' })];
+    const world = worldWith({ lessons: held, constraints: [closed('TEACHER', 'T', 1, 480, 540)] }, rooms);
+    const plan = await planFill(world, [brickOf('a', 'c1', 'T')], { days: [1], fromMinutes: 480, toMinutes: 600 }, options());
+    expect(plan.left.map((entry) => entry.reason)).toEqual(['NO_ROOM']);
+  });
+
+  it('stays NO_FREE_START when it is the time that is out, however many rooms there are', async () => {
+    const plan = await planFill(worldWith({ constraints: [closed('TEACHER', 'T', 1, 0, 1440)] }, rooms), [brickOf('a', 'c1', 'T')], WINDOW_ONE_HOUR, options());
+    expect(plan.left).toEqual([{ brick: expect.objectContaining({ key: 'a' }), reason: 'NO_FREE_START', freeStarts: 0 }]);
+  });
+
+  it('is laid in the free room at the same start, and so left as neither', async () => {
+    const plan = await planFill(worldWith({ lessons: bothHeld().slice(0, 1) }, rooms), [brickOf('a', 'c1', 'T')], WINDOW_ONE_HOUR, options());
+    expect(plan.left).toEqual([]);
+    expect(plan.placed[0]).toMatchObject({ startMinutes: 480, roomId: 'small' });
+  });
 });
 
 describe('the starts asked about', () => {

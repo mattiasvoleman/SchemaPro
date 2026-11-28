@@ -138,6 +138,9 @@ interface PostLesson {
 /** What a lesson nobody wrote a number for occupies outside itself: nothing. */
 const NO_BUFFER: PupilBuffer = { minutesBefore: 0, minutesAfter: 0 };
 
+/** The key under which a transaction keeps the lessons it is to tell the staff room of when it has committed (PrismaService.commitLocal). */
+const ANNOUNCED = {};
+
 /**
  * Whether the school can hold a Lärarens dag rule at all: a cap on some
  * teacher's work rule, a day limit or a limit for teaching in a row
@@ -3244,11 +3247,26 @@ export class MasterLessonsService {
    * the event says which lessons changed, and the client reads just those (use-timetable-realtime.ts), it would be a stale
    * lesson that nothing mends. A write that fails or is retried is not announced for the run that did not commit. Outside a
    * transaction there is no commit to wait for, and it is said at once.
+   *
+   * ONE TRANSACTION, ONE TELLING. A transaction that writes many lessons through createIn / updateIn (Lägg det som går's Ta in is the one that does)
+   * said a thing for each, and every open timetable answered each with a read of its own and a refresh of its lists: 130 lessons taken in were 130
+   * events. The ids of the transaction are collected and told together, once it has committed, as the bulk paths below already name theirs; over the
+   * gateway's cap of lessons the event names none and a client reads the year (MASTER_TIMETABLE_IDS_MAX).
    */
   private announce(tx: PrismaClient, schoolId: string, mode: 'DIRECT' | 'DRAFT', lessonIds: readonly string[]): void {
-    const say = () =>
-      this.realtime.notifyMasterTimetableChanged(schoolId, mode === 'DRAFT' ? { draft: true, lessonIds } : { lessonIds });
-    if (!this.prisma.onCommit(tx, async () => say())) say();
+    const say = (school: string, how: 'DIRECT' | 'DRAFT', ids: readonly string[]) =>
+      this.realtime.notifyMasterTimetableChanged(school, how === 'DRAFT' ? { draft: true, lessonIds: ids } : { lessonIds: ids });
+    const held = this.prisma.commitLocal(tx, ANNOUNCED, () => ({ hooked: false, told: new Map<string, { schoolId: string; mode: 'DIRECT' | 'DRAFT'; ids: Set<string> }>() }));
+    // Outside a transaction there is no commit to wait for.
+    if (!held) return say(schoolId, mode, lessonIds);
+    const key = `${schoolId}|${mode}`;
+    const entry = held.told.get(key) ?? { schoolId, mode, ids: new Set<string>() };
+    held.told.set(key, entry);
+    for (const id of lessonIds) entry.ids.add(id);
+    if (held.hooked) return;
+    held.hooked = this.prisma.onCommit(tx, async () => {
+      for (const told of held.told.values()) say(told.schoolId, told.mode, [...told.ids]);
+    });
   }
 
   // ---------------------------------------------------------------------
