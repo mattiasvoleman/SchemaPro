@@ -6,6 +6,7 @@ import { MasterLessonsController } from './master-lessons.controller';
 import { MasterLessonsService } from './master-lessons.service';
 import { PossibleTimesService } from './possible-times.service';
 import { WhatFitsService } from './what-fits.service';
+import { ScheduleVersionAnnouncer } from './schedule-version-announcer';
 import { ScheduleVersionNamesService } from './schedule-version-names.service';
 import { ScheduleVersionsController } from './schedule-versions.controller';
 import { ScheduleVersionsService } from './schedule-versions.service';
@@ -23,6 +24,7 @@ import { ScheduleVersionsService } from './schedule-versions.service';
     CalendarLessonsService,
     MasterLessonsService,
     PossibleTimesService,
+    ScheduleVersionAnnouncer,
     ScheduleVersionNamesService,
     ScheduleVersionsService,
     WhatFitsService,

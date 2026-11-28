@@ -10,6 +10,7 @@ import { rawSql } from '../../test/utils/locking-read';
 import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import type { CalendarService } from '../calendar/calendar.service';
+import type { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import type { StaffingLoadService } from '../staffing/staffing-load.service';
 import type { TimplanCoverageService } from '../timplan/timplan-coverage.service';
 import type { NotificationsService } from '../notifications/notifications.service';
@@ -82,6 +83,7 @@ describe('PublicationsService (DIRECT)', () => {
   let coverage: { scheduled: jest.Mock; planned: jest.Mock };
   let load: { load: jest.Mock };
   let notifications: { recipientsForLessons: jest.Mock; notifyUsers: jest.Mock };
+  let versions: { snapshotInTransaction: jest.Mock };
 
   beforeEach(() => {
     jest.useFakeTimers({ now: new Date('2026-10-12T08:00:00Z'), doNotFake: ['nextTick', 'setImmediate'] });
@@ -106,6 +108,7 @@ describe('PublicationsService (DIRECT)', () => {
     };
     load = { load: jest.fn() };
     notifications = { recipientsForLessons: jest.fn(async () => []), notifyUsers: jest.fn() };
+    versions = { snapshotInTransaction: jest.fn().mockResolvedValue({ id: 'version-1' }) };
     prisma = createPrismaMock(tx);
     service = new PublicationsService(
       prisma as unknown as PrismaService,
@@ -114,6 +117,7 @@ describe('PublicationsService (DIRECT)', () => {
       load as unknown as StaffingLoadService,
       notifications as unknown as NotificationsService,
       { notifyMasterTimetableChanged: jest.fn() } as unknown as RealtimeService,
+      versions as unknown as ScheduleVersionsService,
     );
   });
 
@@ -161,6 +165,44 @@ describe('PublicationsService (DIRECT)', () => {
       }),
     ]);
     expect(outcome.publication.validFrom).toBe('2026-10-12');
+  });
+
+  /*
+   * EN VERSION VID VARJE PUBLICERING (E9): the grundschema as it was published is kept as a version, named by the window the publication is valid for,
+   * in the publication's own transaction: a publication that is refused, or asks for "Publicera ändå", leaves none, and one that stands leaves one.
+   */
+  describe('the version a publication leaves (E9)', () => {
+    it('saves one, named by the window as the log gives it, in the publication\'s own transaction and for its own year', async () => {
+      await service.publish({ academicYearId: YEAR_ID }, testUser());
+      expect(versions.snapshotInTransaction).toHaveBeenCalledTimes(1);
+      expect(versions.snapshotInTransaction).toHaveBeenCalledWith(tx, YEAR_ID, 'Publicering 2026-10-12–2027-06-11', expect.objectContaining({ schoolId: SCHOOL_ID }));
+      // After the log row, in the same transaction: a version without a publication, or a publication without its version, cannot be left.
+      expect(tx.timetablePublication.create.mock.invocationCallOrder[0]).toBeLessThan(versions.snapshotInTransaction.mock.invocationCallOrder[0]!);
+    });
+
+    it('names a publication by the window it was given, not the window of the year', async () => {
+      calendar.materialise.mockResolvedValue({ ...RESULT, fromDate: '2026-11-02', toDate: '2026-12-18' });
+      await service.publish({ academicYearId: YEAR_ID, validFrom: '2026-11-02', validTo: '2026-12-18' }, testUser());
+      expect(versions.snapshotInTransaction).toHaveBeenCalledWith(tx, YEAR_ID, 'Publicering 2026-11-02–2026-12-18', expect.anything());
+    });
+
+    it('saves none for a publication that asks for "Publicera ändå" or is refused: nothing was published', async () => {
+      tx.masterLesson.findMany.mockResolvedValue([lesson({ roomId: null })]);
+      await service.publish({ academicYearId: YEAR_ID }, testUser()).catch(() => undefined);
+      tx.publicationSettings.findUnique.mockResolvedValue({ publishMode: 'DIRECT', gateMissingRoom: 'REFUSE' });
+      await service.publish({ academicYearId: YEAR_ID, acknowledgeWarnings: true }, testUser()).catch(() => undefined);
+      expect(versions.snapshotInTransaction).not.toHaveBeenCalled();
+    });
+
+    it('saves none when the preview only asks what would happen', async () => {
+      await service.preview({ academicYearId: YEAR_ID }, testUser());
+      expect(versions.snapshotInTransaction).not.toHaveBeenCalled();
+    });
+
+    it('fails the publication, and so logs none that stands, when the version cannot be saved', async () => {
+      versions.snapshotInTransaction.mockRejectedValue(new Error('the version was not saved'));
+      await expect(service.publish({ academicYearId: YEAR_ID }, testUser())).rejects.toThrow('the version was not saved');
+    });
   });
 
   it('takes the publication lock shared before it reads anything, so that an activity settling after its commit waits for it', async () => {
@@ -457,6 +499,19 @@ describe('PublicationsService (DIRECT)', () => {
       // No REFUSE set: the gates are not even asked.
       expect(coverage.scheduled).not.toHaveBeenCalled();
       expect(tx.masterLesson.findMany).not.toHaveBeenCalled();
+    });
+
+    it('leaves a version too, named as the log names the window it materialised (E9)', async () => {
+      await service.legacyPublish({ academicYearId: YEAR_ID, fromDate: '2026-09-01' }, testUser());
+      expect(versions.snapshotInTransaction).toHaveBeenCalledWith(tx, YEAR_ID, 'Publicering 2026-10-12–2027-06-11', expect.anything());
+      expect(tx.timetablePublication.create.mock.invocationCallOrder[0]).toBeLessThan(versions.snapshotInTransaction.mock.invocationCallOrder[0]!);
+    });
+
+    it('leaves none when a check the school set to REFUSE stops it', async () => {
+      tx.publicationSettings.findUnique.mockResolvedValue({ publishMode: 'DIRECT', gateParked: 'REFUSE' });
+      tx.masterLesson.findMany.mockResolvedValue([lesson({ isParked: true })]);
+      await service.legacyPublish({ academicYearId: YEAR_ID }, testUser()).catch(() => undefined);
+      expect(versions.snapshotInTransaction).not.toHaveBeenCalled();
     });
 
     it('takes the lock first and applies the bulk avbokningar and activities in force to what it wrote (S7)', async () => {

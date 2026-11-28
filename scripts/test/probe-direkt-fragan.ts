@@ -160,7 +160,7 @@ function servicesOf(api: PrismaService, spy: Spy) {
     masters,
     tray: new BoardTrayService(api, masters),
     swaps: new SwapsService(api, masters, new ScheduleVersionsService(api), realtime, notifications),
-    publications: new PublicationsService(api, calendar, new TimplanCoverageService(api), new StaffingLoadService(api), notifications, realtime),
+    publications: new PublicationsService(api, calendar, new TimplanCoverageService(api), new StaffingLoadService(api), notifications, realtime, new ScheduleVersionsService(api)),
     drafts: new DraftService(api, calendar, new ScheduleVersionsService(api), realtime),
     reach: new DirectReachService(api),
   };
@@ -353,16 +353,18 @@ async function main(): Promise<void> {
           ],
         };
         const before = [await standing(s.monday), await standing(s.wednesday)];
+        // The publication above left its own version (E9); the swap's safety version is the one after it.
+        const published = await owner.scheduleVersion.count({ where: { schoolId: s.schoolId } });
         const refusal = await refusalOf(svc.swaps.apply(body, s.admin));
         assert.equal(refusal.code, 'DIRECT_REACH_UNANSWERED');
         assert.deepEqual([await standing(s.monday), await standing(s.wednesday)], before, 'both lessons and their calendar rows are as they were');
-        assert.equal(await owner.scheduleVersion.count({ where: { schoolId: s.schoolId } }), 0, 'the safety version the swap took first was rolled back with it');
+        assert.equal(await owner.scheduleVersion.count({ where: { schoolId: s.schoolId } }), published, 'the safety version the swap took first was rolled back with it');
         assert.equal(await owner.scheduleChangeLog.count({ where: { schoolId: s.schoolId } }), 0, 'no log row');
         assert.deepEqual(spy.sent, [], 'nobody was told');
         await svc.reach.acknowledge(s.admin);
         const applied = await svc.swaps.apply(body, s.admin);
         assert.ok(applied.propagatedLessons > 0, 'published lessons moved');
-        assert.equal(await owner.scheduleVersion.count({ where: { schoolId: s.schoolId } }), 1, 'the safety version stands now');
+        assert.equal(await owner.scheduleVersion.count({ where: { schoolId: s.schoolId } }), published + 1, 'the safety version stands now');
         assert.ok(spy.sent.length > 0, 'the classes were told');
       });
     });

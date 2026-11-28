@@ -139,6 +139,16 @@ describe('admin areas: one matrix, three copies', () => {
     expect(writersOf('DRIFT')).toBe('rektor, en fullständig administratör, en schemaläggare eller expeditionen');
   });
 
+  // E9: a publication saves a version of the grundschema in its own transaction, and a version is written by Schemaläggning (ScheduleVersions) while a
+  // publication is Publicering's (TimetablePublications). A profile that could publish but not save a version would have every publication refused by the
+  // database at the version's row (a 500 after the dated lessons were written, which then roll back). No profile is that today; this holds it so.
+  it('lets every profile that can log a publication save the version the publication leaves', () => {
+    for (const profile of Object.values(AdminProfile)) {
+      if (!profileWritesTable(profile, 'TimetablePublications', 'insert')) continue;
+      expect({ profile, saves: profileWritesTable(profile, 'ScheduleVersions', 'insert') }).toEqual({ profile, saves: true });
+    }
+  });
+
   it('never lets a narrower profile write a table a wider one cannot', () => {
     for (const table of Object.keys(TABLE_WRITE_GATES)) {
       for (const command of ['insert', 'update', 'delete'] as const) {

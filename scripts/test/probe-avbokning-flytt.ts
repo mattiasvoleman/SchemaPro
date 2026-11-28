@@ -30,6 +30,7 @@ import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import { CalendarService } from '../../src/calendar/calendar.service';
 import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
+import { ScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import type { PrismaService } from '../../src/database/prisma.service';
 import type { NotificationsService } from '../../src/notifications/notifications.service';
 import { CancellationBatchesService } from '../../src/publication/cancellation-batches.service';
@@ -179,7 +180,7 @@ function servicesOf(api: PrismaService, spy: Spy) {
     masters: new MasterLessonsService(api, realtime, notifications),
     batches: new CancellationBatchesService(api, realtime, notifications),
     activities: new ScheduleActivitiesService(api, realtime, notifications),
-    publications: new PublicationsService(api, calendar, new TimplanCoverageService(api), new StaffingLoadService(api), notifications, realtime),
+    publications: new PublicationsService(api, calendar, new TimplanCoverageService(api), new StaffingLoadService(api), notifications, realtime, new ScheduleVersionsService(api)),
   };
 }
 

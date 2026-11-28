@@ -13,6 +13,7 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { todayInZone } from '../common/utils/time';
 import { CalendarService, publishWindow, type PublishResult } from '../calendar/calendar.service';
+import { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import type { PublishScheduleDto } from '../calendar/dto/publish-schedule.dto';
 import { scopeOf } from '../calendar/lesson-roster';
 import { StaffingLoadService } from '../staffing/staffing-load.service';
@@ -220,6 +221,12 @@ const PUBLICATION_SELECT = {
   acknowledgedWarnings: true,
 } as const;
 
+/**
+ * The name of the version a publication leaves (E9): "Publicering 2026-08-17–2026-12-18", the window it is valid for as the publication log gives it
+ * (Giltighet). The version list says when it was saved, so the day is not in the name, and two publications of one window have one name.
+ */
+export const publicationVersionName = (validFrom: string, validTo: string): string => `Publicering ${validFrom}–${validTo}`;
+
 type StoredPublication = Prisma.TimetablePublicationGetPayload<{ select: typeof PUBLICATION_SELECT }>;
 
 function toRow(row: StoredPublication): PublicationRow {
@@ -255,6 +262,8 @@ export class PublicationsService {
     private readonly load: StaffingLoadService,
     private readonly notifications: NotificationsService,
     private readonly realtime: RealtimeService,
+    /** The version a publication leaves (E9): the grundschema as it was published, kept with the publication's own name. */
+    private readonly versions: ScheduleVersionsService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -434,6 +443,9 @@ export class PublicationsService {
             },
             select: PUBLICATION_SELECT,
           });
+          // A version of the grundschema as it is published, in the publication's own transaction (E9): a publication that is refused or rolled back
+          // leaves none, and one that stands has its restore point, named by the window it is valid for as the log names it.
+          await this.versions.snapshotInTransaction(tx, dto.academicYearId, publicationVersionName(context.validFrom, context.validTo), user);
           if (run.masters) {
             await snapshotMasters(tx, { id: row.id, schoolId, academicYearId: dto.academicYearId }, run.masters);
             await snapshotSittings(tx, { id: row.id, schoolId, academicYearId: dto.academicYearId });
@@ -695,6 +707,8 @@ export class PublicationsService {
             },
             select: { id: true },
           });
+          // As POST /publications: the version of what was published, in the same transaction (E9).
+          await this.versions.snapshotInTransaction(tx, dto.academicYearId, publicationVersionName(result.fromDate, result.toDate), user);
           this.flagExternalClashesAfterCommit(tx, user, schoolId);
           return { kind: 'published', result };
         },

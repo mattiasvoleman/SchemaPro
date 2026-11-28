@@ -236,6 +236,8 @@ describe('Publish and regenerate (e2e)', () => {
 
     const tx = harness.tx;
 
+    // A publication leaves a version of the grundschema (E9): the snapshot reads the year's lessons and writes one row, which this world answers.
+    tx['scheduleVersion']!['create']!.mockResolvedValue({ id: '77777777-7777-4777-8777-777777777777', academicYearId: YEAR_ID, name: 'Publicering', lessonCount: 0, createdAt: new Date('2026-11-28T10:00:00.000Z') });
     tx['academicYear']!['findUnique']!.mockResolvedValue({
       id: YEAR_ID,
       startDate: day(MONDAYS[0]!),

@@ -68,7 +68,7 @@ async function main(): Promise<void> {
   const fill = new BoardFillService(api, tray, masters, possible, versions);
   fill.budgetMs = 120_000; // a probe on a loaded host is given all the time it needs: a failure of the host is no answer
   const calendar = new CalendarService(api);
-  const publications = new PublicationsService(api, calendar, new TimplanCoverageService(api), new StaffingLoadService(api), notifications, realtime);
+  const publications = new PublicationsService(api, calendar, new TimplanCoverageService(api), new StaffingLoadService(api), notifications, realtime, versions);
   const reach = new DirectReachService(api);
 
   let failures = 0;

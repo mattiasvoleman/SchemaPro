@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PrismaService } from '../database/prisma.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { OptimizationProxyService } from './optimization-proxy.service';
 import { EngineTimingService } from './engine-timing.service';
 
@@ -46,9 +47,17 @@ describe('OptimizationProxyService receives MasterLessonsService from Nest (HÖG
         { provide: HttpService, useValue: {} },
         { provide: ConfigService, useValue: config },
         { provide: MasterLessonsService, useValue: { findConflicts: jest.fn() } },
+        { provide: RealtimeService, useValue: {} },
       ],
     }).compile();
     expect((built.get(OptimizationProxyService) as unknown as { timing: unknown }).timing).toBe(built.get(EngineTimingService));
+  });
+
+  // E9 (g465 L-4): a run that has written the week tells the staff room. The global RealtimeModule gives it; a type that is `undefined` here (an import cycle) would
+  // leave a run telling nobody, with nothing failing.
+  it('is decorated with RealtimeService in its sixth place, which Nest gives it', async () => {
+    const types = Reflect.getMetadata('design:paramtypes', OptimizationProxyService) as unknown[];
+    expect(types[5]).toBe(RealtimeService);
   });
 
   it('gets the clash rule injected when Nest builds it, and refuses to build without one', async () => {
@@ -60,6 +69,7 @@ describe('OptimizationProxyService receives MasterLessonsService from Nest (HÖG
       { provide: PrismaService, useValue: {} },
       { provide: HttpService, useValue: {} },
       { provide: ConfigService, useValue: config },
+      { provide: RealtimeService, useValue: {} },
     ];
 
     const built = await Test.createTestingModule({

@@ -522,3 +522,20 @@ Adds `MasterLessons.isLocked` + `coTeacherId`, `Subjects.requiredRoomType`, `Tea
 ## Engine
 
 `optimization-engine` accepts `fixedLessons`, `previousLessons`, `weights` (incl. `teacherGap`), `rules` (lunch/max-per-day), room `type`, requirement `requiredRoomType` and `coTeacherId` in `POST /api/v1/optimize` (and the legacy `/v1/schedule`). Fixed windows are rounded outward to whole slots, so off-grid manual placements still block correctly. Covered by 14 tests in `tests/test_optimize.py`, including `test_co_teacher_prevents_overlap` and `test_lunch_break_rule_is_enforced`.
+
+## En version vid varje publicering, och personalrummet får veta (E9)
+
+- **En version vid varje publicering.** `POST /api/v1/publications` och den gamla `POST /api/v1/calendar/publish` sparar en version av grundschemat som det publicerades, i
+  **publiceringens egen transaktion** (`ScheduleVersionsService.snapshotInTransaction`, efter loggraden): en publicering som nekas eller som ber om "Publicera ändå" lämnar ingen version, en
+  som kraschar efter versionen rullas tillbaka med den, och en som står har sin återställningspunkt. Namnet är **publiceringens**, giltigheten som loggen säger den
+  ("Publicering 2026-11-30–2026-12-18"); versionslistan säger när den sparades, så dagen står inte i namnet. I utkastläget är grundschemat utkastet, och versionen är det som publicerades.
+  Skola24 sparar ett bokmärke vid varje publicering på samma sätt. En version är ungefär 330 kB för en skola med åttahundra lektioner (423 byte per lektion, räknat på lektionens JSON utan elever) och rensas inte: `ScheduleVersions` har ingen gallring, och en skola som publicerar femtio gånger om året får ett par tiotal MB om året.
+- **Generera säger till.** En körning som har skrivit veckan (`written` är inte null) har bytt ut grundschemat under den som har det öppet. Efter commit säger gatewayen
+  `master_timetable_updated` utan lektions-id (en körning ersätter alla), och klienten läser året. I utkastläget hör bara administratörerna det, som för varje skrivare av utkastet.
+  En körning som inte skrev något lämnade schemat som det var och säger inget. Läget läses i en egen transaktion efter commit, så körningens egen transaktion har de uttalanden den hade.
+- **En återställning säger till.** `POST /api/v1/schedule-versions/:id/restore` ersätter varje lektion, och lektionerna får nya id. Efter commit säger `ScheduleVersionAnnouncer` samma sak
+  (alla, eller bara administratörerna i utkastläget), och en återställning som nekas (en version som inte finns, `SCHEDULE_BUSY`) säger ingenting.
+  Det gör meningen ovan sann: *any other change reads the year again*.
+- **Hålls av** `src/publication/publications.service.spec.ts` (namn, samma transaktion, ingen version för en nekad publicering), `src/optimization/optimization-proxy.announce.spec.ts`,
+  `src/calendar/schedule-version-announcer.spec.ts` och `scripts/test/probe-publicering-version.ts` (mot riktig Postgres: pv-a en publicering, pv-b den gamla vägen, pv-b2 en publicering vars version databasen vägrar står inte alls (loggraden och lektionerna rullas tillbaka med den, på båda vägarna), pv-c en nekad publicering lämnar
+  ingen version men en loggrad, pv-d en återställning säger till en gång, i rätt läge, och en som nekas säger ingenting).

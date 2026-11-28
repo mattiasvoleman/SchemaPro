@@ -9039,6 +9039,7 @@ function publicationServicesFor(api: PrismaService): { calendar: CalendarService
     new StaffingLoadService(api),
     { recipientsForLessons: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
     { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+    new RealScheduleVersionsService(api),
   );
   return { calendar, publications };
 }
