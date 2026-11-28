@@ -243,8 +243,10 @@ skriva något (varje administratör får läsa det, skrivningen är schemalägga
 - **En flytt är en rad.** Ett schema har inga lektions-id i en version (en återställning lägger varje lektion på nytt under ett nytt), så "samma lektion" läses av vad den är: ämne, klass,
   lärare, medlärare, veckor, andra klasser och namngivna elever (`web/lib/version-diff.ts`, ren och provad för sig). Två lektioner som är lika i allt detta men står på en annan dag
   eller ett annat klockslag, eller på bricklådan och inte, är **en lektion som flyttats** (`moved`, med en notis om salen också är en annan). En lektion som står där den stod men har
-  en annan lärare, sal, vecka, klass eller elever är **ändrad** (`changed`, med vad: "lärare: K. Ek → N. Berg"). Det som blir kvar är tillagt eller borttaget. Två identiska lektioner
-  räknas som två, så en av dem borta är en borttagen. Ordningen är fast: samma lektioner parar ihop sig i ordning, och en lektion hamnar i en rad.
+  en annan lärare, sal, vecka, klass, elever, ett annat lås eller andra undantag (Lägg ändå) är **ändrad** (`changed`, med vad: "lärare: K. Ek → N. Berg"; lås och undantag skriver en återställning också, så
+  de är med). Det som blir kvar är tillagt eller borttaget. Två identiska lektioner räknas som två, så en av dem borta är en borttagen. Parningen ger så många par som lektionerna tillåter (per ämne och klass,
+  med en förlängande väg när en lektions partner är tagen), och föredrar samma lektion på samma plats, sedan samma lektion på annan plats, sedan samma plats med något annat ändrat. Ordningen är fast:
+  samma lektioner parar ihop sig i ordning, och en lektion hamnar i en rad. En lektion som både flyttats och fått en annan lärare är en borttagen och en tillagd: ingenting säger att det är samma lektion.
 - **Hela listan, per klass.** Varje klass som har något har en rubrik med sina tal ("7A · 1 flyttad, 2 tillagda") och alla sina rader i ordningen flyttade, ändrade, tillagda, borttagna.
   Listan avkortades förut vid åtta rader. Tecknet före raden (↔ ~ + −) är för ögat och ordet före det (Flyttad, Ändrad, Tillagd, Borttagen) för örat.
 - **Två versioner mot varandra.** Jämför-knappen jämför versionen med schemat på skärmen, och listan "Jämför med" byter motparten till en annan version. Båda läses med
