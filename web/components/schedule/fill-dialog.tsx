@@ -111,8 +111,12 @@ export function FillDialog({ open, onClose, yearId, revision, groupById, subject
 
   const labelOf = (subjectId: string, groupId: string) => `${subjectById.get(subjectId)?.name ?? ""} ${groupById.get(groupId)?.name ?? ""}`.trim();
 
-  const versionNameOf = (body: FillRequest): string => {
-    if (body.scope === "CLASS") return t("versionOfClass", { name: groupById.get(body.studentGroupId ?? "")?.name ?? "" });
+  /** What the version is called, or null when the page cannot say what was asked (a class it has no name for: it was removed meanwhile): the gateway's own name then stands. */
+  const versionNameOf = (body: FillRequest): string | null => {
+    if (body.scope === "CLASS") {
+      const name = groupById.get(body.studentGroupId ?? "")?.name;
+      return name ? t("versionOfClass", { name }) : null;
+    }
     if (body.scope === "GRADE") return t("versionOfGrade", { grade: body.gradeLevel ?? 0 });
     return t("versionOfSchool");
   };

@@ -39,16 +39,16 @@ const PROPOSAL: FillProposal = {
 };
 const APPLIED = { academicYearId: "y1", versionId: "v-before", laid: [{ key: "k1", lessonId: "l1", created: false, noRoom: false }] };
 
-async function takeIn(scope?: RegExp, onApplied: () => void = () => undefined) {
+async function takeIn(scope?: RegExp, onApplied: () => void = () => undefined, names: ReadonlyMap<string, { name: string; gradeLevel?: number | null }> = groups) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <NextIntlClientProvider locale="sv" messages={sv}>
-        <FillDialog open onClose={() => undefined} yearId="y1" revision={1} groupById={groups} subjectById={subjects} onApplied={onApplied} />
+        <FillDialog open onClose={() => undefined} yearId="y1" revision={1} groupById={names} subjectById={subjects} onApplied={onApplied} />
       </NextIntlClientProvider>
     </QueryClientProvider>,
   );
-  await screen.findByRole("option", { name: "7A (3 kvar)" });
+  await screen.findByRole("option", { name: names.size > 0 ? "7A (3 kvar)" : /3 kvar/ });
   if (scope) fireEvent.click(screen.getByRole("radio", { name: scope }));
   fireEvent.click(screen.getByRole("button", { name: /^Föreslå$/ }));
   await screen.findByText(/Lade 1 av 3/);
@@ -91,6 +91,13 @@ describe("the version saved before Ta in", () => {
     vi.mocked(toast.success).mockClear();
     await takeIn(/^Hela skolan/);
     expect(apply).toHaveBeenLastCalledWith(PROPOSAL, "Före påfyllning: hela skolan");
+  });
+});
+
+describe("the version's name when the page cannot say what was asked (g523 L-4)", () => {
+  it("is left to the gateway for a class the page has no name for, and not sent as \"Före påfyllning:\" with the colon last", async () => {
+    await takeIn(undefined, undefined, new Map());
+    expect(apply).toHaveBeenLastCalledWith(PROPOSAL, undefined);
   });
 });
 
