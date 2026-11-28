@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -131,6 +132,33 @@ describe("renaming a version", () => {
     expect(screen.getByRole("button", { name: "Spara namnet" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Avbryt" }));
     expect(actions.rename).not.toHaveBeenCalled();
+  });
+
+  // `onOpenChange` of the other tests is a no-op, so a dialog that closed on Escape looked open to them: this host does what the page does.
+  function Controlled() {
+    const [open, setOpen] = useState(true);
+    return <VersionsDialog {...props([])} open={open} onOpenChange={setOpen} />;
+  }
+
+  it("lets the name be on Escape and keeps the dialog open, with focus back on the pencil; a second Escape closes the dialog", async () => {
+    render(wrap(<Controlled />));
+    await userEvent.click(screen.getByRole("button", { name: "Döp om ”Före lovet”" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Nytt namn på versionen" }), "x{Escape}");
+    expect(screen.queryByRole("textbox", { name: "Nytt namn på versionen" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Schemaversioner" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Döp om ”Före lovet”" })).toHaveFocus();
+    expect(actions.rename).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Schemaversioner" })).toBeNull();
+  });
+
+  it("puts focus back on the pencil after the name is saved with Enter", async () => {
+    actions.rename.mockResolvedValue({});
+    render(wrap(<Controlled />));
+    await userEvent.click(screen.getByRole("button", { name: "Döp om ”Före lovet”" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Nytt namn på versionen" }), "!{Enter}");
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Döp om ”Före lovet”" })).toHaveFocus());
+    expect(screen.getByRole("dialog", { name: "Schemaversioner" })).toBeTruthy();
   });
 
   it("marks the pencil as schemaläggning's write", () => {

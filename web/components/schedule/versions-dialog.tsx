@@ -15,7 +15,7 @@
  * the group label, the undo stack) and passes them in.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { GitCompareArrows, Loader2, Pencil, Trash2 } from "lucide-react";
@@ -125,6 +125,17 @@ export function VersionsDialog({
   const [againstId, setAgainstId] = useState<string>("live");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  /** The version whose pencil gets focus back once its field has gone (saved or let be): the field had it, and focus must not fall to the top of the dialog. */
+  const [refocusId, setRefocusId] = useState<string | null>(null);
+  useEffect(() => {
+    if (refocusId === null) return;
+    document.getElementById(`version-rename-${refocusId}`)?.focus();
+    setRefocusId(null);
+  }, [refocusId]);
+  const stopRenaming = () => {
+    setRefocusId(renamingId);
+    setRenamingId(null);
+  };
   /** The version a restore is asked about (E9): nothing is replaced before the reader has said yes. */
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   // A comparison belongs to the läsår it was picked in. The dialog stays
@@ -164,7 +175,7 @@ export function VersionsDialog({
     if (!renamingId || !name) return;
     try {
       await versionActions.rename.mutateAsync({ id: renamingId, name });
-      setRenamingId(null);
+      stopRenaming();
       toast.success(t("versionRenamed", { name }));
     } catch (error) {
       showError(error);
@@ -357,7 +368,15 @@ export function VersionsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent
+        className="max-w-lg"
+        // Escape lets a rename be, and only that: Radix listens on the document before the field does, so a field's own handler cannot keep the whole dialog from closing.
+        onEscapeKeyDown={(event) => {
+          if (renamingId === null) return;
+          event.preventDefault();
+          stopRenaming();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{t("versionsTitle")}</DialogTitle>
           <DialogDescription>{t("versionsBody")}</DialogDescription>
@@ -412,12 +431,6 @@ export function VersionsDialog({
                       event.preventDefault();
                       void doRenameVersion();
                     }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") {
-                        event.stopPropagation();
-                        setRenamingId(null);
-                      }
-                    }}
                   >
                     <Input
                       autoFocus
@@ -429,7 +442,7 @@ export function VersionsDialog({
                     <Button type="submit" size="sm" disabled={versionActions.rename.isPending || !renameDraft.trim()}>
                       {versionActions.rename.isPending ? <Loader2 className="animate-spin" /> : t("versionRenameSave")}
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => setRenamingId(null)}>
+                    <Button type="button" size="sm" variant="ghost" onClick={stopRenaming}>
                       {t("versionRenameCancel")}
                     </Button>
                   </form>
@@ -459,6 +472,7 @@ export function VersionsDialog({
                     <GitCompareArrows />
                   </Button>
                   <Button
+                    id={`version-rename-${version.id}`}
                     size="sm"
                     variant="ghost"
                     onClick={() => {
