@@ -96,3 +96,60 @@ describe("what two schedules do not share", () => {
     expect(KIND_ORDER).toEqual(["moved", "changed", "added", "removed"]);
   });
 });
+
+describe("pairing as many lessons as can be paired", () => {
+  it("does not take a lesson's partner from another that has no other: the Monday lesson that got a new teacher stays Monday, and the Tuesday one moved", () => {
+    // Monday and Tuesday of one lesson; then Monday with Bo, and Wednesday with Anna. Pairing the Monday lesson with the Wednesday one first said "Monday to
+    // Wednesday", left "Tuesday removed" and "Monday with Bo added": a move that did not happen, and a line too many.
+    const entries = diffLessons([lesson({ dayOfWeek: 1 }), lesson({ dayOfWeek: 2 })], [lesson({ dayOfWeek: 1, teacherId: "bo" }), lesson({ dayOfWeek: 3 })]);
+    expect(entries).toEqual([
+      { kind: "moved", from: lesson({ dayOfWeek: 2 }), to: lesson({ dayOfWeek: 3 }), room: false },
+      { kind: "changed", from: lesson({ dayOfWeek: 1 }), to: lesson({ dayOfWeek: 1, teacherId: "bo" }), aspects: ["teacher"] },
+    ]);
+  });
+
+  it("prefers the same lesson in the same place (another room) to the same lesson at another place", () => {
+    // Tuesday in R1 is on both sides in some form: with another room on Tuesday, and again on Monday. The lesson that stays is the one that changed room.
+    const entries = diffLessons([lesson({ dayOfWeek: 2 })], [lesson({ dayOfWeek: 1 }), lesson({ dayOfWeek: 2, roomId: "r2" })]);
+    expect(entries.map((entry) => entry.kind)).toEqual(["changed", "added"]);
+    expect(entries[0]).toMatchObject({ aspects: ["room"] });
+  });
+
+  it("gives as few entries as any pairing of the lessons could: checked against every pairing on small random schedules", () => {
+    let state = 20261128;
+    const random = (n: number) => ((state = (state * 1103515245 + 12345) & 0x7fffffff) % n);
+    const some = (): DiffLesson =>
+      lesson({ subjectId: ["ma", "sv"][random(2)]!, teacherId: ["anna", "bo", null][random(3)] ?? null, roomId: ["r1", "r2"][random(2)]!, dayOfWeek: 1 + random(3), startTime: ["08:00", "09:00"][random(2)]! });
+    const what = (l: DiffLesson) => `${l.subjectId}|${l.teacherId}`;
+    const place = (l: DiffLesson) => `${l.dayOfWeek}|${l.startTime}`;
+    const whole = (l: DiffLesson) => `${what(l)}|${l.roomId}|${place(l)}`;
+    const rest = (side: DiffLesson[], other: DiffLesson[]) => {
+      const left = new Map<string, number>();
+      for (const l of other) left.set(whole(l), (left.get(whole(l)) ?? 0) + 1);
+      return side.filter((l) => {
+        const n = left.get(whole(l)) ?? 0;
+        if (n > 0) left.set(whole(l), n - 1);
+        return n === 0;
+      });
+    };
+    // The most pairs any choice of partners gives, where two lessons may be partners when they are the same lesson, or of one subject in one place.
+    const mostPairs = (from: DiffLesson[], to: DiffLesson[], at = 0, used = new Set<number>()): number => {
+      if (at === from.length) return 0;
+      let best = mostPairs(from, to, at + 1, used);
+      to.forEach((other, index) => {
+        if (used.has(index) || !(what(from[at]!) === what(other) || (from[at]!.subjectId === other.subjectId && place(from[at]!) === place(other)))) return;
+        used.add(index);
+        best = Math.max(best, 1 + mostPairs(from, to, at + 1, used));
+        used.delete(index);
+      });
+      return best;
+    };
+    for (let round = 0; round < 400; round++) {
+      const a = Array.from({ length: 1 + random(5) }, some);
+      const b = Array.from({ length: 1 + random(5) }, some);
+      const onlyA = rest(a, b);
+      const onlyB = rest(b, a);
+      expect(diffLessons(a, b).length, JSON.stringify({ a, b })).toBe(onlyA.length + onlyB.length - mostPairs(onlyA, onlyB));
+    }
+  });
+});

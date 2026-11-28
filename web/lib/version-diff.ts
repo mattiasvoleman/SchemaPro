@@ -81,23 +81,60 @@ function unmatched<L extends DiffLesson>(side: L[], other: readonly DiffLesson[]
   });
 }
 
-/** Pairs the lessons of the two sides that agree on `key`, in order, and gives back what is left on each. */
-function pairBy<L extends DiffLesson>(left: L[], right: L[], key: (lesson: L) => string, make: (from: L, to: L) => DiffEntry<L>): [DiffEntry<L>[], L[], L[]] {
-  const buckets = new Map<string, L[]>();
-  for (const lesson of right) buckets.set(key(lesson), [...(buckets.get(key(lesson)) ?? []), lesson]);
-  const pairs: DiffEntry<L>[] = [];
-  const restLeft: L[] = [];
-  const usedRight = new Set<L>();
-  for (const from of left) {
-    const to = buckets.get(key(from))?.shift();
-    if (to) {
-      pairs.push(make(from, to));
-      usedRight.add(to);
-    } else {
-      restLeft.push(from);
-    }
+/**
+ * Which lesson of `right` each lesson of `left` is, as many pairs as there can be. Two lessons may be paired when they are the same lesson at another place
+ * (`whatOf`) or stand in the same place as the same subject and class (`placeOf`, something else changed). A greedy pass over one kind of pair and then the
+ * other pairs lessons that a better choice would have kept apart: with Mon and Tue of one lesson on one side, and the Monday one with another teacher and a
+ * Wednesday one on the other, taking "Monday to Wednesday" first leaves "Tuesday removed" and "Monday with the new teacher added", a move that did not
+ * happen and a line too many. So a lesson that finds its partner taken asks the holder to take another (an augmenting path, per subject and class, where a
+ * group is a handful of lessons), and the pairs that come out are as many as the lessons allow. Each lesson prefers, in this order: the same lesson in the
+ * same place (another room), the same lesson elsewhere (moved), the same place with something else changed; and a free partner before one that is taken.
+ */
+function pairUp<L extends DiffLesson>(left: L[], right: L[]): Map<L, L> {
+  // What a lesson is and where it stands, read once: a school with one subject in one class a hundred times over asks for them a million times otherwise.
+  const keys = new Map<L, { what: string; place: string; group: string }>();
+  for (const lesson of [...left, ...right]) keys.set(lesson, { what: whatOf(lesson), place: placeOf(lesson), group: `${lesson.subjectId}#${lesson.studentGroupId}` });
+  const byWhat = new Map<string, L[]>();
+  const byPlace = new Map<string, L[]>();
+  for (const lesson of right) {
+    const key = keys.get(lesson)!;
+    byWhat.set(key.what, [...(byWhat.get(key.what) ?? []), lesson]);
+    byPlace.set(`${key.group}|${key.place}`, [...(byPlace.get(`${key.group}|${key.place}`) ?? []), lesson]);
   }
-  return [pairs, restLeft, right.filter((lesson) => !usedRight.has(lesson))];
+  const partnerOf = new Map<L, L>();
+  const holderOf = new Map<L, L>();
+  const candidates = (lesson: L): L[] => {
+    const key = keys.get(lesson)!;
+    const same = byWhat.get(key.what) ?? [];
+    return [
+      ...same.filter((other) => keys.get(other)!.place === key.place),
+      ...same.filter((other) => keys.get(other)!.place !== key.place),
+      ...(byPlace.get(`${key.group}|${key.place}`) ?? []).filter((other) => keys.get(other)!.what !== key.what),
+    ];
+  };
+  const hold = (lesson: L, other: L) => {
+    holderOf.set(other, lesson);
+    partnerOf.set(lesson, other);
+  };
+  const find = (lesson: L, tried: Set<L>): boolean => {
+    const options = candidates(lesson);
+    const free = options.find((other) => !holderOf.has(other));
+    if (free) {
+      hold(lesson, free);
+      return true;
+    }
+    for (const other of options) {
+      if (tried.has(other)) continue;
+      tried.add(other);
+      if (find(holderOf.get(other)!, tried)) {
+        hold(lesson, other);
+        return true;
+      }
+    }
+    return false;
+  };
+  for (const lesson of left) find(lesson, new Set());
+  return partnerOf;
 }
 
 const aspectsOf = (from: DiffLesson, to: DiffLesson): Aspect[] => {
@@ -112,18 +149,28 @@ const aspectsOf = (from: DiffLesson, to: DiffLesson): Aspect[] => {
 };
 
 /**
- * What `to` says that `from` does not. Lessons that stand the same on both sides are not in it. Then, in this order, and each lesson in one entry only:
+ * What `to` says that `from` does not. Lessons that stand the same on both sides are not in it. The rest are paired as far as they can be (`pairUp`: the most
+ * pairs there can be, and a lesson is in one entry only), and a pair is
  *   1. the same lesson (what it is) at another place: `moved` (and `room` when its room is another too), or in the same place with only another room: `changed`;
  *   2. the same class and subject in the same place with something else changed: `changed`, with what.
- * The rest is `removed` (only in `from`) and `added` (only in `to`).
+ * What is not paired is `removed` (only in `from`) and `added` (only in `to`).
  */
 export function diffLessons<L extends DiffLesson>(from: readonly L[], to: readonly L[]): DiffEntry<L>[] {
   const onlyFrom = inOrder(unmatched([...from], to));
   const onlyTo = inOrder(unmatched([...to], from));
-  const [sameLesson, leftFrom, leftTo] = pairBy(onlyFrom, onlyTo, whatOf, (a, b) =>
-    placeOf(a) !== placeOf(b) ? { kind: "moved", from: a, to: b, room: (a.roomId ?? "") !== (b.roomId ?? "") } : { kind: "changed", from: a, to: b, aspects: aspectsOf(a, b) },
-  );
-  const [inPlace, removed, added] = pairBy(leftFrom, leftTo, (lesson) => `${lesson.subjectId}#${lesson.studentGroupId}#${placeOf(lesson)}`, (a, b) => ({ kind: "changed", from: a, to: b, aspects: aspectsOf(a, b) }));
+  const partnerOf = pairUp(onlyFrom, onlyTo);
+  const sameLesson: DiffEntry<L>[] = [];
+  const inPlace: DiffEntry<L>[] = [];
+  const paired = new Set<L>();
+  for (const a of onlyFrom) {
+    const b = partnerOf.get(a);
+    if (!b) continue;
+    paired.add(b);
+    if (whatOf(a) !== whatOf(b)) inPlace.push({ kind: "changed", from: a, to: b, aspects: aspectsOf(a, b) });
+    else sameLesson.push(placeOf(a) !== placeOf(b) ? { kind: "moved", from: a, to: b, room: (a.roomId ?? "") !== (b.roomId ?? "") } : { kind: "changed", from: a, to: b, aspects: aspectsOf(a, b) });
+  }
+  const removed = onlyFrom.filter((lesson) => !partnerOf.has(lesson));
+  const added = onlyTo.filter((lesson) => !paired.has(lesson));
   return [...sameLesson, ...inPlace, ...removed.map((lesson): DiffEntry<L> => ({ kind: "removed", from: lesson })), ...added.map((lesson): DiffEntry<L> => ({ kind: "added", to: lesson }))];
 }
 
