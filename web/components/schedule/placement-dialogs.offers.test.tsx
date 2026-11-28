@@ -73,6 +73,13 @@ describe("the dialog of a refused drop, and what it offers besides the free time
     expect(screen.getByText(/Onsdag|Ons/)).toBeInTheDocument();
   });
 
+  it.each([6, 7])("offers neither for a drop on day %i: the gateway's search is for the school days, Monday to Friday, and answers 400 for another", (dayOfWeek) => {
+    draw({ lesson: lesson(), drop: { dayOfWeek, startMinutes: 600 } });
+    expect(screen.queryByRole("button", { name: "Byt" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Gör plats" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Onsdag|Ons/)).toBeInTheDocument();
+  });
+
   it("is what it was when the page does not say what was refused", () => {
     draw(undefined);
     expect(screen.queryByRole("button", { name: "Byt" })).not.toBeInTheDocument();

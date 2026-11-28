@@ -9,11 +9,13 @@
  * an answer stays with the page and is passed in.
  */
 
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
 import { ArrowLeftRight, Sparkles } from "lucide-react";
 import type { PlacementSuggestion } from "@/lib/placement-search";
 import type { MasterLesson } from "@/lib/types";
+import { useLazyModule } from "@/lib/use-lazy-module";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -81,9 +83,6 @@ export function SharedMoveDialog({
   );
 }
 
-/** Byt and Gör plats (E5a): the lists of proposals, fetched when one of the two is first asked for (swap-dialog.tsx). */
-const SwapProposals = lazy(() => import("./swap-dialog").then((module) => ({ default: module.SwapProposals })));
-
 /** Where the lesson was let go, and what it is: what Byt and Gör plats are asked of. */
 export interface RefusedDrop {
   lesson: MasterLesson;
@@ -125,8 +124,23 @@ export function SuggestPlacementsDialog({
     if (!open) setView("times");
   }, [open]);
   // A lesson on the tray or one Generera wrote from a förläggning has no place to leave: Byt and Gör plats are for a lesson that stands.
-  const offers = open && refused != null && !refused.lesson.isParked && refused.lesson.fromPlacement !== true;
+  // Nor for a drop on a weekend day (a school with a lesson there has the columns): the search is of the school days, Monday to Friday, and the gateway answers 400.
+  const offers = open && refused != null && !refused.lesson.isParked && refused.lesson.fromPlacement !== true && refused.drop.dayOfWeek <= 5;
   const beside = offers && view !== "times";
+  /*
+   * Byt and Gör plats (E5a): the lists of proposals (swap-dialog.tsx), fetched when one of the two is first asked for. By useLazyModule and not by a
+   * module-level lazy(): a lazy() keeps a rejected fetch for good (a tab left open over a deploy), so every later press would throw the same error
+   * into the page's boundary, which closes the dialog, for as long as the tab lives. Here a chunk that does not arrive is said, the dialog goes back
+   * to the free times, and the next press fetches again.
+   */
+  const lists = useLazyModule(
+    () => import("./swap-dialog"),
+    () => {
+      setView("times");
+      toast.error(tSwaps("failed"));
+    },
+    beside,
+  );
   return (
     <Dialog open={open} modal={!beside} onOpenChange={(next) => !next && onClose()}>
       <DialogContent
@@ -143,8 +157,8 @@ export function SuggestPlacementsDialog({
               </DialogTitle>
               <DialogDescription>{view === "swap" ? tSwaps("dropOffers.swapBody") : tSwaps("dropOffers.roomBody")}</DialogDescription>
             </DialogHeader>
-            <Suspense fallback={null}>
-              <SwapProposals
+            {lists ? (
+              <lists.SwapProposals
                 ask={{ kind: view === "swap" ? "swap" : "room", lessonId: refused.lesson.id, target: refused.drop }}
                 teacherName={() => null}
                 roomName={() => null}
@@ -152,7 +166,7 @@ export function SuggestPlacementsDialog({
                 guard={guard}
                 onDone={onClose}
               />
-            </Suspense>
+            ) : null}
             <DialogFooter>
               <Button variant="outline" className="min-h-11 sm:min-h-9" onClick={() => setView("times")}>
                 {tSwaps("dropOffers.back")}
