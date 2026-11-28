@@ -76,6 +76,8 @@
       "LANGUAGE_BLOCK_HAS_OTHER_LESSONS": "The block's entries have other lessons or weeks than the language choice's new entries, and the entries of a block must have the same lessons and weeks. Change the block's lessons with Change lessons under Blocks on Curriculum entries, choose a lesson length that gives the block's lessons, or rename the block so a new one is created.",
       "LANGUAGE_BLOCK_IN_OTHER_GRADE": "The school year already has a block with that name, and it holds entries in another grade. The language choice is not put in it. Rename that block under Blocks on Curriculum entries, and then create the curriculum entries again.",
       "LAST_DECIDER": "The school needs at least one active principal or full administrator. Give someone else that role first.",
+      "LESSON_CHANGED": "The lesson was changed by someone else after the page read it, and your change was not made. Reload the timetable and make the change again if it still applies.",
+      "LESSON_DATE_FORM": "The day is not written as YYYY-MM-DD. Write it that way, for example 2026-08-17.",
       "LESSON_LENGTHS_MISMATCH": "The lesson lengths do not match the number of lessons and the length of the longest. Change them so they match, or give only the lesson lengths.",
       "LESSON_LENGTHS_TOO_MANY_KINDS": "A curriculum entry can have at most three different lesson lengths.",
       "LESSON_LOG_NOT_YOURS": "Only the lesson's teacher and its substitute write the lesson log.",
@@ -2936,8 +2938,32 @@
       "unlock": "Unlock",
       "unlocked": "Unlocked: Generera may move {count, plural, one {the lesson} other {the lessons}} again."
     },
+    "changed": {
+      "refused": "The lesson was changed by someone else after you read it, and your change was not made.",
+      "now": "It is now: {now}.",
+      "unread": "The timetable is being read again.",
+      "gone": "The lesson was removed by someone else, and your change was not made.",
+      "when": "{day} {start}–{end}",
+      "room": "room {room}",
+      "noRoom": "without a room",
+      "otherRoom": "in another room",
+      "teacher": "teacher {teacher}",
+      "noTeacher": "without a teacher",
+      "otherTeacher": "with another teacher",
+      "locked": "locked",
+      "unlocked": "unlocked",
+      "parked": "set aside",
+      "placed": "placed in the timetable",
+      "pupils": "with other classes or pupils",
+      "exempt": "with a changed exemption",
+      "again": "Make my change again",
+      "done": "Your change is made.",
+      "failed": "Your change could not be made again."
+    },
     "motor": {
       "kept": {
+        "WEEKS": "Locked for the engine: other weeks make the lesson hand-made, and Generate leaves it as it is.",
+        "MOVED": "Locked for the engine: Save locks a lesson that is moved, and Generate leaves it where you put it.",
         "LOCKED": "Locked for the generator: Generera leaves the lesson where it is.",
         "HANDMADE": "Locked for the generator: the lesson is made by hand, and Generera leaves it.",
         "PUPILS": "Locked for the generator: the lesson has an extra class or chosen pupils, and Generera leaves it."

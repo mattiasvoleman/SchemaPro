@@ -120,17 +120,16 @@ function marksOf(refusals: readonly MoveRefusal[]): { time: boolean; room: boole
 /** The fields that say WHEN a lesson stands: what an exemption (Undantag med flit) is for. */
 const TIME_FIELDS = ["dayOfWeek", "startTime", "endTime", "recurrence", "startDate", "endDate"] as const;
 
+/** Whether the draft says the day and the clock the lesson has. */
+const atOwnPlace = (lesson: MasterLesson, draft: LessonEditDraft): boolean =>
+  Number(draft.dayOfWeek) === lesson.dayOfWeek && draft.startTime === lesson.startTime.slice(0, 5) && draft.endTime === lesson.endTime.slice(0, 5);
+
+/** Whether the draft says the weeks the lesson has. */
+const atOwnWeeks = (lesson: MasterLesson, draft: LessonEditDraft): boolean =>
+  draft.recurrence === lesson.recurrence && (draft.startDate === "" ? null : draft.startDate) === lesson.startDate && (draft.endDate === "" ? null : draft.endDate) === lesson.endDate;
+
 /** Whether the draft says the time and the weeks the lesson has. */
-function atOwnTime(lesson: MasterLesson, draft: LessonEditDraft): boolean {
-  return (
-    Number(draft.dayOfWeek) === lesson.dayOfWeek &&
-    draft.startTime === lesson.startTime.slice(0, 5) &&
-    draft.endTime === lesson.endTime.slice(0, 5) &&
-    draft.recurrence === lesson.recurrence &&
-    (draft.startDate === "" ? null : draft.startDate) === lesson.startDate &&
-    (draft.endDate === "" ? null : draft.endDate) === lesson.endDate
-  );
-}
+const atOwnTime = (lesson: MasterLesson, draft: LessonEditDraft): boolean => atOwnPlace(lesson, draft) && atOwnWeeks(lesson, draft);
 
 export function LessonEditDialog({
   open,
@@ -195,7 +194,9 @@ export function LessonEditDialog({
   const holdsLock = exempt.length > 0 && (judged.status !== "done" || giving.length > 0);
   const takeBack = () => onDraftChange({ ...draft, exempt: [], isLocked: lesson?.isLocked ?? false });
   // Låst eller fri för motorn (E4): the lesson with the lock as the switch shows it (a held lock is on), asked of the gateway's own rule.
-  const owner = lesson ? motorOwner({ ...lesson, isLocked: draft.isLocked || holdsLock }) : null;
+  // Read off what Spara would do and not only what is stored (granskaren g511, L-3): other weeks hand the lesson to the school, and a move locks a
+  // lesson that was not locked (one the reader unlocks in the same save stays free: the gateway's `locksByMove` is for a lesson that was not).
+  const owner = lesson ? motorOwner({ ...lesson, isLocked: draft.isLocked || holdsLock }, { weeks: !atOwnWeeks(lesson, draft), moves: !atOwnPlace(lesson, draft) && !lesson.isLocked }) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
