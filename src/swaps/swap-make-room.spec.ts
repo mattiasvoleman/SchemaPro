@@ -404,3 +404,153 @@ describe('E5a: Gör plats finds exactly the proposals an exhaustive check on the
     expect(few.judged).toBe(2);
   });
 });
+
+/*
+ * g514 (granskning av #514): WHAT THE ORACLE ABOVE LEAVES OPEN. It holds the search to the exhaustive check with every bound off and a judge that
+ * refuses nothing, so four things the school meets were pinned by no test: that a judge's "no" removes a proposal, the order the list comes in,
+ * which landings the per-unit cap keeps (the cap is on in production, 8 per unit), and the time budget.
+ */
+describe('E5a: the judge’s no, the order, the cap and the clock', () => {
+  const ids = (proposals: ReadonlyArray<{ moves: readonly SwapMove[] }>): string[] => proposals.map((p) => proposalId(p.moves));
+
+  it('a set the judge refuses is no proposal, is counted as refused, and the list is filled from the ones that are left, in order', async () => {
+    const world = miniWorld(13);
+    let vetoed = 0;
+    let filled = 0;
+    for (const ask of asks(world, 3, 4, 3)) {
+      const full = await search(world, ask);
+      // The judge's no: every set of three moves.
+      const veto = new Set(full.proposals.filter((p) => p.moves.length === 3).map((p) => proposalId(p.moves)));
+      const refusing = (sets: ReadonlyArray<readonly SwapMove[]>) => Promise.resolve(sets.map((moves) => !veto.has(proposalId(moves))));
+      const survivors = ids(full.proposals).filter((id) => !veto.has(id));
+      const answer = await search(world, ask, { judge: refusing });
+      expect(ids(answer.proposals)).toEqual(survivors);
+      expect(answer.refused).toBe(veto.size);
+      expect(answer.judged).toBe(full.judged);
+      vetoed += veto.size;
+      // A short list is filled past the refused ones: the two best that stand, not the first two asked.
+      const two = await search(world, ask, { judge: refusing, limit: 2, chunk: 1 });
+      expect(ids(two.proposals)).toEqual(survivors.slice(0, 2));
+      if (veto.size > 0 && survivors.length >= 2) filled += 1;
+    }
+    expect(vetoed).toBeGreaterThan(5);
+    expect(filled).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('answers cheapest first: fewer moves before more (the soft score of this world), and a set by its name when the two are equal', async () => {
+    const world = miniWorld(8);
+    let longer = 0;
+    for (const ask of asks(world, 3, 5, 2)) {
+      const { proposals } = await search(world, ask);
+      for (let at = 1; at < proposals.length; at += 1) {
+        const [before, after] = [proposals[at - 1]!, proposals[at]!];
+        expect(before.score).toBeLessThanOrEqual(after.score);
+        if (before.score === after.score) {
+          expect(before.moves.length).toBeLessThanOrEqual(after.moves.length);
+          if (before.moves.length === after.moves.length) {
+            const name = (p: typeof before) => [...p.moves].map((move) => `${move.lessonId}>${move.to.dayOfWeek}|${move.to.startMinutes}|${move.to.endMinutes}`).sort().join(';');
+            expect(name(before) < name(after)).toBe(true);
+          }
+        }
+        if (after.moves.length > before.moves.length) longer += 1;
+      }
+    }
+    expect(longer).toBeGreaterThan(10);
+  }, 120_000);
+
+  it('with a cap on landings, a displaced lesson is offered the ones that stand in the way of fewest others, the same day first, then the nearest', async () => {
+    const places: SwapSlot[] = DAYS.flatMap((dayOfWeek) => STARTS.map((startMinutes) => ({ dayOfWeek, startMinutes, endMinutes: startMinutes + HOUR })));
+    let asked = 0;
+    let foundMatters = 0;
+    let dayMatters = 0;
+    for (const seed of [5, 13, 21, 34]) {
+      const world = miniWorld(seed, 0);
+      for (const ask of asks(world, 1, 3, 2)) {
+        if (!ask.placed) continue;
+        const uncapped = await search(world, ask);
+        if (uncapped.blockers.length !== 1 || uncapped.stuck) continue;
+        const blocker = uncapped.blockers[0]!;
+        const to: SwapSlot = { dayOfWeek: ask.target.dayOfWeek, startMinutes: ask.target.startMinutes, endMinutes: ask.target.startMinutes + HOUR };
+        // The landings of the one displaced unit, as the list in the head of swap-make-room.ts says they are weighed: this file's own
+        // reading of it, over the world's plain overlap and nothing of the search's.
+        const options = places
+          .filter((place) => !(place.dayOfWeek === blocker.slot.dayOfWeek && place.startMinutes === blocker.slot.startMinutes))
+          .filter((place) => !blocker.members.some((m) => shut(m, landing(m, place))))
+          .filter((place) => !unitsHold(blocker, place, ask.picked, to))
+          .map((place) => ({
+            place,
+            holders: world.units.filter((u) => u.id !== blocker.id && u.id !== ask.picked.id && unitsHold(blocker, place, u, u.slot)),
+          }))
+          .filter((option) => !option.holders.some((u) => u.locked) && 2 + option.holders.length <= 3)
+          .map((option) => ({
+            ...option,
+            weight: [option.holders.length, option.place.dayOfWeek === blocker.slot.dayOfWeek ? 0 : 1, Math.abs(option.place.startMinutes - blocker.slot.startMinutes), option.place.dayOfWeek, option.place.startMinutes],
+          }))
+          .sort((a, b) => a.weight.reduce((diff, w, i) => diff || w - b.weight[i]!, 0));
+        for (const cap of [1, 2, 3]) {
+          // Depth one: a landing that stands in the way of another lesson has nowhere for that one to go, so it is a place taken and no proposal.
+          const kept = options.slice(0, cap);
+          const expected = new Set(kept.filter((option) => option.holders.length === 0).map((option) => `${option.place.dayOfWeek}|${option.place.startMinutes}`));
+          const capped = await search(world, ask, { depth: 1, maxUnits: 3, perUnit: cap });
+          const got = new Set(
+            capped.proposals.map((p) => {
+              const move = p.moves.find((m) => blocker.members.some((member) => member.id === m.lessonId))!;
+              return `${move.to.dayOfWeek}|${move.to.startMinutes}`;
+            }),
+          );
+          expect(got).toEqual(expected);
+          asked += 1;
+          // The weights are not idle in this world: a landing that stands in the way of someone is nearer than an empty one, or another day is.
+          const byDistance = [...options].sort((a, b) => a.weight[1]! - b.weight[1]! || a.weight[2]! - b.weight[2]! || a.weight[3]! - b.weight[3]! || a.weight[4]! - b.weight[4]!).slice(0, cap);
+          if (kept.map((o) => o.place.startMinutes + o.place.dayOfWeek * 10000).join() !== byDistance.map((o) => o.place.startMinutes + o.place.dayOfWeek * 10000).join()) foundMatters += 1;
+          if (options.some((o) => o.weight[1] === 1) && options.some((o) => o.weight[1] === 0)) dayMatters += 1;
+        }
+      }
+    }
+    expect(asked).toBeGreaterThan(30);
+    expect(foundMatters).toBeGreaterThan(0);
+    expect(dayMatters).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('stops judging when the time is up, but not before as many sets as the list holds have been judged, and says it stopped', async () => {
+    const world = miniWorld(8);
+    const ask = asks(world, 3, 4, 1).find((entry) => bruteForce(world, entry).size > 40)!;
+    const run = (over: Partial<MakeRoomInput>) => {
+      const clock = { at: 0, calls: [] as number[] };
+      const result = search(world, ask, {
+        chunk: 4,
+        now: () => clock.at,
+        // Every call of the judge takes a minute of the clock and refuses all of it, so that the list is never full.
+        judge: async (sets) => {
+          clock.calls.push(sets.length);
+          clock.at += 60;
+          return sets.map(() => false);
+        },
+        ...over,
+      });
+      return { clock, result };
+    };
+    // Time up after the second chunk (60 + 60 > 100), the list (3) long since judged: stopped, and said so.
+    const stopped = run({ limit: 3, budgetMs: 100 });
+    const answer = await stopped.result;
+    expect(stopped.clock.calls).toEqual([4, 4]);
+    expect(answer.judged).toBe(8);
+    expect(answer.truncated).toBe(true);
+    // A budget of nothing still judges the first chunk, and stops once the list's worth is judged.
+    const none = run({ limit: 3, budgetMs: 0 });
+    const nothing = await none.result;
+    expect(none.clock.calls).toEqual([4]);
+    expect(nothing.truncated).toBe(true);
+    // The list is not given up on before `limit` sets have been judged, whatever the clock says: ten asked, three chunks of four.
+    const wide = run({ limit: 10, budgetMs: 0 });
+    const long = await wide.result;
+    expect(wide.clock.calls).toEqual([4, 4, 4]);
+    expect(long.judged).toBe(12);
+    expect(long.truncated).toBe(true);
+    // Plenty of time: every set is judged and nothing is cut.
+    const plenty = run({ limit: 3, budgetMs: 1_000_000 });
+    const all = await plenty.result;
+    expect(all.judged).toBe(all.candidates);
+    expect(all.truncated).toBe(false);
+  });
+});
