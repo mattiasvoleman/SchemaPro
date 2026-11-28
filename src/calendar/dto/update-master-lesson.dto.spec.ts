@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { UpdateMasterLessonDto } from './update-master-lesson.dto';

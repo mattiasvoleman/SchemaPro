@@ -1,4 +1,5 @@
 import { LessonRecurrence } from '@prisma/client';
+import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -12,10 +13,88 @@ import {
   Matches,
   Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { EXEMPTABLE_RULES, type ExemptableRule } from '../lesson-exemption';
 
 const TIME = /^\d{2}:\d{2}$/;
+/** A day the way a lesson's window is told: `YYYY-MM-DD` and nothing else (a time of day after it is no part of a date). */
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * WHAT THE PAGE SAW of a lesson, for the fields its request is about to write (Säkerhetsnät, E9). Every field is optional and means "this is
+ * what the page read; refuse if it is not what stands now": a field left out is not asked about, and `null` is an answer (no room, no first
+ * day). The names and the forms are the request's own, so the page copies what it read onto the same keys.
+ *
+ * The check is of VALUES and not of a time stamp, because what a write must not do is put a value over one somebody else has changed
+ * since the page read it. A colleague's change of another field, a lock set or a room given while this request moves the lesson, is not in
+ * its way, and the page's own earlier writes (a drag dropped twice in a row, an undo) are what the lesson holds by then.
+ */
+export class ExpectedLessonDto {
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(7)
+  dayOfWeek?: number;
+
+  @IsOptional()
+  @Matches(TIME, { message: 'startTime must be HH:MM.' })
+  startTime?: string;
+
+  @IsOptional()
+  @Matches(TIME, { message: 'endTime must be HH:MM.' })
+  endTime?: string;
+
+  @IsOptional()
+  @IsUUID('4')
+  roomId?: string | null;
+
+  @IsOptional()
+  @IsUUID('4')
+  teacherId?: string | null;
+
+  @IsOptional()
+  @IsUUID('4')
+  coTeacherId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isLocked?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isParked?: boolean;
+
+  @IsOptional()
+  @IsEnum(LessonRecurrence)
+  recurrence?: LessonRecurrence;
+
+  @IsOptional()
+  @Matches(DAY, { message: 'startDate must be YYYY-MM-DD.' })
+  startDate?: string | null;
+
+  @IsOptional()
+  @Matches(DAY, { message: 'endDate must be YYYY-MM-DD.' })
+  endDate?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsUUID('4', { each: true })
+  extraGroupIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsUUID('4', { each: true })
+  studentIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(EXEMPTABLE_RULES.length)
+  @IsIn(EXEMPTABLE_RULES, { each: true })
+  exempt?: ExemptableRule[];
+}
 
 /**
  * Adjusts a single master-timetable slot. All fields are optional — only the
@@ -134,4 +213,15 @@ export class UpdateMasterLessonDto {
   @ArrayMaxSize(200)
   @IsUUID('4', { each: true })
   studentIds?: string[];
+
+  /**
+   * SÄKERHETSNÄT (E9): what the page saw of the lesson, so that this request does not put a value over one somebody else changed since. Held to
+   * the lesson as it stands, under the lesson's row lock, in the transaction of the write: a value that is not what the page read is a 409
+   * LESSON_CHANGED naming the fields, and nothing is written. A request without it is written as it always was (the mobile app and an older
+   * page send none).
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExpectedLessonDto)
+  expected?: ExpectedLessonDto;
 }
