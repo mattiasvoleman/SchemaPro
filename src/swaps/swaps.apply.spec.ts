@@ -940,3 +940,175 @@ describe('SwapsService.apply: a lesson is moved to a school day and no other (g5
     expect(written).toHaveLength(1);
   });
 });
+
+describe('SwapsService.apply: a lesson that moves also changes room (E5a, Annan ledig sal)', () => {
+  const clock = (slot: { startMinutes: number; endMinutes: number }) => ({ startTime: clockOf(slot.startMinutes), endTime: clockOf(slot.endMinutes) });
+  /** The school's rooms: the world's five, and r6, which nothing stands in. */
+  const ROOM_IDS = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6'];
+  beforeEach(() => {
+    (propagateTemplateChange as jest.Mock).mockClear();
+    directReach.facts = [];
+  });
+
+  /** The tx of an apply that knows the school's rooms: the check that a room a move gives exists reads them. */
+  function withRooms(world: World, lessons: () => SwapLesson[] = () => world.data.lessons, known: readonly string[] = ROOM_IDS) {
+    const made = applyTx(world, lessons);
+    (made.tx as { room: unknown }).room = {
+      findMany: jest.fn(async ({ where }: { where: { id?: { in: string[] } } }) => (where.id ? where.id.in.filter((id) => known.includes(id)).map((id) => ({ id })) : [])),
+    };
+    return made;
+  }
+
+  /** A swap of two in which the picked lesson also goes into a room nothing stands in (r6): the shape of a Gör plats proposal with a room change. */
+  async function aRoomChange(world: World) {
+    const { lesson, swap } = await aGoodSwap(world);
+    const moves = swap.moves.map((move): SwapMove => (move.lessonId === lesson.id ? { ...move, room: { from: lesson.roomId!, to: 'r6' } } : move));
+    return { lesson, moves };
+  }
+
+  const requestOf = (lessonId: string, moves: readonly SwapMove[], over: Record<string, unknown> = {}) => ({
+    lessonId,
+    moves: moves.map((move) => ({
+      lessonId: move.lessonId,
+      from: { dayOfWeek: move.from.dayOfWeek, ...clock(move.from) },
+      to: { dayOfWeek: move.to.dayOfWeek, ...clock(move.to) },
+      ...(move.room ? { room: { from: move.room.from, to: move.room.to } } : {}),
+    })),
+    ...over,
+  });
+
+  it('writes the room with the day and the clock, in the same row, held to the room the page saw, and the log and the calendar follow it', async () => {
+    const world = makeWorld({ seed: 7 });
+    const { lesson, moves } = await aRoomChange(world);
+    const { tx, written, changeLog } = withRooms(world);
+    const result = await build(world, tx).swaps.apply(requestOf(lesson.id, moves) as never, user);
+
+    for (const move of moves) {
+      const row = written.find((entry) => entry.where['id'] === move.lessonId)!;
+      if (move.room) {
+        expect(row.data['roomId']).toBe(move.room.to);
+        // A lesson that has been given another room since the page saw it is not moved over it.
+        expect(row.where['roomId']).toBe(move.room.from);
+      } else {
+        // A lesson that keeps its room is written as it always was: no room in the data, none in the guard.
+        expect('roomId' in row.data).toBe(false);
+        expect('roomId' in row.where).toBe(false);
+      }
+    }
+    const changed = moves.filter((move) => move.room);
+    expect(changed).toHaveLength(1);
+    for (const move of changed) {
+      const log = changeLog.find((entry) => entry['masterLessonId'] === move.lessonId) as { before: { roomId: string }; after: { roomId: string } };
+      expect(log.before.roomId).toBe(move.room!.from);
+      expect(log.after.roomId).toBe(move.room!.to);
+      expect(result.lessons.find((moved) => moved.id === move.lessonId)!.roomId).toBe(move.room!.to);
+      // The published calendar follows the lesson into its new room, as it follows a PATCH.
+      const call = (propagateTemplateChange as jest.Mock).mock.calls.find(([, before]) => (before as { id: string }).id === move.lessonId)!;
+      expect((call[1] as { roomId: string }).roomId).toBe(move.room!.from);
+      expect((call[2] as { roomId: string }).roomId).toBe(move.room!.to);
+    }
+  });
+
+  it('gives the undo back as the same moves reversed, the rooms too, and the undo goes through the same route and puts the room back', async () => {
+    const world = makeWorld({ seed: 7 });
+    const { lesson, moves } = await aRoomChange(world);
+    const { tx } = withRooms(world);
+    const result = await build(world, tx).swaps.apply(requestOf(lesson.id, moves) as never, user);
+    expect(result.undo).toEqual(moves.map((move) => ({ lessonId: move.lessonId, from: move.to, to: move.from, ...(move.room ? { room: { from: move.room.to, to: move.room.from } } : {}) })));
+
+    // The school after the swap: the lessons where the moves put them, in the rooms they were given.
+    const moved = new Map(moves.map((move) => [move.lessonId, move]));
+    const later = world.data.lessons.map((l) => {
+      const move = moved.get(l.id);
+      return move ? { ...l, ...move.to, roomId: move.room?.to ?? l.roomId } : l;
+    });
+    const undone = withRooms({ ...world, data: { ...world.data, lessons: later } } as World, () => later);
+    await build({ ...world, data: { ...world.data, lessons: later } } as World, undone.tx).swaps.apply(requestOf(lesson.id, result.undo) as never, user);
+    for (const move of moves) {
+      const row = undone.written.find((entry) => entry.where['id'] === move.lessonId)!;
+      expect(row.data['dayOfWeek']).toBe(move.from.dayOfWeek);
+      if (move.room) {
+        expect(row.data['roomId']).toBe(move.room.from);
+        expect(row.where['roomId']).toBe(move.room.to);
+      }
+    }
+  });
+
+  it('is SWAP_STALE when the lesson stands in another room than the page saw, and writes nothing', async () => {
+    const world = makeWorld({ seed: 7 });
+    const { lesson, moves } = await aRoomChange(world);
+    const elsewhere = world.data.lessons.map((l) => (l.id === lesson.id ? { ...l, roomId: 'r5' === l.roomId ? 'r4' : 'r5' } : l));
+    const { tx, written } = withRooms(world, () => elsewhere);
+    await expect(build(world, tx).swaps.apply(requestOf(lesson.id, moves) as never, user)).rejects.toMatchObject({ response: { code: SWAP_STALE } });
+    expect(written).toHaveLength(0);
+  });
+
+  it('is a 400 for a room that is not the school’s, and for a change to the room the lesson is in, and writes nothing', async () => {
+    const world = makeWorld({ seed: 7 });
+    const { lesson, moves } = await aRoomChange(world);
+    const unknown = withRooms(world, undefined, ROOM_IDS.filter((id) => id !== 'r6'));
+    await expect(build(world, unknown.tx).swaps.apply(requestOf(lesson.id, moves) as never, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(unknown.tx.masterLesson.updateMany).not.toHaveBeenCalled();
+    const same = withRooms(world);
+    const nothing = moves.map((move) => (move.room ? { ...move, room: { from: move.room.from, to: move.room.from } } : move));
+    await expect(build(world, same.tx).swaps.apply(requestOf(lesson.id, nothing) as never, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(same.written).toHaveLength(0);
+  });
+
+  it('holds the lesson to the board’s rules in the room it is given: a room another school holds then is SWAP_BREAKS_BOARD_RULE, and the room it left is no matter', async () => {
+    const world = makeWorld({ seed: 7 });
+    const { lesson, moves } = await aRoomChange(world);
+    const given = moves.find((move) => move.room)!;
+    const hold = (resourceId: string) => ({
+      holdId: `h-${resourceId}`,
+      kind: 'ROOM_LENT' as const,
+      resourceKind: 'ROOM' as const,
+      resourceId,
+      dayOfWeek: given.to.dayOfWeek,
+      startTime: `${clockOf(given.to.startMinutes)}:00`,
+      endTime: `${clockOf(given.to.endMinutes)}:00`,
+      schools: ['Södra skolan'],
+    });
+    const heldNew = { ...world, data: { ...world.data, holds: [hold(given.room!.to)] } } as World;
+    const refused = withRooms(heldNew);
+    await expect(build(heldNew, refused.tx).swaps.apply(requestOf(lesson.id, moves) as never, user)).rejects.toMatchObject({ response: { code: SWAP_BREAKS_BOARD_RULE, rule: 'OTHER_SCHOOL' } });
+    expect(refused.written).toHaveLength(0);
+    // The room the lesson left is held then, and it does not matter: the lesson is not there.
+    const heldOld = { ...world, data: { ...world.data, holds: [hold(given.room!.from)] } } as World;
+    const fine = withRooms(heldOld);
+    await build(heldOld, fine.tx).swaps.apply(requestOf(lesson.id, moves) as never, user);
+    expect(fine.written).toHaveLength(2);
+  });
+
+  it('holds the lesson to the clash rule in the room it is given: a room another lesson stands in then is a double booking, refused with the clash named', async () => {
+    const world = makeWorld({ seed: 7 });
+    const lessons = world.data.lessons;
+    const overlapping = (a: SwapLesson, b: { dayOfWeek: number; startMinutes: number; endMinutes: number }) => a.dayOfWeek === b.dayOfWeek && a.startMinutes < b.endMinutes && b.startMinutes < a.endMinutes;
+    // A lesson that is free on another lesson's day and clock (its teacher and class), and that other lesson's room.
+    let pick: { mover: SwapLesson; inRoom: SwapLesson } | null = null;
+    for (const mover of lessons) {
+      for (const inRoom of lessons) {
+        if (inRoom.id === mover.id || inRoom.roomId === mover.roomId || inRoom.dayOfWeek === mover.dayOfWeek) continue;
+        const free = !lessons.some((other) => other.id !== mover.id && overlapping(other, inRoom) && (other.studentGroupId === mover.studentGroupId || (other.teacherId !== null && other.teacherId === mover.teacherId)));
+        const ownRoomFree = !lessons.some((other) => other.id !== mover.id && other.roomId === mover.roomId && overlapping(other, inRoom));
+        if (free && ownRoomFree) {
+          pick = { mover, inRoom };
+          break;
+        }
+      }
+      if (pick) break;
+    }
+    expect(pick).not.toBeNull();
+    const { mover, inRoom } = pick!;
+    const move = { lessonId: mover.id, from: { dayOfWeek: mover.dayOfWeek, ...clock(mover) }, to: { dayOfWeek: inRoom.dayOfWeek, ...clock(inRoom) } };
+    const refused = withRooms(world);
+    await expect(build(world, refused.tx).swaps.apply({ forBrick: true, moves: [{ ...move, room: { from: mover.roomId!, to: inRoom.roomId! } }] } as never, user)).rejects.toMatchObject({
+      response: { code: 'MASTER_LESSON_REFUSED' },
+    });
+    expect(refused.written).toHaveLength(0);
+    // The same move with its own room, which is free there, goes: the room is what was refused.
+    const kept = withRooms(world);
+    await build(world, kept.tx).swaps.apply({ forBrick: true, moves: [move] } as never, user);
+    expect(kept.written).toHaveLength(1);
+  });
+});

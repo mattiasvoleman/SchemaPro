@@ -47,6 +47,15 @@ export class MakeRoomDto {
   @Min(1)
   @Max(3)
   depth?: number;
+
+  /**
+   * Annan ledig sal (E5a): let a lesson that moves take another room that fits and is free when its own is held, which is a move that carries
+   * `room: { from, to }` and that the page must send back to `apply` as it got it. A page that does not know the field leaves it out and is
+   * answered as it was: every lesson keeps its room, and no proposal it cannot apply is offered. False when left out.
+   */
+  @IsOptional()
+  @IsBoolean()
+  otherRooms?: boolean;
 }
 
 /**
@@ -105,6 +114,16 @@ export class SwapSlotDto {
   endTime!: string;
 }
 
+/** Annan ledig sal (E5a): the room a lesson stands in and the room the move gives it. */
+export class SwapRoomChangeDto {
+  /** The room the page saw the lesson in: a lesson that stands in another now makes the proposal stale. */
+  @IsUUID('4')
+  from!: string;
+
+  @IsUUID('4')
+  to!: string;
+}
+
 export class SwapMoveDto {
   @IsUUID('4')
   lessonId!: string;
@@ -117,6 +136,12 @@ export class SwapMoveDto {
   @ValidateNested()
   @Type(() => SwapSlotDto)
   to!: SwapSlotDto;
+
+  /** The lesson also changes room (a proposal from Gör plats where the own room was held and another fits). Left out: it keeps its room. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SwapRoomChangeDto)
+  room?: SwapRoomChangeDto;
 }
 
 /**

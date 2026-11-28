@@ -2,6 +2,8 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { judgeLessons, type JudgeItem, type LessonVerdict } from '../calendar/lesson-judge';
 import { MasterLessonsService } from '../calendar/master-lessons.service';
 import { fakeTx, makeWorld, rowOf, YEAR, type World } from './__fixtures__/swap-world';
+import { POSSIBLE_SCORE } from '../calendar/possible-times';
+import { SwapContext } from './swap-context';
 import { proposalId } from './swap-search';
 import { recordRead } from '../access-log/access-log';
 import { readSwapData } from './swap-snapshot';
@@ -41,10 +43,11 @@ function clashes(lessons: ReadonlyArray<{ id: string; dayOfWeek: number; startMi
 }
 
 function after(world: World, moves: readonly SwapMove[], extra: readonly SwapLesson[] = []): SwapLesson[] {
-  const to = new Map(moves.map((move) => [move.lessonId, move.to]));
+  const moved = new Map(moves.map((move) => [move.lessonId, move]));
   return [...world.data.lessons, ...extra].map((lesson) => {
-    const slot = to.get(lesson.id);
-    return slot ? { ...lesson, ...slot } : lesson;
+    const move = moved.get(lesson.id);
+    // The room a move gives a lesson is the room it stands in afterwards (Annan ledig sal).
+    return move ? { ...lesson, ...move.to, roomId: move.room?.to ?? lesson.roomId } : lesson;
   });
 }
 
@@ -84,9 +87,11 @@ interface Set_ {
   exempt?: ReadonlySet<string>;
   /** A lesson that is on the tray: not in the snapshot (readSwapData leaves them out) but stored. */
   tray?: SwapLesson[];
+  /** The school's RoomPreference rows of kind LOCK, as the service reads them. */
+  locks?: Array<{ subjectId: string; minGradeLevel: number | null; maxGradeLevel: number | null; roomTypeId: string | null; rooms: Array<{ roomId: string }> }>;
 }
 
-function txFor({ world, parked = new Set(), placed = new Set(), exempt = new Set(), tray = [] }: Set_) {
+function txFor({ world, parked = new Set(), placed = new Set(), exempt = new Set(), tray = [], locks = [] }: Set_) {
   const base = fakeTx(world);
   const everyone = () => [...world.data.lessons, ...tray];
   const stored = (lesson: SwapLesson) => ({
@@ -119,6 +124,7 @@ function txFor({ world, parked = new Set(), placed = new Set(), exempt = new Set
     studentGroup: { ...base.studentGroup, findFirst: jest.fn(async () => ({ name: 'C1' })) },
     room: { findMany: jest.fn(async () => ['r1', 'r2', 'r3', 'r4', 'r5'].map((id) => ({ id, name: id, capacity: 30, roomTypeId: null, minGradeLevel: null, maxGradeLevel: null, building: null }))) },
     academicYear: { findUnique: jest.fn(async () => null) },
+    roomPreference: { findMany: jest.fn(async () => locks) },
   };
 }
 
@@ -267,7 +273,8 @@ describe('POST /swaps/suggest with makeRoom: what has to move for a lesson to st
     for (const proposal of answer.proposals) {
       expect(proposal.lay).toMatchObject({ lessonId: null, subjectName: 'Nytt ämne', slot: { dayOfWeek: 3, startMinutes: 600, endMinutes: 660 } });
       expect(proposal.moves.length).toBeGreaterThan(0);
-      const brickAt = { id: 'brick', subjectId: 'sx', subjectName: 'Nytt ämne', studentGroupId: 'c1', groupName: 'C1', teacherId: 't1', coTeacherId: null, roomId: 'r1', dayOfWeek: 3, startMinutes: 600, endMinutes: 660 } as SwapLesson;
+      // The room it is laid in is the lay's: its own, or another that the proposal found for it (Annan ledig sal).
+      const brickAt = { id: 'brick', subjectId: 'sx', subjectName: 'Nytt ämne', studentGroupId: 'c1', groupName: 'C1', teacherId: 't1', coTeacherId: null, roomId: proposal.lay!.roomId, dayOfWeek: 3, startMinutes: 600, endMinutes: 660 } as SwapLesson;
       expect(clashes(after(full, proposal.moves, [brickAt]))).toBe(false);
       // Level 1 is what stood in the brick's way: nothing is level 0 among the lessons that stood.
       expect(Object.values(proposal.levels!).every((level) => level >= 1)).toBe(true);
@@ -303,6 +310,169 @@ describe('POST /swaps/suggest with makeRoom: what has to move for a lesson to st
       expect(item.exempt).toBeUndefined();
     }
   });
+});
+
+describe('Gör plats: a displaced lesson may take another room that fits and is free (E5a, Annan ledig sal)', () => {
+  const world = makeWorld({ seed: 7 });
+  const roomOf = (lessonId: string) => world.data.lessons.find((l) => l.id === lessonId)!.roomId;
+
+  /** Every question over some lessons and targets, with the answers that carry a room change. */
+  async function changes(limit = 40) {
+    const { swaps } = service({ world });
+    const out: Array<{ pickedId: string; proposal: Awaited<ReturnType<typeof swaps.suggest>>['proposals'][number]; answer: Awaited<ReturnType<typeof swaps.suggest>> }> = [];
+    for (const picked of world.data.lessons.filter((_, index) => index % 7 === 3)) {
+      for (const [dayOfWeek, startMinutes] of [[1, 540], [3, 600], [5, 480], [2, 660]] as const) {
+        if (picked.dayOfWeek === dayOfWeek && picked.startMinutes === startMinutes) continue;
+        const answer = await swaps.suggest({ lessonId: picked.id, makeRoom: { dayOfWeek, startTime: clock(startMinutes), depth: 3, otherRooms: true }, limit }, user);
+        for (const proposal of answer.proposals) if (proposal.moves.some((move) => move.room)) out.push({ pickedId: picked.id, proposal, answer });
+      }
+    }
+    return out;
+  }
+
+  it('offers no room change unless it is asked for, reads none of the school’s rooms, and answers a page that does not know the field as it always did', async () => {
+    const { swaps, tx } = service({ world });
+    let asked = 0;
+    let offeredWhenAsked = 0;
+    for (const picked of world.data.lessons.filter((_, index) => index % 7 === 3)) {
+      for (const [dayOfWeek, startMinutes] of [[1, 540], [3, 600], [5, 480], [2, 660]] as const) {
+        if (picked.dayOfWeek === dayOfWeek && picked.startMinutes === startMinutes) continue;
+        const plain = await swaps.suggest({ lessonId: picked.id, makeRoom: { dayOfWeek, startTime: clock(startMinutes), depth: 3 }, limit: 40 }, user);
+        const off = await swaps.suggest({ lessonId: picked.id, makeRoom: { dayOfWeek, startTime: clock(startMinutes), depth: 3, otherRooms: false }, limit: 40 }, user);
+        expect(plain.proposals.every((proposal) => proposal.moves.every((move) => move.room === undefined))).toBe(true);
+        expect(off.proposals.map((proposal) => proposal.id)).toEqual(plain.proposals.map((proposal) => proposal.id));
+        const asking = await swaps.suggest({ lessonId: picked.id, makeRoom: { dayOfWeek, startTime: clock(startMinutes), depth: 3, otherRooms: true }, limit: 40 }, user);
+        if (asking.proposals.some((proposal) => proposal.moves.some((move) => move.room))) offeredWhenAsked += 1;
+        asked += 1;
+      }
+    }
+    expect(asked).toBeGreaterThan(10);
+    expect(offeredWhenAsked).toBeGreaterThan(0);
+    // The school's rooms are read for the questions that asked for them and for no other.
+    expect(tx.room.findMany).toHaveBeenCalledTimes(asked);
+  }, 120_000);
+
+  it('names the room each moved lesson leaves and takes, the school’s other room, with no double booking afterwards, and the lesson’s own room stays what the view says it is', async () => {
+    const found = await changes();
+    expect(found.length).toBeGreaterThan(10);
+    const rooms = new Set(['r1', 'r2', 'r3', 'r4', 'r5']);
+    for (const { proposal } of found) {
+      for (const move of proposal.moves) {
+        if (!move.room) continue;
+        expect(move.room.from).toBe(roomOf(move.lessonId));
+        expect(move.room.to).not.toBe(move.room.from);
+        expect(rooms.has(move.room.to)).toBe(true);
+      }
+      expect(clashes(after(world, proposal.moves))).toBe(false);
+      // The lessons the view names stand in the room they stand in now; the room they are given is in the move.
+      for (const view of proposal.lessons) expect(view.roomId).toBe(roomOf(view.id));
+      // The name of a proposal tells the same times in another room apart.
+      expect(proposal.id).toBe(proposalId(proposal.moves));
+    }
+  }, 120_000);
+
+  it('asks the judge for the room the lesson is given, and for the room it stands in as its “låt stå”', async () => {
+    const { swaps } = service({ world });
+    const found = await changes(8);
+    const sample = found[0]!;
+    (judgeLessons as jest.Mock).mockClear();
+    await swaps.suggest({ lessonId: sample.pickedId, makeRoom: { dayOfWeek: sample.proposal.moves[0]!.to.dayOfWeek, startTime: clock(sample.proposal.moves[0]!.to.startMinutes), depth: 3, otherRooms: true }, limit: 40 }, user);
+    const items = (judgeLessons as jest.Mock).mock.calls.flatMap((call) => call[3] as JudgeItem[]);
+    const changed = sample.proposal.moves.find((move) => move.room)!;
+    const asked = items.filter((item) => item.lesson.id === changed.lessonId && item.candidate.roomId === changed.room!.to);
+    expect(asked.length).toBeGreaterThan(0);
+    for (const item of asked) expect(item.stands!.roomId).toBe(changed.room!.from);
+    // No item asks for a lesson in a room that is neither the one it stands in nor one the search gave it.
+    for (const item of items) expect([roomOf(item.lesson.id!), ...['r1', 'r2', 'r3', 'r4', 'r5']]).toContain(item.candidate.roomId);
+  }, 120_000);
+
+  it('is cheapest without a room change: of two proposals of the same times the one that keeps the rooms comes first, and no two are of the same times', async () => {
+    const { swaps } = service({ world });
+    let seen = 0;
+    for (const picked of world.data.lessons.filter((_, index) => index % 7 === 3)) {
+      for (const [dayOfWeek, startMinutes] of [[1, 540], [3, 600]] as const) {
+        const answer = await swaps.suggest({ lessonId: picked.id, makeRoom: { dayOfWeek, startTime: clock(startMinutes), depth: 3, otherRooms: true }, limit: 40 }, user);
+        const times = answer.proposals.map((proposal) => proposal.moves.map((move) => `${move.lessonId}>${move.to.dayOfWeek}|${move.to.startMinutes}`).sort().join(';'));
+        expect(new Set(times).size).toBe(times.length);
+        seen += answer.proposals.filter((proposal) => proposal.moves.some((move) => move.room)).length;
+      }
+    }
+    expect(seen).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('orders by the swap search’s own figures with a room change as a small cost on top, so that a room change never beats a better time, only a tie', async () => {
+    const { swaps } = service({ world });
+    const context = new SwapContext(world.data);
+    const price = (moves: readonly SwapMove[]) => context.soft.evaluate(moves).score + POSSIBLE_SCORE.ROOM_CHANGE * moves.filter((move) => move.room !== undefined).length;
+    let lists = 0;
+    let crossings = 0;
+    for (const picked of world.data.lessons.filter((_, index) => index % 7 === 3)) {
+      for (const [dayOfWeek, startMinutes] of [[1, 540], [3, 600], [5, 480], [2, 660]] as const) {
+        if (picked.dayOfWeek === dayOfWeek && picked.startMinutes === startMinutes) continue;
+        const answer = await swaps.suggest({ lessonId: picked.id, makeRoom: { dayOfWeek, startTime: clock(startMinutes), depth: 3, otherRooms: true }, limit: 40 }, user);
+        const prices = answer.proposals.map((proposal) => price(proposal.moves));
+        for (let at = 1; at < prices.length; at += 1) expect(prices[at - 1]!).toBeLessThanOrEqual(prices[at]!);
+        // A list in which a proposal with a room change stands ahead of one without: the cost is a tie-breaker and not a ban.
+        const changed = answer.proposals.map((proposal) => proposal.moves.some((move) => move.room !== undefined));
+        if (changed.some((flag, at) => flag && changed.slice(at + 1).some((later) => !later))) crossings += 1;
+        lists += 1;
+      }
+    }
+    expect(lists).toBeGreaterThan(10);
+    expect(crossings).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('gives a lesson no room its subject’s LOCK rule leaves out (g524): the generator would not put it there, and `apply` would write it and lock it', async () => {
+    // Every subject of the school is locked to r1 and r2, in every year: a lesson changes room only into one of them.
+    const subjects = [...new Set(world.data.lessons.map((lesson) => lesson.subjectId))];
+    const locks = subjects.map((subjectId) => ({ subjectId, minGradeLevel: null, maxGradeLevel: null, roomTypeId: null, rooms: [{ roomId: 'r1' }, { roomId: 'r2' }] }));
+    const open = service({ world });
+    const locked = service({ world, locks });
+    let givenOpen = 0;
+    let givenLocked = 0;
+    for (const picked of world.data.lessons.filter((_, index) => index % 7 === 3)) {
+      for (const [dayOfWeek, startMinutes] of [[1, 540], [3, 600], [5, 480], [2, 660]] as const) {
+        if (picked.dayOfWeek === dayOfWeek && picked.startMinutes === startMinutes) continue;
+        const body = { lessonId: picked.id, makeRoom: { dayOfWeek, startTime: clock(startMinutes), depth: 3, otherRooms: true }, limit: 40 };
+        for (const proposal of (await open.swaps.suggest(body, user)).proposals) {
+          for (const move of proposal.moves) if (move.room && !['r1', 'r2'].includes(move.room.to)) givenOpen += 1;
+        }
+        const answer = await locked.swaps.suggest(body, user);
+        for (const proposal of answer.proposals) {
+          for (const move of proposal.moves) {
+            if (!move.room) continue;
+            givenLocked += 1;
+            expect(['r1', 'r2']).toContain(move.room.to);
+          }
+        }
+      }
+    }
+    // Without the rule rooms outside r1 and r2 are given (the test would stand on nothing otherwise); with it some room change is still offered.
+    expect(givenOpen).toBeGreaterThan(0);
+    expect(givenLocked).toBeGreaterThan(0);
+    // The rules are read for the questions that asked for another room, and not for any other.
+    expect(locked.tx.roomPreference.findMany).toHaveBeenCalled();
+    const plain = service({ world, locks });
+    await plain.swaps.suggest({ lessonId: world.data.lessons[3]!.id, makeRoom: { dayOfWeek: 1, startTime: '09:00', depth: 3 }, limit: 40 }, user);
+    expect(plain.tx.roomPreference.findMany).not.toHaveBeenCalled();
+  }, 120_000);
+
+  it('lays a brick in another room when its own is held and another is free, and the lay names it', async () => {
+    const full = makeWorld({ seed: 7 });
+    const { swaps } = service({ world: full });
+    const brick = { academicYearId: YEAR, studentGroupId: 'c1', subjectId: 'sx', minutes: 60, teacherId: 't1', roomId: 'r1' };
+    let moved = 0;
+    for (const [dayOfWeek, startTime] of [[1, '08:00'], [2, '09:00'], [3, '10:00'], [4, '11:00'], [5, '12:00']] as const) {
+      const answer = await swaps.suggest({ brick, makeRoom: { dayOfWeek, startTime, depth: 3, otherRooms: true }, limit: 40 } as never, user);
+      for (const proposal of answer.proposals) {
+        // The brick is laid, so its move is not among the moves of lessons that stand; its room is the lay's.
+        expect(proposal.moves.every((move) => move.lessonId !== 'brick')).toBe(true);
+        if (proposal.lay!.roomId !== 'r1') moved += 1;
+        expect(['r1', 'r2', 'r3', 'r4', 'r5']).toContain(proposal.lay!.roomId);
+      }
+    }
+    expect(moved).toBeGreaterThan(0);
+  }, 120_000);
 });
 
 describe('POST /swaps/pair: Byt plats, two marked lessons that each take the other’s start', () => {

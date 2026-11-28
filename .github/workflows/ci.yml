@@ -511,6 +511,16 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-lagg-det-som-gar.ts
 
+      # Annan ledig sal (E5a): a lesson that moves takes another room when its own is held. Against a real database as the API role: Gör plats offers it
+      # only when asked (`otherRooms`), the room is written with the day and the clock after a version and with the room before and after in the log, the
+      # undo puts both back, a lesson that has been given another room since is stale, a room that is not the school's is a 400, and the clash rule judges the
+      # room given. It drops its schools.
+      - name: Annan ledig sal probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=8
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-annan-sal.ts
+
       # Möjliga tider (E3): the query that says where a lesson can stand, held against the judge. Every lesson of the judge's
       # fall file (src/calendar/__fixtures__/lesson-judge-cases.json), every fifteenth minute of the week, over real Postgres as the
       # API role: a start the judge lets through is free, a start the query calls free the judge lets through, a closed stretch is

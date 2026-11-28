@@ -27,6 +27,11 @@ import type { SoftCost, SwapLesson, SwapMove, SwapSlot, SwapUnit } from './swap-
  *      smallest k there is, and no unit is deeper than `depth`: three levels is "make room for the lesson that makes room for the
  *      lesson that makes room". `maxUnits` caps the whole set, the picked unit included, so that a proposal stays readable.
  *
+ *   7. ANNAN LEDIG SAL (swap-rooms.ts). Every landing is offered in the lesson's own room, and, when the unit is one lesson whose own room is
+ *      held then and another room that fits is free, also in that room (`world.otherRoom`): a second way to the same landing, in which the
+ *      holders of the own room are no one in the way, and which the move names (`room: { from, to }`). Two sets of the same times are one
+ *      proposal, the one that changes fewest rooms.
+ *
  * The G1 swap (two units standing in each other's slot) and chain of three are members of this family when the units hold each
  * other's slot; this search does not look for the pairs that stand in nobody's way (that is what a swap of two marked lessons
  * is: POST /swaps/pair).
@@ -46,16 +51,33 @@ import type { SoftCost, SwapLesson, SwapMove, SwapSlot, SwapUnit } from './swap-
 export interface Placement {
   unit: SwapUnit;
   to: SwapSlot;
+  /** Annan ledig sal: the lessons of the unit that stand in another room than their own at this landing, by lesson id. Absent: every one keeps its room. */
+  rooms?: ReadonlyMap<string, string>;
+}
+
+/** What stands in a landing's way, and the rooms the landing takes to be clear of it. */
+export interface MakeRoomWay {
+  lessons: readonly SwapLesson[];
+  closed: boolean;
+  /** The lessons of the unit that land in another room than their own, because the own is held then and another that fits is free. */
+  rooms?: ReadonlyMap<string, string>;
 }
 
 /** What the search asks of the school, in the original world, as plain overlaps (SwapContext supplies them). */
 export interface MakeRoomWorld {
   /**
    * The lessons that hold what `unit` would need at `to`, the unit's own lessons gone, and whether a rule shuts the stretch
-   * whatever else is there (the stage's ramtid, the class's meal, a weekly row, another school's hold).
+   * whatever else is there (the stage's ramtid, the class's meal, a weekly row, another school's hold). Every lesson keeps its room.
    */
-  inTheWay: (unit: SwapUnit, to: SwapSlot) => { lessons: readonly SwapLesson[]; closed: boolean };
-  /** Whether two units at their landings hold the same teacher, room or class at once. */
+  inTheWay: (unit: SwapUnit, to: SwapSlot) => MakeRoomWay;
+  /**
+   * ANNAN LEDIG SAL. When the room a lesson stands in is held (or shut) at `to`, and the unit is one lesson that has another room that
+   * fits and is free then, the same landing in that room: its way leaves the holders of the own room out, and `rooms` names the room.
+   * Absent where the landing has no such room to take. It is a second way to the same landing and not a replacement for the first:
+   * a holder that leaves anyway (the lesson that is swapped with this one stood in the room) lets the lesson keep its own.
+   */
+  otherRoom?: (unit: SwapUnit, to: SwapSlot) => MakeRoomWay | undefined;
+  /** Whether two units at their landings (the rooms they take counted) hold the same teacher, room or class at once. */
   landingsClash: (a: Placement, b: Placement) => boolean;
 }
 
@@ -127,17 +149,21 @@ const durationOf = (unit: SwapUnit): number => unit.slot.endMinutes - unit.slot.
 
 const byId = (a: SwapUnit, b: SwapUnit): number => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-/** A unit's members laid at a slot, each keeping its own length. */
-export function movesOfUnit(unit: SwapUnit, to: SwapSlot): SwapMove[] {
-  return unit.members.map((member) => ({
-    lessonId: member.id,
-    from: { dayOfWeek: member.dayOfWeek, startMinutes: member.startMinutes, endMinutes: member.endMinutes },
-    to: {
-      dayOfWeek: to.dayOfWeek,
-      startMinutes: to.startMinutes,
-      endMinutes: to.startMinutes + (member.endMinutes - member.startMinutes),
-    },
-  }));
+/** A unit's members laid at a slot, each keeping its own length, and its room unless `rooms` names another for it. */
+export function movesOfUnit(unit: SwapUnit, to: SwapSlot, rooms?: ReadonlyMap<string, string>): SwapMove[] {
+  return unit.members.map((member) => {
+    const room = rooms?.get(member.id);
+    return {
+      lessonId: member.id,
+      from: { dayOfWeek: member.dayOfWeek, startMinutes: member.startMinutes, endMinutes: member.endMinutes },
+      to: {
+        dayOfWeek: to.dayOfWeek,
+        startMinutes: to.startMinutes,
+        endMinutes: to.startMinutes + (member.endMinutes - member.startMinutes),
+      },
+      ...(room !== undefined && member.roomId !== null && room !== member.roomId ? { room: { from: member.roomId, to: room } } : {}),
+    };
+  });
 }
 
 interface Candidate {
@@ -187,13 +213,19 @@ export async function searchMakeRoom(input: MakeRoomInput): Promise<MakeRoomResu
   if (input.placed && picked.slot.dayOfWeek === pickedAt.dayOfWeek && picked.slot.startMinutes === pickedAt.startMinutes) return empty({});
   if (pickedAt.endMinutes > 24 * 60) return empty({ stuck: 'CLOSED' });
 
-  // Level 0: the picked unit at the target.
-  const first = world.inTheWay(picked, pickedAt);
+  // Level 0: the picked unit at the target, in its own room, and in another when its own is held and another is free.
   const pickedIds = new Set(picked.members.map((member) => member.id));
-  const blockers = unitsOfLessons(first.lessons.filter((lesson) => !pickedIds.has(lesson.id)), input.unitOf);
-  if (first.closed) return empty({ blockers, stuck: 'CLOSED' });
-  if (blockers.some((unit) => unit.locked)) return empty({ blockers, stuck: 'LOCKED_IN_THE_WAY' });
-  if (1 + blockers.length > maxUnits) return empty({ blockers, stuck: 'TOO_MANY' });
+  const starts = [world.inTheWay(picked, pickedAt), world.otherRoom?.(picked, pickedAt)]
+    .filter((way): way is MakeRoomWay => way !== undefined)
+    .map((way) => {
+      const blockers = unitsOfLessons(way.lessons.filter((lesson) => !pickedIds.has(lesson.id)), input.unitOf);
+      const stuck: MakeRoomResult['stuck'] = way.closed ? 'CLOSED' : blockers.some((unit) => unit.locked) ? 'LOCKED_IN_THE_WAY' : 1 + blockers.length > maxUnits ? 'TOO_MANY' : undefined;
+      return { way, blockers, stuck };
+    });
+  const viable = starts.filter((start) => start.stuck === undefined);
+  // What the time holds is said for the school as it stands, unless a room that is free makes it less.
+  const said = viable[0] ?? starts[0]!;
+  if (viable.length === 0) return empty({ blockers: said.blockers, ...(said.stuck ? { stuck: said.stuck } : {}) });
 
   const candidates: Candidate[] = [];
 
@@ -227,7 +259,7 @@ export async function searchMakeRoom(input: MakeRoomInput): Promise<MakeRoomResu
     interface Option {
       placement: Placement;
       found: SwapUnit[];
-      weight: [number, number, number];
+      weight: [number, number, number, number];
     }
     const options: Option[] = [];
     const length = durationOf(unit);
@@ -236,27 +268,39 @@ export async function searchMakeRoom(input: MakeRoomInput): Promise<MakeRoomResu
         const to: SwapSlot = { dayOfWeek, startMinutes, endMinutes: startMinutes + length };
         if (to.endMinutes > 24 * 60) continue;
         if (slotKey(to) === slotKey(unit.slot)) continue;
-        const placement: Placement = { unit, to };
-        // No two landings hold the same teacher, room or class at once.
-        if (assigned.some((other) => world.landingsClash(placement, other))) continue;
-        const way = world.inTheWay(unit, to);
-        if (way.closed) continue;
-        const holding = unitsOfLessons(way.lessons, input.unitOf);
-        // A unit that is already moving (or waits to) is no longer in the way. A lesson the generation keeps is.
-        const stays = holding.filter((other) => !movingIds.has(other.id) && other.id !== unit.id);
-        if (stays.some((other) => other.locked)) continue;
-        const found = stays.filter((other) => !waiting.has(other.id));
-        // The units this level and the next hold, with the ones this landing adds: more than the cap says is no proposal.
-        const total = assigned.length + 1 + rest.length + new Set([...next.keys(), ...found.map((entry) => entry.id)]).size;
-        if (total > maxUnits) continue;
-        options.push({
-          placement,
-          found,
-          weight: [found.length, dayOfWeek === unit.slot.dayOfWeek ? 0 : 1, Math.abs(startMinutes - unit.slot.startMinutes)],
-        });
+        // The landing as the school stands, and the same landing in another room when there is one to take.
+        for (const way of [world.inTheWay(unit, to), world.otherRoom?.(unit, to)]) {
+          if (way === undefined || way.closed) continue;
+          const placement: Placement = { unit, to, ...(way.rooms ? { rooms: way.rooms } : {}) };
+          // No two landings hold the same teacher, room or class at once.
+          if (assigned.some((other) => world.landingsClash(placement, other))) continue;
+          const holding = unitsOfLessons(way.lessons, input.unitOf);
+          // A unit that is already moving (or waits to) is no longer in the way. A lesson the generation keeps is.
+          const stays = holding.filter((other) => !movingIds.has(other.id) && other.id !== unit.id);
+          if (stays.some((other) => other.locked)) continue;
+          const found = stays.filter((other) => !waiting.has(other.id));
+          // The units this level and the next hold, with the ones this landing adds: more than the cap says is no proposal.
+          const total = assigned.length + 1 + rest.length + new Set([...next.keys(), ...found.map((entry) => entry.id)]).size;
+          if (total > maxUnits) continue;
+          options.push({
+            placement,
+            found,
+            // The cap keeps what stands in the way of fewest, then the nearest: a landing in another room competes by where it is like any other, and
+            // only between the two ways to ONE landing does the own room come first (g524: a cap of eight on a school with room to spare cut every room change).
+            weight: [found.length, dayOfWeek === unit.slot.dayOfWeek ? 0 : 1, Math.abs(startMinutes - unit.slot.startMinutes), placement.rooms ? 1 : 0],
+          });
+        }
       }
     }
-    options.sort((a, b) => a.weight[0] - b.weight[0] || a.weight[1] - b.weight[1] || a.weight[2] - b.weight[2] || a.placement.to.dayOfWeek - b.placement.to.dayOfWeek || a.placement.to.startMinutes - b.placement.to.startMinutes);
+    options.sort(
+      (a, b) =>
+        a.weight[0] - b.weight[0] ||
+        a.weight[1] - b.weight[1] ||
+        a.weight[2] - b.weight[2] ||
+        a.weight[3] - b.weight[3] ||
+        a.placement.to.dayOfWeek - b.placement.to.dayOfWeek ||
+        a.placement.to.startMinutes - b.placement.to.startMinutes,
+    );
     const kept = options.length > perUnit ? options.slice(0, perUnit) : options;
     if (kept.length < options.length) landingsCut = true;
     for (const option of kept) {
@@ -270,9 +314,14 @@ export async function searchMakeRoom(input: MakeRoomInput): Promise<MakeRoomResu
     }
   };
 
-  const firstLevels = new Map<string, number>([[picked.id, 0]]);
-  for (const unit of blockers) firstLevels.set(unit.id, 1);
-  lay(blockers.length > 0 ? 1 : 0, blockers, [{ unit: picked, to: pickedAt }], firstLevels, new Map());
+  // The way with fewest in the way first: the picked lesson in another room has no one to move for its room, so its sets are the few and the best, and a cap that
+  // the other way fills must not be used up before they are made. The sort is stable: on a tie the own room goes first, as it did. (`said` above is the
+  // school as it stands, not this order.)
+  for (const start of [...viable].sort((a, b) => a.blockers.length - b.blockers.length)) {
+    const firstLevels = new Map<string, number>([[picked.id, 0]]);
+    for (const unit of start.blockers) firstLevels.set(unit.id, 1);
+    lay(start.blockers.length > 0 ? 1 : 0, start.blockers, [{ unit: picked, to: pickedAt, ...(start.way.rooms ? { rooms: start.way.rooms } : {}) }], firstLevels, new Map());
+  }
 
   // Costed, ordered, then judged in that order until the list is full.
   interface Costed extends Candidate {
@@ -293,15 +342,24 @@ export async function searchMakeRoom(input: MakeRoomInput): Promise<MakeRoomResu
         break;
       }
     }
-    const moves = candidate.placements.flatMap((placement) => movesOfUnit(placement.unit, placement.to));
+    const moves = candidate.placements.flatMap((placement) => movesOfUnit(placement.unit, placement.to, placement.rooms));
     const { costs, score } = input.soft(moves);
     costed.push({ ...candidate, moves, soft: costs, score });
   }
+  const timesOf = (moves: readonly SwapMove[]): string => [...moves].map((move) => `${move.lessonId}>${slotKey(move.to)}`).sort().join(';');
   const keyOf = (candidate: Costed): string =>
-    [...candidate.moves].map((move) => `${move.lessonId}>${slotKey(move.to)}`).sort().join(';');
-  costed.sort((a, b) => a.score - b.score || a.placements.length - b.placements.length || (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
+    [...candidate.moves].map((move) => `${move.lessonId}>${slotKey(move.to)}${move.room ? `@${move.room.to}` : ''}`).sort().join(';');
+  const roomChanges = (candidate: Costed): number => candidate.moves.filter((move) => move.room !== undefined).length;
+  costed.sort(
+    (a, b) =>
+      a.score - b.score ||
+      a.placements.length - b.placements.length ||
+      roomChanges(a) - roomChanges(b) ||
+      (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0),
+  );
 
   const proposals: MakeRoomProposal[] = [];
+  const shown = new Set<string>();
   const chunk = Math.max(1, input.chunk ?? 24);
   let judged = 0;
   let refused = 0;
@@ -320,11 +378,16 @@ export async function searchMakeRoom(input: MakeRoomInput): Promise<MakeRoomResu
         refused += 1;
         continue;
       }
+      // The same lessons at the same times in other rooms are one proposal, the one that changes fewest rooms (it is first: the order is by score,
+      // and a room change costs). A lesson that keeps its room where it could have changed it is not offered twice.
+      const timesKey = timesOf(candidate.moves);
+      if (shown.has(timesKey)) continue;
+      shown.add(timesKey);
       const ordered = [...candidate.placements].sort(
         (a, b) => (candidate.levels.get(a.unit.id) ?? 0) - (candidate.levels.get(b.unit.id) ?? 0) || byId(a.unit, b.unit),
       );
       proposals.push({
-        moves: ordered.flatMap((placement) => movesOfUnit(placement.unit, placement.to)),
+        moves: ordered.flatMap((placement) => movesOfUnit(placement.unit, placement.to, placement.rooms)),
         levels: Object.fromEntries(candidate.levels),
         depth: Math.max(...candidate.levels.values()),
         soft: candidate.soft,
@@ -333,5 +396,5 @@ export async function searchMakeRoom(input: MakeRoomInput): Promise<MakeRoomResu
       });
     }
   }
-  return { proposals, candidates: costed.length, judged, refused, truncated, landingsCut, blockers };
+  return { proposals, candidates: costed.length, judged, refused, truncated, landingsCut, blockers: said.blockers };
 }

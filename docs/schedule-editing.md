@@ -446,6 +446,23 @@ both are applied by `POST /api/v1/swaps/apply` as above.
     and are no deeper than `depth`: the search gives exactly those, at depth 1, 2 and 3, for placed lessons and for bricks, with locked
     lessons in the school. `swap-context.spec.ts` holds the pair rule it asks (`SwapContext.landingsClash`) to the indexed one (`inTheWay`)
     for every pair of lessons in four kinds of school.
+- **Annan ledig sal: a lesson that moves may take another room.** Asked for with `makeRoom.otherRooms: true`, and left out it is not offered: a
+  page that does not know the field is answered as it always was, and is never offered a proposal it cannot send back (`room` is part of the move).
+  A displaced lesson (and the picked one, and a brick) whose own room is held at
+  the new time need not send the lesson that holds it away: when it is ONE lesson that stands in a room, and nothing but the room is the
+  trouble (its teachers, its classes and every rule that does not name the room leave the stretch alone), it may take the best other room that
+  fits (the generator's rule: the seats, the type the subject needs, the years, and the school's LOCK rules of rooms for the subject and the
+  years; its own kind, the smallest big enough, its own building) and is free then (no lesson of the school stands in it, no weekly row shuts it, no other school holds it). The move then carries
+  `room: { from, to }`; `apply` writes the room with the day and the clock (the write is held to the room the page saw, so a lesson whose room
+  has been changed since is `SWAP_STALE`), the published calendar follows the lesson into its room, the clash rule and the board's rules are
+  asked in the room it is given, and the undo is the same moves reversed, the rooms too. The rule is `src/swaps/swap-rooms.ts`; the search
+  takes it as a **second way to the same landing** (`world.otherRoom`) and not as a replacement, so a lesson whose room is held only by a lesson
+  that leaves anyway (a swap of two lessons in one room) keeps its room; of two proposals of the same lessons at the same times in different
+  rooms the one that changes fewest is the one offered; a room change costs a little in the order (`POSSIBLE_SCORE.ROOM_CHANGE`, as E3 weighs
+  it), so it never beats a better time, only a tie. A block's lessons keep the rooms the school gave them. Not built, and said: a lesson that
+  stays where it stands and changes room so that another may have its own, a room that a lesson leaves in the same proposal, more than one room
+  tried for a landing. `swap-make-room.rooms.spec.ts` holds the search to an exhaustive check that tries every room way as well, and
+  `swap-rooms.spec.ts` holds the rule to a plain reading of the school.
 - **The staff room is told after the commit** (g465 L-3). `apply` announces the move through `PrismaService.onCommit`, with the ids of the
   lessons that moved, as `MasterLessonsService` announces a hand edit: told inside the transaction, the page read the year before the commit and
   found the lessons as they were, and a swap rolled back after the announcement had been announced all the same.

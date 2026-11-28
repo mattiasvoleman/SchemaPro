@@ -105,7 +105,8 @@ function parallelsOf(units: readonly SwapUnit[]): ParallelTouch[] {
 export function proposalId(moves: readonly SwapMove[]): string {
   const canonical = [...moves]
     .sort((a, b) => (a.lessonId < b.lessonId ? -1 : a.lessonId > b.lessonId ? 1 : 0))
-    .map((move) => `${move.lessonId}>${slotKey(move.to)}`)
+    // A room change names the proposal too: the same times in another room are another proposal. Without one the name is what it always was.
+    .map((move) => `${move.lessonId}>${slotKey(move.to)}${move.room ? `@${move.room.to}` : ''}`)
     .join(';');
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }

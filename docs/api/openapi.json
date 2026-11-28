@@ -34509,6 +34509,9 @@
             "type": "number",
             "minimum": 1,
             "maximum": 3
+          },
+          "otherRooms": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -36763,10 +36766,30 @@
           },
           "to": {
             "$ref": "#/components/schemas/SwapSlotDto"
+          },
+          "room": {
+            "$ref": "#/components/schemas/SwapRoomChangeDto"
           }
         },
         "required": [
           "lessonId",
+          "from",
+          "to"
+        ]
+      },
+      "SwapRoomChangeDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "to": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
           "from",
           "to"
         ]

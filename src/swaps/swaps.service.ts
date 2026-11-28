@@ -13,6 +13,8 @@ import { clashRefusedConflict } from '../calendar/clash-refusal';
 import { judgeLessons, type JudgeItem } from '../calendar/lesson-judge';
 import { lessonRefusalText } from '../calendar/lesson-refusal';
 import { isNewLesson, PossibleTimesService, STORED_LESSON_SELECT } from '../calendar/possible-times.service';
+import { POSSIBLE_SCORE } from '../calendar/possible-times';
+import type { RoomNeeds } from '../optimization/room-eligibility';
 import { exemptionKey, exemptionsOf } from '../calendar/lesson-exemption';
 import { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -31,6 +33,8 @@ import { lessonsLeftUnlockedByBlock } from './swap-block-lock';
 import { removedCalendarLessons } from './swap-calendar';
 import { dayLessonOf, SwapReads } from './swap-reads';
 import { movesOfUnit, searchMakeRoom } from './swap-make-room';
+import { makeRoomWorldOf } from './swap-rooms';
+import { lockedRoomsOf, type RoomLockRule } from './swap-room-locks';
 import { proposalId, searchSwaps } from './swap-search';
 import { readSwapData, type SwapData } from './swap-snapshot';
 import type {
@@ -436,6 +440,12 @@ export class SwapsService {
       const reads = new SwapReads(data.lessons);
       const warming = Date.now();
       await reads.warm(tx, data);
+      // The school's rooms and what each lesson needs of one (E3's reading of them), for the lesson that has to go to another room: read only
+      // when the page asked for it. A page that does not send `otherRooms` gets what it got before the rooms, and reads nothing of them.
+      const roomWorld =
+        ask.otherRooms === true
+          ? makeRoomWorldOf(await this.roomWorldOf(tx, data, context, unplaced ? [...data.lessons, lesson] : data.lessons), { otherRooms: true })
+          : makeRoomWorldOf({ context, rooms: [], needsOf: () => null });
       const searching = Date.now();
 
       const length = unit.slot.endMinutes - unit.slot.startMinutes;
@@ -449,21 +459,12 @@ export class SwapsService {
         unitOf: context.unitOf,
         starts: [...new Set(data.lessons.map((placed) => placed.startMinutes))].sort((a, b) => a - b),
         days: SCHOOL_DAYS,
-        world: {
-          inTheWay: (moving, to) => {
-            const vacating = new Set(moving.members.map((member) => member.id));
-            const lessons = new Map<string, SwapLesson>();
-            let closed = false;
-            for (const landing of context.landingsOf(moving, to)) {
-              const way = context.inTheWay(landing, vacating);
-              for (const other of way.lessons) lessons.set(other.id, other);
-              if (way.closures.length > 0 || context.boardRefusal(landing) !== null) closed = true;
-            }
-            return { lessons: [...lessons.values()], closed };
-          },
-          landingsClash: (a, b) => context.landingsOf(a.unit, a.to).some((left) => context.landingsOf(b.unit, b.to).some((right) => context.landingsClash(left, right))),
+        world: roomWorld,
+        // The figures are the swap search's own; a room change is a small cost on top, so that it never beats a better time, only a tie (E3 weighs it alike).
+        soft: (moves) => {
+          const measured = context.soft.evaluate(moves);
+          return { costs: measured.costs, score: measured.score + POSSIBLE_SCORE.ROOM_CHANGE * moves.filter((move) => move.room !== undefined).length };
         },
-        soft: (moves) => context.soft.evaluate(moves),
         judge: (sets) => this.judgeSets(tx, data, context, sets, reads, unplacedIds),
         limit: dto.limit ?? DEFAULT_LIMIT,
         budgetMs: BUDGET_MS,
@@ -496,7 +497,8 @@ export class SwapsService {
                   groupName: lesson.groupName,
                   teacherId: lesson.teacherId,
                   coTeacherId: lesson.coTeacherId,
-                  roomId: lesson.roomId,
+                  // The room it is laid in: its own, or the one the search found for it (the brick is the first of the moves, which `standing` leaves out).
+                  roomId: proposal.moves.find((move) => move.lessonId === lesson.id)?.room?.to ?? lesson.roomId,
                   slot: at,
                 },
               }
@@ -542,6 +544,21 @@ export class SwapsService {
         },
       };
     });
+  }
+
+  /**
+   * E3's world (the rooms, what each lesson needs of one) and the school's LOCK rules of rooms (RoomPreference of kind LOCK), which the generator
+   * keeps to as it keeps to the seats, the type and the years: a room the rules do not leave a lesson is no room to give it (swap-room-locks.ts).
+   */
+  private async roomWorldOf(tx: PrismaClient, data: SwapData, context: SwapContext, members: readonly SwapLesson[]) {
+    const world = await this.possible.worldOf(tx, data, context, members);
+    const rows = await tx.roomPreference.findMany({
+      where: { schoolId: data.schoolId, kind: 'LOCK' },
+      select: { subjectId: true, minGradeLevel: true, maxGradeLevel: true, roomTypeId: true, rooms: { select: { roomId: true } } },
+    });
+    if (rows.length === 0) return world;
+    const rules: RoomLockRule[] = rows.map((row) => ({ ...row, roomIds: row.rooms.map((entry) => entry.roomId) }));
+    return { ...world, lockedRoomsOf: (lesson: SwapLesson, needs: RoomNeeds) => lockedRoomsOf(rules, world.rooms, lesson.subjectId, needs) };
   }
 
   // ---------------------------------------------------------------------------
@@ -639,9 +656,11 @@ export class SwapsService {
   private itemsOf(context: SwapContext, moves: readonly SwapMove[], unplacedIds: ReadonlySet<string>): JudgeItem[] {
     const dateOf = (value: string | null): Date | null => (value ? new Date(`${value}T00:00:00.000Z`) : null);
     const movingIds = moves.map((move) => move.lessonId).filter((id) => !isNewLesson(id));
-    const landed = moves.map((move) => ({ id: move.lessonId, day: move.to.dayOfWeek, row: dayLessonOf(context.lessonById.get(move.lessonId)!, move.to) }));
+    const landed = moves.map((move) => ({ id: move.lessonId, day: move.to.dayOfWeek, row: dayLessonOf(context.standingAt(move)!, move.to) }));
     return moves.map((move) => {
       const lesson = context.lessonById.get(move.lessonId)!;
+      // The room it lands in: the one the move gives it (Annan ledig sal), else its own. `stands` below keeps the room it stands in.
+      const landsIn = move.room?.to ?? lesson.roomId;
       const weeks = { recurrence: lesson.recurrence, startDate: dateOf(lesson.startDate), endDate: dateOf(lesson.endDate) };
       return {
         lesson: { id: isNewLesson(lesson.id) ? null : lesson.id, studentGroupId: lesson.studentGroupId, subjectId: lesson.subjectId },
@@ -651,7 +670,7 @@ export class SwapsService {
           endMinutes: move.to.endMinutes,
           teacherId: lesson.teacherId,
           coTeacherId: lesson.coTeacherId,
-          roomId: lesson.roomId,
+          roomId: landsIn,
           extraGroupIds: lesson.extraGroupIds,
           studentIds: lesson.studentIds,
           ...weeks,
@@ -718,7 +737,7 @@ export class SwapsService {
     // The movers as they will stand. The rule reads `alongside` as lessons of
     // the candidate's own day (a block's card moves to one day), and these go
     // to several: each is laid only beside the movers that land on its day.
-    const placed = moves.map((move) => ({ day: move.to.dayOfWeek, row: dayLessonOf(context.lessonById.get(move.lessonId)!, move.to) }));
+    const placed = moves.map((move) => ({ day: move.to.dayOfWeek, row: dayLessonOf(context.standingAt(move)!, move.to) }));
     for (const move of moves) {
       const lesson = context.lessonById.get(move.lessonId)!;
       const conflicts = await this.masterLessons.findConflicts(
@@ -736,7 +755,7 @@ export class SwapsService {
           endMinutes: move.to.endMinutes,
           teacherId: lesson.teacherId,
           coTeacherId: lesson.coTeacherId,
-          roomId: lesson.roomId,
+          roomId: move.room?.to ?? lesson.roomId,
           extraGroupIds: lesson.extraGroupIds,
           studentIds: lesson.studentIds,
           recurrence: lesson.recurrence,
@@ -841,6 +860,7 @@ export class SwapsService {
         lessonId: move.lessonId,
         from: { dayOfWeek: move.from.dayOfWeek, startMinutes: clockMinutes(move.from.startTime), endMinutes: clockMinutes(move.from.endTime) },
         to: { dayOfWeek: move.to.dayOfWeek, startMinutes: clockMinutes(move.to.startTime), endMinutes: clockMinutes(move.to.endTime) },
+        ...(move.room ? { room: { from: move.room.from, to: move.room.to } } : {}),
       }));
       const byId = new Map(rows.map((row) => [row.id, row]));
       for (const move of moves) {
@@ -853,15 +873,24 @@ export class SwapsService {
         // The school week is Monday to Friday: the judge refuses a Saturday (SCHOOL_DAY) on every other road, and a lesson written there is locked by
         // this very write and sent to the engine as a fixed lesson on a day it does not schedule. Since `forBrick` one move is enough to ask for it (g514).
         if (move.to.dayOfWeek > SCHOOL_WEEK_END) throw new BadRequestException('moves: not a school day (Monday to Friday).');
-        // Where the page saw it, or the proposal is about a timetable that has moved.
+        // Where the page saw it, or the proposal is about a timetable that has moved. A room change is seen the same way: the lesson stands in the
+        // room the proposal says it leaves.
         if (
           row.isParked ||
           row.dayOfWeek !== move.from.dayOfWeek ||
           minutesOf(row.startTime) !== move.from.startMinutes ||
-          minutesOf(row.endTime) !== move.from.endMinutes
+          minutesOf(row.endTime) !== move.from.endMinutes ||
+          (move.room !== undefined && row.roomId !== move.room.from)
         ) {
           throw swapStale();
         }
+        if (move.room !== undefined && move.room.to === move.room.from) throw new BadRequestException('moves: a room change names another room.');
+      }
+      // A room the move gives a lesson is one of this school's (RLS shows the school's rooms and no others).
+      const givenRooms = [...new Set(moves.flatMap((move) => (move.room ? [move.room.to] : [])))];
+      if (givenRooms.length > 0) {
+        const found = await tx.room.findMany({ where: { id: { in: givenRooms } }, select: { id: true } });
+        if (found.length !== givenRooms.length) throw new BadRequestException('moves: no such room.');
       }
 
       const data = await readSwapData(tx, user, leader.academicYearId);
@@ -932,15 +961,29 @@ export class SwapsService {
             startTime: row.startTime,
             endTime: row.endTime,
             isParked: false,
+            ...(move.room ? { roomId: move.room.from } : {}),
           },
-          data: { dayOfWeek: move.to.dayOfWeek, startTime, endTime, ...(locks ? { isLocked: true } : unlocks ? { isLocked: false } : {}) },
+          data: {
+            dayOfWeek: move.to.dayOfWeek,
+            startTime,
+            endTime,
+            ...(move.room ? { roomId: move.room.to } : {}),
+            ...(locks ? { isLocked: true } : unlocks ? { isLocked: false } : {}),
+          },
         });
         if (count !== 1) throw swapStale();
         if (locks) lockedLessonIds.push(row.id);
         // The trigger takes an exemption away from a lesson whose day or clock changes: the answer and the log say so.
         const ended = exemptionsOf(row.exemptFrom);
         if (ended.length > 0) exemptionsEnded.push({ lessonId: row.id, rules: ended.join(',') });
-        const updated = { ...row, dayOfWeek: move.to.dayOfWeek, startTime, endTime, ...(locks ? { isLocked: true } : unlocks ? { isLocked: false } : {}) };
+        const updated = {
+          ...row,
+          dayOfWeek: move.to.dayOfWeek,
+          startTime,
+          endTime,
+          ...(move.room ? { roomId: move.room.to } : {}),
+          ...(locks ? { isLocked: true } : unlocks ? { isLocked: false } : {}),
+        };
         const { moved, removed } =
           dto.propagate === false || mode === 'DRAFT'
             ? { moved: 0, removed: 0 }
@@ -1004,7 +1047,12 @@ export class SwapsService {
         propagatedLessons,
         removedCalendarLessons,
         versionId: version.id,
-        undo: moves.map((move) => ({ lessonId: move.lessonId, from: move.to, to: move.from })),
+        undo: moves.map((move) => ({
+          lessonId: move.lessonId,
+          from: move.to,
+          to: move.from,
+          ...(move.room ? { room: { from: move.room.to, to: move.room.from } } : {}),
+        })),
         exemptionsEnded,
         lockedLessonIds,
         ...(lockedLessonIds.length > 0 ? { lockedByMove: true as const } : {}),

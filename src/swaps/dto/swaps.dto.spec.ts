@@ -79,6 +79,22 @@ describe('E5a: what the doors take', () => {
     expect(await check(PairSwapDto, { lessonId: 'nope', otherLessonId: 'nope' })).toEqual(['lessonId', 'otherLessonId']);
   });
 
+  it('takes otherRooms as a boolean on makeRoom', async () => {
+    expect(await check(SuggestSwapsDto, { lessonId: A, makeRoom: { dayOfWeek: 1, startTime: '08:00', otherRooms: true } })).toEqual([]);
+    expect(await check(SuggestSwapsDto, { lessonId: A, makeRoom: { dayOfWeek: 1, startTime: '08:00' } })).toEqual([]);
+    expect(await check(SuggestSwapsDto, { lessonId: A, makeRoom: { dayOfWeek: 1, startTime: '08:00', otherRooms: 'yes' } })).toEqual(['makeRoom.otherRooms']);
+  });
+
+  it('takes the room a move gives a lesson as two ids, both the school’s rooms as uuids, and leaves "another room" to the service', async () => {
+    const withRoom = (room: unknown) => ({ ...move(A), room });
+    expect(await check(ApplySwapDto, { lessonId: A, moves: [withRoom({ from: A, to: B }), move(B)] })).toEqual([]);
+    expect(await check(ApplySwapDto, { lessonId: A, moves: [withRoom({ from: A }), move(B)] })).toEqual(['moves.0.room.to']);
+    expect(await check(ApplySwapDto, { lessonId: A, moves: [withRoom({ from: 'nope', to: 'nope' }), move(B)] })).toEqual(['moves.0.room.from', 'moves.0.room.to']);
+    expect(await check(ApplySwapDto, { lessonId: A, moves: [withRoom('r1'), move(B)] })).toEqual(['moves.0.room']);
+    // Left out is what it always was: the lesson keeps its room.
+    expect(await check(ApplySwapDto, { lessonId: A, moves: [move(A), move(B)] })).toEqual([]);
+  });
+
   it('takes alsoPicked as ids, forBrick as a boolean, and a lessonId only when it is not for a brick', async () => {
     const moves = [move(A), move(B)];
     expect(await check(ApplySwapDto, { lessonId: A, alsoPicked: [B], moves })).toEqual([]);

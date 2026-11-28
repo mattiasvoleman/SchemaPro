@@ -256,6 +256,39 @@ describe('boardRefusal: the grid’s other hard kinds', () => {
   });
 });
 
+describe('a move that gives a lesson another room (E5a, Annan ledig sal): the board and the other schools read the room it lands in', () => {
+  const mover = lesson('mover', 'c1', 1, 480, { teacherId: 'T', roomId: 'R' });
+  const lent = (resourceId: string) => ({ holdId: `h-${resourceId}`, kind: 'ROOM_LENT' as const, resourceKind: 'ROOM' as const, resourceId, dayOfWeek: 2, startTime: '10:00:00', endTime: '11:00:00', schools: ['Södra skolan'] });
+  const into = (room: string): SwapMove[] => [{ lessonId: 'mover', from: slot(1, 480), to: slot(2, 600), room: { from: 'R', to: room } }];
+
+  it('says the lesson as the move leaves it: in the room the move gives it, and as it stands when the move gives none', () => {
+    const ctx = context([mover]);
+    expect(ctx.standingAt({ lessonId: 'mover', room: { from: 'R', to: 'R2' } })).toMatchObject({ id: 'mover', roomId: 'R2' });
+    expect(ctx.standingAt({ lessonId: 'mover' })).toBe(ctx.lessonById.get('mover'));
+    expect(ctx.standingAt({ lessonId: 'ghost', room: { from: 'R', to: 'R2' } })).toBeUndefined();
+    // The lesson of the snapshot is not changed by asking.
+    expect(ctx.lessonById.get('mover')!.roomId).toBe('R');
+  });
+
+  it('refuses a landing in a room another school holds then, and lets the room the lesson left go: the board reads the NEW room', () => {
+    const ctx = context([mover], { holds: [lent('R')] });
+    // The old room is held at the new time and the lesson no longer asks for it; the new one is held, and it does.
+    expect(ctx.boardVerdict([{ lessonId: 'mover', from: slot(1, 480), to: slot(2, 600) }])).toBe('OTHER_SCHOOL');
+    expect(ctx.boardVerdict(into('R2'))).toBeNull();
+    const held = context([mover], { holds: [lent('R2')] });
+    expect(held.boardVerdict(into('R2'))).toBe('OTHER_SCHOOL');
+    expect(held.boardVerdict([{ lessonId: 'mover', from: slot(1, 480), to: slot(2, 600) }])).toBeNull();
+  });
+
+  it('names the other schools’ holds on the room the lesson lands in, and not on the one it left', () => {
+    const ctx = context([mover], { holds: [lent('R'), { ...lent('R2'), schools: ['Östra skolan'], startTime: '13:00:00', endTime: '14:00:00' }] });
+    const keeps = ctx.externalTouches([{ lessonId: 'mover', from: slot(1, 480), to: slot(2, 600) }]);
+    expect(keeps).toEqual([expect.objectContaining({ kind: 'ROOM_LENT', resourceId: 'R', schools: ['Södra skolan'] })]);
+    const changes = ctx.externalTouches(into('R2'));
+    expect(changes).toEqual([expect.objectContaining({ kind: 'ROOM_LENT', resourceId: 'R2', schools: ['Östra skolan'], startMinutes: 780, endMinutes: 840 })]);
+  });
+});
+
 describe('landingsOf', () => {
   it('lays each member at the slot’s start with its own length', () => {
     const long = lesson('long', 'c1', 1, 480, { endMinutes: 570 });

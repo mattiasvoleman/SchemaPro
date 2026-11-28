@@ -476,7 +476,7 @@ export class SwapContext {
   externalTouches(moves: readonly SwapMove[]): ExternalTouch[] {
     const touches: ExternalTouch[] = [];
     for (const move of moves) {
-      const lesson = this.lessonById.get(move.lessonId);
+      const lesson = this.standingAt(move);
       if (!lesson) continue;
       const resources: Array<['TEACHER' | 'ROOM', string]> = [];
       for (const teacherId of [lesson.teacherId, lesson.coTeacherId]) if (teacherId !== null) resources.push(['TEACHER', teacherId]);
@@ -499,10 +499,16 @@ export class SwapContext {
     return touches;
   }
 
+  /** The lesson as a move leaves it: in the room the move gives it (Annan ledig sal) and otherwise as it stands. */
+  standingAt(move: Pick<SwapMove, 'lessonId' | 'room'>): SwapLesson | undefined {
+    const lesson = this.lessonById.get(move.lessonId);
+    return lesson && move.room ? { ...lesson, roomId: move.room.to } : lesson;
+  }
+
   /** The first board rule any of the moves breaks, or null. */
   boardVerdict(moves: readonly SwapMove[]): Exclude<HardCode, 'CLASH'> | null {
     for (const move of moves) {
-      const lesson = this.lessonById.get(move.lessonId);
+      const lesson = this.standingAt(move);
       if (!lesson) continue;
       const refusal = this.boardRefusal({ lesson, to: move.to });
       if (refusal !== null) return refusal;
