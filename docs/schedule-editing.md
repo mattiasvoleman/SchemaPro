@@ -238,6 +238,32 @@ skriva något (varje administratör får läsa det, skrivningen är schemalägga
   `test/placement-write-in.e2e-spec.ts` (vägarna och vem som får), `scripts/test/probe-skriv-in.ts` och `probe-skriv-in-direkt.ts` (mot riktig Postgres, i CI) och, för hand mot en riktig motor, `scripts/test/probe-skriv-in-motor.ts`:
   Generera, körd efter bron, skriver samma lektioner ur samma rader, och bron efter Generera ändrar ingenting.
 
+## Lägg det som går (E7a)
+
+Påfyllning i gatewayen för brickorna i Att lägga: de markerade brickorna, en klass, en årskurs eller skolan. Den bevisar ingenting och säger det: svaret är ett förslag, aldrig "går inte".
+`POST /api/v1/board-fill/propose` (`{ academicYearId, scope, … }`) läser och skriver ingenting. `scope` är `BRICKS` (`bricks`: postId, teacherId, minutes och brickans `nth` ur bricklådan),
+`CLASS` (`studentGroupId`), `GRADE` (`gradeLevel`, årskursen i läsårets egen numrering) eller `SCHOOL`. Båda dörrarna är schemaläggarens, som domaren och Möjliga tider.
+
+- **Hur.** Brickorna läggs en i taget, den med **färst lediga starter först** (räknad om efter varje läggning, men bara för de brickor en lagd lektion kan ha tagit en start från: samma lärare,
+  en grupp som delar en elev med klassen, ett fåtal salar). Var och en läggs på en start ur de lägst kostade (samma kostnad som Möjliga tider rangordnar med: elevernas och lärarnas håltimmar, ämnets
+  fördelning, lärarens dag och skolans önskemål) som **tar minst ifrån de andra**: av de tolv lägsta startarna den som lämnar flest andra brickor med en start kvar, och därefter den lägsta kostnaden.
+  Salen är den minsta som generatorns regel tillåter (`roomAllowed`) och ingen håller just då; har skolan ingen sådan sal läggs brickan "Utan sal". Starterna är de punkter där något i skolan börjar
+  eller slutar (en lektion, en måltid, en stängd timme, ramen) och där en lektion av brickans längd skulle sluta vid en sådan. Beskärningen är `probeAt` (E3), och **domaren har sista ordet** om varje start
+  (`judgeLessons`, med de lektioner förslaget redan lagt stående): en start domaren nekar läggs inte. Ett förslag föreslår aldrig en tid som kräver ett undantag, ger inget, och flyttar ingenting som ligger:
+  `moved` är platsen för valet "får flytta" (E5a:s sökning, en senare PR) och är alltid tom.
+- **Svaret.** `placed` (per bricka: dag, tid, sal eller "Utan sal", hur många starter som var lediga och vilken av dem, bäst först, den lades på, kostnaden), `left` (per bricka varför den inte lades:
+  `NO_FREE_START` ingen start är ledig för den med det som ligger, `JUDGE` domaren nekade de starter den prövade, `TIME` tiden tog slut innan den påbörjades, `BLOCK` ett block läggs med blocket,
+  `NO_TEACHER` ingen lärare), `asked`, `truncated`, `answeredBy: "FILL"` och en `basis`. Tiden är 20 sekunder (beslut 8); därefter lämnas de som inte påbörjats med `TIME` och förslaget gäller det som hann.
+- **Ta in.** `POST /api/v1/board-fill/apply` (`{ academicYearId, basis, items: [{ key, dayOfWeek, startTime, roomId }], versionName? }`) är den enda skrivningen. En transaktion: läget och årets lås, posternas lås i id-ordning,
+  `basis` jämförd med läget nu (`409 BOARD_FILL_STALE` och ingenting skrivs om en lektion eller post ändrats sedan förslaget lästes), en **version före** ("Före påfyllning"), och sedan varje lektion genom bricklådans
+  egen skrivning (`BoardTrayService.writeBrick`, samma som en läggning för hand): domaren dömer den igen mot det som nu ligger i databasen, en sal generatorn inte tar nekas (`BOARD_ROOM_NOT_ALLOWED`), lektionen
+  görs låst och handgjord, loggas och säges som en handredigering. En lektion på bricklådan som läggs tillbaka frågar P5:s fråga i läget Direkt (`409 DIRECT_REACH_UNANSWERED`, och allt rullas tillbaka, versionen med).
+  Svaret har versionen och, per bricka, lektionens id och om den skapades.
+- **Hålls av** `src/board-fill/fill-plan.spec.ts` (ordningen avgör: ett fall där den först-lagda tar den enda starten en annan har; ingen lagd bricka krockar, ligger utanför ramen eller i en måltid; domaren frågas i kostnadsordning;
+  tiden; salen; starterna), `board-fill.service.spec.ts` (vad som läses och skrivs, ordningen på lås och version, `basis`), `fill-reads.spec.ts`, `test/board-fill.e2e-spec.ts` (dörrarna och valideringen),
+  `scripts/test/probe-lagg-det-som-gar.ts` (mot riktig Postgres, i CI: förslaget skriver ingenting, varje lagd lektion godkänns av domaren, Ta in skriver exakt förslaget efter en version och rör inget som låg,
+  ett ändrat schema nekas, scopen, Direkt) och, för provet på korpusens veckor, `scripts/bench/fill-corpus.ts`.
+
 ## Tier 3
 
 - **Minimal-disruption re-optimization** — the gateway sends the current unlocked placements as `previousLessons`; the solver is rewarded (weight `disruption`) for keeping lessons on those slots and warm-started with them as hints. Mid-term re-runs now change as little as possible.
