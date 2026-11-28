@@ -45,8 +45,15 @@ import { planFill, windowOfFrames, type FillBrick, type FillCandidate, type Fill
 export const BOARD_FILL_STALE = 'BOARD_FILL_STALE';
 /** What the proposal is given to be made: after it the bricks not yet begun are left with the reason TIME (decision 8: 20 s). */
 export const FILL_BUDGET_MS = 20_000;
-/** The prefix of the id a brick has as a lesson that stands nowhere. */
-const FILL_ID = 'fill:';
+/**
+ * The id a brick has as a lesson that stands nowhere: a UUID in form and in no table. The judge names a lesson its clash rule meets by reading that lesson's row
+ * (namesOf), and the fill's own lessons stand in its reads as they are laid, so a prefixed key such as `fill:<post>|<teacher>|60|1` reached Postgres as a uuid
+ * and the whole proposal answered 500 (P2007) whenever the judge met a lesson the prune had not: a school with a group that replaces a subject.
+ */
+export function fillIdOf(key: string): string {
+  const hex = createHash('sha256').update(`fill|${key}`).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
 
 export type FillLeftViewReason = FillLeftReason | 'BLOCK' | 'NO_TEACHER';
 
@@ -111,9 +118,9 @@ function viewOf(brick: TrayBrick): FillBrickView {
 }
 
 /** A brick as a lesson that stands nowhere, for the world the planner reads. */
-function lessonOfBrick(brick: TrayBrick): SwapLesson {
+export function lessonOfBrick(brick: TrayBrick): SwapLesson {
   return {
-    id: `${FILL_ID}${keyOf(brick)}`,
+    id: fillIdOf(keyOf(brick)),
     subjectId: brick.subjectId,
     subjectName: '',
     studentGroupId: brick.studentGroupId,
