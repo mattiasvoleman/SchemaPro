@@ -101,7 +101,7 @@ const LeavePolicyFields = lazy<
     () => ({ default: () => null }),
   ),
 );
-const LeaveRowExtras = lazy<React.ComponentType<{ leave: LeaveRequest; name: string; span: string }>>(() =>
+const LeaveRowExtras = lazy<React.ComponentType<{ leave: LeaveRequest; name: string; span: string; filedByMe?: boolean }>>(() =>
   import("@/components/guardian/leave-extras").then(
     (module) => ({ default: module.LeaveRowExtras }),
     () => ({ default: () => null }),
@@ -571,12 +571,13 @@ export default function GuardianPage() {
                       {t("decisionNote")}: {leave.decisionNote}
                     </p>
                   ) : null}
-                  {hasLeaveExtras(leave) ? (
+                  {hasLeaveExtras(leave, profile.id) ? (
                     <Suspense fallback={null}>
                       <LeaveRowExtras
                         leave={leave}
                         name={childName(leave.studentId)}
                         span={spanText(leave.startDate, leave.endDate)}
+                        filedByMe={leave.requestedById === profile.id}
                       />
                     </Suspense>
                   ) : null}

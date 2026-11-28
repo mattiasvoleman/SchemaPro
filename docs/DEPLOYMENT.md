@@ -5125,9 +5125,9 @@ them under `/admin/leave` (Ledighetsansökningar; no row in `LeavePolicies` is a
   **Rektor can reject a request that waits** (a rejection grants nothing, so the gate holds back an approval only): a
   guardian who never answers cannot keep a request waiting for ever, and switching the policy off would not have helped,
   since `consentRequired` is stamped on the request. Rejecting ends the wait: the guardians' unanswered requests are marked
-  read, a late answer is a 409, and the pass stops reminding. **There is no withdrawal by the family in this release**
-  (BESLUT, follow-up): it needs a status of its own and a rule for what happens to a request already granted, whose
-  absence is written; until then the family asks the school to reject it.
+  read, a late answer is a 409, and the pass stops reminding. **The family can take a request back while it waits** (K6,
+  §42): a status of its own, `WITHDRAWN`, and the rule for what is already granted is that it is not taken back (it
+  has written absence), so the family asks the school, as before.
 - *The administrator sees a request that waits, with the counts (asked, consented, waiting), never who, and cannot
   approve it* (409 `LEAVE_AWAITING_CONSENT`, and the trigger `LeaveRequests_gate` on every other path). The mentor neither
   reads it nor hears of it until it has its consent: the last yes tells the mentor in its own transaction, the job's pass
@@ -8106,3 +8106,48 @@ Generera's five sliders (`preferredFree`, `preferredBusy`, `disruption`, `spread
 - A run that sends no `weights` (an API caller; a candidate run of another page) does not read the profile. Reading it in the gateway would change what every such caller gets and move the hash a candidate run is priced by; it is a decision of its own.
 - One profile a school. A profile per läsår or a named profile is not built.
 - The row has no version. Two administrators who move the same weight in the same second: the last save wins. Different weights are kept, since a save puts over the school's profile only what its reader moved.
+
+## 44. A family takes back a leave request ("Ledighet och anmälan", omgång 15, K6, part b)
+
+Until now a family that had applied for leave and thought better of it had to ask the school to reject the request (§18.2). The person who filed a request can now take it back **while it waits**. Two migrations, one gateway route, a button on the web (`LeaveRowExtras`, where a family's requests are listed), the status's label in the mobile app, and a tab for the administrator.
+
+### 44.1 What the migrations are
+
+- **`20270315090000`**: `ALTER TYPE "LeaveRequestStatus" ADD VALUE 'WITHDRAWN'`, alone in its file (a new enum value cannot be used in the transaction that adds it, so the second file may name it).
+- **`20270315090100`**:
+  - a `CHECK`, `LeaveRequests_a_withdrawn_request_has_no_decider`: a taken-back request has no decider (`decidedById` and `decidedAs` empty) and has the moment it was taken back in `decidedAt`, as `GUARDIAN_DECLINED` has its end there;
+  - the trigger function `app.leave_requests_gate()` replaced with the K4 body **word for word** and three more rules (below);
+  - the door **`app.leave_request_withdraw(p_request)`**, `SECURITY DEFINER`, `EXECUTE` for the API's role alone: `anon`, `authenticated` (PostgREST) and `service_role` have none. It needs a signed-in person (`LV403`, the opposite of the job doors of §40.1). It changes the row only if it is in the caller's school, the caller **filed it**, and it is `PENDING`, and answers whether it did, so the gateway can answer 409 without a second read.
+- **The rules in the trigger**: a taken-back request is final (`LV409`, as a guardian's no is); only a `PENDING` request is taken back (`LV417`); only the person who filed it takes it back (`LV418`; an administrator's own `UPDATE` is refused too, and so is a write with no signed-in person: an administrator **rejects** a request, as before). When it is taken back, the notices that asked something of anybody about it are marked read: the guardians' request for consent and its reminder, and the mentors' "a new request" (`LEAVE_CONSENT_REQUESTED`, `LEAVE_CONSENT_REMINDER`, `LEAVE_REQUESTED`).
+- **No policy, no grant on the table, no new column.** The mentor's arm lets through requests that wait only, so it stops showing the request; the reminder pass and the guardians' answers already ask for `PENDING`, so a late answer is the same 409 (`LEAVE_CONSENT_REQUEST_ENDED`) as for any ended request; the statistics (`app.leave_request_facts`) count approved and waiting requests only. The school's export carries the status in `ledigheter.csv` like any other (`docs/school-export-format.md` was regenerated).
+
+### 44.2 The route
+
+`POST /family/leave-requests/:id/withdraw` (guardian, pupil or school administrator, 20 a minute): 404 if the request is not in the caller's school, 403 `LEAVE_WITHDRAW_NOT_YOURS` if somebody else filed it, 409 `LEAVE_REQUEST_DECIDED` if it is not waiting. A request that is already taken back answers as it did (idempotent, 201: it is a POST), so a double click and a retry over a bad line are harmless. The reply is the request in the family's own shape (`status: WITHDRAWN`). Nobody is notified: the mentor and the administrator had a notice that is now read, and the family knows.
+
+### 44.3 Deploy order
+
+1. Run the two migrations **before** the merge (§20.2), from a tree that holds every applied migration. The first is instant. The second takes `ACCESS EXCLUSIVE` on `LeaveRequests` with `NOWAIT` in a loop of 50 ms for 30 s and `lock_timeout` 5 s (nothing is held between tries; after 30 s it stops with nothing changed and can be run again). No row has the status yet, so the `VALIDATE` reads the table once and finds nothing to refuse.
+2. The API before the migration works unchanged: it never writes the status. **The API before the release, with the migration run and a request taken back**, reads a status it does not know: Prisma reads an unknown enum value of a model read as an error (as §18.1 says of `GUARDIAN_DECLINED`). The deploy replaces every instance within the minute, and nothing writes the status until the new gateway is serving; so run the migration first and merge at once.
+3. The mobile app of an older release lists a request with a status it has no label for: it shows the catalogue key (`leave.status.WITHDRAWN`) where the label would be. Nothing else of the old app's lists changes (nothing is removed or renamed); the label is in the release of the app that carries the status (`mobile/src/i18n`).
+
+### 44.4 Rolling back
+
+The gateway can be rolled back at any time, but the old one cannot read a taken-back request (§44.3 point 2), so if any exist **convert them first**. The closest status the old code knows is `REJECTED` (the check of `20261023091000` allows an empty `decidedAs`, and `decidedAt` keeps the moment). A bare `UPDATE` does not do it: the trigger `LeaveRequests_gate` refuses to move a taken-back request to any other status (`LV409`), the owner's `UPDATE` included. Take the gate out of the way for the one statement, in one transaction (`DISABLE TRIGGER` holds writers of the table back for the moment it takes, and nothing else changes):
+
+```sql
+BEGIN;
+ALTER TABLE "LeaveRequests" DISABLE TRIGGER "LeaveRequests_gate";
+UPDATE "LeaveRequests" SET "status" = 'REJECTED' WHERE "status" = 'WITHDRAWN';
+ALTER TABLE "LeaveRequests" ENABLE TRIGGER "LeaveRequests_gate";
+COMMIT;
+```
+
+The old list then says *Avslagen* for a request the family took back, which is not what happened; tell the school if it is done. The enum value cannot be dropped in Postgres without rebuilding the type: leave it. The `CHECK`, the function and the door can stay, since nothing reaches them with the old gateway.
+
+### 44.5 What is not done
+
+- **A request that is already granted is not taken back by the family** (it has written absence; the school decides, and the family asks).
+- **Nobody is told that a request was taken back.** The administrator sees it under the new tab *Tillbakadragna*; a mentor who had already opened the notice sees nothing change in the list but the request gone.
+- **The mobile app has no button yet**: it lists a taken-back request with its label (*Tillbakadragen*) and a family takes a request back on the web. The route is the same for both.
+- **The pupil's own page** has no form yet (part c), so a pupil who is allowed to file in the API reaches the button only where a page lists their requests.

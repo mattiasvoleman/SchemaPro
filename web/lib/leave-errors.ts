@@ -28,6 +28,17 @@ export function leaveActionError(
   return failureText(error, copy.fallback);
 }
 
+/**
+ * What the family's list says of a request it could not take back (K6). A 409 LEAVE_REQUEST_DECIDED says it was decided, or ended,
+ * between the list and the click (the list is read again, and shows how it ended); a 403 LEAVE_WITHDRAW_NOT_YOURS, a request another
+ * guardian of the child filed. Anything else is the gateway's own message, as everywhere.
+ */
+export function leaveWithdrawError(error: unknown, copy: { decided: string; notYours: string; fallback: string | ProblemLookup }): string {
+  if (error instanceof ApiError && error.status === 409 && error.code === "LEAVE_REQUEST_DECIDED") return copy.decided;
+  if (error instanceof ApiError && error.status === 403 && error.code === "LEAVE_WITHDRAW_NOT_YOURS") return copy.notYours;
+  return failureText(error, copy.fallback);
+}
+
 /** The most days a leave request covers, as the gateway counts them (LEAVE_REQUEST_MAX_DAYS). */
 export const LEAVE_REQUEST_MAX_DAYS = 366;
 

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +30,7 @@ const state = vi.hoisted(() => ({
   /** What the school asks of a leave request (Ledighetspolicy); as delivered: nothing. */
   policy: undefined as LeavePolicy | undefined,
   answerConsent: vi.fn(),
+  withdraw: vi.fn(),
   /** The login's schools (Flera skolor per inloggning); none: one school. */
   schools: [] as MySchool[],
 }));
@@ -70,6 +71,7 @@ vi.mock("@/lib/guardian-queries", () => ({
 vi.mock("@/lib/leave-policy-queries", () => ({ useLeavePolicy: () => ({ data: state.policy }) }));
 vi.mock("@/lib/leave-consent-queries", () => ({
   useAnswerLeaveConsent: () => ({ isPending: false, mutateAsync: state.answerConsent }),
+  useWithdrawLeave: () => ({ isPending: false, mutateAsync: state.withdraw }),
 }));
 vi.mock("@/components/teaching-time-card", () => ({
   TeachingTimeCard: ({ studentId, childName }: { studentId: string; childName?: string }) => (
@@ -114,6 +116,7 @@ beforeEach(() => {
   state.policy = NO_POLICY;
   state.requestLeave.mockResolvedValue({ id: "l-new", studentId: "c-1", status: "PENDING", consentRequired: false, shortNotice: false });
   state.answerConsent.mockResolvedValue({ id: "l-1", answer: "GIVEN", state: "WAITING" });
+  state.withdraw.mockResolvedValue({ id: "l-1", status: "WITHDRAWN" });
   state.role = "GUARDIAN";
   state.children = [
     { linkId: "l-1", id: "c-1", firstName: "Alva", lastName: "Elev", isActive: true, studentGroupId: "g-7a" },
@@ -313,10 +316,11 @@ describe("the leave form and list under the school's policy (Ledighetspolicy)", 
     expect(toast.error).not.toHaveBeenCalledWith(error.message);
   });
 
+  // Filed by the child's other guardian by default: what the signed-in guardian filed themselves is theirs to take back (below).
   const asked = (id: string, over: Partial<LeaveRequest>) => ({
     id,
     studentId: "c-1",
-    requestedById: "g-1",
+    requestedById: "g-2",
     startDate: "2026-10-19",
     endDate: "2026-10-21",
     reason: `Resa ${id}`,
@@ -356,6 +360,34 @@ describe("the leave form and list under the school's policy (Ledighetspolicy)", 
     await user.click(await screen.findByRole("button", { name: "guardian.consent.yesNamed" }));
     await waitFor(() => expect(state.answerConsent).toHaveBeenCalledWith({ id: "l-ask", consent: true }));
     expect(toast.success).toHaveBeenCalledWith("guardian.consent.answeredYes");
+  });
+
+  it("offers taking back on the requests the signed-in guardian filed that still wait, and on no other", async () => {
+    state.leaves = [
+      asked("l-mine", { requestedById: "g-1" }),
+      asked("l-theirs", {}),
+      asked("l-decided", { requestedById: "g-1", status: "APPROVED" }),
+      asked("l-taken", { requestedById: "g-1", status: "WITHDRAWN" }),
+    ];
+    render(<GuardianPage />);
+    const mine = (await screen.findByText("Resa l-mine")).closest("li")!;
+    expect(within(mine).getByRole("button", { name: "guardian.withdraw.named" })).toBeInTheDocument();
+    for (const id of ["l-theirs", "l-decided", "l-taken"]) {
+      expect(within(screen.getByText(`Resa ${id}`).closest("li")!).queryByRole("button", { name: "guardian.withdraw.named" })).not.toBeInTheDocument();
+    }
+    // A request that was taken back says so in words.
+    expect(screen.getByText("Resa l-taken").closest("li")).toHaveTextContent("guardian.statusWITHDRAWN");
+  });
+
+  it("asks before it takes a request back, and sends the request's own id", async () => {
+    state.leaves = [asked("l-mine", { requestedById: "g-1" })];
+    const user = userEvent.setup();
+    render(<GuardianPage />);
+    await user.click(await screen.findByRole("button", { name: "guardian.withdraw.named" }));
+    expect(state.withdraw).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /^guardian\.withdraw\.confirm/ }));
+    await waitFor(() => expect(state.withdraw).toHaveBeenCalledWith("l-mine"));
+    expect(toast.success).toHaveBeenCalledWith("guardian.withdraw.done");
   });
 });
 

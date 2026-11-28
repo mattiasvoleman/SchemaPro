@@ -76,6 +76,7 @@
         - text: Ella Nord Väntar
         - paragraph: <datum>–<datum>
         - paragraph: Familjeresa till mormor
+        - button "Dra tillbaka ledighetsansökan för Ella Nord, <datum>–<datum>": Dra tillbaka
       - listitem:
         - text: Hugo Nord Beviljad
         - paragraph: <datum>

@@ -748,6 +748,86 @@ describe('LeaveService', () => {
   });
 
   // -----------------------------------------------------------------------
+  // withdrawLeaveRequest (K6)
+  // -----------------------------------------------------------------------
+
+  describe('withdrawLeaveRequest', () => {
+    it('takes back a pending request the caller filed, through app.leave_request_withdraw, and writes nothing else', async () => {
+      tx.leaveRequest.findUnique.mockResolvedValue({ requestedById: GUARDIAN_ID, status: 'PENDING' });
+      tx.$queryRaw = jest.fn().mockResolvedValue([{ withdrawn: true }]);
+
+      await expect(service.withdrawLeaveRequest(REQUEST_ID, guardianUser())).resolves.toEqual({ id: REQUEST_ID, status: 'WITHDRAWN' });
+
+      const call = rawCall(tx.$queryRaw as jest.Mock);
+      expect(call.sql).toContain('app.leave_request_withdraw(');
+      expect(call.values).toEqual([REQUEST_ID]);
+      // The database moves the status and reads the notices; the service writes no row and tells nobody.
+      expect(tx.leaveRequest.updateMany).not.toHaveBeenCalled();
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(notifications.deliver).not.toHaveBeenCalled();
+    });
+
+    it('404s a request the caller does not read, and 403s one somebody else filed, with its code, before the database is asked', async () => {
+      tx.$queryRaw = jest.fn();
+      tx.leaveRequest.findUnique.mockResolvedValue(null);
+      await expect(service.withdrawLeaveRequest(REQUEST_ID, guardianUser())).rejects.toThrow(NotFoundException);
+
+      // Another guardian of the child reads the request, and does not take it back.
+      tx.leaveRequest.findUnique.mockResolvedValue({ requestedById: ANNA, status: 'PENDING' });
+      const refused = await service.withdrawLeaveRequest(REQUEST_ID, guardianUser()).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(ForbiddenException);
+      expect((refused as ForbiddenException).getResponse()).toMatchObject({ code: 'LEAVE_WITHDRAW_NOT_YOURS' });
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('403s a login that carries no person before anything is read: a service account takes nothing back', async () => {
+      tx.$queryRaw = jest.fn();
+      await expect(service.withdrawLeaveRequest(REQUEST_ID, testUser({ role: Role.SCHOOL_ADMIN, userId: undefined, schoolId: SCHOOL_ID }))).rejects.toThrow(ForbiddenException);
+      expect(tx.leaveRequest.findUnique).not.toHaveBeenCalled();
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it.each(['APPROVED', 'REJECTED', 'GUARDIAN_DECLINED'])('409s a request that is %s: a decided one is not taken back, the family asks the school', async (status) => {
+      tx.$queryRaw = jest.fn();
+      tx.leaveRequest.findUnique.mockResolvedValue({ requestedById: GUARDIAN_ID, status });
+      const refused = await service.withdrawLeaveRequest(REQUEST_ID, guardianUser()).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(ConflictException);
+      expect((refused as ConflictException).getResponse()).toMatchObject({ code: LEAVE_REQUEST_DECIDED });
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('answers a second taking back that crossed the first as no news, and a taking back that a decision beat as decided', async () => {
+      // The first call of the same person commits while the second waits for the row: the door says no, and the row now says WITHDRAWN.
+      tx.leaveRequest.findUnique.mockReset();
+      tx.leaveRequest.findUnique
+        .mockResolvedValueOnce({ requestedById: GUARDIAN_ID, status: 'PENDING' })
+        .mockResolvedValueOnce({ status: 'WITHDRAWN' });
+      tx.$queryRaw = jest.fn().mockResolvedValue([{ withdrawn: false }]);
+      await expect(service.withdrawLeaveRequest(REQUEST_ID, guardianUser())).resolves.toEqual({ id: REQUEST_ID, status: 'WITHDRAWN' });
+
+      // A decision won: the row says APPROVED, and so does the answer's code.
+      tx.leaveRequest.findUnique.mockReset();
+      tx.leaveRequest.findUnique
+        .mockResolvedValueOnce({ requestedById: GUARDIAN_ID, status: 'PENDING' })
+        .mockResolvedValueOnce({ status: 'APPROVED' });
+      const lost = await service.withdrawLeaveRequest(REQUEST_ID, guardianUser()).catch((error: unknown) => error);
+      expect(lost).toBeInstanceOf(ConflictException);
+      expect((lost as ConflictException).getResponse()).toMatchObject({ code: LEAVE_REQUEST_DECIDED });
+    });
+
+    it('409s a taking back that a decision beat, and answers one that is taken back already as no news, asking nothing', async () => {
+      tx.leaveRequest.findUnique.mockResolvedValue({ requestedById: GUARDIAN_ID, status: 'PENDING' });
+      tx.$queryRaw = jest.fn().mockResolvedValue([{ withdrawn: false }]);
+      await expect(service.withdrawLeaveRequest(REQUEST_ID, guardianUser())).rejects.toThrow(ConflictException);
+
+      tx.$queryRaw = jest.fn();
+      tx.leaveRequest.findUnique.mockResolvedValue({ requestedById: GUARDIAN_ID, status: 'WITHDRAWN' });
+      await expect(service.withdrawLeaveRequest(REQUEST_ID, guardianUser())).resolves.toEqual({ id: REQUEST_ID, status: 'WITHDRAWN' });
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // listLeaveRequests
   // -----------------------------------------------------------------------
 

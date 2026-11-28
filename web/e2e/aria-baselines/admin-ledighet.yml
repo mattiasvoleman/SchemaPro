@@ -9,6 +9,7 @@
     - tab "Väntar" [selected]
     - tab "Beviljad"
     - tab "Avslagen"
+    - tab "Tillbakadragna"
   - region "Väntar på rektor":
     - heading "Väntar på rektor" [level=2]
     - list:

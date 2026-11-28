@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /*
@@ -376,5 +376,40 @@ describe("the user manual's 5.1 and the feature list say where the optimization 
 
   it('and docs/schedule-editing.md does not list the sliders as persisted per browser', () => {
     expect(flat(read('docs/schedule-editing.md'))).not.toContain('persisted per browser');
+  });
+});
+
+describe('DEPLOYMENT says what the migration and the route of "A family takes back a leave request" do (K6)', () => {
+  // Found by its heading, not its number: the sections of parallel pull requests are renumbered when they meet.
+  const heading = /^## \d+\. A family takes back a leave request.*$/m.exec(deployment);
+  if (heading === null) throw new Error('docs/DEPLOYMENT.md no longer has the section "A family takes back a leave request"; read this spec again');
+  const after = deployment.slice(heading.index + heading[0].length);
+  const next = after.search(/^## \d+\. /m);
+  const k6 = next === -1 ? after : after.slice(0, next);
+
+  const migrations = readdirSync(join(ROOT, 'prisma/migrations'));
+  const doorMigration = migrations.find((name) => name.endsWith('_en_familj_drar_tillbaka_sin_ledighetsansokan_fore_beslutet'));
+  if (doorMigration === undefined) throw new Error('the migration of the taking-back door is gone; read DEPLOYMENT "A family takes back a leave request" again');
+
+  it('gives a rollback that works: the gate the migration adds refuses a taken-back request any other status, so the conversion takes the gate out of the way', () => {
+    const migration = read(`prisma/migrations/${doorMigration}/migration.sql`);
+    // The rule that makes a bare UPDATE fail, for the owner too (triggers are not skipped for the owner).
+    expect(migration).toContain(`IF OLD."status" = 'WITHDRAWN' AND NEW."status" IS DISTINCT FROM OLD."status" THEN`);
+    expect(k6).toMatch(
+      /DISABLE TRIGGER "LeaveRequests_gate";\s+UPDATE "LeaveRequests" SET "status" = 'REJECTED' WHERE "status" = 'WITHDRAWN';\s+ALTER TABLE "LeaveRequests" ENABLE TRIGGER "LeaveRequests_gate";/,
+    );
+  });
+
+  it('says 201 for the route, which is a POST with no status of its own, and what the older app shows where the label would be', () => {
+    const controller = read('src/family/family.controller.ts');
+    const route = controller.slice(controller.indexOf("@Post('leave-requests/:id/withdraw')"), controller.indexOf('withdrawLeaveRequest('));
+    expect(route).toContain("@Post('leave-requests/:id/withdraw')");
+    expect(route).not.toContain('@HttpCode');
+    expect(k6).toContain('(idempotent, 201: it is a POST)');
+    expect(k6).not.toContain('idempotent, 200');
+    // translate() returns the key itself for a message the catalogue lacks, which is what an older app shows.
+    expect(read('mobile/src/i18n/translate.ts')).toContain('A missing key returns the key itself');
+    expect(k6).toContain('`leave.status.WITHDRAWN`');
+    expect(k6).not.toContain('it shows the raw word');
   });
 });

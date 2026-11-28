@@ -550,7 +550,7 @@ export const LEDIGHETER: DataFile = {
     { name: 'fran', doc: 'Första dagen (ÅÅÅÅ-MM-DD).' },
     { name: 'till', doc: 'Sista dagen (ÅÅÅÅ-MM-DD).' },
     { name: 'skal', doc: 'Skälet som ansökan gavs. Tomt om det nämner en person med skyddad identitet, och i ett registerutdrag om ansökan inte gäller personen utdraget är om.' },
-    { name: 'status', doc: 'PENDING (väntar), APPROVED (beviljad), REJECTED (avslagen) eller GUARDIAN_DECLINED (en vårdnadshavare som skolan bad om samtycke sa nej, och ansökan avslutades; ingen beslutsfattare).' },
+    { name: 'status', doc: 'PENDING (väntar), APPROVED (beviljad), REJECTED (avslagen), GUARDIAN_DECLINED (en vårdnadshavare som skolan bad om samtycke sa nej, och ansökan avslutades; ingen beslutsfattare) eller WITHDRAWN (den som ansökte drog tillbaka ansökan innan den beslutades; ingen beslutsfattare, och beslut_tid är när den drogs tillbaka).' },
     { name: 'beslut_av_id', doc: 'Id på den som beslutade. Tomt om personen är borttagen eller har skyddad identitet.' },
     { name: 'beslut_av_epost', doc: 'E-postadress till den som beslutade.' },
     { name: 'beslut_tid', doc: 'När beslutet fattades (UTC).' },

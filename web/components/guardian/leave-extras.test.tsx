@@ -20,7 +20,8 @@ import { LeavePolicyFields, LeaveRowExtras } from "./leave-extras";
  */
 
 const answer = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
-vi.mock("@/lib/leave-consent-queries", () => ({ useAnswerLeaveConsent: () => answer }));
+const withdraw = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
+vi.mock("@/lib/leave-consent-queries", () => ({ useAnswerLeaveConsent: () => answer, useWithdrawLeave: () => withdraw }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const POLICY: LeavePolicy = { requireAllGuardians: false, minDaysAhead: null, shortNotice: "REFUSE", contact: "OFF" };
@@ -36,6 +37,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   answer.isPending = false;
   answer.mutateAsync.mockResolvedValue({ id: "l-1", answer: "GIVEN", state: "WAITING" });
+  withdraw.isPending = false;
+  withdraw.mutateAsync.mockResolvedValue({ id: "l-1", status: "WITHDRAWN" });
 });
 
 /** The form's part with its own contact state, as the page holds it. */
@@ -173,8 +176,8 @@ const consentOf = (state: LeaveRequest["consent"]["state"], mine: LeaveRequest["
   state,
   mine,
 });
-const row = (request: LeaveRequest, language: "sv" | "en" = "sv") =>
-  render(intl(language, <LeaveRowExtras leave={request} name="Ella Nord" span="19–21 okt 2026" />));
+const row = (request: LeaveRequest, language: "sv" | "en" = "sv", filedByMe = false) =>
+  render(intl(language, <LeaveRowExtras leave={request} name="Ella Nord" span="19–21 okt 2026" filedByMe={filedByMe} />));
 
 describe("the list's part: where the consent stands", () => {
   it("says a request waits for the guardians' consent, to whoever applied, and offers no answer", () => {
@@ -329,5 +332,79 @@ describe("the list's part: the question to a guardian the school waits for", () 
     row(leave({ consent: consentOf("WAITING", "WAITING") }), "en");
     expect(screen.getByRole("button", { name: "Consent, Ella Nord, 19–21 okt 2026" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Do not consent, Ella Nord, 19–21 okt 2026" })).toBeInTheDocument();
+  });
+});
+
+describe("the list's part: taking a request back (K6)", () => {
+  const take = () => screen.getByRole("button", { name: "Dra tillbaka ledighetsansökan för Ella Nord, 19–21 okt 2026" });
+
+  it("offers it on a request the signed-in person filed that still waits, named after the child and the days", () => {
+    row(leave(), "sv", true);
+    expect(take()).toHaveTextContent("Dra tillbaka");
+  });
+
+  it("offers it on nothing else: not on one another guardian filed, not on a decided, ended or taken-back one", () => {
+    row(leave(), "sv", false);
+    expect(screen.queryByRole("button", { name: /Dra tillbaka/ })).not.toBeInTheDocument();
+    for (const status of ["APPROVED", "REJECTED", "GUARDIAN_DECLINED", "WITHDRAWN"] as const) {
+      const { unmount } = row(leave({ status }), "sv", true);
+      expect(screen.queryByRole("button", { name: /Dra tillbaka/ })).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("asks first, with focus on the question and what taking it back means, and sends nothing until it is confirmed", async () => {
+    const user = userEvent.setup();
+    row(leave(), "sv", true);
+    await user.click(take());
+    expect(screen.getByText("Dra tillbaka ansökan?")).toHaveFocus();
+    expect(screen.getByText(/ingen får veta att du har dragit tillbaka den/)).toBeInTheDocument();
+    expect(withdraw.mutateAsync).not.toHaveBeenCalled();
+    // The first button is gone while the question is asked.
+    expect(screen.queryByRole("button", { name: /^Dra tillbaka ledighetsansökan/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Ja, dra tillbaka, Ella Nord, 19–21 okt 2026" }));
+    await waitFor(() => expect(withdraw.mutateAsync).toHaveBeenCalledWith("l-1"));
+    expect(toast.success).toHaveBeenCalledWith("Ansökan är tillbakadragen.");
+  });
+
+  it("takes the question back before it is sent, and returns to the button that asked", async () => {
+    const user = userEvent.setup();
+    row(leave(), "sv", true);
+    await user.click(take());
+    await user.click(screen.getByRole("button", { name: "Avbryt" }));
+    expect(withdraw.mutateAsync).not.toHaveBeenCalled();
+    await waitFor(() => expect(take()).toHaveFocus());
+  });
+
+  it("holds both buttons of the question while the call is on its way", async () => {
+    const user = userEvent.setup();
+    withdraw.isPending = true;
+    row(leave(), "sv", true);
+    await user.click(take());
+    expect(screen.getByRole("button", { name: /^Ja, dra tillbaka/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Avbryt" })).toBeDisabled();
+  });
+
+  it.each([
+    ["a request decided or ended in between", new ApiError(409, "x", "LEAVE_REQUEST_DECIDED"), "Ansökan är redan beslutad eller avslutad, så den går inte att dra tillbaka. Listan är uppdaterad. Kontakta skolan om du vill ändra ett beslut."],
+    ["a request another guardian filed", new ApiError(403, "x", "LEAVE_WITHDRAW_NOT_YOURS"), "Bara den som skickade ansökan kan dra tillbaka den."],
+  ])("says in the family's language why it was refused for %s, and closes the question", async (_what, error, said) => {
+    withdraw.mutateAsync.mockRejectedValue(error);
+    const user = userEvent.setup();
+    row(leave(), "sv", true);
+    await user.click(take());
+    await user.click(screen.getByRole("button", { name: /^Ja, dra tillbaka/ }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(said));
+    expect(toast.error).not.toHaveBeenCalledWith("x");
+    expect(await screen.findByRole("button", { name: /^Dra tillbaka ledighetsansökan/ })).toBeInTheDocument();
+  });
+
+  it("is said in English as well", async () => {
+    const user = userEvent.setup();
+    row(leave(), "en", true);
+    await user.click(screen.getByRole("button", { name: "Withdraw the leave request for Ella Nord, 19–21 okt 2026" }));
+    expect(screen.getByText("Withdraw the request?")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Yes, withdraw, Ella Nord, 19–21 okt 2026" })).toBeInTheDocument();
   });
 });

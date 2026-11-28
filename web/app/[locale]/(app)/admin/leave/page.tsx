@@ -30,7 +30,7 @@ const DelegationDialog = lazy(() =>
   import("@/components/leave/delegation-dialog").then((module) => ({ default: module.DelegationDialog })),
 );
 
-const FILTERS = ["PENDING", "APPROVED", "REJECTED", "GUARDIAN_DECLINED"] as const;
+const FILTERS = ["PENDING", "APPROVED", "REJECTED", "GUARDIAN_DECLINED", "WITHDRAWN"] as const;
 type Filter = (typeof FILTERS)[number];
 const isFilter = (value: string | null): value is Filter => FILTERS.some((filter) => filter === value);
 
@@ -168,7 +168,7 @@ export default function LeaveRequestsPage() {
         <Suspense fallback={null}>
           <FilterOfAddress onFilter={setFilter} />
         </Suspense>
-        {/* Four tabs are wider than a phone: the row scrolls (from its start, not its middle) instead of the page. */}
+        {/* Five tabs are wider than a phone: the row scrolls (from its start, not its middle) instead of the page. */}
         <Tabs value={filter} onValueChange={(value) => choose(value as Filter)} className="min-w-0 max-w-full">
           <TabsList aria-label={t("filterLabel")} className="max-w-full justify-start overflow-x-auto">
             <TabsTrigger value="PENDING">{tGuardian("statusPENDING")}</TabsTrigger>
@@ -177,6 +177,7 @@ export default function LeaveRequestsPage() {
             {policy.data?.requireAllGuardians || filter === "GUARDIAN_DECLINED" ? (
               <TabsTrigger value="GUARDIAN_DECLINED">{t("filterGUARDIAN_DECLINED")}</TabsTrigger>
             ) : null}
+            <TabsTrigger value="WITHDRAWN">{t("filterWITHDRAWN")}</TabsTrigger>
           </TabsList>
         </Tabs>
       </FilterBar>

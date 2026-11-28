@@ -165,7 +165,7 @@ export const sv = {
     submittedConsent: 'Skolan ber alla vårdnadshavare samtycka innan ansökan går till beslut.',
     submittedFlagged: 'Ansökan kom senare än skolans minimum och har flaggats för den som beslutar.',
     submitFailed: 'Ansökan gick inte att skicka.',
-    status: { PENDING: 'Väntar', APPROVED: 'Beviljad', REJECTED: 'Avslagen', GUARDIAN_DECLINED: 'Avslutad' },
+    status: { PENDING: 'Väntar', APPROVED: 'Beviljad', REJECTED: 'Avslagen', GUARDIAN_DECLINED: 'Avslutad', WITHDRAWN: 'Tillbakadragen' },
     note: 'Kommentar: {note}',
     decidedByMentor: 'Beslutad av mentor',
     decidedByRektor: 'Beslutad av rektor',

@@ -47,6 +47,7 @@ const STATUS_TONE: Record<LeaveRequestStatus, Tone> = {
   REJECTED: 'danger',
   // Ended by a guardian's "no", not decided by the school: neither a yes nor the school's no.
   GUARDIAN_DECLINED: 'neutral',
+  WITHDRAWN: 'neutral',
 };
 
 /** The policy shapes the form and no more: a read that fails leaves the one in hand (the all-off one at first). */

@@ -183,6 +183,21 @@ export class FamilyController {
     return this.leave.createLeaveRequest(dto, user);
   }
 
+  /**
+   * Whoever filed a leave request takes it back before it is decided (K6). Only the one who filed it:
+   * another guardian of the child, a mentor and an administrator who did not file it cannot (403, or 404 where the request is not read).
+   */
+  @Post('leave-requests/:id/withdraw')
+  @Roles(Role.GUARDIAN, Role.STUDENT, Role.SCHOOL_ADMIN)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Area('DRIFT')
+  withdrawLeaveRequest(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.leave.withdrawLeaveRequest(id, user);
+  }
+
   /** Rektor decides any request; a TEACHER only one theirs to decide as the pupil's mentor. */
   @Patch('leave-requests/:id/decide')
   @Roles(Role.SCHOOL_ADMIN, Role.TEACHER)
