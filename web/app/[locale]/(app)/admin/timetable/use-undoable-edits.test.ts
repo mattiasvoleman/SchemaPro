@@ -506,3 +506,28 @@ describe("what a step says it was about (E9)", () => {
     expect(steps[2]!.meta).toMatchObject({ what: "delete", lesson: { id: "l-1" } });
   });
 });
+
+describe("an undone delete that the judge refuses (E9, granskaren g521)", () => {
+  it("is dropped from the history and told as one that cannot be undone, so that the steps before it are not shut behind it", async () => {
+    const { view, createLesson, updateLesson } = setup();
+    await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 2 })));
+    await act(async () => void (await view.result.current.edits.undoableDelete(lesson)));
+    // A colleague has since put another lesson of the class where this one stood: making it again is the judge's no.
+    createLesson.mutateAsync.mockRejectedValueOnce(new ApiError(409, "x", "MASTER_LESSON_REFUSED", { reason: "GROUP", reasons: "GROUP" }));
+    await act(async () => void (await view.result.current.edits.doUndo()));
+    expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining("echo.undoRefused"));
+    // The refused step is gone, and the next undo takes the update before it.
+    expect(view.result.current.history.steps().done.map((step) => step.label)).toEqual(["update"]);
+    await act(async () => void (await view.result.current.edits.doUndo()));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ id: "l-1", dayOfWeek: 1 }));
+    expect(view.result.current.history.canUndo).toBe(false);
+  });
+
+  it("stays on top for another try when the failure is the network's", async () => {
+    const { view, createLesson } = setup();
+    await act(async () => void (await view.result.current.edits.undoableDelete(lesson)));
+    createLesson.mutateAsync.mockRejectedValueOnce(new Error("network"));
+    await act(async () => void (await view.result.current.edits.doUndo()));
+    expect(view.result.current.history.steps().done.map((step) => step.label)).toEqual(["delete"]);
+  });
+});
