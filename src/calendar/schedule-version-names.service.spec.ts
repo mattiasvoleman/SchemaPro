@@ -42,6 +42,12 @@ describe('ScheduleVersionNamesService', () => {
     expect(tx['scheduleVersion']!['update']).not.toHaveBeenCalled();
   });
 
+  it('answers 400 for a name with a NUL character in it, which Postgres cannot store, before the database is asked', async () => {
+    await expect(service.rename(VERSION, 'Före\u0000lovet', testUser())).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx['scheduleVersion']!['findUnique']).not.toHaveBeenCalled();
+    expect(tx['scheduleVersion']!['update']).not.toHaveBeenCalled();
+  });
+
   it('answers 400 for a name that is only blanks, before the database is asked', async () => {
     await expect(service.rename(VERSION, '   ', testUser())).rejects.toBeInstanceOf(BadRequestException);
     expect(tx['scheduleVersion']!['findUnique']).not.toHaveBeenCalled();

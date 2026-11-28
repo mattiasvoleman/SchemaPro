@@ -19,6 +19,8 @@ export class ScheduleVersionNamesService {
   async rename(versionId: string, name: string, user: AuthenticatedUser): Promise<ScheduleVersionSummary> {
     const trimmed = name.trim();
     if (trimmed.length === 0) throw new BadRequestException('name: a version needs a name.');
+    // Postgres text holds no NUL: it comes back from the database as a 500 ("an unexpected database error"), for a value the sender chose.
+    if (trimmed.includes('\u0000')) throw new BadRequestException('name: a version name has no NUL character.');
     return this.prisma.withRls(user, async (tx) => {
       const found = await tx.scheduleVersion.findUnique({ where: { id: versionId }, select: { id: true } });
       if (!found) throw new NotFoundException('Schedule version not found.');
