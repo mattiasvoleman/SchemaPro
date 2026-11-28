@@ -1,4 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createTranslator } from "use-intl";
 import en from "@/messages/en.json";
@@ -42,6 +44,8 @@ const echo = ((key: string) => `echo.${key}`) as never;
 /** The engine catalogue as a lookup: every code is there, and each sentence says which catalogue it came from (a text ending in the code is the real translator's fallback). */
 const catalogue = (name: string) => Object.assign((key: string) => `${name} says ${key}`, { has: () => true }) as never;
 
+const queryClient = new QueryClient();
+
 function setup(overrides: Partial<Parameters<typeof useUndoableEdits>[0]> = {}) {
   const updateLesson = { mutateAsync: vi.fn().mockResolvedValue({ propagatedLessons: 1 }) };
   const createLesson = { mutateAsync: vi.fn().mockResolvedValue({ id: "new-1" }) };
@@ -61,9 +65,13 @@ function setup(overrides: Partial<Parameters<typeof useUndoableEdits>[0]> = {}) 
       });
       return { history, edits };
     },
-    { initialProps: { tEngine: catalogue("engine") } },
+    {
+      initialProps: { tEngine: catalogue("engine") },
+      // The refusal for another's change reads the lessons again through the page's query client (E9).
+      wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client: queryClient }, children),
+    },
   );
-  return { view, updateLesson, createLesson, deleteLesson };
+  return { view, updateLesson, createLesson, deleteLesson, queryClient };
 }
 
 beforeEach(() => {
@@ -77,7 +85,7 @@ describe("an undoable update", () => {
     await act(async () => {
       await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 3, startTime: "10:00" });
     });
-    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith({ id: "l-1", dayOfWeek: 3, startTime: "10:00" });
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith({ id: "l-1", dayOfWeek: 3, startTime: "10:00", expected: { dayOfWeek: 1, startTime: "08:00" } });
     expect(view.result.current.history.canUndo).toBe(true);
 
     await act(async () => void (await view.result.current.history.undo()));
@@ -100,7 +108,7 @@ describe("an undoable update of a lesson that has an exemption (Undantag med fli
     const { view, updateLesson } = setup();
     await act(async () => void (await view.result.current.edits.undoableUpdate(given, { dayOfWeek: 3 })));
     // The patch itself is what the page said: no word of the exemption.
-    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith({ id: "l-1", dayOfWeek: 3 });
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith({ id: "l-1", dayOfWeek: 3, expected: { dayOfWeek: 1 } });
 
     await act(async () => void (await view.result.current.history.undo()));
     expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ id: "l-1", dayOfWeek: 1, isLocked: true, exempt: ["FRAME"] }));
@@ -350,5 +358,134 @@ describe("undo and redo from the toolbar and from the keyboard", () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true }));
     });
     await vi.waitFor(() => expect(toasts.info).toHaveBeenCalledWith("echo.undone"));
+  });
+});
+
+/*
+ * SÄKERHETSNÄT (E9): a write says what the page saw of the fields it sets, and the gateway refuses it, 409 LESSON_CHANGED, when somebody else has
+ * changed one of them since. An undo is held to what the lesson held after the write (the gateway's answer, so a lock the server set is not waited
+ * for), and a redo to what it held before. A refusal is told as what it is: what the lesson has become, and the change offered again.
+ */
+describe("a write says what the page saw (E9)", () => {
+  it("names only the fields the patch sets, as the page read them, and the clock as the inputs write it", async () => {
+    const { view, updateLesson } = setup();
+    await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { roomId: "r-2" })));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith({ id: "l-1", roomId: "r-2", expected: { roomId: "r-1" } });
+    await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { startTime: "10:00", endTime: "11:00", isLocked: true })));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ expected: { startTime: "08:00", endTime: "09:00", isLocked: false } }));
+  });
+
+  it("holds the undo to what the gateway answered, and the redo to what the page saw before", async () => {
+    const { view, updateLesson } = setup();
+    // The gateway locked the lesson the move moved (lockedByMove): the patch did not name the lock, and the undo does not wait for it.
+    updateLesson.mutateAsync.mockResolvedValueOnce({ id: "l-1", dayOfWeek: 3, startTime: "10:00", endTime: "09:00", isLocked: true, lockedByMove: true });
+    await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 3, startTime: "10:00" })));
+    await act(async () => void (await view.result.current.history.undo()));
+    // Every field the undo writes, and the lock as the gateway answered it.
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: "l-1",
+        dayOfWeek: 1,
+        startTime: "08:00",
+        expected: { dayOfWeek: 3, startTime: "10:00", endTime: "09:00", roomId: "r-1", teacherId: "t-1", isLocked: true, isParked: false, recurrence: "ALL_WEEKS", startDate: null, endDate: null },
+      }),
+    );
+    await act(async () => void (await view.result.current.history.redo()));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        dayOfWeek: 3,
+        startTime: "10:00",
+        expected: { dayOfWeek: 1, startTime: "08:00", endTime: "09:00", roomId: "r-1", teacherId: "t-1", isLocked: false, isParked: false, recurrence: "ALL_WEEKS", startDate: null, endDate: null },
+      }),
+    );
+  });
+
+  it("holds an undo and a redo to every field they write, so that a colleague's later change of a field the patch did not set is not put back (granskaren g515)", async () => {
+    const { view, updateLesson } = setup();
+    await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 3 })));
+    for (const step of ["undo", "redo"] as const) {
+      await act(async () => void (await view.result.current.history[step]()));
+      const body = updateLesson.mutateAsync.mock.lastCall![0] as Record<string, unknown>;
+      const written = Object.keys(body).filter((field) => field !== "id" && field !== "expected");
+      // The undo writes the whole snapshot (teacher and room too): a teacher that a colleague changed after the move is a value it would put back over his.
+      expect(written, step).toContain("teacherId");
+      for (const field of written) expect(body["expected"], `${step} writes ${field}`).toHaveProperty(field);
+    }
+  });
+
+  it("holds the undo of an exemption to the rules the gateway saved, which may be fewer than were asked", async () => {
+    const { view, updateLesson } = setup();
+    updateLesson.mutateAsync.mockResolvedValueOnce({ id: "l-1", dayOfWeek: 2, startTime: "08:00", endTime: "09:00", isLocked: true, exemptFrom: ["FRAME"] });
+    await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 2, exempt: ["FRAME", "LUNCH"] })));
+    await act(async () => void (await view.result.current.history.undo()));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ expected: expect.objectContaining({ dayOfWeek: 2, exempt: ["FRAME"] }) }));
+  });
+
+  it("sends what a lesson that has none holds of an exemption as an empty list, so that a colleague's later one is seen", async () => {
+    const { view, updateLesson } = setup();
+    await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { exempt: ["FRAME"] })));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ expected: { exempt: [] } }));
+  });
+});
+
+describe("a lesson somebody else has changed (E9)", () => {
+  const changed = (fields = "dayOfWeek,startTime") => new ApiError(409, "changed", "LESSON_CHANGED", { fields });
+  // The module that says it is the real one; what it reads again is the one lesson, and it comes back as a colleague left it.
+  const readOne = vi.hoisted(() => vi.fn());
+  vi.mock("@/lib/master-lesson-cache", () => ({ readOne }));
+
+  beforeEach(() => readOne.mockReset());
+
+  /** Whether the history holds a step to undo. */
+  const history = (view: ReturnType<typeof setup>["view"]) => view.result.current.history.canUndo;
+
+  it("tells the refusal of a write in full: what the lesson has become, and the change offered again on it, held to what the reader was told", async () => {
+    const { view, updateLesson, queryClient } = setup();
+    updateLesson.mutateAsync.mockRejectedValueOnce(changed());
+    readOne.mockResolvedValue({ ...lesson, dayOfWeek: 4 });
+    let error: unknown;
+    await act(async () => {
+      error = await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 3 }).catch((caught: unknown) => caught);
+    });
+    expect(history(view)).toBe(false);
+    await act(async () => {
+      view.result.current.edits.showError(error);
+      await vi.waitFor(() => expect(toasts.error).toHaveBeenCalled());
+    });
+    expect(readOne).toHaveBeenCalledWith(queryClient, "l-1");
+    const [text, options] = toasts.error.mock.calls[0]!;
+    expect(text).toContain("echo.changed.refused");
+    expect(text).toContain("echo.changed.now");
+    // Pressed, the button makes the same change on the lesson as it is now: the same patch, held to what the reader has just been told.
+    updateLesson.mutateAsync.mockClear();
+    await act(async () => void (await options.action.onClick()));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith({ id: "l-1", dayOfWeek: 3, expected: { dayOfWeek: 4 } });
+  });
+
+  it("says it as the catalogue's sentence when the write is not one the page can describe, and never as a clash", async () => {
+    const { view } = setup();
+    await act(async () => {
+      view.result.current.edits.showError(changed());
+      await vi.waitFor(() => expect(toasts.error).toHaveBeenCalled());
+    });
+    expect(toasts.error.mock.calls[0]![0]).toBe("echo.codes.LESSON_CHANGED");
+    expect(toasts.error.mock.calls[0]![0]).not.toContain("editConflict");
+    expect(readOne).not.toHaveBeenCalled();
+  });
+
+  it("says an undo that meets it as an undo that cannot be done, and drops the step so that the older steps are not shut behind it", async () => {
+    const { view, updateLesson } = setup({ t: ((key: string, values?: { why?: string }) => (key === "undoRefused" ? `undoRefused: ${values?.why}` : key)) as never });
+    await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { dayOfWeek: 3 })));
+    await act(async () => void (await view.result.current.edits.undoableUpdate(lesson, { startTime: "10:00" })));
+    updateLesson.mutateAsync.mockRejectedValueOnce(changed("startTime"));
+    await act(async () => {
+      await view.result.current.edits.doUndo();
+      await vi.waitFor(() => expect(toasts.error).toHaveBeenCalled());
+    });
+    expect(toasts.error.mock.calls[0]![0]).toMatch(/^undoRefused: /);
+    expect(readOne).not.toHaveBeenCalled();
+    // The step is gone: the next undo takes the step before it.
+    await act(async () => void (await view.result.current.edits.doUndo()));
+    expect(updateLesson.mutateAsync).toHaveBeenLastCalledWith(expect.objectContaining({ dayOfWeek: 1, expected: expect.objectContaining({ dayOfWeek: 3 }) }));
   });
 });

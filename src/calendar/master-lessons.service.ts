@@ -20,7 +20,7 @@ import { propagateTemplateChange, reconcilableLessons } from './propagate-templa
 import { NotificationsService } from '../notifications/notifications.service';
 import { parseTimeString } from '../common/utils/time';
 import type { CreateMasterLessonDto } from './dto/create-master-lesson.dto';
-import type { UpdateMasterLessonDto } from './dto/update-master-lesson.dto';
+import type { ExpectedLessonDto, UpdateMasterLessonDto } from './dto/update-master-lesson.dto';
 import type { LockBlockDto, MoveBlockCardDto } from './dto/block-card.dto';
 import { lessonQualificationFindings } from '../staffing/staffing-enforcement';
 import {
@@ -77,6 +77,7 @@ import { storedSharesOf } from '../resources/requirement-shares';
 import { judgeLessons, placementChanged, type JudgedCandidate, type LessonJudgement, type MoveJudgement } from './lesson-judge';
 import { exemptionsOf, keepExemptions, type ExemptableRule } from './lesson-exemption';
 import { lessonRefusalText, lessonRefusedConflict } from './lesson-refusal';
+import { changedSince, lessonChanged, type LessonAsStored } from './lesson-expectation';
 import type { JudgeLessonsDto } from './dto/judge-lessons.dto';
 import { ConflictReads } from './conflict-reads';
 
@@ -355,6 +356,8 @@ export const EXEMPTION_ENDED = 'EXEMPTION_ENDED';
 export const BLOCK_CARD_STALE = 'BLOCK_CARD_STALE';
 /** The problem `code` of lessons that are not one block's card. */
 export const NOT_A_BLOCK_CARD = 'NOT_A_BLOCK_CARD';
+/** The problem `code` of a first or last day that is not told as `YYYY-MM-DD`. */
+export const LESSON_DATE_FORM = 'LESSON_DATE_FORM';
 
 /** A lesson the clash scan holds a candidate against: one of its day, or one moved with it. */
 export interface DayLesson {
@@ -779,12 +782,15 @@ export class MasterLessonsService {
   ): Promise<UpdateMasterLessonResult> {
     return this.inTransaction(user, held, async (tx) => {
       const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
-      const lesson = await tx.masterLesson.findUnique({
+      // A function, because a request that says what the page saw reads the lesson again under its row lock when somebody wrote it meanwhile.
+      const readLesson = () => tx.masterLesson.findUnique({
         where: { id },
         select: {
           ...LESSON_SELECT,
           // Förlagda poster: a lesson Generera wrote from a förläggning (below).
           fromPlacement: true,
+          // Säkerhetsnät: whether somebody wrote the lesson between this read and the row lock (stillAsSeen).
+          updatedAt: true,
           school: {
             select: {
               id: true,
@@ -814,12 +820,16 @@ export class MasterLessonsService {
           },
         },
       });
+      let lesson = await readLesson();
       if (!lesson) {
         throw new NotFoundException('Master lesson not found.');
       }
       // The year read without a lock, then the edit's share of the year's
       // regeneration lock before any row is locked (as on create).
       await lockYearForGrundschemaEdit(tx, lesson.academicYearId);
+      // SÄKERHETSNÄT (E9): what the page saw, held to the lesson as it is under the row lock. Before anything is asked of the judge, because
+      // a lesson that is not as the page saw it is not the lesson the page asked about, and its no or yes would be about another lesson.
+      if (dto.expected) lesson = await this.stillAsSeen(tx, id, lesson, dto.expected, dto, readLesson);
       // As on create. The same basis goes to the behörighet span below, so the
       // clash check and the warning read one set of pupils.
       const rosters = await rostersOfYear(tx, user, lesson.academicYearId, {
@@ -1288,6 +1298,30 @@ export class MasterLessonsService {
   // ---------------------------------------------------------------------
   // Block i schemat: a parallel block's card, moved and locked as one
   // ---------------------------------------------------------------------
+
+  /**
+   * The lesson as the page saw it, or a 409. The row is held to COMMIT first (NO KEY UPDATE, as a block card's rows are: calendar lessons
+   * reference them, and FOR UPDATE would wait out every writer of one), so that what is compared is what is written over, and a request
+   * that was beside another one that wrote the lesson meets that write and not the state before it. The lesson read before the lock is read
+   * again only when somebody wrote it meanwhile: a request that sends no `expected` pays nothing, and one that does pays one statement.
+   */
+  private async stillAsSeen<T extends LessonAsStored & { updatedAt: Date }>(
+    tx: PrismaClient,
+    id: string,
+    read: T,
+    expected: ExpectedLessonDto,
+    writes: ExpectedLessonDto,
+    readAgain: () => Promise<T | null>,
+  ): Promise<T> {
+    const [held] = await tx.$queryRaw<Array<{ updatedAt: Date }>>`
+      SELECT "updatedAt" FROM "MasterLessons" WHERE "id" = ${id}::uuid FOR NO KEY UPDATE`;
+    if (!held) throw new NotFoundException('Master lesson not found.');
+    const now = held.updatedAt.getTime() === read.updatedAt.getTime() ? read : await readAgain();
+    if (!now) throw new NotFoundException('Master lesson not found.');
+    const changed = changedSince(now, expected, writes);
+    if (changed.length > 0) throw lessonChanged(changed);
+    return now;
+  }
 
   /**
    * Moves a block card — the lessons of a parallel block's members that stand
@@ -3503,10 +3537,21 @@ function toDateStringOrNull(value: Date | null): string | null {
   return value ? value.toISOString().slice(0, 10) : null;
 }
 
-/** `YYYY-MM-DD` (or null/undefined) to the midnight-UTC date a DATE column holds. */
+const DAY_FORM = /^\d{4}-\d{2}-\d{2}(?:T|$)/;
+
+/**
+ * `YYYY-MM-DD` (or null/undefined) to the midnight-UTC date a DATE column holds. A time of day after the date is let go, as it always was
+ * (the first ten characters are the day). What is no `YYYY-MM-DD` at the front is a 400 LESSON_DATE_FORM, and not the 500 it was: the
+ * validator the DTOs use takes the ISO 8601 forms `20260817`, `2026-W34-1` and `2026-229` as dates, and slicing ten characters of those
+ * built a date that is not one, which threw where the lesson was told back (granskaren g511, L-6).
+ */
 function parseDateOrNull(value: string | null | undefined): Date | null {
   if (value === null || value === undefined || value === '') return null;
-  return new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
+  const day = DAY_FORM.test(value) ? new Date(`${value.slice(0, 10)}T00:00:00.000Z`) : null;
+  if (day === null || Number.isNaN(day.getTime())) {
+    throw new BadRequestException({ message: 'startDate and endDate must be told as YYYY-MM-DD.', code: LESSON_DATE_FORM });
+  }
+  return day;
 }
 
 /** The same ids, whatever the order. */

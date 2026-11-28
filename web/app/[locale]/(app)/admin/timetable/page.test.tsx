@@ -411,6 +411,10 @@ vi.mock("@/components/schedule/swap-dialog", async () => {
   const { createElement } = await import("react");
   return {
     SwapDialog: ({ open }: { open: boolean }) => (open ? createElement("div", { role: "dialog" }, "swapDialogStub") : null),
+    // Byt and Gör plats (E5a): the list says what it was asked, and nothing else (its own rows are components/schedule/swap-proposals.test.tsx).
+    SwapProposals: ({ ask, guard }: { ask: unknown; guard?: unknown }) =>
+      createElement("div", { "data-testid": "proposals-stub", "data-ask": JSON.stringify(ask), "data-guard": typeof guard }),
+    SwapPairDialog: () => null,
   };
 });
 
@@ -2435,19 +2439,19 @@ describe("the selection's bar", () => {
     selectSlojd(container);
     await user.click(await screen.findByRole("button", { name: "timetable.bulkLock" }));
     await waitFor(() =>
-      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: true, propagate: false }),
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: true, propagate: false, expected: { isLocked: false } }),
     );
     expect(toasts.success).toHaveBeenCalledWith("timetable.bulkDone(1)");
 
     noMutation.mutateAsync.mockClear();
     await user.click(screen.getByRole("button", { name: "timetable.undo" }));
     await waitFor(() =>
-      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: false, propagate: false }),
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: false, propagate: false, expected: { isLocked: true } }),
     );
     noMutation.mutateAsync.mockClear();
     await user.click(screen.getByRole("button", { name: "timetable.redo" }));
     await waitFor(() =>
-      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: true, propagate: false }),
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: true, propagate: false, expected: { isLocked: false } }),
     );
 
     // Ta bort: the selection goes with the lessons it named.
@@ -2526,8 +2530,8 @@ describe("the tray", () => {
     await user.click(screen.getByRole("button", { name: "timetable.putBack" }));
 
     // Only the flag: the server reads the remembered day and time, and checks
-    // the slot like any placement — it may since have been taken.
-    expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isParked: false });
+    // the slot like any placement — it may since have been taken. It says what the page saw of the flag (E9).
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isParked: false, expected: { isParked: true } });
   });
 
   it("parks a lesson dropped onto it", () => {
@@ -2666,8 +2670,9 @@ describe("comparing a version with the timetable", () => {
     return screen.getByText("timetable.diffTitle(Före bytet)").parentElement!;
   }
 
+  // The word a screen reader hears before each entry is not part of the line the eye reads (↔ moved, ~ changed, + added, − removed).
   const lines = (diff: HTMLElement) =>
-    [...diff.querySelectorAll("li")].map((li) => li.textContent);
+    [...diff.querySelectorAll("li")].map((li) => li.textContent?.replace(/timetable\.diffKind\.[a-z]+: /, ""));
 
   it("sees a lesson that was on the tray then and is back at its hour now", async () => {
     saved(withSlojd(onTray).map(snapshotOf));
@@ -2675,12 +2680,9 @@ describe("comparing a version with the timetable", () => {
     const diff = await compare();
 
     expect(diff.textContent).not.toContain("timetable.diffIdentical");
-    // Named by the tray, not by the hour it remembers — the hour the placed
-    // one now holds, which would make the pair read as one lesson twice.
-    expect(lines(diff)).toEqual([
-      "+ Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek",
-      "− Slöjd · 5.1 · timetable.diffOnTray · K. Ek",
-    ]);
+    // One lesson that moved off the tray, named by the tray and not by the hour it remembers (E9: a move is one line, and not a removed
+    // lesson and an added one that read as the same lesson twice).
+    expect(lines(diff)).toEqual(["↔ Slöjd · timetable.diffOnTray → days.1 11:00–12:00"]);
   });
 
   it("sees a lesson that is on the tray now and was placed then", async () => {
@@ -2689,10 +2691,7 @@ describe("comparing a version with the timetable", () => {
 
     const diff = await compare();
 
-    expect(lines(diff)).toEqual([
-      "+ Slöjd · 5.1 · timetable.diffOnTray · K. Ek",
-      "− Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek",
-    ]);
+    expect(lines(diff)).toEqual(["↔ Slöjd · days.1 11:00–12:00 → timetable.diffOnTray"]);
   });
 
   it("does not count the hour a parked lesson remembers as a change", async () => {
@@ -2717,8 +2716,8 @@ describe("comparing a version with the timetable", () => {
 
     const diff = await compare();
 
-    expect(diff.textContent).toContain("timetable.diffRemoved(1)");
-    expect(diff.textContent).toContain("timetable.diffAdded(0)");
+    expect(diff.textContent).toContain("timetable.diffCount.removed(1)");
+    expect(diff.textContent).not.toContain("timetable.diffCount.added");
     expect(lines(diff)).toEqual(["− Matematik · 4ma1 · timetable.diffOnTray · K. Ek"]);
   });
 
@@ -2757,10 +2756,7 @@ describe("comparing a version with the timetable", () => {
 
     const diff = await compare();
 
-    expect(lines(diff)).toEqual([
-      "+ Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek · timetable.badgeOdd",
-      "− Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek",
-    ]);
+    expect(lines(diff)).toEqual(["~ Slöjd · days.1 11:00–12:00 · timetable.diffAspectWeeks: timetable.diffEveryWeek → timetable.badgeOdd"]);
   });
 
   it("sees a lesson's date window change, and prints the window", async () => {
@@ -2778,10 +2774,8 @@ describe("comparing a version with the timetable", () => {
     const diff = await compare();
 
     expect(lines(diff)).toEqual([
-      "+ Matematik · 4ma1 · days.1 08:00–09:00 · K. Ek",
-      "+ Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek · timetable.badgePeriod · 2026-08-17–2026-10-30",
-      "− Matematik · 4ma1 · days.1 08:00–09:00 · K. Ek · timetable.badgePeriod · timetable.diffUntil(2027-06-01)",
-      "− Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek · timetable.badgePeriod · timetable.diffFrom(2026-08-17)",
+      "~ Matematik · days.1 08:00–09:00 · timetable.diffAspectWeeks: timetable.badgePeriod · timetable.diffUntil(2027-06-01) → timetable.diffEveryWeek",
+      "~ Slöjd · days.1 11:00–12:00 · timetable.diffAspectWeeks: timetable.badgePeriod · timetable.diffFrom(2026-08-17) → timetable.badgePeriod · 2026-08-17–2026-10-30",
     ]);
   });
 
@@ -2829,10 +2823,8 @@ describe("comparing a version with the timetable", () => {
     const diff = await compare();
 
     expect(lines(diff)).toEqual([
-      "+ Matematik · 4ma1 · days.1 08:00–09:00 · N. Berg",
-      "+ Matematik · 4ma2 · days.1 09:00–10:00 · N. Berg · timetable.diffRoom(Verkstaden)",
-      "− Matematik · 4ma1 · days.1 08:00–09:00 · K. Ek",
-      "− Matematik · 4ma2 · days.1 09:00–10:00 · N. Berg · timetable.diffRoom(A1)",
+      "~ Matematik · days.1 08:00–09:00 · timetable.diffAspectTeacher: K. Ek → N. Berg",
+      "~ Matematik · days.1 09:00–10:00 · timetable.diffAspectRoom: A1 → Verkstaden",
     ]);
   });
 
@@ -2846,35 +2838,27 @@ describe("comparing a version with the timetable", () => {
     const diff = await compare();
 
     expect(lines(diff)).toEqual([
-      "+ Idrott · 4.2 + 4.1 + 5.1 · days.1 10:00–11:00 · K. Ek",
-      "+ Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek · timetable.diffCoTeacher(N. Berg)",
-      "− Idrott · 4.2 + 4.1 · days.1 10:00–11:00 · K. Ek",
-      "− Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek",
+      "~ Idrott · days.1 10:00–11:00 · timetable.diffAspectGroups: 4.2 + 4.1 → 4.2 + 4.1 + 5.1",
+      "~ Slöjd · days.1 11:00–12:00 · timetable.diffAspectCoTeacher: timetable.diffNobody → N. Berg",
     ]);
   });
 
   it("names the pupils where one was swapped for another", async () => {
-    // Counted, the pair would read "⊕1" on both sides.
+    // Counted, the change would read "1 pupil" on both sides: it is the names that say who came and who went.
     saved(withChanged({ "l-musik": { studentIds: ["p-bo"] } }).map(snapshotOf));
 
     const diff = await compare();
 
-    expect(lines(diff)).toEqual([
-      "+ Musik · 5.1 · days.1 12:00–13:00 · K. Ek · timetable.diffRoom(Verkstaden) · ⊕ Alva Elev",
-      "− Musik · 5.1 · days.1 12:00–13:00 · K. Ek · timetable.diffRoom(Verkstaden) · ⊕ Bo Elev",
-    ]);
+    expect(lines(diff)).toEqual(["~ Musik · days.1 12:00–13:00 · timetable.diffAspectPupils: +Alva Elev, −Bo Elev"]);
   });
 
-  it("only counts the pupils where something else tells the lines apart", async () => {
+  it("says a lesson with pupils that moved is one lesson that moved, and says nothing of its pupils", async () => {
     saved(LESSONS.map(snapshotOf));
     state.lessons = withChanged({ "l-musik": { startTime: "13:00", endTime: "14:00" } });
 
     const diff = await compare();
 
-    expect(lines(diff)).toEqual([
-      "+ Musik · 5.1 · days.1 13:00–14:00 · K. Ek · timetable.diffRoom(Verkstaden) · ⊕1",
-      "− Musik · 5.1 · days.1 12:00–13:00 · K. Ek · timetable.diffRoom(Verkstaden) · ⊕1",
-    ]);
+    expect(lines(diff)).toEqual(["↔ Musik · days.1 12:00–13:00 → days.1 13:00–14:00"]);
   });
 
   it("does not read the order of the classes or the pupils as a change", async () => {
@@ -4963,6 +4947,55 @@ describe("a numbered time the gateway offers in another room (E3)", () => {
     fireEvent.keyDown(drawn, { key: "Enter" });
     await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalled());
     expect(noMutation.mutateAsync.mock.calls.at(-1)![0]).not.toHaveProperty("roomId");
+  });
+});
+
+/*
+ * Byt and Gör plats (E5a) at a refused drop. The lists are the gateway's and have their own rows (components/schedule/swap-proposals.test.tsx); what is the
+ * page's to get wrong is what it hands the dialog: the lesson and the time it was let go on, the undo history's clearing, the question before Direkt. The
+ * list is asked in a dialog that is NOT modal while it is up, so that the board is in reach, and the year choice in the header is in reach too: the list
+ * belongs to the year it was asked in (its proposals name that year's lessons by id, and Tillämpa writes them), so a year chosen under it takes it away,
+ * as it takes the selection and the undo history.
+ */
+describe("Byt and Gör plats at a refused drop", () => {
+  const NEXT = {
+    id: "y-2",
+    name: "2027/28",
+    isActive: false,
+    predecessorId: "y-1",
+    startDate: "2027-08-16",
+    endDate: "2028-06-09",
+  };
+
+  async function refusedDropWithTheListUp(button: string) {
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}>
+        <TimetablePage />
+      </QueryClientProvider>,
+    );
+    // Slöjd onto Monday 08:00, which Matematik holds with the same teacher.
+    const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 260 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 62 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 62 });
+    await user.click(await screen.findByRole("button", { name: button }));
+    const list = await screen.findByTestId("proposals-stub");
+    return { user, list };
+  }
+
+  it("asks Gör plats for the lesson let go and the day and time it was let go on, and Byt for the same", async () => {
+    const { list } = await refusedDropWithTheListUp("swaps.dropOffers.room");
+    expect(JSON.parse(list.getAttribute("data-ask")!)).toMatchObject({ kind: "room", lessonId: "l-slojd", target: { dayOfWeek: 1, startMinutes: 480 } });
+    expect(list).toHaveAttribute("data-guard", "function");
+  });
+
+  it("goes with the year it was asked in", async () => {
+    planning.successor = NEXT;
+    const { user } = await refusedDropWithTheListUp("swaps.dropOffers.swap");
+    await user.click(screen.getByRole("button", { name: "planningYear.optionNext(2027/28)" }));
+    await waitFor(() => expect(screen.queryByTestId("proposals-stub")).toBeNull());
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 

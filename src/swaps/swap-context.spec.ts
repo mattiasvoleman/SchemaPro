@@ -400,3 +400,71 @@ describe('inTheWay: a room several lessons may share', () => {
     expect(asked(ctx).lessons.map((entry) => entry.id).sort()).toEqual(['sameClass', 'sameTeacher']);
   });
 });
+
+/*
+ * E5a: landingsClash is inTheWay asked of a pair. Gör plats lets two units move at once, and the index only knows where lessons stood,
+ * so the pair has its own function; this holds the two to one answer, for every lesson against every other at every half hour, in
+ * the schools where the rules differ: the pupils' minutes before and after, a pupil in two groups, alternating weeks, a week no one
+ * sits, and a room the school lets several lessons share.
+ */
+describe('landingsClash: the pair, and the index, say the same', () => {
+  const sameAnswers = (ctx: SwapContext): number => {
+    let pairs = 0;
+    let clashing = 0;
+    const differ: string[] = [];
+    const lessons = [...ctx.lessonById.values()];
+    for (const mover of lessons) {
+      for (let day = 1; day <= 5; day++) {
+        for (let start = 450; start <= 780; start += 30) {
+          const landing = { lesson: mover, to: { dayOfWeek: day, startMinutes: start, endMinutes: start + (mover.endMinutes - mover.startMinutes) } };
+          const holding = new Set(ctx.inTheWay(landing, new Set([mover.id])).lessons.map((entry) => entry.id));
+          for (const other of lessons) {
+            if (other.id === mover.id) continue;
+            const answer = ctx.landingsClash(landing, { lesson: other, to: { dayOfWeek: other.dayOfWeek, startMinutes: other.startMinutes, endMinutes: other.endMinutes } });
+            if (answer !== holding.has(other.id)) differ.push(`${mover.id} at ${day}|${start} against ${other.id}`);
+            pairs += 1;
+            if (answer) clashing += 1;
+          }
+        }
+      }
+    }
+    expect(differ).toEqual([]);
+    // Not a vacuous pass: the schools below hold lessons that clash and lessons that do not.
+    expect(clashing).toBeGreaterThan(10);
+    expect(clashing).toBeLessThan(pairs);
+    return pairs;
+  };
+
+  it('in the busy school, as it stands', () => {
+    for (const seed of [3, 11]) expect(sameAnswers(new SwapContext(makeWorld({ seed }).data))).toBeGreaterThan(500);
+  });
+
+  it('with the pupils’ minutes before and after, alternating weeks and a pupil who is in two groups', () => {
+    const lessons = [
+      lesson('idrott', 'c1', 1, 480, { subjectId: 'idh', teacherId: 'T1', roomId: 'R1' }),
+      lesson('ma', 'c1', 1, 600, { subjectId: 'ma', teacherId: 'T2', roomId: 'R2' }),
+      lesson('odd', 'c2', 2, 540, { recurrence: 'ODD_WEEKS', teacherId: 'T1', roomId: 'R1' }),
+      lesson('even', 'c3', 2, 540, { recurrence: 'EVEN_WEEKS', teacherId: 'T1', roomId: 'R1' }),
+      lesson('tg', 'tg', 3, 540, { teacherId: 'T3', roomId: 'R3' }),
+      lesson('c1b', 'c1', 3, 600, { teacherId: 'T4', roomId: 'R4', coTeacherId: 'T3' }),
+      lesson('c2b', 'c2', 4, 480, { teacherId: 'T3', roomId: 'R3', extraGroupIds: ['c1'] }),
+    ];
+    const posts = [{ studentGroupId: 'c1', subjectId: 'idh', blockId: null, minutesBefore: 10, minutesAfter: 20, distribution: { maxLessonsPerDay: null, minDaysBetween: null } }];
+    const rosters = { ...base.data.rosters, groupsByStudent: new Map([['p1', new Set(['c1', 'tg'])]]) };
+    const groups = [...base.data.groups, { id: 'tg', name: 'Spanska', kind: 'TEACHING_GROUP' as const, halfOfId: null, replacesSubjectId: null, gradeLevel: 7 }];
+    expect(sameAnswers(context(lessons, { posts, rosters, groups }))).toBeGreaterThan(100);
+  });
+
+  it('with a week no one sits and a room several lessons may share', () => {
+    const closed = { from: '2026-08-15', to: '2027-06-11', mondays: new Set(['2026-12-28']) };
+    const lessons = [
+      lesson('autumn', 'c1', 2, 540, { teacherId: 'T', roomId: 'HALL', endDate: '2027-01-01' }),
+      lesson('spring', 'c2', 2, 540, { teacherId: 'T', roomId: 'HALL', startDate: '2026-12-28' }),
+      lesson('open', 'c3', 2, 540, { teacherId: 'T', roomId: 'HALL', endDate: '2027-01-08' }),
+      lesson('hall1', 'c4', 3, 540, { roomId: 'HALL' }),
+      lesson('hall2', 'c5', 3, 540, { roomId: 'HALL' }),
+      lesson('same', 'c1', 3, 540, { teacherId: 'T9', roomId: 'HALL' }),
+    ];
+    expect(sameAnswers(new SwapContext({ ...base.data, lessons, posts: [] }, { closedWeeks: closed, sharedRooms: new Set(['HALL']) }))).toBeGreaterThan(100);
+  });
+});

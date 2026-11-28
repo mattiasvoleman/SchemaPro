@@ -55,6 +55,33 @@ describe('Byten och flyttar (e2e)', () => {
       await request(http()).post('/api/v1/swaps/suggest').set('x-test-user', admin()).send({ lessonId: A }).expect(404);
     });
 
+    // E5a: Gör plats is asked with a time, and a brick only with one. The door says no to a body that is none of that, before the service.
+    it('refuses a makeRoom that is not a school day, a clock and a depth of one to three, and a brick with no time, before anything is read', async () => {
+      const brick = { academicYearId: YEAR_ID, studentGroupId: A, subjectId: B, minutes: 60 };
+      const bad = [
+        { lessonId: A, makeRoom: { dayOfWeek: 6, startTime: '08:00' } },
+        { lessonId: A, makeRoom: { dayOfWeek: 0, startTime: '08:00' } },
+        { lessonId: A, makeRoom: { dayOfWeek: 1, startTime: '8:00' } },
+        { lessonId: A, makeRoom: { dayOfWeek: 1, startTime: '24:00' } },
+        { lessonId: A, makeRoom: { dayOfWeek: 1, startTime: '08:00', depth: 4 } },
+        { lessonId: A, makeRoom: { dayOfWeek: 1, startTime: '08:00', depth: 0 } },
+        { lessonId: A, makeRoom: { dayOfWeek: 1, startTime: '08:00', extra: 1 } },
+        { lessonId: A, brick, makeRoom: { dayOfWeek: 1, startTime: '08:00' } },
+        { brick },
+        { brick: { ...brick, minutes: 2 }, makeRoom: { dayOfWeek: 1, startTime: '08:00' } },
+      ];
+      for (const body of bad) {
+        await request(http()).post('/api/v1/swaps/suggest').set('x-test-user', admin()).send(body).expect(400);
+      }
+      expect(harness.tx['masterLesson']!['findUnique']).not.toHaveBeenCalled();
+    });
+
+    it('reaches the handler with makeRoom for an administrator: a lesson on the tray is a lesson to lay, and answers 404 when it is not there', async () => {
+      harness.tx['masterLesson']!['findUnique']!.mockResolvedValue(null);
+      await request(http()).post('/api/v1/swaps/suggest').set('x-test-user', admin()).send({ lessonId: A, makeRoom: { dayOfWeek: 2, startTime: '09:00' } }).expect(404);
+      expect(harness.tx['masterLesson']!['findUnique']).toHaveBeenCalled();
+    });
+
     it('reaches the handler for an administrator: a lesson on the tray has nothing to offer, and says why', async () => {
       harness.tx['masterLesson']!['findUnique']!.mockResolvedValue({ id: A, academicYearId: YEAR_ID, isParked: true });
       const response = await request(http()).post('/api/v1/swaps/suggest').set('x-test-user', admin()).send({ lessonId: A }).expect(200);
@@ -128,6 +155,58 @@ describe('Byten och flyttar (e2e)', () => {
         .expect(409);
       expect(response.body).toMatchObject({ code: 'SWAP_STALE' });
       expect(harness.tx['masterLesson']!['updateMany']).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /api/v1/swaps/pair', () => {
+    it('is the scheduler’s: a teacher and a signed-out caller are refused', async () => {
+      await request(http()).post('/api/v1/swaps/pair').send({ lessonId: A, otherLessonId: B }).expect(401);
+      await request(http())
+        .post('/api/v1/swaps/pair')
+        .set('x-test-user', asUser({ role: 'TEACHER' as never }))
+        .send({ lessonId: A, otherLessonId: B })
+        .expect(403);
+    });
+
+    it('refuses what is not two lesson ids, before the service', async () => {
+      for (const body of [{}, { lessonId: A }, { lessonId: A, otherLessonId: 'nope' }, { lessonId: 'nope', otherLessonId: B }, { lessonId: A, otherLessonId: B, extra: 1 }]) {
+        await request(http()).post('/api/v1/swaps/pair').set('x-test-user', admin()).send(body).expect(400);
+      }
+      expect(harness.tx['masterLesson']!['findMany']).not.toHaveBeenCalled();
+    });
+
+    it('reaches the handler for an administrator: the same lesson twice is the service’s 400, a lesson that is not there is 404', async () => {
+      await request(http()).post('/api/v1/swaps/pair').set('x-test-user', admin()).send({ lessonId: A, otherLessonId: A }).expect(400);
+      harness.tx['masterLesson']!['findMany']!.mockResolvedValue([]);
+      await request(http()).post('/api/v1/swaps/pair').set('x-test-user', admin()).send({ lessonId: A, otherLessonId: B }).expect(404);
+      expect(harness.tx['masterLesson']!['findMany']).toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /api/v1/swaps/apply, the additions of E5a', () => {
+    it('refuses what names the other lesson of a swap of two, or a brick, wrongly, before the service', async () => {
+      const bad = [
+        { lessonId: A, alsoPicked: 'nope', moves: [move(A, 1, 2), move(B, 2, 1)] },
+        { lessonId: A, alsoPicked: ['nope'], moves: [move(A, 1, 2), move(B, 2, 1)] },
+        { lessonId: A, forBrick: 'yes', moves: [move(A, 1, 2)] },
+        { forBrick: true, moves: [] },
+        { moves: [move(A, 1, 2), move(B, 2, 1)] },
+      ];
+      for (const body of bad) {
+        await request(http()).post('/api/v1/swaps/apply').set('x-test-user', admin()).send(body).expect(400);
+      }
+      expect(harness.tx['masterLesson']!['updateMany']).not.toHaveBeenCalled();
+    });
+
+    it('takes one move for a lesson that stands nowhere, and the service answers SWAP_STALE when it is not there to move', async () => {
+      harness.tx.$queryRaw.mockResolvedValue([{ mode: 'DIRECT' }]);
+      harness.tx['masterLesson']!['findMany']!.mockResolvedValue([]);
+      const response = await request(http()).post('/api/v1/swaps/apply').set('x-test-user', admin()).send({ forBrick: true, moves: [move(A, 1, 2)] }).expect(409);
+      expect(response.body).toMatchObject({ code: 'SWAP_STALE' });
+      // Without forBrick one move is no swap, and nothing is read for it.
+      harness.tx['masterLesson']!['findMany']!.mockClear();
+      await request(http()).post('/api/v1/swaps/apply').set('x-test-user', admin()).send({ lessonId: A, moves: [move(A, 1, 2)] }).expect(400);
+      expect(harness.tx['masterLesson']!['findMany']).not.toHaveBeenCalled();
     });
   });
 });

@@ -465,7 +465,8 @@ describe('the roster-reader inventory', () => {
       // Byten och flyttar (G1): the suggestion reads the year's pupils through
       // its basis for the clash rule, the pupils' håltimmar and the frames'
       // grade spans, and the apply asks the clash rule again under its row
-      // locks, so a year two steps ahead is refused there as a hand edit is.
+      // locks, so a year two steps ahead is refused there as a hand edit is. Byt plats (E5a, SwapsController.pair) reads the same snapshot
+      // for the swap of two marked lessons and judges both as one move, so it answers the same 409 for the same year.
       //
       // Klasslärarens schema holds a draft to the clash rule of a hand edit
       // (MasterLessonsService.findConflicts) whenever the page asks for its
@@ -589,6 +590,7 @@ describe('the roster-reader inventory', () => {
         'StaffingWeekController.weekOfProposal',
         'SuggestionsController.start',
         'SwapsController.apply',
+        'SwapsController.pair',
         'SwapsController.suggest',
         'TeachingBlocksController.update',
         'TeachingRequirementsController.create',
