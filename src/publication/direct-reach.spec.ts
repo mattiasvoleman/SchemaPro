@@ -75,6 +75,15 @@ describe('requireDirectReachAnswered: the guard of a write that moved or removed
     });
   });
 
+  it('carries what the write says of its own reach on the refusal, as flat numbers beside the period', async () => {
+    tx.$queryRaw.mockResolvedValue([row()]);
+    await expect(
+      requireDirectReachAnswered(tx as never, { academicYearId: YEAR, mode: 'DIRECT', reached: 4, detail: { removed: 4, handChanged: 1 } }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ params: { validFrom: '2026-08-01', validTo: '2027-06-11', removed: 4, handChanged: 1 } }),
+    });
+  });
+
   it('lets a change through that the school has answered for, and one in a year no publication holds', async () => {
     tx.$queryRaw.mockResolvedValue([row({ answered: true, acknowledgedAt: new Date('2026-08-02T10:00:00Z') })]);
     await expect(requireDirectReachAnswered(tx as never, { academicYearId: YEAR, mode: 'DIRECT', reached: 5 })).resolves.toBeUndefined();

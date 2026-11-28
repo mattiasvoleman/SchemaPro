@@ -955,6 +955,187 @@ describe('ScheduleVersionsService', () => {
     });
 
     /*
+     * DIRECT, and the year has published rows (E9, g520 M-3). The calendar rows hang on the masters by an ON DELETE SET NULL key, so a restore
+     * that deletes and recreates the masters strands them. The database probe (probe-aterstallning-direkt.ts) shows what the calendar looks like
+     * after; here is the order of the writes and what is asked of whom, which a faked client can hold.
+     */
+    describe('in Direkt, with published rows', () => {
+      const OLD_A = '10000000-0000-4000-8000-00000000000a';
+      const OLD_B = '10000000-0000-4000-8000-00000000000b';
+      const NEW_A = '20000000-0000-4000-8000-00000000000a';
+      const NEW_B = '20000000-0000-4000-8000-00000000000b';
+      const mondayRow = () => ({ id: OLD_A, ...masterLessonRow({ dayOfWeek: 1, extraGroups: [], participants: [] }) });
+      const fridayRow = () => ({ id: OLD_B, ...masterLessonRow({ dayOfWeek: 5, extraGroups: [], participants: [] }) });
+      /** A row of the table as a version holds it. */
+      const asVersionLesson = (row: ReturnType<typeof mondayRow>): VersionLesson => ({
+        subjectId: row.subjectId,
+        studentGroupId: row.studentGroupId,
+        teacherId: row.teacherId,
+        coTeacherId: row.coTeacherId,
+        roomId: row.roomId,
+        dayOfWeek: row.dayOfWeek,
+        startTime: '08:05',
+        endTime: '09:30',
+        isLocked: row.isLocked,
+        isGenerated: row.isGenerated,
+        isParked: row.isParked,
+        recurrence: row.recurrence,
+        startDate: null,
+        endDate: null,
+        extraGroupIds: [],
+        studentIds: [],
+      });
+      let rawSeen: string[];
+      const given = (input: {
+        mode?: 'DIRECT' | 'DRAFT';
+        calendarRows?: boolean;
+        answered?: boolean;
+        swept?: { removed: number; handChanged: number };
+        published?: boolean;
+      }) => {
+        rawSeen = [];
+        tx.$queryRaw.mockImplementation(async (query: { strings?: readonly string[] }) => {
+          const text = (query.strings ?? []).join('?');
+          rawSeen.push(text);
+          if (/enter_grundschema_write/.test(text)) return [{ mode: input.mode ?? 'DIRECT' }];
+          if (/direct_reach_facts/.test(text)) {
+            return input.published === false
+              ? []
+              : [
+                  {
+                    publishedAt: new Date('2026-08-01T10:00:00Z'),
+                    validFrom: new Date('2026-08-01T00:00:00Z'),
+                    validTo: new Date('2027-06-11T00:00:00Z'),
+                    acknowledgedAt: null,
+                    answered: input.answered ?? false,
+                  },
+                ];
+          }
+          if (/WITH swept AS/.test(text)) return [input.swept ?? { removed: 0, handChanged: 0 }];
+          return [];
+        });
+        tx.calendarLesson.findFirst.mockResolvedValue(input.calendarRows === false ? null : { id: 'row-1' });
+        tx.calendarLesson.deleteMany.mockResolvedValue({ count: input.swept?.removed ?? 0 });
+        let made = 0;
+        tx.masterLesson.create.mockImplementation(async () => ({ id: [NEW_A, NEW_B][made++] }));
+      };
+
+      it('makes the restored lessons first, moves the rows of a lesson that stays over to its new lesson, and only then deletes the old lessons', async () => {
+        arrangeRestore([asVersionLesson(mondayRow())]);
+        timetable([mondayRow(), fridayRow()]);
+        given({ swept: { removed: 40, handChanged: 3 }, answered: true });
+
+        const result = await service.restore(VERSION_ID, testUser());
+
+        expect(result).toEqual({
+          restoredLessons: 1,
+          safetyVersionId: SAFETY_ID,
+          // The relink's own count comes from the database; the faked client answers 0.
+          calendar: { kept: 0, removed: 40, handChanged: 3 },
+        });
+        // The relink is one statement, built with Prisma.sql: its first argument is the statement, with its values.
+        const relink = tx.$executeRaw.mock.calls.find((call) => ((call[0] as { strings?: readonly string[] }).strings ?? []).join('?').includes('UPDATE "CalendarLessons"'))!;
+        expect((relink[0] as { values: unknown[] }).values).toEqual([[OLD_A], [NEW_A]]);
+        // The old Friday lesson, which the version leaves out, loses its future rows; the old Monday lesson's are not asked for.
+        expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
+          where: expect.objectContaining({ masterLessonId: { in: [OLD_B] }, status: 'SCHEDULED', attendanceRecords: { none: {} } }),
+        });
+        // Both old lessons go, by id: the new lesson made above is in the same year and is not touched.
+        expect(tx.masterLesson.deleteMany).toHaveBeenCalledWith({ where: { academicYearId: YEAR_ID, id: { in: [OLD_A, OLD_B] } } });
+        const order = {
+          create: tx.masterLesson.create.mock.invocationCallOrder[0]!,
+          relink: tx.$executeRaw.mock.invocationCallOrder[tx.$executeRaw.mock.calls.indexOf(relink)]!,
+          sweep: tx.calendarLesson.deleteMany.mock.invocationCallOrder[0]!,
+          wipe: tx.masterLesson.deleteMany.mock.invocationCallOrder[0]!,
+        };
+        expect(order.create).toBeLessThan(order.relink);
+        expect(order.relink).toBeLessThan(order.sweep);
+        expect(order.sweep).toBeLessThan(order.wipe);
+      });
+
+      it('holds the old lessons FOR UPDATE before it makes the new ones or moves a row: a publication that has rows in flight under them is waited for, not stranded (g522)', async () => {
+        arrangeRestore([asVersionLesson(mondayRow())]);
+        timetable([mondayRow(), fridayRow()]);
+        given({ swept: { removed: 0, handChanged: 0 }, answered: true });
+
+        await service.restore(VERSION_ID, testUser());
+
+        const locked = tx.$queryRaw.mock.calls.findIndex((call) => ((call[0] as { strings?: readonly string[] }).strings ?? []).join('?').includes('FOR UPDATE'));
+        expect(locked).toBeGreaterThanOrEqual(0);
+        const lockOrder = tx.$queryRaw.mock.invocationCallOrder[locked]!;
+        const relink = tx.$executeRaw.mock.calls.findIndex((call) => ((call[0] as { strings?: readonly string[] }).strings ?? []).join('?').includes('UPDATE "CalendarLessons"'));
+        expect(lockOrder).toBeLessThan(tx.masterLesson.create.mock.invocationCallOrder[0]!);
+        expect(lockOrder).toBeLessThan(tx.$executeRaw.mock.invocationCallOrder[relink]!);
+        expect((tx.$queryRaw.mock.calls[locked]![0] as { values: unknown[] }).values).toEqual([YEAR_ID]);
+      });
+
+      it('writes what the calendar lost into the log of the restore', async () => {
+        arrangeRestore([asVersionLesson(mondayRow())]);
+        timetable([mondayRow(), fridayRow()]);
+        given({ swept: { removed: 40, handChanged: 3 }, answered: true });
+
+        await service.restore(VERSION_ID, testUser());
+
+        expect(tx.scheduleChangeLog.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ after: expect.objectContaining({ calendar: { kept: 0, removed: 40, handChanged: 3 } }) }),
+        });
+      });
+
+      it('asks the school before the old lessons go, and a refusal leaves them: the throw rolls the whole restore back', async () => {
+        arrangeRestore([asVersionLesson(mondayRow())]);
+        timetable([mondayRow(), fridayRow()]);
+        given({ swept: { removed: 40, handChanged: 3 }, answered: false });
+
+        const error = await service.restore(VERSION_ID, testUser()).catch((thrown: unknown) => thrown);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({
+          code: 'DIRECT_REACH_UNANSWERED',
+          params: { validFrom: '2026-08-01', validTo: '2027-06-11', removed: 40, handChanged: 3 },
+        });
+        expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+        expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
+      });
+
+      it('asks nothing when the restore takes no published lesson off the calendar, whatever the school has answered', async () => {
+        arrangeRestore([asVersionLesson(mondayRow()), asVersionLesson(fridayRow())]);
+        timetable([mondayRow(), fridayRow()]);
+        given({ swept: { removed: 0, handChanged: 0 }, answered: false });
+
+        await expect(service.restore(VERSION_ID, testUser())).resolves.toMatchObject({ calendar: { removed: 0, handChanged: 0 } });
+        expect(rawSeen.some((text) => /direct_reach_facts/.test(text))).toBe(false);
+        expect(tx.masterLesson.deleteMany).toHaveBeenCalled();
+      });
+
+      it('does not touch the calendar in utkast: the published rows stay until a publication settles them', async () => {
+        arrangeRestore([asVersionLesson(mondayRow())]);
+        timetable([mondayRow(), fridayRow()]);
+        given({ mode: 'DRAFT' });
+
+        const result = await service.restore(VERSION_ID, testUser());
+
+        expect(result).toEqual({ restoredLessons: 1, safetyVersionId: SAFETY_ID });
+        expect(tx.calendarLesson.findFirst).not.toHaveBeenCalled();
+        expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+        expect(tx.masterLesson.deleteMany).toHaveBeenCalledWith({ where: { academicYearId: YEAR_ID } });
+        const wipe = tx.masterLesson.deleteMany.mock.invocationCallOrder[0]!;
+        expect(wipe).toBeLessThan(tx.masterLesson.create.mock.invocationCallOrder[0]!);
+      });
+
+      it('replaces the timetable as ever when the year has no published rows to carry', async () => {
+        arrangeRestore([asVersionLesson(mondayRow())]);
+        timetable([mondayRow()]);
+        given({ calendarRows: false });
+
+        const result = await service.restore(VERSION_ID, testUser());
+
+        expect(result).toEqual({ restoredLessons: 1, safetyVersionId: SAFETY_ID });
+        expect(tx.masterLesson.deleteMany).toHaveBeenCalledWith({ where: { academicYearId: YEAR_ID } });
+        expect(rawSeen.some((text) => /direct_reach_facts|WITH swept AS/.test(text))).toBe(false);
+      });
+    });
+
+    /*
      * A restore replaces the whole year, so it queues with Generera's persist
      * and a schemaförslag apply on the year's regeneration lock — second,
      * after the publication lock, the order every grundschema writer keeps.

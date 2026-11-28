@@ -21321,7 +21321,14 @@
         ],
         "responses": {
           "201": {
-            "description": "Created"
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"

@@ -8,9 +8,21 @@ import type { LessonRecurrence, Prisma, PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
-import { enterGrundschemaWrite, isLockTimeout } from '../publication/publish-mode';
+import { todayInZone } from '../common/utils/time';
+import { schoolTimezone } from '../cover/cover-context';
+import { requireDirectReachAnswered } from '../publication/direct-reach';
+import { enterGrundschemaWrite, isLockTimeout, type PublishMode } from '../publication/publish-mode';
 import { lockYearForRegeneration, scheduleBusy, SCHEDULE_BUSY } from '../optimization/regeneration-lock';
 import { exemptionsOf } from './lesson-exemption';
+import {
+  countSweep,
+  lockYearLessons,
+  pairTemplates,
+  relinkCalendarRows,
+  sweepCalendarRows,
+  yearHasCalendarRows,
+  type TemplateFields,
+} from './restore-calendar';
 
 /**
  * One lesson inside a version snapshot (times as `HH:MM`, dates as
@@ -110,6 +122,26 @@ export interface VersionLesson {
   studentIds?: string[];
 }
 
+/**
+ * What a restore did to the published calendar (Direkt only; absent when the year had no calendar rows to carry, and in Utkast, where the
+ * published rows stay until a publication settles them): the rows that went with their lesson to the restored one, the rows taken off the
+ * calendar, and how many of those somebody had worked on by hand. restore-calendar.ts says why.
+ */
+export type RestoredCalendar = {
+  kept: number;
+  removed: number;
+  handChanged: number;
+};
+
+/** A version's lesson with its two clocks parsed, as the restore writes it. */
+type RestoreRow = Omit<VersionLesson, 'startTime' | 'endTime'> & { startTime: Date; endTime: Date };
+
+export interface RestoreResult {
+  restoredLessons: number;
+  safetyVersionId: string;
+  calendar?: RestoredCalendar;
+}
+
 export interface ScheduleVersionSummary {
   id: string;
   academicYearId: string;
@@ -193,15 +225,13 @@ export class ScheduleVersionsService {
     });
   }
 
-  async restore(
-    versionId: string,
-    user: AuthenticatedUser,
-  ): Promise<{ restoredLessons: number; safetyVersionId: string }> {
+  async restore(versionId: string, user: AuthenticatedUser): Promise<RestoreResult> {
     return this.prisma.withRls(user, async (tx) => {
-      // The publication lock and the mode, first (publish-mode.ts). A restore
-      // writes no calendar row in either mode; in DRAFT the delete below records
-      // the published rows of the replaced masters for the next publish.
-      await enterGrundschemaWrite(tx, requireSchoolId(user));
+      // The publication lock and the mode, first (publish-mode.ts). In DRAFT the
+      // delete below records the published rows of the replaced masters for the
+      // next publish, and the restore writes no calendar row. In DIRECT it
+      // carries the restore to the calendar itself (restore-calendar.ts).
+      const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
       const version = await tx.scheduleVersion.findUnique({
         where: { id: versionId },
         select: {
@@ -225,7 +255,7 @@ export class ScheduleVersionsService {
       // because it is what names the year; versions are never edited.
       await lockYearForRegeneration(tx, version.academicYearId, SCHEDULE_BUSY);
       try {
-        return await this.replaceWithVersion(tx, version, user);
+        return await this.replaceWithVersion(tx, version, user, mode);
       } catch (error) {
         // The 5 s holds for the rest of the transaction; a row a hand edit
         // holds past it is the same answer.
@@ -240,7 +270,8 @@ export class ScheduleVersionsService {
     tx: PrismaClient,
     version: { id: string; schoolId: string; academicYearId: string; name: string; lessons: Prisma.JsonValue },
     user: AuthenticatedUser,
-  ): Promise<{ restoredLessons: number; safetyVersionId: string }> {
+    mode: PublishMode,
+  ): Promise<RestoreResult> {
     // Safety net: snapshot the current timetable before replacing it.
     const safety = await this.snapshotInTransaction(
       tx,
@@ -266,46 +297,19 @@ export class ScheduleVersionsService {
       endTime: parseHHMM(lesson.endTime),
     }));
 
-    await tx.masterLesson.deleteMany({
-      where: { academicYearId: version.academicYearId },
-    });
-    for (const lesson of rows) {
-      await tx.masterLesson.create({
-        data: {
-          schoolId: version.schoolId,
-          academicYearId: version.academicYearId,
-          subjectId: lesson.subjectId,
-          studentGroupId: lesson.studentGroupId,
-          teacherId: lesson.teacherId,
-          coTeacherId: lesson.coTeacherId ?? null,
-          roomId: lesson.roomId,
-          dayOfWeek: lesson.dayOfWeek,
-          startTime: lesson.startTime,
-          endTime: lesson.endTime,
-          isLocked: lesson.isLocked,
-          // See VersionLesson.isGenerated for why an absent key is false.
-          isGenerated: lesson.isGenerated ?? false,
-          // See VersionLesson.fromPlacement.
-          fromPlacement: lesson.fromPlacement ?? false,
-          // See VersionLesson.isParked for why an absent key is false.
-          isParked: lesson.isParked ?? false,
-          // See VersionLesson.exemptFrom: only the names the table knows (its CHECK), the way a row is written.
-          ...(exemptionsOf(lesson.exemptFrom).length > 0 ? { exemptFrom: exemptionsOf(lesson.exemptFrom) } : {}),
-          recurrence: lesson.recurrence ?? 'ALL_WEEKS',
-          startDate: parseDateOrNull(lesson.startDate),
-          endDate: parseDateOrNull(lesson.endDate),
-          extraGroups: {
-            create: (lesson.extraGroupIds ?? []).map((studentGroupId) => ({
-              studentGroupId,
-            })),
-          },
-          participants: {
-            create: (lesson.studentIds ?? []).map((studentId) => ({
-              studentId,
-            })),
-          },
-        },
+    // Direkt, and the year has published rows: the restore is carried to the
+    // calendar in this transaction (restore-calendar.ts). Otherwise the
+    // timetable is replaced as it always was.
+    let calendar: RestoredCalendar | undefined;
+    if (mode === 'DIRECT' && (await yearHasCalendarRows(tx, version.academicYearId))) {
+      calendar = await this.replaceCarryingCalendar(tx, version, rows);
+    } else {
+      await tx.masterLesson.deleteMany({
+        where: { academicYearId: version.academicYearId },
       });
+      for (const lesson of rows) {
+        await tx.masterLesson.create({ data: masterLessonData(version, lesson) });
+      }
     }
 
     await tx.scheduleChangeLog.create({
@@ -319,15 +323,107 @@ export class ScheduleVersionsService {
           versionName: version.name,
           restoredLessons: lessons.length,
           safetyVersionId: safety.id,
+          ...(calendar ? { calendar } : {}),
         },
       },
     });
 
     this.logger.log(
-      `Schedule version restored [version=${version.id}, lessons=${lessons.length}]`,
+      `Schedule version restored [version=${version.id}, lessons=${lessons.length}${
+        calendar ? `, calendarKept=${calendar.kept}, calendarRemoved=${calendar.removed}` : ''
+      }]`,
     );
 
-    return { restoredLessons: lessons.length, safetyVersionId: safety.id };
+    return { restoredLessons: lessons.length, safetyVersionId: safety.id, ...(calendar ? { calendar } : {}) };
+  }
+
+  /**
+   * DIRECT's restore of a year that has published rows: the new masters are made
+   * first, so the rows of a lesson the version holds unchanged can move over to
+   * it before the old masters are deleted (their SET NULL would otherwise strand
+   * every row); the rows of the lessons it changes or drops are swept; the school
+   * is asked as any change in Direkt that reaches families asks; then the old
+   * masters go. See restore-calendar.ts.
+   */
+  private async replaceCarryingCalendar(
+    tx: PrismaClient,
+    version: { id: string; schoolId: string; academicYearId: string },
+    rows: ReadonlyArray<RestoreRow>,
+  ): Promise<RestoredCalendar> {
+    // Before the lessons are read and before a row moves: a publication in Direkt takes no lock on the year (restore-calendar.ts).
+    await lockYearLessons(tx, version.academicYearId);
+    const current = await tx.masterLesson.findMany({
+      where: { academicYearId: version.academicYearId },
+      select: {
+        id: true,
+        subjectId: true,
+        studentGroupId: true,
+        teacherId: true,
+        coTeacherId: true,
+        roomId: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+        isParked: true,
+        recurrence: true,
+        startDate: true,
+        endDate: true,
+        extraGroups: { select: { studentGroupId: true } },
+        participants: { select: { studentId: true } },
+      },
+    });
+    const pairing = pairTemplates(
+      current.map((lesson) => ({
+        id: lesson.id,
+        subjectId: lesson.subjectId,
+        studentGroupId: lesson.studentGroupId,
+        teacherId: lesson.teacherId,
+        coTeacherId: lesson.coTeacherId,
+        roomId: lesson.roomId,
+        dayOfWeek: lesson.dayOfWeek,
+        startTime: toHHMM(lesson.startTime),
+        endTime: toHHMM(lesson.endTime),
+        isParked: lesson.isParked,
+        recurrence: lesson.recurrence,
+        startDate: toDateStringOrNull(lesson.startDate),
+        endDate: toDateStringOrNull(lesson.endDate),
+        extraGroupIds: lesson.extraGroups.map((entry) => entry.studentGroupId),
+        studentIds: lesson.participants.map((entry) => entry.studentId),
+      })),
+      rows.map(templateOfRow),
+    );
+
+    const createdIds: string[] = [];
+    for (const lesson of rows) {
+      const created = await tx.masterLesson.create({
+        data: masterLessonData(version, lesson),
+        select: { id: true },
+      });
+      createdIds.push(created.id);
+    }
+
+    const kept = await relinkCalendarRows(
+      tx,
+      pairing.from.flatMap((from, index) => (from === null ? [] : [{ from, to: createdIds[index]! }])),
+    );
+
+    // The school's today, as Generera's sweep reads it (regenerationSweepDay).
+    const today = todayInZone(await schoolTimezone(tx, version.schoolId));
+    const { removed, handChanged } = await countSweep(tx, pairing.replaced, today);
+    await sweepCalendarRows(tx, pairing.replaced, today);
+    // Published lessons taken off the calendar reach families: asked of the school
+    // once, and the throw rolls the restore back whole, the safety version too.
+    await requireDirectReachAnswered(tx, {
+      academicYearId: version.academicYearId,
+      mode: 'DIRECT',
+      reached: removed,
+      detail: { removed, handChanged },
+    });
+
+    await tx.masterLesson.deleteMany({
+      where: { academicYearId: version.academicYearId, id: { in: current.map((lesson) => lesson.id) } },
+    });
+    return { kept, removed, handChanged };
   }
 
   async remove(versionId: string, user: AuthenticatedUser): Promise<{ id: string }> {
@@ -450,6 +546,67 @@ export class ScheduleVersionsService {
 }
 
 // ---------------------------------------------------------------------------
+
+/** One restored lesson as the table takes it. */
+function masterLessonData(
+  version: { schoolId: string; academicYearId: string },
+  lesson: RestoreRow,
+): Prisma.MasterLessonUncheckedCreateInput {
+  return {
+    schoolId: version.schoolId,
+    academicYearId: version.academicYearId,
+    subjectId: lesson.subjectId,
+    studentGroupId: lesson.studentGroupId,
+    teacherId: lesson.teacherId,
+    coTeacherId: lesson.coTeacherId ?? null,
+    roomId: lesson.roomId,
+    dayOfWeek: lesson.dayOfWeek,
+    startTime: lesson.startTime,
+    endTime: lesson.endTime,
+    isLocked: lesson.isLocked,
+    // See VersionLesson.isGenerated for why an absent key is false.
+    isGenerated: lesson.isGenerated ?? false,
+    // See VersionLesson.fromPlacement.
+    fromPlacement: lesson.fromPlacement ?? false,
+    // See VersionLesson.isParked for why an absent key is false.
+    isParked: lesson.isParked ?? false,
+    // See VersionLesson.exemptFrom: only the names the table knows (its CHECK), the way a row is written.
+    ...(exemptionsOf(lesson.exemptFrom).length > 0 ? { exemptFrom: exemptionsOf(lesson.exemptFrom) } : {}),
+    recurrence: lesson.recurrence ?? 'ALL_WEEKS',
+    startDate: parseDateOrNull(lesson.startDate),
+    endDate: parseDateOrNull(lesson.endDate),
+    extraGroups: {
+      create: (lesson.extraGroupIds ?? []).map((studentGroupId) => ({
+        studentGroupId,
+      })),
+    },
+    participants: {
+      create: (lesson.studentIds ?? []).map((studentId) => ({
+        studentId,
+      })),
+    },
+  };
+}
+
+/** A restored lesson as restore-calendar.ts compares it with a lesson the year holds: absent keys read the way the restore reads them. */
+function templateOfRow(lesson: RestoreRow): TemplateFields {
+  return {
+    subjectId: lesson.subjectId,
+    studentGroupId: lesson.studentGroupId,
+    teacherId: lesson.teacherId,
+    coTeacherId: lesson.coTeacherId ?? null,
+    roomId: lesson.roomId,
+    dayOfWeek: lesson.dayOfWeek,
+    startTime: toHHMM(lesson.startTime),
+    endTime: toHHMM(lesson.endTime),
+    isParked: lesson.isParked ?? false,
+    recurrence: lesson.recurrence ?? 'ALL_WEEKS',
+    startDate: toDateStringOrNull(parseDateOrNull(lesson.startDate)),
+    endDate: toDateStringOrNull(parseDateOrNull(lesson.endDate)),
+    extraGroupIds: lesson.extraGroupIds ?? [],
+    studentIds: lesson.studentIds ?? [],
+  };
+}
 
 function toHHMM(time: Date): string {
   const h = time.getUTCHours().toString().padStart(2, '0');
