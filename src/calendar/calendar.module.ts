@@ -28,6 +28,7 @@ import { ScheduleVersionsService } from './schedule-versions.service';
   // The room optimisation snapshots the year inside its own apply transaction;
   // the cover board builds on the day operations (CoverModule).
   // The timetable import holds a file's lessons to the hand edit's clash rule.
-  exports: [ScheduleVersionsService, CalendarService, CalendarLessonsService, MasterLessonsService],
+  // Lägg det som går (board-fill) asks E3's question brick by brick and builds its world with the service's own reads.
+  exports: [ScheduleVersionsService, CalendarService, CalendarLessonsService, MasterLessonsService, PossibleTimesService],
 })
 export class CalendarModule {}

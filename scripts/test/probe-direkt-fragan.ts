@@ -21,7 +21,9 @@
  *   (e) a switch of mode takes the answer back, both ways, and the question is asked again in Direkt;
  *   (f) the view counts the school's pupils and the guardians linked to an active one, and no other school's;
  *   (g) a läsare cannot answer for the school (the settings row is the Publicering area's), and nothing is written;
- *   (h) a swap that reached published lessons is refused whole, its safety version rolled back with it, and goes once the school has answered.
+ *   (h) a swap that reached published lessons is refused whole, its safety version rolled back with it, and goes once the school has answered;
+ *   (i) att lägga (E4): a brick that is a parked lesson with calendar rows, laid back in a published period, is refused as a drag is and nothing is written
+ *       (g490 M-5); a brick that is no lesson yet reaches nobody; the answer lets the lay go, and the class is told.
  *
  * Each in a school of its own (slug <marker>-direkt-<n>), swept whole after, and before the first. The year is in 2096, so every day of
  * it lies ahead and nothing a check writes is ever "the past".
@@ -32,6 +34,7 @@ import { HttpException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
+import { BoardTrayService } from '../../src/board-tray/board-tray.service';
 import { CalendarService } from '../../src/calendar/calendar.service';
 import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
 import { ScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
@@ -155,6 +158,7 @@ function servicesOf(api: PrismaService, spy: Spy) {
   const masters = new MasterLessonsService(api, realtime, notifications);
   return {
     masters,
+    tray: new BoardTrayService(api, masters),
     swaps: new SwapsService(api, masters, new ScheduleVersionsService(api), realtime, notifications),
     publications: new PublicationsService(api, calendar, new TimplanCoverageService(api), new StaffingLoadService(api), notifications, realtime),
     drafts: new DraftService(api, calendar, new ScheduleVersionsService(api), realtime),
@@ -360,6 +364,71 @@ async function main(): Promise<void> {
         assert.ok(applied.propagatedLessons > 0, 'published lessons moved');
         assert.equal(await owner.scheduleVersion.count({ where: { schoolId: s.schoolId } }), 1, 'the safety version stands now');
         assert.ok(spy.sent.length > 0, 'the classes were told');
+      });
+    });
+
+    await check('(i) a lay that moves a parked lesson with calendar rows back is refused before the school has answered, and a brick that is no lesson reaches nobody', async () => {
+      await inSchool('i', async (s, spy, svc) => {
+        // A post of one lesson a week of its own subject, and its lesson on a Tuesday: published, it has calendar rows.
+        const subject = await owner.subject.create({ data: { schoolId: s.schoolId, name: `${MARKER}-i idrott` } });
+        const post = await owner.teachingRequirement.create({
+          data: { schoolId: s.schoolId, academicYearId: s.yearId, subjectId: subject.id, studentGroupId: s.groupId, teacherId: s.teacherId, lessonsPerWeek: 2, minutesPerLesson: 60 },
+        });
+        const tuesday = await owner.masterLesson.create({
+          data: { schoolId: s.schoolId, academicYearId: s.yearId, subjectId: subject.id, studentGroupId: s.groupId, teacherId: s.teacherId, dayOfWeek: 2, startTime: time('09:00'), endTime: time('10:00'), isLocked: true },
+        });
+        await publish(s, svc);
+        // The lesson is put on the tray the way the page puts it (a drag to the parking), which the school may have answered for; its rows stay.
+        await svc.reach.acknowledge(s.admin);
+        await svc.masters.update(tuesday.id, { isParked: true }, s.admin);
+        await owner.$executeRaw`UPDATE "PublicationSettings" SET "directReachAcknowledgedAt" = NULL WHERE "schoolId" = ${s.schoolId}::uuid`;
+        assert.equal(await answerOf(s), null, 'the question is open again');
+        spy.sent.length = 0; // the park itself told the class (the school had answered): the check starts from here
+        const told = (): string[] => spy.sent.map((notice) => notice.type);
+        const rowsBefore = await standing(tuesday.id);
+        assert.ok(rowsBefore.split('|')[1]!.length > 0, 'the parked lesson still has calendar rows');
+        const brickOf = async () => {
+          const bricks = (await svc.tray.trayOfYear(s.yearId, undefined, s.admin)).bricks.filter((brick) => brick.postId === post.id);
+          return bricks;
+        };
+        const parkedBrick = (await brickOf()).find((brick) => brick.lessonId === tuesday.id);
+        assert.ok(parkedBrick, 'the parked lesson is a brick of the post');
+        const lay = (brick: NonNullable<typeof parkedBrick>, day: number) =>
+          svc.tray.lay(
+            { academicYearId: s.yearId, postId: post.id, teacherId: s.teacherId, minutes: 60, partKey: brick.partKey, ...(brick.lessonId ? { lessonId: brick.lessonId } : {}), dayOfWeek: day, startTime: '09:00', roomId: null },
+            s.admin,
+          );
+        const parkedState = async () => {
+          const row = await owner.masterLesson.findUniqueOrThrow({ where: { id: tuesday.id }, select: { isParked: true, dayOfWeek: true, isLocked: true } });
+          return `${row.isParked}|${row.dayOfWeek}|${row.isLocked}`;
+        };
+        const stateBefore = await parkedState();
+        const logBefore = await owner.scheduleChangeLog.count({ where: { schoolId: s.schoolId } });
+        const refusal = await refusalOf(lay(parkedBrick!, 4));
+        assert.equal(refusal.code, 'DIRECT_REACH_UNANSWERED');
+        assert.deepEqual(refusal.params, { validFrom: YEAR_START, validTo: YEAR_END });
+        assert.equal(await parkedState(), stateBefore, 'the lesson is still on the tray, where it was');
+        assert.equal(await standing(tuesday.id), rowsBefore, 'the calendar rows have not moved');
+        assert.deepEqual(told(), [], 'nobody was told');
+        assert.equal(await owner.scheduleChangeLog.count({ where: { schoolId: s.schoolId } }), logBefore, 'the refused lay left no log row');
+
+        // The brick that is no lesson yet makes a new lesson, whose calendar rows come with the next generation of the calendar: nobody is reached,
+        // and nobody is asked.
+        const second = (await brickOf()).find((brick) => brick.lessonId === null);
+        assert.ok(second, 'the post has a second brick, which is no lesson yet');
+        const made = await lay(second!, 5);
+        assert.equal(made.lesson.dayOfWeek, 5);
+        assert.deepEqual(told(), [], 'a new lesson reached nobody');
+
+        // Once the school has answered, the same lay goes: the lesson is back on the grundschema, locked, its rows moved, the class told.
+        await svc.reach.acknowledge(s.admin);
+        const fresh = (await brickOf()).find((brick) => brick.lessonId === tuesday.id);
+        assert.ok(fresh, 'the parked lesson is still a brick');
+        const laid = await lay(fresh!, 4);
+        assert.equal(laid.noRoom, true);
+        assert.equal(await parkedState(), 'false|4|true');
+        assert.match(await standing(tuesday.id), /^4\|/);
+        assert.deepEqual(told(), ['SCHEDULE_CHANGED']);
       });
     });
   } finally {

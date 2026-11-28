@@ -77,19 +77,53 @@ function applyTx(
   return { tx, written, changeLog, calls };
 }
 
+/**
+ * PrismaService as far as a swap uses it: `withRls` runs the work and then, only if it did not throw, the hooks `onCommit` was given, as the
+ * real one runs them once the transaction has COMMITTED; a rolled-back run drops them unrun. `heard` is what a hook did and when.
+ */
+function committing() {
+  const hooks: Array<() => Promise<void>> = [];
+  const seen: { committed: boolean; hooksRegistered: number; sentAfterCommit?: boolean } = { committed: false, hooksRegistered: 0 };
+  const prisma = {
+    withRls: async (_user: unknown, run: (tx: unknown) => unknown, ..._rest: unknown[]) => {
+      hooks.length = 0;
+      seen.committed = false;
+      const result = await run(txOf.current);
+      seen.committed = true;
+      for (const hook of hooks.splice(0)) await hook();
+      return result;
+    },
+    onCommit: (_tx: unknown, hook: () => Promise<void>) => {
+      hooks.push(hook);
+      seen.hooksRegistered += 1;
+      return true;
+    },
+  };
+  return { prisma, seen };
+}
+/** The transaction the next `withRls` hands its work: one at a time, as the specs run one request at a time. */
+const txOf: { current: unknown } = { current: null };
+
 function build(world: World, tx: unknown) {
   (readSwapData as jest.Mock).mockResolvedValue(world.data);
   const snapshot = jest.fn(async () => ({ id: 'version-1' }));
-  const realtime = { notifyMasterTimetableChanged: jest.fn() };
+  const { prisma, seen } = committing();
+  txOf.current = tx;
+  // What the hook sees of the commit: said while the transaction is still open, it would say "false".
+  const realtime = {
+    notifyMasterTimetableChanged: jest.fn((..._args: unknown[]) => {
+      seen.sentAfterCommit = seen.committed;
+    }),
+  };
   const notifications = { recipientsForLessons: jest.fn(async () => ['pupil-1']), notifyUsers: jest.fn() };
   const swaps = new SwapsService(
-    { withRls: (_user: unknown, run: (tx: unknown) => unknown) => run(tx) } as never,
+    prisma as never,
     new MasterLessonsService({} as never, {} as never, {} as never),
     { snapshotInTransaction: snapshot } as never,
     realtime as never,
     notifications as never,
   );
-  return { swaps, snapshot, realtime, notifications };
+  return { swaps, snapshot, realtime, notifications, seen };
 }
 
 const body = (world: World, pairs: Array<[SwapLesson, SwapLesson]>, over: Record<string, unknown> = {}) => ({
@@ -127,7 +161,7 @@ describe('SwapsService.apply', () => {
   it('writes a proposal as one move: a safety version first, then every lesson, the calendar following, a log row each', async () => {
     const { lesson, swap } = await aGoodSwap(world);
     const { tx, written, changeLog, calls } = applyTx(world);
-    const { swaps, snapshot, realtime, notifications } = build(world, tx);
+    const { swaps, snapshot, realtime, notifications, seen } = build(world, tx);
     snapshot.mockImplementation(async () => {
       calls.push('snapshot');
       return { id: 'version-1' };
@@ -158,7 +192,10 @@ describe('SwapsService.apply', () => {
     expect(changeLog).toHaveLength(2);
     expect(changeLog[0]).toMatchObject({ action: 'UPDATE', schoolId: SCHOOL, academicYearId: YEAR });
     expect(propagateTemplateChange).toHaveBeenCalledTimes(2);
-    expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL);
+    // g465 L-3: said once the transaction has committed, and with the lessons that moved, so that a collaborator's page reads those and not the year.
+    expect(seen.sentAfterCommit).toBe(true);
+    expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+    expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL, { lessonIds: swap.moves.map((move) => move.lessonId).sort() });
     expect(notifications.notifyUsers).toHaveBeenCalledTimes(2);
     expect(result.versionId).toBe('version-1');
     expect(result.propagatedLessons).toBe(2);
@@ -224,7 +261,7 @@ describe('SwapsService.apply', () => {
     const draft = build(world, drafted.tx);
     await draft.swaps.apply({ ...request, propagate: undefined }, user);
     expect(propagateTemplateChange).not.toHaveBeenCalled();
-    expect(draft.realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL, { draft: true });
+    expect(draft.realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL, { draft: true, lessonIds: swap.moves.map((move) => move.lessonId).sort() });
   });
 
   it('P5: refuses a swap that moved published lessons before the school has answered the question about Direkt, and tells nobody', async () => {
@@ -745,5 +782,161 @@ describe('SwapsService.apply does not lock one card of a parallel block (g505, M
     expect(written).toHaveLength(3);
     for (const entry of written) expect(entry.data).toMatchObject({ isLocked: true });
     expect([...result.lockedLessonIds].sort()).toEqual([first.id, second.id, plain.id].sort());
+  });
+});
+
+describe('SwapsService.apply: the staff room is told after the commit, with the lessons that moved (g465 L-3)', () => {
+  const world = makeWorld({ seed: 7 });
+  const requestOf = (lessonId: string, moves: readonly SwapMove[]) => ({
+    lessonId,
+    moves: moves.map((move) => ({
+      lessonId: move.lessonId,
+      from: { dayOfWeek: move.from.dayOfWeek, startTime: clockOf(move.from.startMinutes), endTime: clockOf(move.from.endMinutes) },
+      to: { dayOfWeek: move.to.dayOfWeek, startTime: clockOf(move.to.startMinutes), endTime: clockOf(move.to.endMinutes) },
+    })),
+  });
+
+  beforeEach(() => {
+    (propagateTemplateChange as jest.Mock).mockClear();
+    directReach.facts = [];
+  });
+
+  it('says it once, when the transaction has committed, and says which lessons', async () => {
+    const { lesson, swap } = await aGoodSwap(world);
+    const { swaps, realtime, seen } = build(world, applyTx(world).tx);
+    await swaps.apply(requestOf(lesson.id, swap.moves), user);
+    expect(seen.hooksRegistered).toBe(1);
+    expect(seen.sentAfterCommit).toBe(true);
+    expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+    expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL, { lessonIds: swap.moves.map((move) => move.lessonId).sort() });
+  });
+
+  it('says nothing for a swap that rolled back after the point where it used to be said', async () => {
+    // The notice to the class comes after the old announcement: a failing one rolled the swap back, and the page had been told it moved.
+    const { lesson, swap } = await aGoodSwap(world);
+    const { swaps, realtime, notifications } = build(world, applyTx(world).tx);
+    notifications.notifyUsers.mockRejectedValueOnce(new Error('the notice failed'));
+    await expect(swaps.apply(requestOf(lesson.id, swap.moves), user)).rejects.toThrow('the notice failed');
+    expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
+  });
+
+  it('says it to the admins alone, and with the lessons, for a draft', async () => {
+    const { lesson, swap } = await aGoodSwap(world);
+    const drafted = applyTx(world);
+    drafted.tx.$queryRaw.mockResolvedValue([{ mode: 'DRAFT' }]);
+    const { swaps, realtime } = build(world, drafted.tx);
+    await swaps.apply(requestOf(lesson.id, swap.moves), user);
+    expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(SCHOOL, { draft: true, lessonIds: swap.moves.map((move) => move.lessonId).sort() });
+  });
+});
+
+describe('SwapsService.apply: a swap of two marked lessons, and the moves that make room for a lesson that stands nowhere (E5a)', () => {
+  const clock = (slot: { startMinutes: number; endMinutes: number }) => ({ startTime: clockOf(slot.startMinutes), endTime: clockOf(slot.endMinutes) });
+  const moveOf = (lesson: SwapLesson, to: { dayOfWeek: number; startMinutes: number; endMinutes: number }) => ({
+    lessonId: lesson.id,
+    from: { dayOfWeek: lesson.dayOfWeek, ...clock(lesson) },
+    to: { dayOfWeek: to.dayOfWeek, ...clock(to) },
+  });
+  beforeEach(() => {
+    (propagateTemplateChange as jest.Mock).mockClear();
+    directReach.facts = [];
+  });
+
+  it('lets two lessons the schemaläggare marked be locked, which only the picked one may be on a swap that was found for them', async () => {
+    const lockedBoth = makeWorld({ seed: 7 });
+    const { lesson, swap } = await aGoodSwap(makeWorld({ seed: 7 }));
+    const partnerId = swap.moves.find((move) => move.lessonId !== lesson.id)!.lessonId;
+    lockedBoth.data.lessons = lockedBoth.data.lessons.map((l) => (l.id === partnerId || l.id === lesson.id ? { ...l, isLocked: true } : l));
+    const request = {
+      lessonId: lesson.id,
+      moves: swap.moves.map((move) => ({
+        lessonId: move.lessonId,
+        from: { dayOfWeek: move.from.dayOfWeek, ...clock(move.from) },
+        to: { dayOfWeek: move.to.dayOfWeek, ...clock(move.to) },
+      })),
+    };
+    // Without the other named, the locked partner is an automat's move: refused.
+    await expect(build(lockedBoth, applyTx(lockedBoth).tx).swaps.apply(request, user)).rejects.toMatchObject({ response: { code: SWAP_LOCKED } });
+    // Named, it is the person's own, as a PATCH of it would be.
+    const { tx, written } = applyTx(lockedBoth);
+    const result = await build(lockedBoth, tx).swaps.apply({ ...request, alsoPicked: [partnerId] }, user);
+    expect(written.map((entry) => entry.where['id']).sort()).toEqual([lesson.id, partnerId].sort());
+    expect(result.undo).toHaveLength(2);
+  });
+
+  it('refuses a named lesson that is not among the moves, before anything is read', async () => {
+    const world = makeWorld({ seed: 7 });
+    const { lesson, swap } = await aGoodSwap(world);
+    const { tx } = applyTx(world);
+    const request = {
+      lessonId: lesson.id,
+      alsoPicked: [world.data.lessons.find((l) => !swap.moves.some((move) => move.lessonId === l.id))!.id],
+      moves: swap.moves.map((move) => ({ lessonId: move.lessonId, from: { dayOfWeek: move.from.dayOfWeek, ...clock(move.from) }, to: { dayOfWeek: move.to.dayOfWeek, ...clock(move.to) } })),
+    };
+    await expect(build(world, tx).swaps.apply(request, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('takes one move as a proposal when it makes room for a lesson that stands nowhere, and says a swap of one is not one', async () => {
+    const world = makeWorld({ seed: 7 });
+    const [mover] = world.data.lessons as [SwapLesson];
+    const { tx, written } = applyTx(world);
+    const single = { forBrick: true, moves: [moveOf(mover, { dayOfWeek: 5, startMinutes: 19 * 60, endMinutes: 20 * 60 })] };
+    const result = await build(world, tx).swaps.apply(single as never, user);
+    expect(written).toHaveLength(1);
+    expect(result.lockedLessonIds).toEqual([mover.id]);
+    // Without forBrick one move is no swap, and the answer is said before the transaction is opened.
+    const plain = applyTx(world);
+    await expect(build(world, plain.tx).swaps.apply({ lessonId: mover.id, moves: single.moves } as never, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(plain.tx.masterLesson.findMany).not.toHaveBeenCalled();
+    expect(plain.tx.masterLesson.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('moves no locked lesson to make room: nobody chose it', async () => {
+    const world = makeWorld({ seed: 7 });
+    const locked = world.data.lessons[0]!;
+    world.data.lessons = world.data.lessons.map((l) => (l.id === locked.id ? { ...l, isLocked: true } : l));
+    const { tx, written } = applyTx(world);
+    const request = { forBrick: true, moves: [moveOf(locked, { dayOfWeek: 5, startMinutes: 19 * 60, endMinutes: 20 * 60 })] };
+    await expect(build(world, tx).swaps.apply(request as never, user)).rejects.toMatchObject({ response: { code: SWAP_LOCKED, lessonIds: [locked.id] } });
+    expect(written).toHaveLength(0);
+  });
+});
+
+describe('SwapsService.apply: a lesson is moved to a school day and no other (g514)', () => {
+  const clock = (slot: { startMinutes: number; endMinutes: number }) => ({ startTime: clockOf(slot.startMinutes), endTime: clockOf(slot.endMinutes) });
+
+  it.each([6, 7])('refuses a move to day %i, for one move that makes room for a brick and for a swap, and writes nothing', async (day) => {
+    const world = makeWorld({ seed: 7 });
+    const [mover] = world.data.lessons as [SwapLesson];
+    const move = {
+      lessonId: mover.id,
+      from: { dayOfWeek: mover.dayOfWeek, ...clock(mover) },
+      to: { dayOfWeek: day, startTime: '09:00', endTime: '10:00' },
+    };
+    const brick = applyTx(world);
+    await expect(build(world, brick.tx).swaps.apply({ forBrick: true, moves: [move] } as never, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(brick.written).toHaveLength(0);
+    const { lesson, swap } = await aGoodSwap(world);
+    const request = {
+      lessonId: lesson.id,
+      moves: swap.moves.map((m, index) => ({
+        lessonId: m.lessonId,
+        from: { dayOfWeek: m.from.dayOfWeek, ...clock(m.from) },
+        to: index === 0 ? { dayOfWeek: day, ...clock(m.to) } : { dayOfWeek: m.to.dayOfWeek, ...clock(m.to) },
+      })),
+    };
+    const pair = applyTx(world);
+    await expect(build(world, pair.tx).swaps.apply(request as never, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(pair.written).toHaveLength(0);
+  });
+
+  it('still takes Friday', async () => {
+    const world = makeWorld({ seed: 7 });
+    const [mover] = world.data.lessons as [SwapLesson];
+    const { tx, written } = applyTx(world);
+    const move = { lessonId: mover.id, from: { dayOfWeek: mover.dayOfWeek, ...clock(mover) }, to: { dayOfWeek: 5, startTime: '19:00', endTime: '20:00' } };
+    await build(world, tx).swaps.apply({ forBrick: true, moves: [move] } as never, user);
+    expect(written).toHaveLength(1);
   });
 });

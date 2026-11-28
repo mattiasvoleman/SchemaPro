@@ -142,7 +142,8 @@ export interface ExternalTouch {
 export interface SwapProposal {
   /** A name that is the same for the same moves, so a page can tell a proposal it showed before. */
   id: string;
-  kind: 'SWAP' | 'CHAIN';
+  /** MAKE_ROOM (E5a, Gör plats): what had to move for a lesson to stand at a time, to empty places or into places others leave. */
+  kind: 'SWAP' | 'CHAIN' | 'MAKE_ROOM';
   moves: SwapMove[];
   /** Every parallel lesson the moves take along, by the lesson it stands beside. */
   parallels: ParallelTouch[];

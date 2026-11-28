@@ -85,6 +85,7 @@ ingenting läggs vid sidan av den.
 - En lektion Generera skrivit från en förläggning (`fromPlacement`) vars rad tagits bort står kvar och räknas som lagd; läsningen matchar den mot postens tider i stället för mot raden.
 - Utan sal läggs brickan som den är och svaret säger `noRoom: true` (Klart e: "Utan sal"). Salen väljer den som lägger, ur E3:s `room-choices` (rang 1 är den generatorn skulle ta). Läggningen frågar generatorns egen regel för salen (`roomAllowed`: platser, typ, årskurser) och nekar en sal den inte skulle ta med `409 BOARD_ROOM_NOT_ALLOWED` och skälet i `params.reason` (`SEATS`, `TYPE` eller `YEARS`); domaren vägrar dessutom en sal som är upptagen eller stängd, som vid varje handredigering.
 - Undantag med flit (`exempt: ['FRAME', 'LUNCH']`) bärs som vid en handredigering ("Lägg ändå"): domaren dömer det, och bara de två reglerna kan nämnas.
+- **Direkt frågar först** (P5, beslut 8; granskaren g490, M-5). En parkerad lektion behåller sina kalenderrader, så att lägga tillbaka den flyttar publicerade lektioner som ett drag gör, och i läget Direkt i en publicerad period som skolan inte svarat om nekas läggningen med `409 DIRECT_REACH_UNANSWERED` och ingenting skrivs (lektionen ligger kvar på bricklådan, raderna är där de var, ingen notis har gått). Frågan ställs av skrivningen läggningen görs med: `updateIn` är PATCHens `update`, som frågar efter att kalendern följt med. En ny lektion (`createIn`) har inga kalenderrader förrän kalendern nästa gång genereras och når ingen. Hålls av `scripts/test/probe-direkt-fragan.ts` (i).
 - Ett block läggs inte här, och inte heller en bricka utan lärare (`cannotPlace` → `409 BOARD_BRICK_CANNOT_BE_LAID`, med skälet i `params.reason`); en bricka som inte finns kvar efter låset är samma `409 REQUIREMENT_PLACEMENTS_STALE` som en gammal bild.
 
 Hålls av `src/board-tray/board-tray.lay.spec.ts` och `board-tray.identity.spec.ts` (bild, parkerad, föräldralös, tvåa), samt `scripts/test/probe-att-lagga.ts` (al-e…al-g: mot riktig Postgres, två som lägger
@@ -270,6 +271,34 @@ skriva något (varje administratör får läsa det, skrivningen är schemalägga
   `test/placement-write-in.e2e-spec.ts` (vägarna och vem som får), `scripts/test/probe-skriv-in.ts` och `probe-skriv-in-direkt.ts` (mot riktig Postgres, i CI) och, för hand mot en riktig motor, `scripts/test/probe-skriv-in-motor.ts`:
   Generera, körd efter bron, skriver samma lektioner ur samma rader, och bron efter Generera ändrar ingenting.
 
+## Lägg det som går (E7a)
+
+Påfyllning i gatewayen för brickorna i Att lägga: de markerade brickorna, en klass, en årskurs eller skolan. Den bevisar ingenting och säger det: svaret är ett förslag, aldrig "går inte".
+`POST /api/v1/board-fill/propose` (`{ academicYearId, scope, … }`) läser och skriver ingenting. `scope` är `BRICKS` (`bricks`: postId, teacherId, minutes och brickans `nth` ur bricklådan),
+`CLASS` (`studentGroupId`), `GRADE` (`gradeLevel`, årskursen i läsårets egen numrering) eller `SCHOOL`. Båda dörrarna är schemaläggarens, som domaren och Möjliga tider.
+Ett förslag rymmer högst 600 brickor som går att lägga (Ta ins gräns): frågar man om fler är svaret `400 BOARD_FILL_TOO_MANY` med `asked` och `max` som platta `params`, och sidan ber om en årskurs eller en klass i taget.
+
+- **Hur.** Brickorna läggs en i taget, den med **färst lediga starter först** (räknad om efter varje läggning, men bara för de brickor en lagd lektion kan ha tagit en start från: samma lärare,
+  en grupp som delar en elev med klassen, ett fåtal salar). Var och en läggs på en start ur de lägst kostade (samma kostnad som Möjliga tider rangordnar med: elevernas och lärarnas håltimmar, ämnets
+  fördelning, lärarens dag och skolans önskemål) som **tar minst ifrån de andra**: av de tolv lägsta startarna den som lämnar flest andra brickor med en start kvar, och därefter den lägsta kostnaden.
+  Salen är den minsta som generatorns regel tillåter (`roomAllowed`) och ingen håller just då; har skolan ingen sådan sal läggs brickan "Utan sal". Starterna är de punkter där något i skolan börjar
+  eller slutar (en lektion, en måltid, en stängd timme, ramen) och där en lektion av brickans längd skulle sluta vid en sådan. Beskärningen är `probeAt` (E3), och **domaren har sista ordet** om varje start
+  (`judgeLessons`, med de lektioner förslaget redan lagt stående): en start domaren nekar läggs inte. Ett förslag föreslår aldrig en tid som kräver ett undantag, ger inget, och flyttar ingenting som ligger:
+  `moved` är platsen för valet "får flytta" (E5a:s sökning, en senare PR) och är alltid tom. En bricka som är en lektion på bricklådan döms som den lektion den är (dess andra klasser, namngivna elever och veckor),
+  så som Ta in skriver den; och en lärare vars tjänst bär en gräns (dagar, sammanhängande undervisning) läses som den läses i Möjliga tider och loggas som läsning av tjänsten (`EMPLOYMENT`).
+- **Svaret.** `placed` (per bricka: dag, tid, sal eller "Utan sal", hur många starter som var lediga och vilken av dem, bäst först, den lades på, kostnaden), `left` (per bricka varför den inte lades:
+  `NO_FREE_START` ingen start är ledig för den med det som ligger, `JUDGE` domaren nekade de starter den prövade, `TIME` tiden tog slut innan den påbörjades, `BLOCK` ett block läggs med blocket,
+  `NO_TEACHER` ingen lärare), `asked`, `truncated`, `answeredBy: "FILL"` och en `basis`. Tiden är 20 sekunder (beslut 8); därefter lämnas de som inte påbörjats med `TIME` och förslaget gäller det som hann.
+- **Ta in.** `POST /api/v1/board-fill/apply` (`{ academicYearId, basis, items: [{ key, dayOfWeek, startTime, roomId }], versionName? }`) är den enda skrivningen. En transaktion: läget och årets lås (**exklusivt**, som Generera och en återställning tar det: en Ta in i taget; en andra som kommer medan den första skriver får `409 SCHEDULE_BUSY` efter 5 s, och när den kommer in efter den första är dess `basis` gammal), posternas lås i id-ordning,
+  `basis` jämförd med läget nu (`409 BOARD_FILL_STALE` och ingenting skrivs om en lektion eller post ändrats sedan förslaget lästes), en **version före** ("Före påfyllning"), och sedan varje lektion genom bricklådans
+  egen skrivning (`BoardTrayService.writeBrick`, samma som en läggning för hand): domaren dömer den igen mot det som nu ligger i databasen, en sal generatorn inte tar nekas (`BOARD_ROOM_NOT_ALLOWED`), lektionen
+  görs låst och handgjord, loggas och säges som en handredigering. En lektion på bricklådan som läggs tillbaka frågar P5:s fråga i läget Direkt (`409 DIRECT_REACH_UNANSWERED`, och allt rullas tillbaka, versionen med).
+  Svaret har versionen och, per bricka, lektionens id och om den skapades.
+- **Hålls av** `src/board-fill/fill-plan.spec.ts` (ordningen avgör: ett fall där den först-lagda tar den enda starten en annan har; ingen lagd bricka krockar, ligger utanför ramen eller i en måltid; domaren frågas i kostnadsordning;
+  tiden; salen; starterna), `board-fill.service.spec.ts` (vad som läses och skrivs, ordningen på lås och version, `basis`), `fill-reads.spec.ts`, `test/board-fill.e2e-spec.ts` (dörrarna och valideringen),
+  `scripts/test/probe-lagg-det-som-gar.ts` (mot riktig Postgres, i CI: förslaget skriver ingenting, varje lagd lektion godkänns av domaren, Ta in skriver exakt förslaget efter en version och rör inget som låg,
+  ett ändrat schema nekas, scopen, Direkt) och, för provet på korpusens veckor, `scripts/bench/fill-corpus.ts`.
+
 ## Tier 3
 
 - **Minimal-disruption re-optimization** — the gateway sends the current unlocked placements as `previousLessons`; the solver is rewarded (weight `disruption`) for keeping lessons on those slots and warm-started with them as hints. Mid-term re-runs now change as little as possible.
@@ -355,6 +384,49 @@ proposal. Code in `src/swaps/`, dialog in `web/components/schedule/swap-dialog.t
   (`clockMinutes`), the value that is written: `parseTimeString` wraps an hour
   past 23 into the next day, so `34:00` used to be judged at minute 2040 and
   stored as 10:00.
+
+### Byt plats and Gör plats (E5a)
+
+Two more questions of the same code, asked of a lesson the schemaläggare marked or dropped on a taken time. Nothing is written by either;
+both are applied by `POST /api/v1/swaps/apply` as above.
+
+- **Byt plats: `POST /api/v1/swaps/pair`.** Two lessons the schemaläggare marked each take the other's day and start and keep their own
+  length, so an hour and three quarters swap when both fit where the other stood. Each lesson goes with the lessons laid beside it (its unit).
+  The two are judged as ONE move (each is gone from where it stood when the other is asked of) by the judge of the hand edit
+  (`src/calendar/lesson-judge.ts`), and the answer is `ok` with the swap as a proposal (kind `SWAP`, its price and what it takes out of the
+  calendar) or the judge's reasons by lesson, each with its sentence. `immovable` says why there is nothing to judge: a lesson on the tray
+  (`PARKED`) or written from a förläggning (`PLACED`), lessons that move as one (`SAME_UNIT`) or stand at one start (`SAME_PLACE`). A lesson the
+  generation keeps may be swapped: it is the person's own hand, as a PATCH is, and the swap locks both, as every hand move does. `apply` is
+  sent with `alsoPicked` naming the second lesson, which is what lets it be locked.
+- **Gör plats: `POST /api/v1/swaps/suggest` with `makeRoom: { dayOfWeek, startTime, depth? }`.** The picked lesson (`lessonId`), or a lesson
+  that is not one yet (`brick`, as the possible times take it), or a lesson on the tray (its own `lessonId`), is asked to stand at that time,
+  and the answer is the sets of moves that make room for it: kind `MAKE_ROOM`, each lesson's `levels` (0 is the picked one, 1 what stood in its
+  way, 2 what stood in the way of that, at most `depth`, three when left out), the price before and after, and for a brick or a lesson on the
+  tray `lay`, where it is laid once the others have gone (it is not among `moves`). `makeRoom.blockers` names what stands at the time and
+  `makeRoom.stuck` says why there is nothing to offer when that is known beforehand (`CLOSED` by a rule, `LOCKED_IN_THE_WAY`, `TOO_MANY`).
+  The rules of a proposal, in `src/swaps/swap-make-room.ts`:
+  - the picked unit lands at the time; every other unit that moves stood in the way of one that moves (nothing moves for no reason); nothing
+    stands in the way at the end, and no two landings hold the same teacher, room or class;
+  - **a lesson the generation keeps never moves** (a locked lesson, a lesson a förläggning wrote, and so one with an exemption, which is locked
+    as long as it holds): where one stands in the way, the landing is not to be had. The picked lesson, when it carries an exemption, is
+    answered `EXEMPT` and is moved by hand;
+  - a displaced lesson lands at a start of the school's own grid (the clocks its lessons begin at), in a place that is empty or that another
+    lesson of the set leaves; no proposal asks for an exemption, because the judge is asked without one;
+  - `levels` are the smallest there are (breadth first), at most six units move in all, and each displaced unit is offered its eight
+    landings that stand in the way of fewest others (`makeRoom.landingsCut` says when that cut was made), at most 1 200 sets are costed,
+    and the judge has the same 1,5 s as the swap search. A school the size of the tests (hourly grid) is searched without a cut.
+  - **Held to an exhaustive check.** `swap-make-room.spec.ts` tries every assignment of every subset of the unlocked units to every place of
+    the grid and keeps the sets that leave the school with no double booking, move only what stood in the way (reached from the picked unit)
+    and are no deeper than `depth`: the search gives exactly those, at depth 1, 2 and 3, for placed lessons and for bricks, with locked
+    lessons in the school. `swap-context.spec.ts` holds the pair rule it asks (`SwapContext.landingsClash`) to the indexed one (`inTheWay`)
+    for every pair of lessons in four kinds of school.
+- **The staff room is told after the commit** (g465 L-3). `apply` announces the move through `PrismaService.onCommit`, with the ids of the
+  lessons that moved, as `MasterLessonsService` announces a hand edit: told inside the transaction, the page read the year before the commit and
+  found the lessons as they were, and a swap rolled back after the announcement had been announced all the same.
+- **Not in the apply: laying a brick.** A swap that makes room for a brick is applied as the moves that vacate the time (`forBrick`: one move
+  is a proposal, and no moved lesson may be locked), and the brick is laid by `POST /api/v1/board-tray/lay` (a lesson on the tray by moving it
+  back). They are two requests, which the page runs one after the other, taking the moves back with `undo` if the lay is refused. One
+  transaction needs a `layIn(tx, …)` in the tray's service, whose partKey check lives in a private read there.
 
 ## Lesson participants (multi-class & individual students)
 
