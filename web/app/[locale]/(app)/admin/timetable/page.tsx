@@ -64,6 +64,7 @@ import { FilterBar } from "@/components/ui/filter-bar";
 import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
+import { fillBehind } from "@/components/schedule/fill-behind";
 import {
   Select,
   SelectContent,
@@ -306,6 +307,7 @@ export default function TimetablePage() {
     ConflictList,
     TrayHead,
     TrayPanel,
+    FillHead,
   } = lazyDialogs;
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   /*
@@ -1232,6 +1234,7 @@ export default function TimetablePage() {
           <DialogLoadBoundary onError={() => setTrayFailed(true)}>
             <Suspense fallback={null}>
               <TrayHead yearId={shownYear.id} revision={lessonsReadAt} open={trayOpen} onToggle={() => setTrayOpen((open) => !open)} />
+              <FillHead yearId={shownYear.id} revision={lessonsReadAt} groupById={groupById} subjectById={subjectById} writable={!readOnly} guard={directReach.ask} declined={(error) => error instanceof DirectReachDeclined} />
             </Suspense>
           </DialogLoadBoundary>
         ) : null}
@@ -1533,6 +1536,7 @@ export default function TimetablePage() {
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onSlotClick={lunchMode ? (day, minute) => void placeLunch(day, minute) : openCreate}
+          behind={fillBehind}
           bands={lunchBands}
           onBandMove={(id, day, minute) => void moveLunch(id, day, minute)}
           onBandRemove={(id) => void removeLunch(id)}

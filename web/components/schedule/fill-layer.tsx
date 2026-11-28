@@ -1,0 +1,45 @@
+"use client";
+
+import { useTranslations } from "next-intl";
+import { clockOf } from "@/lib/board-fill";
+import type { FillShown } from "@/lib/fill-store";
+
+/*
+ * THE PROPOSAL OF LÄGG DET SOM GÅR, DRAWN ON ONE DAY OF THE BOARD (E7a, "förslaget ritas på brädet").
+ *
+ * For each brick the proposal lays on this day: a dashed outline where it would stand, with what it is and when ("Matematik 7A 08:00"), and "Utan sal" for a
+ * brick laid with no room. The outlines are drawn over the cards and are inert (a pointer or a key goes through them): the dialog the proposal came from
+ * says the same in words, and this is a picture of it, so a screen reader has the dialog and nothing here (aria-hidden), and the words are in the outline
+ * and not only in its colour. A proposal writes nothing until it is taken in: an outline is not a lesson, and the board says so by drawing it dashed.
+ */
+
+export interface FillLayerProps {
+  day: number;
+  scale: { startMinutes: number; pxPerMinute: number };
+  shown: FillShown;
+}
+
+export default function FillLayer({ day, scale, shown }: FillLayerProps) {
+  const t = useTranslations("fillLayer");
+  const px = (minutes: number) => (minutes - scale.startMinutes) * scale.pxPerMinute;
+  const here = shown.proposal.placed.filter((entry) => entry.dayOfWeek === day);
+  if (here.length === 0) return null;
+  return (
+    <div aria-hidden data-fill-layer={day} className="pointer-events-none absolute inset-0 z-30 overflow-hidden">
+      {here.map((entry) => (
+        <div
+          key={entry.key}
+          data-fill-box=""
+          className="absolute inset-x-0.5 rounded-sm border-2 border-dashed border-primary bg-primary/10"
+          style={{ top: `${px(entry.startMinutes)}px`, height: `${Math.max(14, (entry.endMinutes - entry.startMinutes) * scale.pxPerMinute)}px` }}
+        >
+          <span className="block max-w-full truncate bg-background/90 px-1 text-[10px] font-semibold leading-3 text-foreground">
+            {entry.noRoom
+              ? t("withoutRoom", { lesson: shown.labels.get(entry.key) ?? "", from: clockOf(entry.startMinutes) })
+              : t("proposed", { lesson: shown.labels.get(entry.key) ?? "", from: clockOf(entry.startMinutes) })}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}

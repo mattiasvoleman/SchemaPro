@@ -42,3 +42,5 @@ export { ConflictList } from "@/components/schedule/conflict-list";
 // Att lägga (E4): the head in the board's toolbar and the panel under it. The head is drawn as the page mounts, which is when this chunk is
 // fetched anyway, and sharing it keeps their form fields, notices and the possible-times client in the one copy.
 export { TrayHead, TrayPanel } from "@/components/schedule/tray";
+// Lägg det som går (E7a): the button in the board's toolbar, drawn beside the tray's head. The dialog it opens is its own import, fetched when the button is first pressed.
+export { FillHead } from "@/components/schedule/fill-head";
