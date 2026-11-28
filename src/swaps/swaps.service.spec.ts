@@ -15,7 +15,8 @@ const user = { userId: 'u1', role: 'SCHOOL_ADMIN', schoolId: 's1' } as never;
 function service(world: World, tx: ReturnType<typeof fakeTx>) {
   (readSwapData as jest.Mock).mockResolvedValue(world.data);
   const masterLessons = new MasterLessonsService({} as never, {} as never, {} as never);
-  const prisma = { withRls: (_user: unknown, run: (tx: unknown) => unknown) => run(tx) };
+  // `onCommit` as the real PrismaService has it: the suggestions write nothing, so a hook is never given, and run at once if it were.
+  const prisma = { withRls: (_user: unknown, run: (tx: unknown) => unknown) => run(tx), onCommit: () => false };
   return {
     swaps: new SwapsService(
       prisma as never,
