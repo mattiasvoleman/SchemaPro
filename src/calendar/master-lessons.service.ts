@@ -829,7 +829,7 @@ export class MasterLessonsService {
       await lockYearForGrundschemaEdit(tx, lesson.academicYearId);
       // SÄKERHETSNÄT (E9): what the page saw, held to the lesson as it is under the row lock. Before anything is asked of the judge, because
       // a lesson that is not as the page saw it is not the lesson the page asked about, and its no or yes would be about another lesson.
-      if (dto.expected) lesson = await this.stillAsSeen(tx, id, lesson, dto.expected, readLesson);
+      if (dto.expected) lesson = await this.stillAsSeen(tx, id, lesson, dto.expected, dto, readLesson);
       // As on create. The same basis goes to the behörighet span below, so the
       // clash check and the warning read one set of pupils.
       const rosters = await rostersOfYear(tx, user, lesson.academicYearId, {
@@ -1310,6 +1310,7 @@ export class MasterLessonsService {
     id: string,
     read: T,
     expected: ExpectedLessonDto,
+    writes: ExpectedLessonDto,
     readAgain: () => Promise<T | null>,
   ): Promise<T> {
     const [held] = await tx.$queryRaw<Array<{ updatedAt: Date }>>`
@@ -1317,7 +1318,7 @@ export class MasterLessonsService {
     if (!held) throw new NotFoundException('Master lesson not found.');
     const now = held.updatedAt.getTime() === read.updatedAt.getTime() ? read : await readAgain();
     if (!now) throw new NotFoundException('Master lesson not found.');
-    const changed = changedSince(now, expected);
+    const changed = changedSince(now, expected, writes);
     if (changed.length > 0) throw lessonChanged(changed);
     return now;
   }

@@ -55,11 +55,22 @@ const sameSet = (a: readonly string[], b: readonly string[]): boolean => new Set
 
 const dayOf = (date: Date | null): string | null => (date ? date.toISOString().slice(0, 10) : null);
 
+/** Two values of one field: a list as a set, anything else as it is. */
+const same = (a: unknown, b: unknown): boolean => (Array.isArray(a) ? Array.isArray(b) && sameSet(a as string[], b as string[]) : a === b);
+
+/** What a request writes into a field, in the form the lesson holds it: a day is its first ten characters (parseDateOrNull), and no day at all is null. */
+const asHeld = (field: (typeof EXPECTED_FIELDS)[number], value: unknown): unknown =>
+  (field === 'startDate' || field === 'endDate') && typeof value === 'string' ? (value === '' ? null : value.slice(0, 10)) : value;
+
 /**
  * The fields the page named whose value is not the one stored now, in EXPECTED_FIELDS' order. Empty: the lesson is as the page saw it.
  * A field the request leaves out is not asked about, and `undefined` is "left out" while `null` is an answer (no room, no first day).
+ *
+ * `writes` is what the request itself sets. A field it sets to the value that already stands is nothing written over, whatever the page saw: a save
+ * that is sent twice, a lock a colleague has just set too, a move made twice (granskaren g515). Without it the second of two equal requests was
+ * refused as "somebody else has changed the lesson" for a change it had made itself, and a bulk lock stopped at the first lesson that was locked.
  */
-export function changedSince(stored: LessonAsStored, expected: ExpectedLessonDto): string[] {
+export function changedSince(stored: LessonAsStored, expected: ExpectedLessonDto, writes: ExpectedLessonDto = {}): string[] {
   const now: Record<(typeof EXPECTED_FIELDS)[number], unknown> = {
     dayOfWeek: stored.dayOfWeek,
     startTime: toWallClock(stored.startTime),
@@ -80,7 +91,9 @@ export function changedSince(stored: LessonAsStored, expected: ExpectedLessonDto
     const saw = expected[field];
     if (saw === undefined) return false;
     const holds = now[field];
-    return Array.isArray(saw) ? !sameSet(saw, holds as string[]) : saw !== holds;
+    if (same(saw, holds)) return false;
+    const sets = writes[field];
+    return sets === undefined || !same(asHeld(field, sets), holds);
   });
 }
 
