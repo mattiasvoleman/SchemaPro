@@ -5,7 +5,7 @@ import sv from "@/messages/sv.json";
 import en from "@/messages/en.json";
 import type { MasterLesson } from "@/lib/types";
 import { ApiError } from "@/lib/api";
-import { nowSaid, tellChanged, told } from "./lesson-changed";
+import { changedBy, nowSaid, tellChanged, told } from "./lesson-changed";
 
 /*
  * What is said when a write of a lesson is refused for somebody else's change (E9): the lesson as it has become, in the fields the gateway named,
@@ -122,5 +122,22 @@ describe("a write refused for somebody else's change", () => {
     expect(text).toContain("Nu är den: sal A12.");
     await options.action.onClick();
     expect(again).toHaveBeenCalledWith(lesson({ roomId: "r-12" }), { roomId: "r-3" });
+  });
+
+  it("offers again what the reader changed and not the fields a dialog save only restated: the colleague's teacher is not put back by the button (granskaren g515)", async () => {
+    readOne.mockResolvedValue(lesson({ teacherId: "berit" }));
+    again.mockClear();
+    const dialog = { dayOfWeek: 2, startTime: "10:00", endTime: "11:00", roomId: "r-3", teacherId: "anna", isLocked: false, recurrence: "ALL_WEEKS", startDate: null, endDate: null };
+    await told({ queryClient: client(), error: new ApiError(409, "changed", "LESSON_CHANGED", { fields: "teacherId" }), asked: { lesson: lesson(), patch: dialog }, undo: false, t: catalogue, tCommon: common, again });
+    await toasts.error.mock.calls.at(-1)![1].action.onClick();
+    expect(again).toHaveBeenCalledWith(lesson({ teacherId: "berit" }), { roomId: "r-3" });
+  });
+});
+
+describe("what the reader changed", () => {
+  it("is the fields of the patch that are not what the lesson held, the lists as sets, and the fields the lesson has no word for are kept", () => {
+    expect(changedBy(lesson({ exemptFrom: ["FRAME", "LUNCH"] }), { roomId: "r-12", exempt: ["LUNCH", "FRAME"], dayOfWeek: 3, propagate: false })).toEqual({ dayOfWeek: 3, propagate: false });
+    expect(changedBy(lesson(), { startTime: "10:00", endTime: "12:00", startDate: null })).toEqual({ endTime: "12:00" });
+    expect(changedBy(lesson(), { exempt: [] })).toEqual({});
   });
 });
