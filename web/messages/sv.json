@@ -76,6 +76,8 @@
       "LANGUAGE_BLOCK_HAS_OTHER_LESSONS": "Blockets poster har andra lektioner eller veckor än språkvalets nya poster, och posterna i ett block måste ha samma lektioner och veckor. Ändra blockets lektioner med Ändra lektioner under Block på Timplansposter, välj en lektionslängd som ger blockets lektioner, eller byt namn på blocket så skapas ett nytt.",
       "LANGUAGE_BLOCK_IN_OTHER_GRADE": "Läsåret har redan ett block med det namnet, och det håller poster i en annan årskurs. Språkvalet läggs inte i det. Byt namn på det blocket under Block på Timplansposter, och skapa sedan timplansposterna igen.",
       "LAST_DECIDER": "Skolan behöver minst en aktiv rektor eller fullständig administratör. Ge någon annan den rollen först.",
+      "LESSON_CHANGED": "Lektionen har ändrats av någon annan sedan sidan läste den, och din ändring gjordes inte. Läs om schemat och gör ändringen igen om den fortfarande gäller.",
+      "LESSON_DATE_FORM": "Dagen är inte skriven som ÅÅÅÅ-MM-DD. Skriv den så, till exempel 2026-08-17.",
       "LESSON_LENGTHS_MISMATCH": "Lektionslängderna stämmer inte med antalet lektioner och längden på den längsta. Ändra dem så att de stämmer, eller ange bara lektionslängderna.",
       "LESSON_LENGTHS_TOO_MANY_KINDS": "En timplanspost kan ha högst tre olika lektionslängder.",
       "LESSON_LOG_NOT_YOURS": "Bara lektionens lärare och dess vikarie skriver lektionens logg.",
@@ -2975,8 +2977,32 @@
       "unlock": "Lås upp",
       "unlocked": "Upplåst: Generera kan lägga om {count, plural, one {lektionen} other {lektionerna}}."
     },
+    "changed": {
+      "refused": "Lektionen har ändrats av någon annan sedan du läste den, och din ändring gjordes inte.",
+      "now": "Nu är den: {now}.",
+      "unread": "Schemat läses om.",
+      "gone": "Lektionen har tagits bort av någon annan, och din ändring gjordes inte.",
+      "when": "{day} {start}–{end}",
+      "room": "sal {room}",
+      "noRoom": "utan sal",
+      "otherRoom": "i en annan sal",
+      "teacher": "lärare {teacher}",
+      "noTeacher": "utan lärare",
+      "otherTeacher": "hos en annan lärare",
+      "locked": "låst",
+      "unlocked": "upplåst",
+      "parked": "satt åt sidan",
+      "placed": "lagd i schemat",
+      "pupils": "med andra klasser eller elever",
+      "exempt": "med ett ändrat undantag",
+      "again": "Gör om min ändring",
+      "done": "Din ändring är gjord.",
+      "failed": "Din ändring gick inte att göra om."
+    },
     "motor": {
       "kept": {
+        "WEEKS": "Låst för motorn: andra veckor gör lektionen handgjord, och Generera låter den stå.",
+        "MOVED": "Låst för motorn: Spara låser en flyttad lektion, och Generera låter den stå där du lägger den.",
         "LOCKED": "Låst för motorn: Generera låter lektionen stå där den är.",
         "HANDMADE": "Låst för motorn: lektionen är handgjord, och Generera låter den stå.",
         "PUPILS": "Låst för motorn: lektionen har en extra klass eller utvalda elever, och Generera låter den stå."
