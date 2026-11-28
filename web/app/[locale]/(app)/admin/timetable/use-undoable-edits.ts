@@ -129,6 +129,7 @@ export function useUndoableEdits(inputs: {
       const sawBefore = seenOf(before, after);
       history.push({
         label: "update",
+        meta: { what: "update", lesson, patch },
         // The judge's final no (a lesson put back on a time that breaks a rule, beslut 4) and a lesson somebody else has changed since are
         // dropped from the history, so that the older steps are not shut behind them; the toast says so (t("undoRefused")).
         refusedUndo: (error) => error instanceof ApiError && (error.code === "MASTER_LESSON_REFUSED" || error.code === "LESSON_CHANGED"),
@@ -156,6 +157,7 @@ export function useUndoableEdits(inputs: {
       const ref = { id: created.id };
       history.push({
         label: "create",
+        meta: { what: "create", lesson: input },
         undo: async () => {
           await deleteLesson.mutateAsync(ref.id);
         },
@@ -176,9 +178,18 @@ export function useUndoableEdits(inputs: {
       const ref = { id: lesson.id };
       history.push({
         label: "delete",
+        meta: { what: "delete", lesson },
+        // The judge's no to making the lesson again (a colleague has used its time) is the same the next time: the step goes, so that the older steps are not shut
+        // behind it, and the toast says so as it does for a move (E9, granskaren g521).
+        refusedUndo: (error) => error instanceof ApiError && error.code === "MASTER_LESSON_REFUSED",
         undo: async () => {
-          const again = await createLesson.mutateAsync(input);
-          ref.id = again.id;
+          try {
+            const again = await createLesson.mutateAsync(input);
+            ref.id = again.id;
+          } catch (error) {
+            if (typeof error === "object" && error !== null) undoOfAMove.add(error);
+            throw error;
+          }
         },
         redo: async () => {
           await deleteLesson.mutateAsync(ref.id);

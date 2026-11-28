@@ -492,3 +492,51 @@ describe("useHistoryKeyboard", () => {
     expect(move.redo).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("steps (the session's steps as a list, E9)", () => {
+  it("lists the steps done, oldest first, and the ones undone in the order a redo takes them, and stamps each with the time it was taken", async () => {
+    const { result } = renderHook(() => useScheduleHistory());
+    const a = makeEntry("a");
+    const b = makeEntry("b");
+    const c = makeEntry("c");
+    act(() => {
+      result.current.push(a);
+      result.current.push(b);
+      result.current.push(c);
+    });
+    expect(result.current.steps().done.map((entry) => entry.label)).toEqual(["a", "b", "c"]);
+    expect(result.current.steps().undone).toEqual([]);
+    expect(a.at).toEqual(expect.any(Number));
+
+    await run(() => result.current.undo());
+    await run(() => result.current.undo());
+    // c was undone first and b last: the redo takes b, then c.
+    expect(result.current.steps().done.map((entry) => entry.label)).toEqual(["a"]);
+    expect(result.current.steps().undone.map((entry) => entry.label)).toEqual(["b", "c"]);
+    await run(() => result.current.redo());
+    expect(result.current.steps().done.map((entry) => entry.label)).toEqual(["a", "b"]);
+    expect(result.current.steps().undone.map((entry) => entry.label)).toEqual(["c"]);
+  });
+
+  it("is a copy: pushing after reading does not change what was read", () => {
+    const { result } = renderHook(() => useScheduleHistory());
+    act(() => result.current.push(makeEntry("a")));
+    const before = result.current.steps();
+    act(() => result.current.push(makeEntry("b")));
+    expect(before.done).toHaveLength(1);
+    expect(result.current.steps().done).toHaveLength(2);
+  });
+
+  it("keeps the time a step already has, and says what it was about", () => {
+    const { result } = renderHook(() => useScheduleHistory());
+    act(() => result.current.push(makeEntry("a", { at: 1_000, meta: { what: "bulk-delete", count: 2 } })));
+    expect(result.current.steps().done[0]).toMatchObject({ at: 1_000, meta: { what: "bulk-delete", count: 2 } });
+  });
+
+  it("forgets the steps when the history is cleared (a restore replaced every lesson)", () => {
+    const { result } = renderHook(() => useScheduleHistory());
+    act(() => result.current.push(makeEntry("a")));
+    act(() => result.current.clear());
+    expect(result.current.steps()).toEqual({ done: [], undone: [], lost: 0 });
+  });
+});

@@ -12,6 +12,38 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/**
+ * What a step was about, as data: the list of the session's steps says it in words (components/schedule/versions-dialog.tsx, which is fetched the first time
+ * Versioner is pressed), so the words are not in the code of the page. A step without it is named by its label.
+ */
+export type HistoryMeta =
+  | { what: "update"; lesson: HistoryLesson; patch: object }
+  | { what: "create" | "delete"; lesson: HistoryLesson }
+  | { what: "bulk-lock"; locked: boolean; count: number }
+  | { what: "bulk-delete"; count: number }
+  | { what: "block-move"; name: string; dayOfWeek: number; startTime: string; endTime: string }
+  | { what: "block-lock"; name: string; locked: boolean }
+  | { what: "lunch"; kind: "place" | "move" | "remove"; dayOfWeek: number; startTime: string };
+
+/** The lesson a step is about: what names it ("Matematik 7A"). */
+export interface HistoryLesson {
+  subjectId: string;
+  studentGroupId: string;
+  extraGroupIds?: readonly string[];
+  /** Where it stood, which a change that names only a clock is about. */
+  dayOfWeek?: number;
+  startTime?: string;
+  endTime?: string;
+  /** What the lesson held of the fields a save can change (a step is given the lesson as it stood), so that the list says only what the step changed. */
+  roomId?: string | null;
+  teacherId?: string | null;
+  isLocked?: boolean;
+  isParked?: boolean;
+  recurrence?: string;
+  startDate?: string | null;
+  endDate?: string | null;
+}
+
 /** Mutable holder so undo/redo closures survive id changes across recreates. */
 export interface IdRef {
   id: string;
@@ -20,6 +52,10 @@ export interface IdRef {
 export interface HistoryEntry {
   /** Short human label, e.g. "move", "create" — used in toasts. */
   label: string;
+  /** What the step was about, for the list of the session's steps (E9). */
+  meta?: HistoryMeta;
+  /** When it was taken (`push` says it): the list shows the clock. */
+  at?: number;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
   /**
@@ -32,6 +68,12 @@ export interface HistoryEntry {
 
 export interface ScheduleHistory {
   push: (entry: HistoryEntry) => void;
+  /**
+   * The session's steps as they stand: the ones done, oldest first, and the ones undone, in the order a redo takes them (E9). `lost` is how many
+   * steps have left the history without being undone (the oldest, past the depth the history keeps, and one that could not be undone for good, see
+   * `refusedUndo`): what they did stands, and the first of the done steps is then not where the session began.
+   */
+  steps: () => { done: readonly HistoryEntry[]; undone: readonly HistoryEntry[]; lost?: number };
   undo: () => Promise<HistoryEntry | null>;
   redo: () => Promise<HistoryEntry | null>;
   canUndo: boolean;
@@ -45,12 +87,17 @@ export function useScheduleHistory(): ScheduleHistory {
   const undoStack = useRef<HistoryEntry[]>([]);
   const redoStack = useRef<HistoryEntry[]>([]);
   const busy = useRef(false);
+  const lost = useRef(0);
   const [, bump] = useState(0);
   const refresh = () => bump((n) => n + 1);
 
   const push = useCallback((entry: HistoryEntry) => {
+    entry.at ??= Date.now();
     undoStack.current.push(entry);
-    if (undoStack.current.length > MAX_DEPTH) undoStack.current.shift();
+    if (undoStack.current.length > MAX_DEPTH) {
+      undoStack.current.shift();
+      lost.current++;
+    }
     redoStack.current = [];
     refresh();
   }, []);
@@ -65,7 +112,10 @@ export function useScheduleHistory(): ScheduleHistory {
       redoStack.current.push(entry);
       return entry;
     } catch (error) {
-      if (entry.refusedUndo?.(error)) undoStack.current.pop();
+      if (entry.refusedUndo?.(error)) {
+        undoStack.current.pop();
+        lost.current++;
+      }
       throw error;
     } finally {
       busy.current = false;
@@ -88,14 +138,18 @@ export function useScheduleHistory(): ScheduleHistory {
     }
   }, []);
 
+  const steps = useCallback(() => ({ done: [...undoStack.current], undone: [...redoStack.current].reverse(), lost: lost.current }), []);
+
   const clear = useCallback(() => {
     undoStack.current = [];
     redoStack.current = [];
+    lost.current = 0;
     refresh();
   }, []);
 
   return {
     push,
+    steps,
     undo,
     redo,
     canUndo: undoStack.current.length > 0,

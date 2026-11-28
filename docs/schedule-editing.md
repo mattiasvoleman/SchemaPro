@@ -236,6 +236,12 @@ whatever the request names (decision 5: no forced clash).
   lektionen som den står nu. Ett Ångra som möter det är ett Ångra som inte går, och steget tas ur historiken så att de äldre inte stängs bakom det.
 - **Dagar som inte är ÅÅÅÅ-MM-DD** (granskaren g511, L-6). Valideringen tar ISO 8601:s andra former (`20260817`, `2026-W34-1`, `2026-229`) som datum, och de gav 500 när
   lektionen berättades. De är nu `400 LESSON_DATE_FORM`, från både PATCH, POST och den läsande frågan; en dag med klockslag efter sig är fortfarande en dag.
+- **Historiken som en lista.** Versioner-dialogen har ett infällt avsnitt, "Det du har gjort i den här sessionen (N)": sessionens steg, det nyaste först, med klockslaget och vad steget gjorde med ord
+  ("Matematik 7A: flyttad till tisdag 10:00–11:00, sal A12, låst", "Låste 3 lektioner", "Ny lektion: …", "Borttagen: …"). Sidan skickar stegets innehåll som data (`HistoryEntry.meta`, `at`) och orden
+  står i den lata dialogen (`components/schedule/history-list.tsx`), inte i sidans kod. **Gå tillbaka hit** ångrar allt efter steget, ett i taget, genom samma Ångra som verktygsfältets och Ctrl+Z:
+  domaren, revisionsspåret och en kollegas ändring som gör ett steg omöjligt (`LESSON_CHANGED`, ovan) svarar som där, och det första steg som inte går stoppar vandringen och säger varför; det som redan
+  är ångrat står kvar. Ett ångrat steg står kvar i listan, märkt "ångrad", med **Gör om hit**. Längst ner står "Så här såg schemat ut när du började". En återställning av en version tömmer listan,
+  som den tömmer Ångra.
 - **Hålls av** `src/calendar/master-lessons.expected.spec.ts`, `test/lesson-changed.e2e-spec.ts` (koden och `fields` når klienten), `scripts/test/probe-sakerhetsnat.ts` (mot riktig
   Postgres, i CIs Database-jobb) och webbens `lib/lesson-expected.test.ts` (som läser gatewayens fältlista som text), `lib/lesson-changed.test.ts` och `use-undoable-edits.test.ts`.
 

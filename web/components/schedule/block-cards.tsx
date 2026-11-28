@@ -365,6 +365,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
         let result = await acts.current.guard(() => patchCard(to));
         acts.current.history.push({
           label: "block-move",
+          meta: { what: "block-move", name: card.name, dayOfWeek: to.dayOfWeek, startTime: to.startTime, endTime: to.endTime },
           undo: async () => {
             // Låset vid en flytt (E4): the gateway locks the block the card was moved in, and the way back moves nothing it did not move, so the lock is
             // taken off here, by the lessons the move locked, once the card is back where it stood.
@@ -580,6 +581,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       if (lessonIds.length > 0) {
         actions.history.push({
           label: "block-lock",
+          meta: { what: "block-lock", name: card.name, locked: isLocked },
           undo: async () => void (await patchLock({ blockId: card.blockId, isLocked: !isLocked, lessonIds })),
           redo: async () => void (await patchLock({ blockId: card.blockId, isLocked, lessonIds })),
         });

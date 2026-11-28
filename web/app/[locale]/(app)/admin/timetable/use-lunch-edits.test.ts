@@ -174,3 +174,17 @@ describe("a failed write", () => {
     expect(view.result.current.history.canUndo).toBe(false);
   });
 });
+
+describe("what a meal's step says it was about (E9, granskaren g521)", () => {
+  it("names the day and the time of a meal that was placed, one that was moved (where it went) and one that was removed (where it stood)", async () => {
+    const { view } = setup([sitting({ id: "m-2", dayOfWeek: 4, startTime: "11:30:00" })]);
+    await act(async () => void (await view.result.current.lunch.placeLunch(3, 11 * 60 + 30)));
+    await act(async () => void (await view.result.current.lunch.moveLunch("m-2", 5, 12 * 60)));
+    await act(async () => void (await view.result.current.lunch.removeLunch("m-2")));
+    expect(view.result.current.history.steps().done.map((entry) => entry.meta)).toEqual([
+      { what: "lunch", kind: "place", dayOfWeek: 3, startTime: "11:30" },
+      { what: "lunch", kind: "move", dayOfWeek: 5, startTime: "12:00" },
+      { what: "lunch", kind: "remove", dayOfWeek: 4, startTime: "11:30" },
+    ]);
+  });
+});

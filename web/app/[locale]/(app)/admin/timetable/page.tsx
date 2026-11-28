@@ -1785,6 +1785,7 @@ export default function TimetablePage() {
             groupLabel={groupLabel}
             onRestored={afterRestore}
             showError={showError}
+            history={history}
           />
         </Suspense>
         </DialogLoadBoundary>

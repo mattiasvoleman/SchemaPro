@@ -24,6 +24,8 @@ import { ApiError } from "@/lib/api";
 import { classOf, countsOf, diffLessons, KIND_ORDER, type Aspect, type DiffEntry, type DiffLesson } from "@/lib/version-diff";
 import type { LessonRecurrence, MasterLesson, Person, Room, Subject } from "@/lib/types";
 import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
+import { HistoryList } from "@/components/schedule/history-list";
+import type { ScheduleHistory } from "@/lib/use-schedule-history";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
@@ -89,6 +91,8 @@ export interface VersionsDialogProps {
   /** A restore replaced every lesson: the page drops its undo stack and selection. */
   onRestored: () => void;
   showError: (error: unknown) => void;
+  /** The session's steps, listed with a way back to each (E9). Absent, the list is not shown. */
+  history?: ScheduleHistory;
 }
 
 export function VersionsDialog({
@@ -103,6 +107,7 @@ export function VersionsDialog({
   groupLabel,
   onRestored,
   showError,
+  history,
 }: VersionsDialogProps) {
   const t = useTranslations("timetable");
   const tDays = useTranslations("days");
@@ -412,6 +417,7 @@ export function VersionsDialog({
           <DialogTitle>{t("versionsTitle")}</DialogTitle>
           <DialogDescription>{t("versionsBody")}</DialogDescription>
         </DialogHeader>
+        {history ? <HistoryList history={history} subjectById={subjectById} teacherById={teacherById} roomById={roomById} groupLabel={groupLabel} showError={showError} /> : null}
         <div className="flex gap-2" data-writes="SCHEMALAGGNING">
           {/* Named for a screen reader: the placeholder is an example, and
               it is gone as soon as a name is typed. */}

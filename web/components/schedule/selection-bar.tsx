@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ArrowLeftRight, Lock, LockOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ApiError } from "@/lib/api";
 import { restorableInput } from "@/lib/lesson-restore";
 import { useLazyModule } from "@/lib/use-lazy-module";
 import type {
@@ -97,10 +98,19 @@ export function SelectionBar({
       for (const lesson of targets) {
         await updateLesson.mutateAsync({ id: lesson.id, isLocked, propagate: false, expected: { isLocked: lesson.isLocked } });
       }
+      // A step of many lessons is taken lesson by lesson, and a try that stops halfway (the network falls, a colleague has changed lesson 3) has done the
+      // ones before it: the next try goes on from the first it has not done. From the first again, it would ask those for the lock they no longer hold, and
+      // be refused at once for a change that was its own (409 LESSON_CHANGED), every time, with the older steps shut behind it (E9, granskaren g521).
+      let takenBack = 0;
+      let doneAgain = 0;
       history.push({
         label: "bulk-lock",
+        meta: { what: "bulk-lock", locked: isLocked, count: targets.length },
+        // A colleague's change of one of the lessons is a no that the next try meets again, as the judge's is for a single lesson: the step goes.
+        refusedUndo: (error) => error instanceof ApiError && error.code === "LESSON_CHANGED",
         undo: async () => {
-          for (const lesson of targets) {
+          for (; takenBack < targets.length; takenBack++) {
+            const lesson = targets[takenBack]!;
             await updateLesson.mutateAsync({
               id: lesson.id,
               isLocked: !isLocked,
@@ -110,11 +120,13 @@ export function SelectionBar({
               ...(!isLocked && lesson.exemptFrom && lesson.exemptFrom.length > 0 ? { exempt: lesson.exemptFrom } : {}),
             });
           }
+          takenBack = 0;
         },
         redo: async () => {
-          for (const lesson of targets) {
-            await updateLesson.mutateAsync({ id: lesson.id, isLocked, propagate: false, expected: { isLocked: !isLocked } });
+          for (; doneAgain < targets.length; doneAgain++) {
+            await updateLesson.mutateAsync({ id: targets[doneAgain]!.id, isLocked, propagate: false, expected: { isLocked: !isLocked } });
           }
+          doneAgain = 0;
         },
       });
       toast.success(t("bulkDone", { count: targets.length }));
@@ -141,18 +153,26 @@ export function SelectionBar({
         const remove = () => deleteLesson.mutateAsync(lesson.id);
         await (guard ? guard(remove) : remove());
       }
+      // As bulkSetLock's: a try that stopped halfway has made (or removed) the ones before it, and the next goes on from there, so that no lesson is made twice.
+      let recreated = 0;
+      let removedAgain = 0;
       history.push({
         label: "bulk-delete",
+        meta: { what: "bulk-delete", count: targets.length },
+        // The judge's no to putting one of them back (a colleague has used its time) is the same the next time: the step goes, as a single lesson's does.
+        refusedUndo: (error) => error instanceof ApiError && error.code === "MASTER_LESSON_REFUSED",
         undo: async () => {
-          for (let i = 0; i < inputs.length; i++) {
-            const again = await createLesson.mutateAsync(inputs[i]);
-            refs[i].id = again.id;
+          for (; recreated < inputs.length; recreated++) {
+            const again = await createLesson.mutateAsync(inputs[recreated]);
+            refs[recreated].id = again.id;
           }
+          recreated = 0;
         },
         redo: async () => {
-          for (const ref of refs) {
-            await deleteLesson.mutateAsync(ref.id);
+          for (; removedAgain < refs.length; removedAgain++) {
+            await deleteLesson.mutateAsync(refs[removedAgain].id);
           }
+          removedAgain = 0;
         },
       });
       onClear();
