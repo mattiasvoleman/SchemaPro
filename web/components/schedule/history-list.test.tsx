@@ -60,7 +60,7 @@ describe("the list of the session's steps", () => {
       "10:05 Borttagen: Matematik 7AGå tillbaka hit",
       "10:05 Ny lektion: Naturkunskap 8BGå tillbaka hit",
       "10:05 Matematik 7A: sal A12, lärare B. Berg, låstGå tillbaka hit",
-      "10:05 Matematik 7A: flyttad till Tisdag 10:00–11:00Gå tillbaka hit",
+      "10:05 Matematik 7A: flyttad till tisdag 10:00–11:00Gå tillbaka hit",
       "Så här såg schemat ut när du börjadeGå tillbaka hit",
     ]);
   });
@@ -68,7 +68,7 @@ describe("the list of the session's steps", () => {
   it("names a clock-only change by the day the lesson stood on, and a step it has no words for by its label", async () => {
     setup([step("update", { what: "update", lesson: MATTE, patch: { startTime: "09:00", endTime: "10:00" } }), step("other", undefined)]);
     await open();
-    expect(lines()[1]).toBe("10:05 Matematik 7A: flyttad till Måndag 09:00–10:00Gå tillbaka hit");
+    expect(lines()[1]).toBe("10:05 Matematik 7A: flyttad till måndag 09:00–10:00Gå tillbaka hit");
     expect(lines()[0]).toBe("10:05 Ändring i schemat" + "Nu");
   });
 

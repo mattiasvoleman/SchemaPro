@@ -53,27 +53,35 @@ export function HistoryList({ history, subjectById, teacherById, roomById, group
     [subjectById, groupLabel],
   );
 
-  /** What a patch did to a lesson, in the words of the page: "flyttad till tisdag 10:00–11:00, sal A12, låst". */
+  /**
+   * What a patch did to a lesson, in the words of the page: "flyttad till tisdag 10:00–11:00, sal A12, låst". Only what differs from the lesson as it stood:
+   * a save of the edit dialog carries every field of the dialog (page.tsx doSaveEdit), and the ones the reader did not touch are restated, not changed,
+   * so that a room change would otherwise read "flyttad till …, låst, andra veckor". A field the step does not know the old value of counts as changed.
+   */
   const changesOf = useCallback(
     (lesson: HistoryLesson, patch: Record<string, unknown>): string[] => {
+      const was: Record<string, unknown> = { ...lesson };
+      const changed = (field: string) => was[field] === undefined || (/Time$/.test(field) ? String(patch[field]).slice(0, 5) !== String(was[field]).slice(0, 5) : patch[field] !== was[field]);
       const parts: string[] = [];
-      if ("dayOfWeek" in patch || "startTime" in patch || "endTime" in patch) {
+      if (["dayOfWeek", "startTime", "endTime"].some((field) => field in patch && changed(field))) {
         const day = Number(patch["dayOfWeek"] ?? lesson.dayOfWeek ?? 1);
         const start = String(patch["startTime"] ?? lesson.startTime ?? "").slice(0, 5);
         const end = String(patch["endTime"] ?? lesson.endTime ?? "").slice(0, 5);
-        parts.push(t("historyMoved", { slot: `${tDays(String(day))} ${start}–${end}` }));
+        // A weekday is written in lower case in the middle of a Swedish sentence ("flyttad till tisdag"), and with a capital in English.
+        const name = tDays(String(day));
+        parts.push(t("historyMoved", { slot: `${locale === "sv" ? name.toLocaleLowerCase("sv") : name} ${start}–${end}` }));
       }
-      if ("roomId" in patch) parts.push(patch["roomId"] ? t("historyRoom", { room: roomById.get(String(patch["roomId"]))?.name ?? "?" }) : t("historyNoRoom"));
-      if ("teacherId" in patch) {
+      if ("roomId" in patch && changed("roomId")) parts.push(patch["roomId"] ? t("historyRoom", { room: roomById.get(String(patch["roomId"]))?.name ?? "?" }) : t("historyNoRoom"));
+      if ("teacherId" in patch && changed("teacherId")) {
         const teacher = patch["teacherId"] ? teacherById.get(String(patch["teacherId"])) : undefined;
         parts.push(patch["teacherId"] ? t("historyTeacher", { teacher: teacher ? `${teacher.firstName[0]}. ${teacher.lastName}` : "?" }) : t("historyNoTeacher"));
       }
-      if ("isLocked" in patch) parts.push(t(patch["isLocked"] ? "historyLocked" : "historyUnlocked"));
-      if ("isParked" in patch) parts.push(t(patch["isParked"] ? "historyParked" : "historyPlaced"));
-      if ("recurrence" in patch || "startDate" in patch || "endDate" in patch) parts.push(t("historyWeeks"));
+      if ("isLocked" in patch && changed("isLocked")) parts.push(t(patch["isLocked"] ? "historyLocked" : "historyUnlocked"));
+      if ("isParked" in patch && changed("isParked")) parts.push(t(patch["isParked"] ? "historyParked" : "historyPlaced"));
+      if (["recurrence", "startDate", "endDate"].some((field) => field in patch && changed(field))) parts.push(t("historyWeeks"));
       return parts;
     },
-    [t, tDays, roomById, teacherById],
+    [t, tDays, locale, roomById, teacherById],
   );
 
   const describe = (entry: HistoryEntry): string => {

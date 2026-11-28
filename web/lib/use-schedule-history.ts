@@ -31,6 +31,14 @@ export interface HistoryLesson {
   dayOfWeek?: number;
   startTime?: string;
   endTime?: string;
+  /** What the lesson held of the fields a save can change (a step is given the lesson as it stood), so that the list says only what the step changed. */
+  roomId?: string | null;
+  teacherId?: string | null;
+  isLocked?: boolean;
+  isParked?: boolean;
+  recurrence?: string;
+  startDate?: string | null;
+  endDate?: string | null;
 }
 
 /** Mutable holder so undo/redo closures survive id changes across recreates. */
