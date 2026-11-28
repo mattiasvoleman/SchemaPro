@@ -319,6 +319,7 @@ model School {
   teacherReportingDays    TeacherReportingDay[]
   reportingReminders      ReportingReminder[]
   ackSettings             AckSetting?
+  optimizationProfile     OptimizationProfile?
   ackRequests             AckRequest[]
   /// Checklistor (20270129091000).
   instructionTemplates    InstructionTemplate[]
@@ -6868,6 +6869,23 @@ model ReportingDigest {
 
   @@id([schoolId, periodEnd])
   @@map("ReportingDigests")
+}
+
+/// Optimeringsprofilen (P5, 20270314090000): the five weights Generera's sliders set, one row per school. They were the browser's
+/// (localStorage); they are the school's, so that every scheduler sees the profile the school runs with. No row is the defaults
+/// (src/optimization/optimization-profile.ts). The weights are relative, 0..1000 as the engine's request takes them.
+model OptimizationProfile {
+  schoolId      String   @id @db.Uuid
+  preferredFree Int      @default(10) @db.SmallInt
+  preferredBusy Int      @default(5) @db.SmallInt
+  disruption    Int      @default(8) @db.SmallInt
+  spread        Int      @default(3) @db.SmallInt
+  teacherGap    Int      @default(2) @db.SmallInt
+  updatedAt     DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@map("OptimizationProfiles")
 }
 
 // -----------------------------------------------------------------------------
