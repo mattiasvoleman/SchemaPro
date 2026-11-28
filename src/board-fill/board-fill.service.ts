@@ -18,7 +18,7 @@ import { lockPostForShares } from '../resources/requirement-shares';
 import { SwapContext } from '../swaps/swap-context';
 import { readSwapData, type SwapData } from '../swaps/swap-snapshot';
 import type { SoftCost, SwapLesson } from '../swaps/swap-types';
-import type { FillApplyDto, FillBrickRefDto, FillProposeDto } from './dto/fill.dto';
+import { FILL_MAX_BRICKS, type FillApplyDto, type FillBrickRefDto, type FillProposeDto } from './dto/fill.dto';
 import { FillReads } from './fill-reads';
 import { planFill, windowOfFrames, type FillBrick, type FillCandidate, type FillLeftReason, type FillPlaced } from './fill-plan';
 
@@ -111,6 +111,9 @@ export interface FillApplyResult {
   laid: Array<{ key: string; lessonId: string; created: boolean; noRoom: boolean }>;
 }
 
+/** The problem `code` of a question about more bricks than Ta in can take in at once (FILL_MAX_BRICKS): the page narrows it to a year or a class. */
+export const BOARD_FILL_TOO_MANY = 'BOARD_FILL_TOO_MANY';
+
 const dateOf = (value: string | null): Date | null => (value ? new Date(`${value}T00:00:00.000Z`) : null);
 const keyOf = (brick: Pick<TrayBrick, 'postId' | 'teacherId' | 'minutes' | 'nth'>): string => `${brick.postId}|${brick.teacherId ?? '-'}|${brick.minutes}|${brick.nth}`;
 
@@ -200,6 +203,16 @@ export class BoardFillService {
         const trayOfYear = await this.tray.trayIn(tx, dto.academicYearId, undefined);
         const data = await readSwapData(tx, user, dto.academicYearId);
         const asked = this.bricksAsked(dto, trayOfYear, data);
+        // Ta in takes in at most FILL_MAX_BRICKS lessons (its DTO and its transaction are sized to it), so a proposal longer than that could never be taken in: a school
+        // that fills a year from nothing would be given 700 lessons and refused 400 "items must contain no more than 600 elements" when it said yes.
+        const placeable = asked.filter((brick) => brick.cannotPlace === null).length;
+        if (placeable > FILL_MAX_BRICKS) {
+          throw new BadRequestException({
+            message: `Det är ${placeable} brickor att lägga, och ett förslag rymmer högst ${FILL_MAX_BRICKS}. Fyll en årskurs eller en klass i taget.`,
+            code: BOARD_FILL_TOO_MANY,
+            params: { asked: placeable, max: FILL_MAX_BRICKS },
+          });
+        }
 
         const bricks = asked.filter((brick) => brick.cannotPlace === null);
         const left: FillLeftView[] = asked.filter((brick) => brick.cannotPlace !== null).map((brick) => ({ ...viewOf(brick), reason: brick.cannotPlace as FillLeftViewReason }));
