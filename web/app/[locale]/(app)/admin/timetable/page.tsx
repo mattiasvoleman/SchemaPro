@@ -1029,6 +1029,7 @@ export default function TimetablePage() {
                 // would move a lesson nobody can see.
                 setGroupFilters([]);
                 setSelectedIds(new Set());
+                setSuggesting(null);
                 setPlacingLunch(false);
                 history.clear();
                 planning.choose(yearId);

@@ -410,6 +410,10 @@ vi.mock("@/components/schedule/swap-dialog", async () => {
   const { createElement } = await import("react");
   return {
     SwapDialog: ({ open }: { open: boolean }) => (open ? createElement("div", { role: "dialog" }, "swapDialogStub") : null),
+    // Byt and Gör plats (E5a): the list says what it was asked, and nothing else (its own rows are components/schedule/swap-proposals.test.tsx).
+    SwapProposals: ({ ask, guard }: { ask: unknown; guard?: unknown }) =>
+      createElement("div", { "data-testid": "proposals-stub", "data-ask": JSON.stringify(ask), "data-guard": typeof guard }),
+    SwapPairDialog: () => null,
   };
 });
 
@@ -4962,5 +4966,54 @@ describe("a numbered time the gateway offers in another room (E3)", () => {
     fireEvent.keyDown(drawn, { key: "Enter" });
     await waitFor(() => expect(noMutation.mutateAsync).toHaveBeenCalled());
     expect(noMutation.mutateAsync.mock.calls.at(-1)![0]).not.toHaveProperty("roomId");
+  });
+});
+
+/*
+ * Byt and Gör plats (E5a) at a refused drop. The lists are the gateway's and have their own rows (components/schedule/swap-proposals.test.tsx); what is the
+ * page's to get wrong is what it hands the dialog: the lesson and the time it was let go on, the undo history's clearing, the question before Direkt. The
+ * list is asked in a dialog that is NOT modal while it is up, so that the board is in reach, and the year choice in the header is in reach too: the list
+ * belongs to the year it was asked in (its proposals name that year's lessons by id, and Tillämpa writes them), so a year chosen under it takes it away,
+ * as it takes the selection and the undo history.
+ */
+describe("Byt and Gör plats at a refused drop", () => {
+  const NEXT = {
+    id: "y-2",
+    name: "2027/28",
+    isActive: false,
+    predecessorId: "y-1",
+    startDate: "2027-08-16",
+    endDate: "2028-06-09",
+  };
+
+  async function refusedDropWithTheListUp(button: string) {
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}>
+        <TimetablePage />
+      </QueryClientProvider>,
+    );
+    // Slöjd onto Monday 08:00, which Matematik holds with the same teacher.
+    const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 260 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 62 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 62 });
+    await user.click(await screen.findByRole("button", { name: button }));
+    const list = await screen.findByTestId("proposals-stub");
+    return { user, list };
+  }
+
+  it("asks Gör plats for the lesson let go and the day and time it was let go on, and Byt for the same", async () => {
+    const { list } = await refusedDropWithTheListUp("swaps.dropOffers.room");
+    expect(JSON.parse(list.getAttribute("data-ask")!)).toMatchObject({ kind: "room", lessonId: "l-slojd", target: { dayOfWeek: 1, startMinutes: 480 } });
+    expect(list).toHaveAttribute("data-guard", "function");
+  });
+
+  it("goes with the year it was asked in", async () => {
+    planning.successor = NEXT;
+    const { user } = await refusedDropWithTheListUp("swaps.dropOffers.swap");
+    await user.click(screen.getByRole("button", { name: "planningYear.optionNext(2027/28)" }));
+    await waitFor(() => expect(screen.queryByTestId("proposals-stub")).toBeNull());
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
