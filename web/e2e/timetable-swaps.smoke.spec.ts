@@ -144,6 +144,10 @@ const distinct = (asked: unknown[]) => [...new Set(asked.map((entry) => JSON.str
 
 /** What a sheet must be at: inside the window, with no sideways scroll of the page, and every button of it a size a finger can press. */
 async function fits(page: Page, scope: string) {
+  // The sheet is measured where it comes to rest. It opens with the dialogs' own 200 ms zoom-in, and Tailwind 3's `enter` keyframes carry no
+  // translate of their own: until it ends the sheet is drawn at left 50 % of the window and slides in from the right, so measured at once it
+  // "reaches past the window" at 375 and 320 px (CI, 51–421 of 375). The other smoke rows wait the same way before they measure a dialog.
+  await page.locator(scope).first().evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
   return page.evaluate((selector) => {
     const root = document.querySelector(selector) as HTMLElement | null;
     const problems: string[] = [];
