@@ -87,9 +87,11 @@ interface Set_ {
   exempt?: ReadonlySet<string>;
   /** A lesson that is on the tray: not in the snapshot (readSwapData leaves them out) but stored. */
   tray?: SwapLesson[];
+  /** The school's RoomPreference rows of kind LOCK, as the service reads them. */
+  locks?: Array<{ subjectId: string; minGradeLevel: number | null; maxGradeLevel: number | null; roomTypeId: string | null; rooms: Array<{ roomId: string }> }>;
 }
 
-function txFor({ world, parked = new Set(), placed = new Set(), exempt = new Set(), tray = [] }: Set_) {
+function txFor({ world, parked = new Set(), placed = new Set(), exempt = new Set(), tray = [], locks = [] }: Set_) {
   const base = fakeTx(world);
   const everyone = () => [...world.data.lessons, ...tray];
   const stored = (lesson: SwapLesson) => ({
@@ -122,6 +124,7 @@ function txFor({ world, parked = new Set(), placed = new Set(), exempt = new Set
     studentGroup: { ...base.studentGroup, findFirst: jest.fn(async () => ({ name: 'C1' })) },
     room: { findMany: jest.fn(async () => ['r1', 'r2', 'r3', 'r4', 'r5'].map((id) => ({ id, name: id, capacity: 30, roomTypeId: null, minGradeLevel: null, maxGradeLevel: null, building: null }))) },
     academicYear: { findUnique: jest.fn(async () => null) },
+    roomPreference: { findMany: jest.fn(async () => locks) },
   };
 }
 
@@ -417,6 +420,41 @@ describe('Gör plats: a displaced lesson may take another room that fits and is 
     }
     expect(lists).toBeGreaterThan(10);
     expect(crossings).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('gives a lesson no room its subject’s LOCK rule leaves out (g524): the generator would not put it there, and `apply` would write it and lock it', async () => {
+    // Every subject of the school is locked to r1 and r2, in every year: a lesson changes room only into one of them.
+    const subjects = [...new Set(world.data.lessons.map((lesson) => lesson.subjectId))];
+    const locks = subjects.map((subjectId) => ({ subjectId, minGradeLevel: null, maxGradeLevel: null, roomTypeId: null, rooms: [{ roomId: 'r1' }, { roomId: 'r2' }] }));
+    const open = service({ world });
+    const locked = service({ world, locks });
+    let givenOpen = 0;
+    let givenLocked = 0;
+    for (const picked of world.data.lessons.filter((_, index) => index % 7 === 3)) {
+      for (const [dayOfWeek, startMinutes] of [[1, 540], [3, 600], [5, 480], [2, 660]] as const) {
+        if (picked.dayOfWeek === dayOfWeek && picked.startMinutes === startMinutes) continue;
+        const body = { lessonId: picked.id, makeRoom: { dayOfWeek, startTime: clock(startMinutes), depth: 3, otherRooms: true }, limit: 40 };
+        for (const proposal of (await open.swaps.suggest(body, user)).proposals) {
+          for (const move of proposal.moves) if (move.room && !['r1', 'r2'].includes(move.room.to)) givenOpen += 1;
+        }
+        const answer = await locked.swaps.suggest(body, user);
+        for (const proposal of answer.proposals) {
+          for (const move of proposal.moves) {
+            if (!move.room) continue;
+            givenLocked += 1;
+            expect(['r1', 'r2']).toContain(move.room.to);
+          }
+        }
+      }
+    }
+    // Without the rule rooms outside r1 and r2 are given (the test would stand on nothing otherwise); with it some room change is still offered.
+    expect(givenOpen).toBeGreaterThan(0);
+    expect(givenLocked).toBeGreaterThan(0);
+    // The rules are read for the questions that asked for another room, and not for any other.
+    expect(locked.tx.roomPreference.findMany).toHaveBeenCalled();
+    const plain = service({ world, locks });
+    await plain.swaps.suggest({ lessonId: world.data.lessons[3]!.id, makeRoom: { dayOfWeek: 1, startTime: '09:00', depth: 3 }, limit: 40 }, user);
+    expect(plain.tx.roomPreference.findMany).not.toHaveBeenCalled();
   }, 120_000);
 
   it('lays a brick in another room when its own is held and another is free, and the lay names it', async () => {

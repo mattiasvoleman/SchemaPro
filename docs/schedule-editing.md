@@ -393,8 +393,8 @@ both are applied by `POST /api/v1/swaps/apply` as above.
   A displaced lesson (and the picked one, and a brick) whose own room is held at
   the new time need not send the lesson that holds it away: when it is ONE lesson that stands in a room, and nothing but the room is the
   trouble (its teachers, its classes and every rule that does not name the room leave the stretch alone), it may take the best other room that
-  fits (the generator's rule: the seats, the type the subject needs, the years; its own kind, the smallest big enough, its own building) and
-  is free then (no lesson of the school stands in it, no weekly row shuts it, no other school holds it). The move then carries
+  fits (the generator's rule: the seats, the type the subject needs, the years, and the school's LOCK rules of rooms for the subject and the
+  years; its own kind, the smallest big enough, its own building) and is free then (no lesson of the school stands in it, no weekly row shuts it, no other school holds it). The move then carries
   `room: { from, to }`; `apply` writes the room with the day and the clock (the write is held to the room the page saw, so a lesson whose room
   has been changed since is `SWAP_STALE`), the published calendar follows the lesson into its room, the clash rule and the board's rules are
   asked in the room it is given, and the undo is the same moves reversed, the rooms too. The rule is `src/swaps/swap-rooms.ts`; the search

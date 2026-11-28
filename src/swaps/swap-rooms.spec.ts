@@ -202,6 +202,35 @@ describe('the room a displaced lesson takes when its own is held (swap-rooms.ts)
   });
 });
 
+describe('the school’s LOCK rules of rooms (g524): the generator keeps to them, so the room given is one they leave the lesson', () => {
+  it('skips a room outside the rooms the lesson is locked to, takes the best that is inside, and offers none when none is left', () => {
+    const { context } = worldOf({ lessons: [mover, holder] });
+    const x = context.unitOf.get('x')!;
+    const withLock = (allowed: string[] | null) =>
+      makeRoomWorldOf({ context, rooms: ROOMS, needsOf: () => NEEDS, lockedRoomsOf: () => (allowed === null ? null : new Set(allowed)) }, { otherRooms: true });
+    // Not locked: r2, the first by the generator's order.
+    expect([...withLock(null).otherRoom!(x, TARGET)!.rooms!]).toEqual([['x', 'r2']]);
+    // Locked to r4 and r5 (the own room r1 is outside, as a school may have laid it by hand): r4, which r2 and r3 do not matter to.
+    expect([...withLock(['r4', 'r5']).otherRoom!(x, TARGET)!.rooms!]).toEqual([['x', 'r4']]);
+    // Locked to the own room and a room that is taken then: no room to give.
+    const taken = lessonOf('t', { studentGroupId: 'c9', groupName: 'C9', teacherId: 't9', roomId: 'r3', dayOfWeek: 2, startMinutes: 540, endMinutes: 600 });
+    const crowded = worldOf({ lessons: [mover, holder, taken] });
+    const lockedToTaken = makeRoomWorldOf({ context: crowded.context, rooms: ROOMS, needsOf: () => NEEDS, lockedRoomsOf: () => new Set(['r1', 'r3']) }, { otherRooms: true });
+    expect(lockedToTaken.otherRoom!(crowded.context.unitOf.get('x')!, TARGET)).toBeUndefined();
+  });
+
+  it('asks the rule of the lesson it is choosing a room for, with what the lesson needs', () => {
+    const { context } = worldOf({ lessons: [mover, holder] });
+    const asked: Array<[string, RoomNeeds]> = [];
+    const world = makeRoomWorldOf(
+      { context, rooms: ROOMS, needsOf: () => NEEDS, lockedRoomsOf: (lesson, needs) => (asked.push([lesson.id, needs]), null) },
+      { otherRooms: true },
+    );
+    world.otherRoom!(context.unitOf.get('x')!, TARGET);
+    expect(asked).toEqual([['x', NEEDS]]);
+  });
+});
+
 describe('against a plain reading of the hourly school', () => {
   it.each([3, 7, 11])('seed %i: for every lesson at every landing, another room is offered exactly when the own is the trouble and another is free, and it is the first free one', (seed) => {
     const data = makeWorld({ seed, classes: 5, teachers: 7, rooms: 5, perClass: 18 }).data;

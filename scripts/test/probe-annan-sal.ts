@@ -16,6 +16,7 @@
  *   (as-e) en sal som inte är skolans (en annan skolas, som RLS döljer) är 400 och ingenting skrivs;
  *   (as-f) en sal som en annan lektion står i då nekas av krockregeln (409 MASTER_LESSON_REFUSED) och ingenting skrivs, och samma flytt utan saländringen, med
  *          den egna salen R2 som X håller, nekas likadant: det är salen som döms.
+ *   (as-g) skolans LOCK-regel för salar följs (generatorn håller sig till den): med Kemi låst till R1 och R2 får ingen R3, och med R3 i regeln får H den.
  *
  * Ett eget skolspår (slug `probe-annan-sal`) som tas bort.
  */
@@ -112,6 +113,24 @@ async function main() {
       assert.deepEqual(h.room, { from: r2, to: r3 });
       assert.equal(aMove.room, undefined);
       assert.ok(!proposal.moves.some((m) => m.lessonId === lessonX), 'X stays');
+    });
+
+    await check('(as-g) the subject’s LOCK rule of rooms is kept: with Kemi locked to R1 and R2 nobody is given R3, and once the rule names R3 H is (g524)', async () => {
+      const kemi = a.subjectId.get('Kemi')!;
+      const rule = (await q<{ id: string }>(`INSERT INTO "RoomPreferences" ("schoolId", "subjectId", kind, weight, "updatedAt") VALUES ($1, $2, 'LOCK', 5, now()) RETURNING id`, [a.school, kemi]))[0]!.id;
+      const name = async (room: string) => owner.query(`INSERT INTO "RoomPreferenceRooms" ("schoolId", "preferenceId", "roomId") VALUES ($1, $2, $3)`, [a.school, rule, room]);
+      try {
+        await name(r1);
+        await name(r2);
+        const locked = await ask({ otherRooms: true });
+        assert.ok(!locked.proposals.some((p) => p.moves.some((m) => m.lessonId === lessonH && m.room)), 'H is given no room outside the rooms its subject is locked to');
+        assert.ok(locked.proposals.length > 0, 'the proposals that move X out of the way are still there');
+        await name(r3);
+        const widened = await ask({ otherRooms: true });
+        assert.ok(widened.proposals.some((p) => p.moves.some((m) => m.lessonId === lessonH && m.room?.to === r3)), 'R3 is offered once the rule names it');
+      } finally {
+        await owner.query(`DELETE FROM "RoomPreferences" WHERE id = $1`, [rule]);
+      }
     });
 
     await check('(as-d) a lesson that has been given another room since the proposal is SWAP_STALE, and nothing is written', async () => {

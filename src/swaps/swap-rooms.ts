@@ -1,7 +1,8 @@
 import { roomsByFit, type PossibleWorld } from '../calendar/possible-times';
+import type { RoomNeeds } from '../optimization/room-eligibility';
 import type { Landing } from './swap-context';
 import type { MakeRoomWay, MakeRoomWorld, Placement } from './swap-make-room';
-import type { SwapSlot, SwapUnit } from './swap-types';
+import type { SwapLesson, SwapSlot, SwapUnit } from './swap-types';
 
 /*
  * E5a, ANNAN LEDIG SAL: THE ROOM A LESSON TAKES WHEN ITS OWN IS HELD.
@@ -20,7 +21,8 @@ import type { SwapSlot, SwapUnit } from './swap-types';
  *   2. It is offered only when the room is the trouble: the lesson's teachers, its classes and every weekly row and board rule that does
  *      not name the room leave the stretch alone, and the own room is held there by a lesson (that is not already in the way for its
  *      teacher or class) or shut by a row or by another school. Where something else shuts the stretch another room does not help.
- *   3. The room is the BEST that fits and is free, in the generator's order (its own kind, the smallest that is big enough, its own building):
+ *   3. The room is the BEST that fits and is free, in the generator's order (its own kind, the smallest that is big enough, its own building), and one
+ *      the school's LOCK rules for the lesson's subject and years allow (swap-room-locks.ts):
  *      one room per landing and not every room that would do, so that a landing is two ways at most, and the list a person reads is not
  *      the same times over again in every room of the school. Free is as the school stood: no lesson of the school is in it then, no row
  *      or hold shuts it. A room the school lets several lessons share is not called held by the prune, and the judge counts its pupils.
@@ -33,8 +35,13 @@ import type { SwapSlot, SwapUnit } from './swap-types';
  * than one room per landing.
  */
 
-/** The facts a landing's rooms are asked with: E3's world (the snapshot indexed, the rooms, what a lesson needs of one). */
-export type RoomWorld = Pick<PossibleWorld, 'context' | 'rooms' | 'needsOf'>;
+/**
+ * The facts a landing's rooms are asked with: E3's world (the snapshot indexed, the rooms, what a lesson needs of one), and the rooms the school's
+ * LOCK rules leave a lesson (swap-room-locks.ts: the generator keeps to them too). Absent: no lesson is locked to rooms.
+ */
+export type RoomWorld = Pick<PossibleWorld, 'context' | 'rooms' | 'needsOf'> & {
+  lockedRoomsOf?: (lesson: SwapLesson, needs: RoomNeeds) => ReadonlySet<string> | null;
+};
 
 export function makeRoomWorldOf(world: RoomWorld, options: { otherRooms?: boolean } = {}): MakeRoomWorld {
   const { context } = world;
@@ -103,8 +110,11 @@ function anotherRoomFor(world: RoomWorld, unit: SwapUnit, to: SwapSlot, vacating
 
   const needs = world.needsOf(landing.lesson);
   if (needs === null) return undefined;
+  // The rooms the school's LOCK rules leave the lesson: the generator would put it in no other (g524).
+  const locked = world.lockedRoomsOf?.(landing.lesson, needs) ?? null;
   for (const room of roomsByFit(world.rooms, needs, world.rooms.find((candidate) => candidate.id === own))) {
     if (room.id === own) continue;
+    if (locked !== null && !locked.has(room.id)) continue;
     // Only the room is asked, as the room chooser asks it (room-choices.ts): the lessons that hold the room, the rows that shut it, the hold of another school.
     const taking: Landing = {
       lesson: { ...landing.lesson, teacherId: null, coTeacherId: null, studentGroupId: '', extraGroupIds: [], roomId: room.id },

@@ -14,6 +14,7 @@ import { judgeLessons, type JudgeItem } from '../calendar/lesson-judge';
 import { lessonRefusalText } from '../calendar/lesson-refusal';
 import { isNewLesson, PossibleTimesService, STORED_LESSON_SELECT } from '../calendar/possible-times.service';
 import { POSSIBLE_SCORE } from '../calendar/possible-times';
+import type { RoomNeeds } from '../optimization/room-eligibility';
 import { exemptionKey, exemptionsOf } from '../calendar/lesson-exemption';
 import { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -33,6 +34,7 @@ import { removedCalendarLessons } from './swap-calendar';
 import { dayLessonOf, SwapReads } from './swap-reads';
 import { movesOfUnit, searchMakeRoom } from './swap-make-room';
 import { makeRoomWorldOf } from './swap-rooms';
+import { lockedRoomsOf, type RoomLockRule } from './swap-room-locks';
 import { proposalId, searchSwaps } from './swap-search';
 import { readSwapData, type SwapData } from './swap-snapshot';
 import type {
@@ -40,6 +42,7 @@ import type {
   HardCode,
   ParallelLink,
   SoftCost,
+  SwapLesson,
   SwapMove,
   SwapProposal,
   SwapSlot,
@@ -441,7 +444,7 @@ export class SwapsService {
       // when the page asked for it. A page that does not send `otherRooms` gets what it got before the rooms, and reads nothing of them.
       const roomWorld =
         ask.otherRooms === true
-          ? makeRoomWorldOf(await this.possible.worldOf(tx, data, context, unplaced ? [...data.lessons, lesson] : data.lessons), { otherRooms: true })
+          ? makeRoomWorldOf(await this.roomWorldOf(tx, data, context, unplaced ? [...data.lessons, lesson] : data.lessons), { otherRooms: true })
           : makeRoomWorldOf({ context, rooms: [], needsOf: () => null });
       const searching = Date.now();
 
@@ -541,6 +544,21 @@ export class SwapsService {
         },
       };
     });
+  }
+
+  /**
+   * E3's world (the rooms, what each lesson needs of one) and the school's LOCK rules of rooms (RoomPreference of kind LOCK), which the generator
+   * keeps to as it keeps to the seats, the type and the years: a room the rules do not leave a lesson is no room to give it (swap-room-locks.ts).
+   */
+  private async roomWorldOf(tx: PrismaClient, data: SwapData, context: SwapContext, members: readonly SwapLesson[]) {
+    const world = await this.possible.worldOf(tx, data, context, members);
+    const rows = await tx.roomPreference.findMany({
+      where: { schoolId: data.schoolId, kind: 'LOCK' },
+      select: { subjectId: true, minGradeLevel: true, maxGradeLevel: true, roomTypeId: true, rooms: { select: { roomId: true } } },
+    });
+    if (rows.length === 0) return world;
+    const rules: RoomLockRule[] = rows.map((row) => ({ ...row, roomIds: row.rooms.map((entry) => entry.roomId) }));
+    return { ...world, lockedRoomsOf: (lesson: SwapLesson, needs: RoomNeeds) => lockedRoomsOf(rules, world.rooms, lesson.subjectId, needs) };
   }
 
   // ---------------------------------------------------------------------------
