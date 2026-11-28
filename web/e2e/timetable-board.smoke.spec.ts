@@ -244,7 +244,8 @@ test("Grundschemat: a lesson is taken up, moved, locked, parked and undone from 
   await page.keyboard.press("Enter");
   await expect(status).toContainText("Flyttar");
   await expect.poll(() => written.length).toBe(1);
-  expect(written[0]).toEqual({ id: MATH_LESSON.id, body: { dayOfWeek: 1, startTime: "09:40", endTime: "10:40" } });
+  // The write says what the page saw of the fields it sets (E9), so that a colleague's change of one of them is refused and not written over.
+  expect(written[0]).toEqual({ id: MATH_LESSON.id, body: { dayOfWeek: 1, startTime: "09:40", endTime: "10:40", expected: { dayOfWeek: 1, startTime: "09:25", endTime: "10:25" } } });
 
   // The card is drawn again and focus is on it.
   await expect(card(MATH_LESSON.id)).toBeFocused();
@@ -254,13 +255,13 @@ test("Grundschemat: a lesson is taken up, moved, locked, parked and undone from 
   await page.keyboard.press("l");
   await expect(status).toContainText(/Låser Matematik 7A|Matematik 7A är låst/);
   await expect.poll(() => written.length).toBe(2);
-  expect(written[1]).toEqual({ id: MATH_LESSON.id, body: { isLocked: true } });
+  expect(written[1]).toEqual({ id: MATH_LESSON.id, body: { isLocked: true, expected: { isLocked: false } } });
 
   // P parks the idrottslektion.
   await card(IDH_LESSON.id).focus();
   await page.keyboard.press("p");
   await expect.poll(() => written.length).toBe(3);
-  expect(written[2]).toEqual({ id: IDH_LESSON.id, body: { isParked: true } });
+  expect(written[2]).toEqual({ id: IDH_LESSON.id, body: { isParked: true, expected: { isParked: false } } });
   await expect(card(IDH_LESSON.id)).toHaveCount(0);
 
   // Ctrl+Z puts the last write back: the lesson is not parked.

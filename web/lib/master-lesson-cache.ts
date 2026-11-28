@@ -292,3 +292,19 @@ export async function readHeard(
   for (const id of ids) if (!found.has(id) && current(id)) removeLesson(queryClient, id);
   return true;
 }
+
+/**
+ * One lesson as the database holds it now, laid in the lists that hold it: what a write that was refused for another's change
+ * says the lesson has become (lib/lesson-changed.ts). Null is a lesson that is gone, and undefined a read that did not come.
+ */
+export async function readOne(queryClient: QueryClient, id: string): Promise<MasterLesson | null | undefined> {
+  const { data, error } = await createClient().from("MasterLessons").select(MASTER_LESSON_SELECT).eq("id", id).maybeSingle();
+  if (error) return undefined;
+  if (!data) {
+    removeLesson(queryClient, id);
+    return null;
+  }
+  const lesson = lessonOfRow(data as unknown as LessonRow);
+  putLesson(queryClient, lesson);
+  return lesson;
+}

@@ -2434,19 +2434,19 @@ describe("the selection's bar", () => {
     selectSlojd(container);
     await user.click(await screen.findByRole("button", { name: "timetable.bulkLock" }));
     await waitFor(() =>
-      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: true, propagate: false }),
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: true, propagate: false, expected: { isLocked: false } }),
     );
     expect(toasts.success).toHaveBeenCalledWith("timetable.bulkDone(1)");
 
     noMutation.mutateAsync.mockClear();
     await user.click(screen.getByRole("button", { name: "timetable.undo" }));
     await waitFor(() =>
-      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: false, propagate: false }),
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: false, propagate: false, expected: { isLocked: true } }),
     );
     noMutation.mutateAsync.mockClear();
     await user.click(screen.getByRole("button", { name: "timetable.redo" }));
     await waitFor(() =>
-      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: true, propagate: false }),
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isLocked: true, propagate: false, expected: { isLocked: false } }),
     );
 
     // Ta bort: the selection goes with the lessons it named.
@@ -2525,8 +2525,8 @@ describe("the tray", () => {
     await user.click(screen.getByRole("button", { name: "timetable.putBack" }));
 
     // Only the flag: the server reads the remembered day and time, and checks
-    // the slot like any placement — it may since have been taken.
-    expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isParked: false });
+    // the slot like any placement — it may since have been taken. It says what the page saw of the flag (E9).
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isParked: false, expected: { isParked: true } });
   });
 
   it("parks a lesson dropped onto it", () => {

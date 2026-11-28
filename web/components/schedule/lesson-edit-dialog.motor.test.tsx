@@ -89,6 +89,32 @@ describe("Justera lektion says whether the motor keeps the lesson", () => {
     expect(screen.getByText("Fri för motorn: nästa Generera lägger om lektionen.")).toBeInTheDocument();
   });
 
+  // L-3 (granskaren g511). The sentence says what Spara leaves, and Spara hands a generated lesson over when it writes other weeks and locks a
+  // lesson it moves: "Fri för motorn" under either was a promise the save broke.
+  it("says a generated lesson whose weeks the reader changes is kept, and that a restated window is not a change", () => {
+    const lesson = { ...base, isGenerated: true } as MasterLesson;
+    const same = draw(lesson, { recurrence: "ALL_WEEKS", startDate: "", endDate: "" });
+    expect(screen.getByText("Fri för motorn: nästa Generera lägger om lektionen.")).toBeInTheDocument();
+    same.unmount();
+    for (const over of [{ recurrence: "ODD_WEEKS" as const }, { startDate: "2026-09-07" }, { endDate: "2026-12-18" }]) {
+      const changed = draw(lesson, over);
+      expect(screen.getByText("Låst för motorn: andra veckor gör lektionen handgjord, och Generera låter den stå.")).toBeInTheDocument();
+      expect(screen.queryByText(/Fri för motorn/)).toBeNull();
+      changed.unmount();
+    }
+  });
+
+  it("says a generated lesson the reader moves is locked by Spara, and that one the reader unlocks in the same save stays free", () => {
+    const lesson = { ...base, isGenerated: true } as MasterLesson;
+    for (const over of [{ dayOfWeek: "2" }, { startTime: "13:00" }, { endTime: "16:00" }]) {
+      const moved = draw(lesson, over);
+      expect(screen.getByText("Låst för motorn: Spara låser en flyttad lektion, och Generera låter den stå där du lägger den.")).toBeInTheDocument();
+      moved.unmount();
+    }
+    draw({ ...lesson, isLocked: true }, { isLocked: false, dayOfWeek: "2" });
+    expect(screen.getByText("Fri för motorn: nästa Generera lägger om lektionen.")).toBeInTheDocument();
+  });
+
   it("says a lesson made by hand is kept whichever way the switch stands", () => {
     draw({ ...base, isGenerated: false }, { isLocked: false });
     expect(screen.getByText("Låst för motorn: lektionen är handgjord, och Generera låter den stå.")).toBeInTheDocument();

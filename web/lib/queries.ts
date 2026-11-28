@@ -1095,6 +1095,11 @@ export interface UpdateMasterLessonInput {
   propagate?: boolean;
   extraGroupIds?: string[];
   studentIds?: string[];
+  /**
+   * What the page saw of the fields this write sets (lib/lesson-expected.ts): the gateway refuses it, 409 LESSON_CHANGED, when somebody else
+   * has changed one of them since. Absent, the write is as it always was.
+   */
+  expected?: Record<string, unknown>;
 }
 
 export interface CreateMasterLessonInput {
